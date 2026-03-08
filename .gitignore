@@ -137,3 +137,50 @@ dist
 # Vite logs files
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+
+# --- OS / editor ---
+.DS_Store
+.DS_Store?
+._*
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+*.swp
+*.swo
+*~
+
+# IDE / editor (uncomment if you don't commit shared config)
+# .idea/
+# .vscode/
+# *.sublime-project
+# *.sublime-workspace
+
+# --- Electron ---
+release/
+*.exe
+*.dmg
+*.AppImage
+*.snap
+*.deb
+*.rpm
+*.flatpak
+
+# --- Python (if you add scripts later) ---
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+.eggs/
+*.egg
+
+# --- Misc ---
+*.local
+.turbo
+*.tmp
