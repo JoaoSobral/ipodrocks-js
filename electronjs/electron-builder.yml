@@ -1,0 +1,23 @@
+appId: com.ipodrocks.app
+productName: iPodRocks
+directories:
+  output: out
+  buildResources: resources
+files:
+  - dist/**/*
+  - package.json
+linux:
+  target:
+    - AppImage
+    - deb
+    - rpm
+  category: Audio
+mac:
+  target:
+    - dmg
+    - zip
+  category: public.app-category.music
+win:
+  target:
+    - nsis
+    - portable

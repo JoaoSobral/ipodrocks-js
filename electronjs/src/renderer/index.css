@@ -1,0 +1,90 @@
+@import "tailwindcss";
+
+@keyframes fadeSlideIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Light theme: off-white bg, dark text, teal-green accent (picture-inspired) */
+.theme-light {
+  color: #1a1a1a;
+}
+.theme-light > div {
+  background-color: #f8f8f8;
+}
+.theme-light nav {
+  background-color: #fff;
+  border-color: #e2e8f0;
+}
+.theme-light nav h1,
+.theme-light nav .text-white {
+  color: #1a1a1a;
+}
+.theme-light nav .nav-inactive {
+  color: #4b5563;
+}
+.theme-light nav .nav-inactive:hover {
+  background-color: #f3f4f6;
+  color: #1a1a1a;
+}
+.theme-light nav .nav-active {
+  background-color: rgba(46, 204, 113, 0.18);
+  color: #16a34a;
+}
+.theme-light main {
+  background-color: #f8f8f8;
+}
+.theme-light main > div.overflow-auto {
+  background-color: #f8f8f8;
+}
+
+/* Panel content: headings and labels use dark text in light theme; keep button text */
+.theme-light .panel-content .text-white {
+  color: #1a1a1a;
+}
+.theme-light .panel-content button.text-white {
+  color: white;
+}
+.theme-light .panel-content [class*="text-[#e0e0e0]"] {
+  color: #374151;
+}
+
+/* Dark boxes (grid cells, table headers, etc.) become light */
+.theme-light .theme-box {
+  background-color: #fff;
+  border-color: #e2e8f0;
+  color: #1a1a1a;
+}
+.theme-light .theme-box .text-white,
+.theme-light .theme-box [class*="text-[#e0e0e0]"] {
+  color: #1a1a1a;
+}
+.theme-light .theme-box [class*="text-[#8a8f98]"],
+.theme-light .theme-box [class*="text-[#5a5f68]"] {
+  color: #6b7280;
+}
+
+/* Inputs and bordered controls in light theme (panels and modals) */
+.theme-light input[type="text"],
+.theme-light input[type="number"],
+.theme-light input[type="checkbox"],
+.theme-light select,
+.theme-light textarea,
+.theme-light [role="combobox"] {
+  background-color: #fff;
+  border-color: #e2e8f0;
+  color: #1a1a1a;
+}
+.theme-light input::placeholder,
+.theme-light textarea::placeholder {
+  color: #9ca3af;
+}
+.theme-light .panel-content [class*="bg-white/[0.02]"] {
+  background-color: #f3f4f6;
+}
