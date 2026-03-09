@@ -64,6 +64,7 @@ function formatDate(iso: string): string {
 
 export function PlaylistPanel() {
   const { devices, fetchDevices } = useDeviceStore();
+  const deviceList = Array.isArray(devices) ? devices : [];
 
   // -- playlist list state ------------------------------------------------
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
@@ -135,11 +136,12 @@ export function PlaylistPanel() {
     fetchDevices();
   }, [fetchAll, fetchDevices]);
 
+  const playlistList = Array.isArray(playlists) ? playlists : [];
   const filtered =
     activeTab === "all"
-      ? playlists
-      : playlists.filter((p) =>
-          p.typeName.toLowerCase().includes(activeTab)
+      ? playlistList
+      : playlistList.filter((p) =>
+          (p?.typeName ?? "").toLowerCase().includes(activeTab)
         );
 
   // -- playlist actions ---------------------------------------------------
@@ -197,29 +199,29 @@ export function PlaylistPanel() {
 
   function buildRules(): SmartPlaylistRule[] {
     if (strategy === "by_genre") {
-      return genres
-        .filter((g) => selectedGenreIds.has(g.id))
+      return (Array.isArray(genres) ? genres : [])
+        .filter((g) => g != null && selectedGenreIds.has(g.id))
         .map((g) => ({
           ruleType: "genre",
           targetId: g.id,
-          targetLabel: g.name,
+          targetLabel: g.name ?? "",
         }));
     }
     if (strategy === "by_artist") {
-      return artists
-        .filter((a) => selectedArtistIds.has(a.id))
+      return (Array.isArray(artists) ? artists : [])
+        .filter((a) => a != null && selectedArtistIds.has(a.id))
         .map((a) => ({
           ruleType: "artist",
           targetId: a.id,
-          targetLabel: a.name,
+          targetLabel: a.name ?? "",
         }));
     }
-    return albums
-      .filter((a) => selectedAlbumIds.has(a.id))
+    return (Array.isArray(albums) ? albums : [])
+      .filter((a) => a != null && selectedAlbumIds.has(a.id))
       .map((a) => ({
         ruleType: "album",
         targetId: a.id,
-        targetLabel: `${a.title} — ${a.artist}`,
+        targetLabel: `${a?.title ?? ""} — ${a?.artist ?? ""}`,
       }));
   }
 
@@ -322,7 +324,7 @@ export function PlaylistPanel() {
 
   async function handleSaveGenius() {
     if (!geniusPreview || geniusDeviceId == null || !geniusSelectedType) return;
-    const trackIds = geniusPreview.tracks.map((t) => t.id);
+    const trackIds = (Array.isArray(geniusPreview?.tracks) ? geniusPreview.tracks : []).map((t) => t?.id);
     await saveGeniusPlaylist(
       geniusSaveName || geniusPreview.playlistName,
       geniusSelectedType,
@@ -391,7 +393,7 @@ export function PlaylistPanel() {
             <div className="flex items-center justify-center py-12">
               <div className="w-5 h-5 border-2 border-[#4a9eff]/30 border-t-[#4a9eff] rounded-full animate-spin" />
             </div>
-          ) : tracks.length === 0 ? (
+          ) : (Array.isArray(tracks) ? tracks : []).length === 0 ? (
             <p className="text-center text-xs text-[#5a5f68] py-8">
               No tracks in this playlist
             </p>
@@ -405,7 +407,7 @@ export function PlaylistPanel() {
                 <span className="w-16 text-right">Duration</span>
               </div>
               <div className="max-h-[60vh] overflow-auto">
-                {tracks.map((t, i) => (
+                {(Array.isArray(tracks) ? tracks : []).map((t, i) => (
                   <div
                     key={t.id}
                     className="flex items-center gap-2 px-3 py-2 text-sm hover:bg-white/[0.02] border-b border-white/[0.03] transition-colors"
@@ -461,9 +463,9 @@ export function PlaylistPanel() {
                 label="Device"
                 options={[
                   { value: "", label: "Select a device\u2026" },
-                  ...devices.map((d) => ({
-                    value: String(d.id),
-                    label: d.name,
+                  ...deviceList.map((d) => ({
+                    value: String(d?.id ?? ""),
+                    label: d?.name ?? "",
                   })),
                 ]}
                 value={geniusDeviceId != null ? String(geniusDeviceId) : ""}
@@ -564,7 +566,7 @@ export function PlaylistPanel() {
 
           {/* Type picker grid */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
-            {geniusTypes.map((gt) => (
+            {(Array.isArray(geniusTypes) ? geniusTypes : []).map((gt) => (
               <button
                 key={gt.value}
                 type="button"
@@ -596,7 +598,7 @@ export function PlaylistPanel() {
 
     // -- configuring --
     if (geniusStep === "configuring" && geniusSelectedType) {
-      const typeInfo = geniusTypes.find(
+      const typeInfo = (Array.isArray(geniusTypes) ? geniusTypes : []).find(
         (t) => t.value === geniusSelectedType
       );
       const showMinPlays =
@@ -659,7 +661,7 @@ export function PlaylistPanel() {
               {showArtistPicker && (
                 <Select
                   label="Artist"
-                  options={geniusArtists.map((a) => ({
+                  options={(Array.isArray(geniusArtists) ? geniusArtists : []).map((a) => ({
                     value: a.name,
                     label: `${a.name} (${a.playCount} plays)`,
                   }))}
@@ -711,7 +713,7 @@ export function PlaylistPanel() {
           {errorBanner}
           <Card title="Playlist Preview">
             <p className="text-xs text-[#5a5f68] mb-2">
-              {geniusPreview.criteria}
+              {geniusPreview?.criteria ?? ""}
             </p>
             <Input
               label="Playlist Name"
@@ -721,7 +723,7 @@ export function PlaylistPanel() {
           </Card>
 
           <Card>
-            {geniusPreview.tracks.length === 0 ? (
+            {(Array.isArray(geniusPreview?.tracks) ? geniusPreview.tracks : []).length === 0 ? (
               <p className="text-center text-xs text-[#5a5f68] py-8">
                 No tracks matched this criteria. Try different settings.
               </p>
@@ -735,7 +737,7 @@ export function PlaylistPanel() {
                   <span className="w-16 text-right">Plays</span>
                 </div>
                 <div className="max-h-[50vh] overflow-auto">
-                  {geniusPreview.tracks.map((t, i) => (
+                  {(Array.isArray(geniusPreview?.tracks) ? geniusPreview.tracks : []).map((t, i) => (
                     <div
                       key={`${t.id}-${i}`}
                       className="flex items-center gap-2 px-3 py-2 text-sm hover:bg-white/[0.02] border-b border-white/[0.03] transition-colors"
@@ -770,7 +772,7 @@ export function PlaylistPanel() {
             >
               &larr; Back
             </Button>
-            {geniusPreview.tracks.length > 0 && (
+            {(Array.isArray(geniusPreview?.tracks) ? geniusPreview.tracks : []).length > 0 && (
               <Button
                 variant="primary"
                 size="sm"
@@ -1030,7 +1032,7 @@ export function PlaylistPanel() {
               </p>
               <div className="max-h-56 overflow-y-auto rounded-lg border border-white/10 bg-black/20 p-2 space-y-1">
                 {strategy === "by_genre" &&
-                  genres.map((g) => (
+                  (Array.isArray(genres) ? genres : []).map((g) => (
                     <label
                       key={g.id}
                       className="flex items-center gap-2 py-1.5 px-2 rounded hover:bg-white/[0.04] cursor-pointer text-sm"
@@ -1052,7 +1054,7 @@ export function PlaylistPanel() {
                     </label>
                   ))}
                 {strategy === "by_artist" &&
-                  artists.map((a) => (
+                  (Array.isArray(artists) ? artists : []).map((a) => (
                     <label
                       key={a.id}
                       className="flex items-center gap-2 py-1.5 px-2 rounded hover:bg-white/[0.04] cursor-pointer text-sm"
@@ -1074,7 +1076,7 @@ export function PlaylistPanel() {
                     </label>
                   ))}
                 {strategy === "by_album" &&
-                  albums.map((a) => (
+                  (Array.isArray(albums) ? albums : []).map((a) => (
                     <label
                       key={a.id}
                       className="flex items-center gap-2 py-1.5 px-2 rounded hover:bg-white/[0.04] cursor-pointer text-sm"

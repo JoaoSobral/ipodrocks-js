@@ -97,6 +97,21 @@ describe("AppDatabase", () => {
       expect(rows).toHaveLength(2);
     });
 
+    it("accepts content_type audiobook in library_folders", () => {
+      db.run(
+        "INSERT INTO library_folders (name, path, content_type) VALUES (?, ?, ?)",
+        "Audiobooks",
+        "/audiobooks",
+        "audiobook"
+      );
+      const row = db.getOne<{ name: string; content_type: string }>(
+        "SELECT name, content_type FROM library_folders WHERE path = ?",
+        "/audiobooks"
+      );
+      expect(row?.name).toBe("Audiobooks");
+      expect(row?.content_type).toBe("audiobook");
+    });
+
     it("getOne returns undefined for missing row", () => {
       const row = db.getOne("SELECT * FROM library_folders WHERE id = ?", 999);
       expect(row).toBeUndefined();

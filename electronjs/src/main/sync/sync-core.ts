@@ -31,6 +31,7 @@ export interface RunSyncOptions {
   syncType?: string;
   extraTrackPolicy?: string | null;
   includePodcasts?: boolean;
+  includeAudiobooks?: boolean;
   includePlaylists?: boolean;
   progressCallback?: ProgressCallback;
   cancelSignal?: AbortSignal;
@@ -94,7 +95,9 @@ export function computeDeviceRelativePath(
         const folderNames =
           contentType === "music"
             ? ["Music", "music", "MUSIC"]
-            : ["Podcasts", "podcasts", "PODCASTS", "Podcast", "podcast"];
+            : contentType === "audiobook"
+              ? ["Audiobooks", "audiobooks", "AUDIOBOOKS", "Audiobook", "audiobook"]
+              : ["Podcasts", "podcasts", "PODCASTS", "Podcast", "podcast"];
 
         if (parts.length > 1 && folderNames.includes(parts[0])) {
           const safeParts = parts.slice(1).map((p) => sanitizeDevicePathComponent(p));

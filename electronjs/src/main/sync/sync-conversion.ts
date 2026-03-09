@@ -1,6 +1,28 @@
 import { ChildProcess, spawn } from "child_process";
 import * as fs from "fs";
 import * as path from "path";
+import { app } from "electron";
+
+let cachedFfmpegPath: string | null = null;
+
+/**
+ * Returns the path to the FFmpeg binary. Uses @ffmpeg-installer/ffmpeg in dev;
+ * in packaged app uses the binary from extraResources.
+ */
+function getFfmpegPath(): string {
+  if (cachedFfmpegPath) return cachedFfmpegPath;
+  if (app.isPackaged && process.resourcesPath) {
+    const name = process.platform === "win32" ? "ffmpeg.exe" : "ffmpeg";
+    const candidate = path.join(process.resourcesPath, "ffmpeg", name);
+    if (fs.existsSync(candidate)) {
+      cachedFfmpegPath = candidate;
+      return candidate;
+    }
+  }
+  const ffmpeg = require("@ffmpeg-installer/ffmpeg");
+  cachedFfmpegPath = ffmpeg.path;
+  return cachedFfmpegPath as string;
+}
 
 export interface ConversionSettings {
   codec?: string;
@@ -40,7 +62,7 @@ function buildFfmpegCommand(
   const codec = settings.codec ?? "mp3";
   const bitrate = settings.bitrate ?? 256;
 
-  const cmd = ["ffmpeg", "-y", "-i", src];
+  const cmd = [getFfmpegPath(), "-y", "-i", src];
 
   const codecArgs: Record<string, string[]> = {
     mp3: ["-c:a", "mp3", "-b:a", `${bitrate}k`],
@@ -77,7 +99,7 @@ function buildProfileCommand(
     default: ["-c:a", "mp3", "-b:a", "256k"],
   };
 
-  const cmd = ["ffmpeg", "-y", "-i", src];
+  const cmd = [getFfmpegPath(), "-y", "-i", src];
   cmd.push(...(profiles[profile] ?? profiles["default"]));
   cmd.push(
     "-map", "0:a",
@@ -211,7 +233,7 @@ async function convertMusepack(
 
   try {
     const ffmpegCmd = [
-      "ffmpeg", "-y", "-i", src,
+      getFfmpegPath(), "-y", "-i", src,
       "-f", "wav", "-acodec", "pcm_s16le",
       "-ar", "44100", "-ac", "2",
       tmpWav,

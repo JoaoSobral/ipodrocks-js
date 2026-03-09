@@ -40,6 +40,14 @@ describe("LibraryCore", () => {
         lib.addLibraryFolder("Bad", "/bad", "invalid" as never)
       ).toThrow();
     });
+
+    it("accepts audiobook content type", () => {
+      const id = lib.addLibraryFolder("My Audiobooks", "/home/audiobooks", "audiobook");
+      expect(id).toBeGreaterThan(0);
+      const folders = lib.getLibraryFolders();
+      const ab = folders.find((f) => f.contentType === "audiobook");
+      expect(ab?.name).toBe("My Audiobooks");
+    });
   });
 
   describe("addOrUpdateTrack", () => {
@@ -183,6 +191,34 @@ describe("LibraryCore", () => {
       const podcasts = lib.getTracks({ contentType: "podcast" });
       expect(podcasts).toHaveLength(1);
       expect(podcasts[0].title).toBe("Episode 1");
+    });
+  });
+
+  describe("getTracks with audiobook", () => {
+    it("filters by contentType audiobook", () => {
+      const abFolderId = lib.addLibraryFolder("Audiobooks", "/ab", "audiobook");
+      lib.addOrUpdateTrack(
+        "/ab/book1.mp3",
+        "book1.mp3",
+        "Chapter 1",
+        "1",
+        "1",
+        3600,
+        128000,
+        null,
+        10000000,
+        "audiobook",
+        abFolderId,
+        "Author",
+        "Book Title",
+        "Audiobook",
+        "MP3",
+        "h3"
+      );
+      const audiobooks = lib.getTracks({ contentType: "audiobook" });
+      expect(audiobooks).toHaveLength(1);
+      expect(audiobooks[0].title).toBe("Chapter 1");
+      expect(audiobooks[0].contentType).toBe("audiobook");
     });
   });
 

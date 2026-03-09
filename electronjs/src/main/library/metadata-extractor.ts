@@ -75,7 +75,7 @@ export class MetadataExtractor {
   /**
    * Extract tag metadata from an audio file.
    * @param filePath  Absolute path to the audio file
-   * @param contentType  "music" or "podcast"
+   * @param contentType  "music", "podcast", or "audiobook"
    * @returns Normalised tag metadata with defaults for missing fields
    */
   async extractMetadata(
@@ -94,7 +94,7 @@ export class MetadataExtractor {
       const trackNumber = common.track?.no?.toString() ?? "";
       const discNumber = common.disk?.no?.toString() ?? "";
 
-      if (contentType === "podcast") {
+      if (contentType === "podcast" || contentType === "audiobook") {
         const showTitle = common.album || "";
         return {
           title,

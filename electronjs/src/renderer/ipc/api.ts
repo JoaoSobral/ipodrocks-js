@@ -17,6 +17,8 @@ import type {
   GeniusTypeOption,
   GeniusGenerateOptions,
   PlaylistGenerationResult,
+  ShadowLibrary,
+  ShadowBuildProgress,
 } from "@shared/types";
 
 export type {
@@ -38,6 +40,8 @@ export type {
   GeniusTypeOption,
   GeniusGenerateOptions,
   PlaylistGenerationResult,
+  ShadowLibrary,
+  ShadowBuildProgress,
 };
 
 export interface LibraryStats {
@@ -45,6 +49,8 @@ export interface LibraryStats {
   totalAlbums: number;
   totalArtists: number;
   totalSizeBytes: number;
+  podcastTrackCount?: number;
+  audiobookTrackCount?: number;
 }
 
 export interface TrackFilter {
@@ -58,14 +64,18 @@ export interface CheckResult {
   name: string;
   music: { fileCount: number; totalGb: number };
   podcasts: { fileCount: number; totalGb: number };
+  audiobooks?: { fileCount: number; totalGb: number };
   playlists?: { fileCount: number; totalGb: number };
   disk: { totalBytes: number; freeBytes: number; totalGb: number; freeGb: number };
   musicSyncedWithLibrary?: number;
   musicOrphans?: number;
   podcastSyncedWithLibrary?: number;
   podcastOrphans?: number;
+  audiobookSyncedWithLibrary?: number;
+  audiobookOrphans?: number;
   orphansMusicPaths?: string[];
   orphansPodcastPaths?: string[];
+  orphansAudiobookPaths?: string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -100,6 +110,78 @@ export async function scanLibrary(
 
 export async function scanCancel(): Promise<{ cancelled: boolean }> {
   return window.api.invoke("scan:cancel") as Promise<{ cancelled: boolean }>;
+}
+
+// ---------------------------------------------------------------------------
+// App (prefs, tool availability)
+// ---------------------------------------------------------------------------
+
+export async function isMpcencAvailable(): Promise<{ available: boolean }> {
+  return window.api.invoke("app:isMpcencAvailable") as Promise<{
+    available: boolean;
+  }>;
+}
+
+export async function getMpcRemindDisabled(): Promise<{ disabled: boolean }> {
+  return window.api.invoke("app:getMpcRemindDisabled") as Promise<{
+    disabled: boolean;
+  }>;
+}
+
+export async function setMpcRemindDisabled(
+  disabled: boolean
+): Promise<void> {
+  return window.api.invoke("app:setMpcRemindDisabled", disabled) as Promise<
+    void
+  >;
+}
+
+// ---------------------------------------------------------------------------
+// Shadow Libraries
+// ---------------------------------------------------------------------------
+
+export async function getShadowLibraries(): Promise<ShadowLibrary[]> {
+  return window.api.invoke("shadow:getAll") as Promise<ShadowLibrary[]>;
+}
+
+export async function createShadowLibrary(
+  name: string,
+  path: string,
+  codecConfigId: number,
+): Promise<ShadowLibrary> {
+  return window.api.invoke("shadow:create", {
+    name,
+    path,
+    codecConfigId,
+  }) as Promise<ShadowLibrary>;
+}
+
+export async function deleteShadowLibrary(
+  id: number,
+  keepFilesOnDisk = false
+): Promise<boolean> {
+  return window.api.invoke("shadow:delete", id, keepFilesOnDisk) as Promise<
+    boolean
+  >;
+}
+
+export async function rebuildShadowLibrary(id: number): Promise<unknown> {
+  return window.api.invoke("shadow:rebuild", id);
+}
+
+export async function cancelShadowBuild(): Promise<{ cancelled: boolean }> {
+  return window.api.invoke("shadow:cancelBuild") as Promise<{
+    cancelled: boolean;
+  }>;
+}
+
+export function onShadowBuildProgress(
+  cb: (progress: ShadowBuildProgress) => void,
+): () => void {
+  return window.api.on(
+    "shadow:buildProgress",
+    cb as (...args: unknown[]) => void,
+  );
 }
 
 // ---------------------------------------------------------------------------

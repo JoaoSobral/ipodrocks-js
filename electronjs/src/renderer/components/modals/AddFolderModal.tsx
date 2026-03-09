@@ -14,6 +14,7 @@ interface AddFolderModalProps {
 const contentTypeOptions = [
   { value: "music", label: "Music" },
   { value: "podcast", label: "Podcasts" },
+  { value: "audiobook", label: "Audiobooks" },
 ];
 
 export function AddFolderModal({ open, onClose }: AddFolderModalProps) {

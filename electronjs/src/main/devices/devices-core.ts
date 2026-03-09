@@ -14,6 +14,7 @@ interface DeviceRow {
   mount_path: string;
   music_folder: string;
   podcast_folder: string;
+  audiobook_folder: string;
   playlist_folder: string;
   description: string | null;
   last_sync_date: string | null;
@@ -26,6 +27,8 @@ interface DeviceRow {
   override_bits: number | null;
   playback_rockbox_enable: number;
   partial_sync_enabled: number;
+  source_library_type: string;
+  shadow_library_id: number | null;
   transfer_mode_name: string | null;
   codec_config_name: string | null;
   bitrate_value: number | null;
@@ -38,10 +41,11 @@ interface DeviceRow {
 
 const DEVICES_QUERY = `
   SELECT d.id, d.name, d.mount_path, d.music_folder, d.podcast_folder,
-         d.playlist_folder, d.description, d.last_sync_date, d.total_synced_items,
+         d.audiobook_folder, d.playlist_folder, d.description, d.last_sync_date, d.total_synced_items,
          d.default_transfer_mode_id, d.default_codec_config_id, d.model_id,
          d.override_bitrate, d.override_quality, d.override_bits,
          d.playback_rockbox_enable, d.partial_sync_enabled,
+         d.source_library_type, d.shadow_library_id,
          dtm.name as transfer_mode_name,
          cc.name as codec_config_name, cc.bitrate_value, cc.quality_value,
          cc.bits_per_sample, c.name as codec_name,
@@ -58,6 +62,7 @@ const ALLOWED_UPDATE_FIELDS = new Set([
   "mount_path",
   "music_folder",
   "podcast_folder",
+  "audiobook_folder",
   "playlist_folder",
   "default_codec_config_id",
   "override_bitrate",
@@ -69,12 +74,15 @@ const ALLOWED_UPDATE_FIELDS = new Set([
   "model_id",
   "last_sync_date",
   "total_synced_items",
+  "source_library_type",
+  "shadow_library_id",
 ]);
 
 const FIELD_MAP: Record<string, string> = {
   mountPath: "mount_path",
   musicFolder: "music_folder",
   podcastFolder: "podcast_folder",
+  audiobookFolder: "audiobook_folder",
   playlistFolder: "playlist_folder",
   defaultCodecConfigId: "default_codec_config_id",
   overrideBitrate: "override_bitrate",
@@ -85,6 +93,8 @@ const FIELD_MAP: Record<string, string> = {
   modelId: "model_id",
   lastSyncDate: "last_sync_date",
   totalSyncedItems: "total_synced_items",
+  sourceLibraryType: "source_library_type",
+  shadowLibraryId: "shadow_library_id",
 };
 
 export class DevicesCore {
@@ -131,22 +141,26 @@ export class DevicesCore {
     const info = this.db
       .prepare(
         `INSERT INTO devices
-         (name, mount_path, music_folder, podcast_folder, playlist_folder,
+         (name, mount_path, music_folder, podcast_folder, audiobook_folder, playlist_folder,
           default_transfer_mode_id, default_codec_config_id, description,
-          playback_rockbox_enable, model_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          playback_rockbox_enable, model_id, source_library_type,
+          shadow_library_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         config.name,
         config.mountPath,
         config.musicFolder ?? "Music",
         config.podcastFolder ?? "Podcasts",
+        config.audiobookFolder ?? "Audiobooks",
         config.playlistFolder ?? "Playlists",
         transferMode.id,
         config.defaultCodecConfigId ?? null,
         config.description ?? null,
         config.playbackRockboxEnable !== false ? 1 : 0,
-        config.modelId ?? null
+        config.modelId ?? null,
+        config.sourceLibraryType ?? "primary",
+        config.shadowLibraryId ?? null
       );
 
     const newId = Number(info.lastInsertRowid);
@@ -248,7 +262,7 @@ export class DevicesCore {
       }
 
       const foldersCreated: string[] = [];
-      for (const folder of ["Music", "Podcasts", "Playlists"]) {
+      for (const folder of ["Music", "Podcasts", "Audiobooks", "Playlists"]) {
         const folderPath = path.join(resolved, folder);
         if (!fs.existsSync(folderPath)) {
           try {
@@ -281,6 +295,7 @@ export class DevicesCore {
       mountPath: row.mount_path,
       musicFolder: row.music_folder,
       podcastFolder: row.podcast_folder,
+      audiobookFolder: row.audiobook_folder ?? "Audiobooks",
       playlistFolder: row.playlist_folder,
       description: row.description,
       lastSyncDate: row.last_sync_date,
@@ -293,6 +308,8 @@ export class DevicesCore {
       overrideBits: row.override_bits,
       playbackRockboxEnable: !!row.playback_rockbox_enable,
       partialSyncEnabled: !!row.partial_sync_enabled,
+      sourceLibraryType: (row.source_library_type as "primary" | "shadow") ?? "primary",
+      shadowLibraryId: row.shadow_library_id,
       transferModeName: row.transfer_mode_name,
       codecConfigName: row.codec_config_name,
       codecConfigBitrate: row.bitrate_value,

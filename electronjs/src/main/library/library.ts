@@ -1,10 +1,12 @@
 import fs from "fs";
-import { LibraryFolder, Track } from "../../shared/types";
+import path from "path";
+import { LibraryFolder, ShadowBuildProgress, ShadowLibrary, Track } from "../../shared/types";
 import { AppDatabase } from "../database/database";
 import { ContentHash, HashManager } from "./hash-manager";
 import { LibraryCore } from "./library-core";
+import { ShadowLibraryManager } from "./shadow-library";
 
-type ContentType = "music" | "podcast";
+type ContentType = "music" | "podcast" | "audiobook";
 
 interface TrackFilter {
   contentType?: ContentType;
@@ -19,6 +21,42 @@ interface LibraryStats {
   totalArtists: number;
   totalGenres: number;
   totalSizeBytes: number;
+  podcastTrackCount: number;
+  audiobookTrackCount: number;
+}
+
+function computeDirectorySize(root: string): number {
+  try {
+    const st = fs.statSync(root);
+    if (!st.isDirectory()) return st.size;
+  } catch {
+    return 0;
+  }
+
+  let total = 0;
+  const stack: string[] = [root];
+
+  while (stack.length > 0) {
+    const dir = stack.pop() as string;
+    let entries: string[];
+    try {
+      entries = fs.readdirSync(dir);
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      const full = path.join(dir, entry);
+      try {
+        const s = fs.statSync(full);
+        if (s.isDirectory()) stack.push(full);
+        else total += s.size;
+      } catch {
+        // best effort: ignore inaccessible files
+      }
+    }
+  }
+
+  return total;
 }
 
 /**
@@ -31,6 +69,7 @@ export class Library {
   private database: AppDatabase;
   private core: LibraryCore;
   private hashManager: HashManager;
+  private shadowManager: ShadowLibraryManager;
 
   constructor(dbPath?: string) {
     this.database = new AppDatabase(dbPath);
@@ -38,6 +77,7 @@ export class Library {
     const conn = this.database.getConnection();
     this.core = new LibraryCore(conn);
     this.hashManager = new HashManager(conn);
+    this.shadowManager = new ShadowLibraryManager(conn);
   }
 
   // ------------------------------------------------------------------
@@ -66,6 +106,12 @@ export class Library {
   }
 
   removeLibraryFolder(folderId: number, removeTracks = false): boolean {
+    if (removeTracks) {
+      const paths = this.core.getTrackPathsByFolderId(folderId);
+      if (paths.length > 0) {
+        this.shadowManager.propagateRemovedByPath(paths);
+      }
+    }
     return this.core.removeLibraryFolder(folderId, removeTracks);
   }
 
@@ -162,22 +208,20 @@ export class Library {
 
   /**
    * Aggregate statistics across the library.
-   * totalSizeBytes sums only tracks whose file still exists on disk,
-   * so the size matches the filesystem (avoids counting stale/deleted files).
+   * totalSizeBytes is computed by summing the sizes of all configured
+   * library folders on disk, so it reflects the actual on-disk size.
    */
   getStats(): LibraryStats {
     const conn = this.database.getConnection();
     const count = (sql: string) =>
       (conn.prepare(sql).get() as { c: number }).c;
 
-    const rows = conn
-      .prepare("SELECT path, file_size FROM tracks")
-      .all() as { path: string; file_size: number | null }[];
+    const folders = conn
+      .prepare("SELECT path FROM library_folders")
+      .all() as { path: string }[];
     let totalSizeBytes = 0;
-    for (const r of rows) {
-      if (r.file_size != null && r.file_size > 0 && fs.existsSync(r.path)) {
-        totalSizeBytes += r.file_size;
-      }
+    for (const f of folders) {
+      totalSizeBytes += computeDirectorySize(f.path);
     }
 
     return {
@@ -186,7 +230,89 @@ export class Library {
       totalArtists: count("SELECT COUNT(*) as c FROM artists"),
       totalGenres: count("SELECT COUNT(*) as c FROM genres"),
       totalSizeBytes,
+      podcastTrackCount: count("SELECT COUNT(*) as c FROM tracks WHERE content_type = 'podcast'"),
+      audiobookTrackCount: count("SELECT COUNT(*) as c FROM tracks WHERE content_type = 'audiobook'"),
     };
+  }
+
+  // ------------------------------------------------------------------
+  // Shadow Libraries
+  // ------------------------------------------------------------------
+
+  getShadowLibraries(): ShadowLibrary[] {
+    return this.shadowManager.getShadowLibraries();
+  }
+
+  getShadowLibraryById(id: number): ShadowLibrary | undefined {
+    return this.shadowManager.getShadowLibraryById(id);
+  }
+
+  createShadowLibrary(
+    name: string,
+    libPath: string,
+    codecConfigId: number
+  ): number {
+    return this.shadowManager.createShadowLibrary(name, libPath, codecConfigId);
+  }
+
+  deleteShadowLibrary(id: number, removeFiles = true): boolean {
+    return this.shadowManager.deleteShadowLibrary(id, removeFiles);
+  }
+
+  async buildShadowLibrary(
+    shadowLibId: number,
+    progressCallback?: (progress: ShadowBuildProgress) => void,
+    signal?: AbortSignal
+  ): Promise<void> {
+    const allTracks = this.core.getTracks();
+    const folders = this.core.getLibraryFolders();
+    const folderPaths = new Map<number, string>();
+    for (const f of folders) folderPaths.set(f.id, f.path);
+
+    return this.shadowManager.buildShadowLibrary(
+      shadowLibId,
+      allTracks,
+      folderPaths,
+      progressCallback,
+      signal
+    );
+  }
+
+  /**
+   * After a scan completes, propagate new/changed tracks to all shadow
+   * libraries and clean up removed ones.
+   */
+  async propagateScanToShadows(
+    addedPaths: string[],
+    updatedPaths: string[],
+    removedPaths: string[],
+    signal?: AbortSignal
+  ): Promise<void> {
+    const folders = this.core.getLibraryFolders();
+    const folderPaths = new Map<number, string>();
+    for (const f of folders) folderPaths.set(f.id, f.path);
+
+    const combined = [...addedPaths, ...updatedPaths];
+    if (combined.length > 0) {
+      await this.shadowManager.propagateAddedOrUpdated(
+        combined,
+        (p) => this.core.getTrackByPath(p),
+        folderPaths,
+        signal
+      );
+    }
+
+    if (removedPaths.length > 0) {
+      this.shadowManager.propagateRemovedByPath(removedPaths);
+    }
+  }
+
+  getShadowTrackMap(shadowLibId: number): Map<number, string> {
+    return this.shadowManager.getShadowTrackMap(shadowLibId);
+  }
+
+  getShadowManager(): ShadowLibraryManager {
+    return this.shadowManager;
   }
 
   getConnection(): import("better-sqlite3").Database {

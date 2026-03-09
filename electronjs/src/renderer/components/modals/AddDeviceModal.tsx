@@ -15,6 +15,7 @@ export function AddDeviceModal({ open, onClose }: AddDeviceModalProps) {
   const [mountPath, setMountPath] = useState("");
   const [musicFolder, setMusicFolder] = useState("Music");
   const [podcastFolder, setPodcastFolder] = useState("Podcasts");
+  const [audiobookFolder, setAudiobookFolder] = useState("Audiobooks");
   const [playlistFolder, setPlaylistFolder] = useState("Playlists");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -26,6 +27,7 @@ export function AddDeviceModal({ open, onClose }: AddDeviceModalProps) {
     setMountPath("");
     setMusicFolder("Music");
     setPodcastFolder("Podcasts");
+    setAudiobookFolder("Audiobooks");
     setPlaylistFolder("Playlists");
     setError(null);
     setLoading(false);
@@ -46,6 +48,7 @@ export function AddDeviceModal({ open, onClose }: AddDeviceModalProps) {
         mountPath: mountPath.trim(),
         musicFolder: musicFolder.trim() || "Music",
         podcastFolder: podcastFolder.trim() || "Podcasts",
+        audiobookFolder: audiobookFolder.trim() || "Audiobooks",
         playlistFolder: playlistFolder.trim() || "Playlists",
       });
       reset();
@@ -80,7 +83,7 @@ export function AddDeviceModal({ open, onClose }: AddDeviceModalProps) {
           onChange={(e) => setMountPath(e.target.value)}
         />
 
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-2 gap-3">
           <Input
             label="Music Folder"
             value={musicFolder}
@@ -90,6 +93,11 @@ export function AddDeviceModal({ open, onClose }: AddDeviceModalProps) {
             label="Podcast Folder"
             value={podcastFolder}
             onChange={(e) => setPodcastFolder(e.target.value)}
+          />
+          <Input
+            label="Audiobook Folder"
+            value={audiobookFolder}
+            onChange={(e) => setAudiobookFolder(e.target.value)}
           />
           <Input
             label="Playlist Folder"

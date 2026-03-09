@@ -28,6 +28,8 @@ import {
   getProfileCodecExt,
 } from "./sync/sync-core";
 import { compareLibraries } from "./sync/name-size-sync";
+import { isMpcencAvailable } from "./utils/mpcenc";
+import { getMpcRemindDisabled, setMpcRemindDisabled } from "./utils/prefs";
 
 // ---------------------------------------------------------------------------
 // Singleton state
@@ -38,6 +40,7 @@ let devicesCore: DevicesCore | null = null;
 let playlistCore: PlaylistCore | null = null;
 let activeSyncAbort: AbortController | null = null;
 let activeScanAbort: AbortController | null = null;
+let activeShadowBuildAbort: AbortController | null = null;
 
 /** In-memory cache of matched playback events keyed by device ID. */
 const geniusEventsCache = new Map<number, MatchedPlayEvent[]>();
@@ -58,8 +61,11 @@ function getPlaylistCore(): PlaylistCore {
 }
 
 function getDevicesCore(): DevicesCore {
-  getLibrary();
-  return devicesCore!;
+  const lib = getLibrary();
+  if (!devicesCore) {
+    devicesCore = new DevicesCore(lib.getConnection());
+  }
+  return devicesCore;
 }
 
 // ---------------------------------------------------------------------------
@@ -126,6 +132,23 @@ export function registerIpcHandlers(): void {
     }
     return undefined;
   });
+
+  // ---- App prefs and tool availability ----
+  ipcMain.handle(
+    "app:isMpcencAvailable",
+    safe(async () => ({ available: isMpcencAvailable() }))
+  );
+  ipcMain.handle(
+    "app:getMpcRemindDisabled",
+    safe(async () => ({ disabled: getMpcRemindDisabled() }))
+  );
+  ipcMain.handle(
+    "app:setMpcRemindDisabled",
+    safe(async (_event, disabled: boolean) => {
+      setMpcRemindDisabled(disabled);
+      return undefined;
+    })
+  );
 
   // ---- Genius Playlists (register early so they are always available) ----
   ipcMain.handle(
@@ -218,6 +241,9 @@ export function registerIpcHandlers(): void {
       let totalProcessed = 0;
 
       const allErrors: string[] = [];
+      const allAdded: string[] = [];
+      const allUpdated: string[] = [];
+      const allRemoved: string[] = [];
       try {
         for (const folder of payload.folders) {
           const result = await scanner.scanFolder(
@@ -229,10 +255,20 @@ export function registerIpcHandlers(): void {
           totalAdded += result.filesAdded;
           totalProcessed += result.filesProcessed;
           if (result.errors?.length) allErrors.push(...result.errors);
+          if (result.addedTrackPaths?.length) allAdded.push(...result.addedTrackPaths);
+          if (result.updatedTrackPaths?.length) allUpdated.push(...result.updatedTrackPaths);
+          if (result.removedTrackPaths?.length) allRemoved.push(...result.removedTrackPaths);
           if (result.cancelled) {
             return { filesAdded: totalAdded, filesProcessed: totalProcessed, cancelled: true, errors: allErrors };
           }
         }
+
+        if (allAdded.length > 0 || allUpdated.length > 0 || allRemoved.length > 0) {
+          lib
+            .propagateScanToShadows(allAdded, allUpdated, allRemoved)
+            .catch((err) => console.error("[ipc] Shadow propagation error:", err));
+        }
+
         return { filesAdded: totalAdded, filesProcessed: totalProcessed, cancelled: false, errors: allErrors };
       } finally {
         activeScanAbort = null;
@@ -287,6 +323,96 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     "library:clearContentHashes",
     safe(async () => getLibrary().clearContentHashes())
+  );
+
+  // ---- Shadow Libraries -------------------------------------------------
+
+  ipcMain.handle(
+    "shadow:getAll",
+    safe(async () => getLibrary().getShadowLibraries())
+  );
+
+  ipcMain.handle(
+    "shadow:create",
+    safe(async (
+      event,
+      config: { name: string; path: string; codecConfigId: number }
+    ) => {
+      const lib = getLibrary();
+      const id = lib.createShadowLibrary(
+        config.name,
+        config.path,
+        config.codecConfigId
+      );
+
+      activeShadowBuildAbort = new AbortController();
+      lib
+        .buildShadowLibrary(
+          id,
+          (progress) => {
+            if (!event.sender.isDestroyed()) {
+              event.sender.send("shadow:buildProgress", progress);
+            }
+          },
+          activeShadowBuildAbort.signal
+        )
+        .catch((err) => {
+          console.error("[ipc] Shadow build error:", err);
+        })
+        .finally(() => {
+          activeShadowBuildAbort = null;
+        });
+
+      return lib.getShadowLibraryById(id);
+    })
+  );
+
+  ipcMain.handle(
+    "shadow:delete",
+    safe(async (_event, shadowLibId: number, keepFilesOnDisk?: boolean) => {
+      return getLibrary().deleteShadowLibrary(shadowLibId, !keepFilesOnDisk);
+    })
+  );
+
+  ipcMain.handle(
+    "shadow:rebuild",
+    safe(async (event, shadowLibId: number) => {
+      const lib = getLibrary();
+      const shadowLib = lib.getShadowLibraryById(shadowLibId);
+      if (!shadowLib) return { error: "Shadow library not found" };
+
+      activeShadowBuildAbort = new AbortController();
+      lib
+        .buildShadowLibrary(
+          shadowLibId,
+          (progress) => {
+            if (!event.sender.isDestroyed()) {
+              event.sender.send("shadow:buildProgress", progress);
+            }
+          },
+          activeShadowBuildAbort.signal
+        )
+        .catch((err) => {
+          console.error("[ipc] Shadow rebuild error:", err);
+        })
+        .finally(() => {
+          activeShadowBuildAbort = null;
+        });
+
+      return { started: true };
+    })
+  );
+
+  ipcMain.handle(
+    "shadow:cancelBuild",
+    safe(async () => {
+      if (activeShadowBuildAbort) {
+        activeShadowBuildAbort.abort();
+        activeShadowBuildAbort = null;
+        return { cancelled: true };
+      }
+      return { cancelled: false };
+    })
   );
 
   // ---- Devices ----------------------------------------------------------
@@ -377,25 +503,68 @@ export function registerIpcHandlers(): void {
       const lib = getLibrary();
       const musicStats = device.getContentStats("music");
       const podcastStats = device.getContentStats("podcast");
+      const audiobookStats = device.getContentStats("audiobook");
       const playlistStats = device.getContentStats("playlist");
       const space = device.getAvailableSpace();
 
       const musicTracks = lib.getTracks({ contentType: "music" as any });
       const podcastTracks = lib.getTracks({ contentType: "podcast" as any });
-      const libraryMusicMap: Record<string, Record<string, unknown>> = {};
+      const audiobookTracks = lib.getTracks({ contentType: "audiobook" as any });
+      let libraryMusicMap: Record<string, Record<string, unknown>> = {};
       for (const t of musicTracks) {
         libraryMusicMap[t.path] = t as unknown as Record<string, unknown>;
       }
-      const libraryPodcastMap: Record<string, Record<string, unknown>> = {};
+      let libraryPodcastMap: Record<string, Record<string, unknown>> = {};
       for (const t of podcastTracks) {
         libraryPodcastMap[t.path] = t as unknown as Record<string, unknown>;
       }
+      let libraryAudiobookMap: Record<string, Record<string, unknown>> = {};
+      for (const t of audiobookTracks) {
+        libraryAudiobookMap[t.path] = t as unknown as Record<string, unknown>;
+      }
 
-      const codecName = device.profile.codecName ?? "copy";
+      let codecName = device.profile.codecName ?? "copy";
       const folders = lib.getLibraryFolders();
       const libraryFolderPaths = new Map<number, string>();
       for (const f of folders) {
         libraryFolderPaths.set(f.id, f.path);
+      }
+
+      if (
+        device.profile.sourceLibraryType === "shadow" &&
+        device.profile.shadowLibraryId != null
+      ) {
+        codecName = "DIRECT COPY";
+        const shadowLib = lib.getShadowLibraryById(
+          device.profile.shadowLibraryId
+        );
+        const shadowTrackMap = lib.getShadowTrackMap(
+          device.profile.shadowLibraryId
+        );
+
+        const remapForCheck = (
+          trackMap: Record<string, Record<string, unknown>>
+        ): Record<string, Record<string, unknown>> => {
+          const remapped: Record<string, Record<string, unknown>> = {};
+          for (const [, info] of Object.entries(trackMap)) {
+            const trackId = info.id as number;
+            const shadowPath = shadowTrackMap.get(trackId);
+            if (shadowPath) {
+              remapped[shadowPath] = { ...info, path: shadowPath };
+            }
+          }
+          return remapped;
+        };
+
+        libraryMusicMap = remapForCheck(libraryMusicMap);
+        libraryPodcastMap = remapForCheck(libraryPodcastMap);
+        libraryAudiobookMap = remapForCheck(libraryAudiobookMap);
+
+        if (shadowLib) {
+          for (const [folderId] of libraryFolderPaths) {
+            libraryFolderPaths.set(folderId, shadowLib.path);
+          }
+        }
       }
 
       const deviceMusicRaw = device.getTracks("music");
@@ -410,6 +579,14 @@ export function registerIpcHandlers(): void {
       const devicePodcastMap: Record<string, { file_size: number; mtime?: number }> = {};
       for (const [p, info] of devicePodcastRaw) {
         devicePodcastMap[p] = {
+          file_size: info.fileSize ?? 0,
+          ...(info.mtimeMs != null && { mtime: info.mtimeMs }),
+        };
+      }
+      const deviceAudiobookRaw = device.getTracks("audiobook");
+      const deviceAudiobookMap: Record<string, { file_size: number; mtime?: number }> = {};
+      for (const [p, info] of deviceAudiobookRaw) {
+        deviceAudiobookMap[p] = {
           file_size: info.fileSize ?? 0,
           ...(info.mtimeMs != null && { mtime: info.mtimeMs }),
         };
@@ -461,9 +638,32 @@ export function registerIpcHandlers(): void {
         }
       );
 
+      const audiobookDest = buildLibraryDestMap(
+        libraryAudiobookMap,
+        "audiobook",
+        codecName,
+        libraryFolderPaths
+      );
+      const audiobookCompare = compareLibraries(
+        audiobookDest.destMap,
+        audiobookDest.expectedSizes,
+        device.getContentPath("audiobook"),
+        deviceAudiobookMap,
+        {
+          profileCodecExt,
+          libraryExpectedMtimes: audiobookDest.expectedMtimes,
+          ...(isDevMode && {
+            debugCallback: (msg: string) => {
+              if (msg.startsWith("[ORPHAN-DIAG]")) console.log(msg);
+            },
+          }),
+        }
+      );
+
       const matchedLibraryPaths = [
         ...musicCompare.tracksToSkip.map((t) => t.library_path),
         ...podcastCompare.tracksToSkip.map((t) => t.library_path),
+        ...audiobookCompare.tracksToSkip.map((t) => t.library_path),
       ];
       const conn = lib.getConnection();
       conn.prepare("DELETE FROM device_synced_tracks WHERE device_id = ?").run(deviceId);
@@ -479,14 +679,18 @@ export function registerIpcHandlers(): void {
         name: device.name,
         music: musicStats,
         podcasts: podcastStats,
+        audiobooks: audiobookStats,
         playlists: playlistStats,
         disk: space,
         musicSyncedWithLibrary: musicCompare.tracksToSkip.length,
         musicOrphans: musicCompare.extras.length,
         podcastSyncedWithLibrary: podcastCompare.tracksToSkip.length,
         podcastOrphans: podcastCompare.extras.length,
+        audiobookSyncedWithLibrary: audiobookCompare.tracksToSkip.length,
+        audiobookOrphans: audiobookCompare.extras.length,
         orphansMusicPaths: musicCompare.extras,
         orphansPodcastPaths: podcastCompare.extras,
+        orphansAudiobookPaths: audiobookCompare.extras,
       };
     })
   );
@@ -505,9 +709,11 @@ export function registerIpcHandlers(): void {
 
       const musicTracks = lib.getTracks({ contentType: "music" as any });
       const podcastTracks = lib.getTracks({ contentType: "podcast" as any });
+      const audiobookTracks = lib.getTracks({ contentType: "audiobook" as any });
 
       let musicLibraryTracks: Record<string, Record<string, unknown>> = {};
       let podcastLibraryTracks: Record<string, Record<string, unknown>> = {};
+      let audiobookLibraryTracks: Record<string, Record<string, unknown>> = {};
 
       if (opts.syncType === "custom" && opts.selections) {
         const sel = opts.selections;
@@ -515,6 +721,7 @@ export function registerIpcHandlers(): void {
         const artistSet = new Set(sel.artists ?? []);
         const genreSet = new Set(sel.genres ?? []);
         const podcastSet = new Set(sel.podcasts ?? []);
+        const audiobookSet = new Set(sel.audiobooks ?? []);
 
         const matchMusic = (t: { path: string; album?: string; artist?: string; genre?: string }) => {
           const album = (t.album ?? "Unknown Album").trim();
@@ -529,6 +736,12 @@ export function registerIpcHandlers(): void {
           const label = artist ? `${title} — ${artist}` : title;
           return podcastSet.has(label) || podcastSet.has(title);
         };
+        const matchAudiobook = (t: { title?: string; filename?: string; artist?: string }) => {
+          const title = (t.title ?? t.filename ?? "Untitled").trim();
+          const artist = (t.artist ?? "").trim();
+          const label = artist ? `${title} — ${artist}` : title;
+          return audiobookSet.has(label) || audiobookSet.has(title);
+        };
 
         for (const t of musicTracks) {
           if (matchMusic(t)) {
@@ -540,9 +753,15 @@ export function registerIpcHandlers(): void {
             podcastLibraryTracks[t.path] = t as unknown as Record<string, unknown>;
           }
         }
+        for (const t of audiobookTracks) {
+          if (matchAudiobook(t)) {
+            audiobookLibraryTracks[t.path] = t as unknown as Record<string, unknown>;
+          }
+        }
       } else {
         const includeMusic = opts.syncType === "full" ? opts.includeMusic === true : true;
         const includePodcasts = opts.syncType === "full" ? opts.includePodcasts === true : true;
+        const includeAudiobooks = opts.syncType === "full" ? opts.includeAudiobooks === true : true;
         if (includeMusic) {
           for (const t of musicTracks) {
             musicLibraryTracks[t.path] = t as unknown as Record<string, unknown>;
@@ -553,6 +772,11 @@ export function registerIpcHandlers(): void {
             podcastLibraryTracks[t.path] = t as unknown as Record<string, unknown>;
           }
         }
+        if (includeAudiobooks) {
+          for (const t of audiobookTracks) {
+            audiobookLibraryTracks[t.path] = t as unknown as Record<string, unknown>;
+          }
+        }
       }
 
       // #region agent log
@@ -560,17 +784,56 @@ export function registerIpcHandlers(): void {
         syncType: opts.syncType,
         includeMusic: opts.includeMusic,
         includePodcasts: opts.includePodcasts,
+        includeAudiobooks: opts.includeAudiobooks,
         includePlaylists: opts.includePlaylists,
         musicCount: Object.keys(musicLibraryTracks).length,
         podcastCount: Object.keys(podcastLibraryTracks).length,
+        audiobookCount: Object.keys(audiobookLibraryTracks).length,
       }, "H1");
       // #endregion
 
-      const codecName = device.profile.codecName ?? "copy";
+      let codecName = device.profile.codecName ?? "copy";
       const folders = lib.getLibraryFolders();
       const libraryFolderPaths = new Map<number, string>();
       for (const f of folders) {
         libraryFolderPaths.set(f.id, f.path);
+      }
+
+      if (
+        device.profile.sourceLibraryType === "shadow" &&
+        device.profile.shadowLibraryId != null
+      ) {
+        codecName = "DIRECT COPY";
+        const shadowLib = lib.getShadowLibraryById(
+          device.profile.shadowLibraryId
+        );
+        const shadowTrackMap = lib.getShadowTrackMap(
+          device.profile.shadowLibraryId
+        );
+
+        const remapTracks = (
+          trackMap: Record<string, Record<string, unknown>>
+        ): Record<string, Record<string, unknown>> => {
+          const remapped: Record<string, Record<string, unknown>> = {};
+          for (const [origPath, info] of Object.entries(trackMap)) {
+            const trackId = info.id as number;
+            const shadowPath = shadowTrackMap.get(trackId);
+            if (shadowPath) {
+              remapped[shadowPath] = { ...info, path: shadowPath };
+            }
+          }
+          return remapped;
+        };
+
+        musicLibraryTracks = remapTracks(musicLibraryTracks);
+        podcastLibraryTracks = remapTracks(podcastLibraryTracks);
+        audiobookLibraryTracks = remapTracks(audiobookLibraryTracks);
+
+        if (shadowLib) {
+          for (const [folderId] of libraryFolderPaths) {
+            libraryFolderPaths.set(folderId, shadowLib.path);
+          }
+        }
       }
 
       let progressSendCount = 0;
@@ -607,8 +870,9 @@ export function registerIpcHandlers(): void {
 
       const willRunMusic = Object.keys(musicLibraryTracks).length > 0;
       const willRunPodcast = Object.keys(podcastLibraryTracks).length > 0;
-      if (!willRunMusic && !willRunPodcast) {
-        syncOpts.progressCallback?.({ event: "log", message: "No music, podcast or playlist to sync." });
+      const willRunAudiobook = Object.keys(audiobookLibraryTracks).length > 0;
+      if (!willRunMusic && !willRunPodcast && !willRunAudiobook) {
+        syncOpts.progressCallback?.({ event: "log", message: "No music, podcast, audiobook or playlist to sync." });
         syncOpts.progressCallback?.({ event: "total", path: "0" });
       }
 
@@ -670,6 +934,33 @@ export function registerIpcHandlers(): void {
         result.errors += podcastResult.errors;
         result.extras = [...result.extras, ...podcastResult.extras];
         result.missingFiles = [...result.missingFiles, ...podcastResult.missingFiles];
+      }
+
+      if (willRunAudiobook) {
+        const deviceAudiobookPath = device.getContentPath("audiobook");
+        const deviceAudiobookRaw = device.getTracks("audiobook", { cancelSignal: activeSyncAbort.signal });
+        const deviceAudiobookMap: Record<string, { file_size: number; mtime?: number }> = {};
+        for (const [p, info] of deviceAudiobookRaw) {
+          deviceAudiobookMap[p] = {
+            file_size: info.fileSize,
+            ...(info.mtimeMs != null && { mtime: info.mtimeMs }),
+          };
+        }
+        const audiobookResult = await runSync(
+          device.profile,
+          audiobookLibraryTracks,
+          codecName,
+          "audiobook",
+          deviceAudiobookPath,
+          deviceAudiobookMap,
+          syncOpts,
+          libraryFolderPaths
+        );
+        result.synced += audiobookResult.synced;
+        result.removed += audiobookResult.removed;
+        result.errors += audiobookResult.errors;
+        result.extras = [...result.extras, ...audiobookResult.extras];
+        result.missingFiles = [...result.missingFiles, ...audiobookResult.missingFiles];
       }
 
       if (result.errors > 0) result.status = "error";

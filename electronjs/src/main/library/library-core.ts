@@ -2,7 +2,7 @@ import Database from "better-sqlite3";
 import path from "path";
 import { LibraryFolder, Track } from "../../shared/types";
 
-type ContentType = "music" | "podcast";
+type ContentType = "music" | "podcast" | "audiobook";
 
 interface TrackFilter {
   contentType?: ContentType;
@@ -41,7 +41,7 @@ interface LibraryFolderRow {
   created_at: string;
 }
 
-const VALID_CONTENT_TYPES = new Set(["music", "podcast"]);
+const VALID_CONTENT_TYPES = new Set(["music", "podcast", "audiobook"]);
 
 const CODEC_MAP: Record<string, string> = {
   AAC: "AAC",
@@ -175,7 +175,7 @@ export class LibraryCore {
     contentType: ContentType
   ): number {
     if (!VALID_CONTENT_TYPES.has(contentType)) {
-      throw new Error("contentType must be 'music' or 'podcast'");
+      throw new Error("contentType must be 'music', 'podcast', or 'audiobook'");
     }
     const resolved = path.resolve(folderPath);
     const info = this.stmtInsertFolder.run(name, resolved, contentType);
@@ -194,7 +194,7 @@ export class LibraryCore {
     contentType: ContentType
   ): boolean {
     if (!VALID_CONTENT_TYPES.has(contentType)) {
-      throw new Error("contentType must be 'music' or 'podcast'");
+      throw new Error("contentType must be 'music', 'podcast', or 'audiobook'");
     }
     const resolved = path.resolve(folderPath);
     const info = this.db
@@ -365,6 +365,16 @@ export class LibraryCore {
   deleteTrack(trackPath: string): boolean {
     const info = this.stmtDeleteTrack.run(trackPath);
     return info.changes > 0;
+  }
+
+  /**
+   * Return track file paths for a library folder (for propagation before delete).
+   */
+  getTrackPathsByFolderId(folderId: number): string[] {
+    const rows = this.db
+      .prepare("SELECT path FROM tracks WHERE library_folder_id = ?")
+      .all(folderId) as { path: string }[];
+    return rows.map((r) => r.path);
   }
 
   /**

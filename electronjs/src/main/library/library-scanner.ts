@@ -154,7 +154,7 @@ export class LibraryScanner {
   /**
    * Scan a folder for audio files and add/update them in the library.
    * @param folderPath   Absolute path to the folder to scan
-   * @param contentType  "music" or "podcast"
+   * @param contentType  "music", "podcast", or "audiobook"
    * @param progressCallback  Optional callback invoked for each file
    * @param signal  Optional AbortSignal for cancellation
    * @returns Summary of files processed and added
@@ -174,10 +174,13 @@ export class LibraryScanner {
     const existingHashes = this.loadExistingHashes(folder);
     const existingMtimes = this.loadExistingMtimes(folder);
     const audioFiles = this.collectAudioFiles(folder);
+    const audioFileSet = new Set(audioFiles);
     const total = audioFiles.length;
     let filesProcessed = 0;
     let filesAdded = 0;
     const errors: string[] = [];
+    const addedTrackPaths: string[] = [];
+    const updatedTrackPaths: string[] = [];
 
     for (const filePath of audioFiles) {
       if (signal?.aborted) {
@@ -296,7 +299,12 @@ export class LibraryScanner {
         }
 
         filesProcessed++;
-        if (isNew) filesAdded++;
+        if (isNew) {
+          filesAdded++;
+          addedTrackPaths.push(filePath);
+        } else {
+          updatedTrackPaths.push(filePath);
+        }
         progressCallback?.({
           file: path.basename(filePath),
           processed: filesProcessed,
@@ -317,6 +325,10 @@ export class LibraryScanner {
       }
     }
 
+    const removedTrackPaths = [...existingHashes.keys()].filter(
+      (p) => !audioFileSet.has(p)
+    );
+
     progressCallback?.({
       file: "",
       processed: filesProcessed,
@@ -324,7 +336,15 @@ export class LibraryScanner {
       status: "complete",
     });
 
-    return { filesAdded, filesProcessed, cancelled: false, errors };
+    return {
+      filesAdded,
+      filesProcessed,
+      cancelled: false,
+      errors,
+      addedTrackPaths,
+      removedTrackPaths,
+      updatedTrackPaths,
+    };
   }
 
   // ---------------------------------------------------------------------------

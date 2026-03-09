@@ -13,7 +13,7 @@ CREATE TABLE IF NOT EXISTS library_folders (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
     path TEXT NOT NULL UNIQUE,
-    content_type TEXT NOT NULL CHECK(content_type IN ('music', 'podcast')),
+    content_type TEXT NOT NULL CHECK(content_type IN ('music', 'podcast', 'audiobook')),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -57,7 +57,7 @@ CREATE TABLE IF NOT EXISTS tracks (
     bitrate INTEGER,
     bits_per_sample INTEGER,
     file_size INTEGER,
-    content_type TEXT NOT NULL CHECK(content_type IN ('music', 'podcast')),
+    content_type TEXT NOT NULL CHECK(content_type IN ('music', 'podcast', 'audiobook')),
     library_folder_id INTEGER,
     artist_id INTEGER,
     album_id INTEGER,
@@ -146,6 +146,7 @@ CREATE TABLE IF NOT EXISTS devices (
     mount_path TEXT NOT NULL,
     music_folder TEXT NOT NULL DEFAULT 'Music',
     podcast_folder TEXT NOT NULL DEFAULT 'Podcasts',
+    audiobook_folder TEXT NOT NULL DEFAULT 'Audiobooks',
     playlist_folder TEXT NOT NULL DEFAULT 'Playlists',
     default_transfer_mode_id INTEGER NOT NULL,
     default_codec_config_id INTEGER,
@@ -155,13 +156,16 @@ CREATE TABLE IF NOT EXISTS devices (
     override_bits INTEGER,
     playback_rockbox_enable BOOLEAN NOT NULL DEFAULT 1,
     partial_sync_enabled BOOLEAN NOT NULL DEFAULT 0,
+    source_library_type TEXT NOT NULL DEFAULT 'primary' CHECK(source_library_type IN ('primary', 'shadow')),
+    shadow_library_id INTEGER,
     description TEXT,
     last_sync_date TIMESTAMP,
     total_synced_items INTEGER DEFAULT 0,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (default_transfer_mode_id) REFERENCES device_transfer_modes (id),
     FOREIGN KEY (default_codec_config_id) REFERENCES codec_configurations (id),
-    FOREIGN KEY (model_id) REFERENCES device_models (id)
+    FOREIGN KEY (model_id) REFERENCES device_models (id),
+    FOREIGN KEY (shadow_library_id) REFERENCES shadow_libraries (id)
 );
 
 CREATE TABLE IF NOT EXISTS device_log_cache (
@@ -207,6 +211,7 @@ CREATE TABLE IF NOT EXISTS sync_configurations (
     is_active BOOLEAN NOT NULL DEFAULT 1,
     extra_track_policy TEXT NOT NULL DEFAULT 'prompt',
     include_podcasts INTEGER NOT NULL DEFAULT 1,
+    include_audiobooks INTEGER NOT NULL DEFAULT 1,
     include_playlists INTEGER NOT NULL DEFAULT 1,
     last_codec_config_id INTEGER,
     created_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -314,6 +319,34 @@ CREATE TABLE IF NOT EXISTS genius_playlist_configs (
     last_generated_at TIMESTAMP,
     FOREIGN KEY (playlist_id) REFERENCES playlists (id) ON DELETE CASCADE,
     FOREIGN KEY (device_id) REFERENCES devices (id)
+);
+
+-- ============================================================
+-- Shadow Libraries
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS shadow_libraries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    path TEXT NOT NULL UNIQUE,
+    codec_config_id INTEGER NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'building', 'ready', 'error')),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (codec_config_id) REFERENCES codec_configurations (id)
+);
+
+CREATE TABLE IF NOT EXISTS shadow_tracks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    shadow_library_id INTEGER NOT NULL,
+    source_track_id INTEGER NOT NULL,
+    shadow_path TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'synced', 'error')),
+    error_message TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (shadow_library_id) REFERENCES shadow_libraries (id) ON DELETE CASCADE,
+    FOREIGN KEY (source_track_id) REFERENCES tracks (id) ON DELETE CASCADE,
+    UNIQUE(shadow_library_id, source_track_id)
 );
 
 -- ============================================================
@@ -538,4 +571,13 @@ CREATE INDEX IF NOT EXISTS idx_last_modified ON content_hashes(last_modified);
 
 -- app_settings
 CREATE INDEX IF NOT EXISTS idx_app_settings_key ON app_settings(key);
+
+-- shadow_libraries
+CREATE INDEX IF NOT EXISTS idx_shadow_libraries_status ON shadow_libraries(status);
+CREATE INDEX IF NOT EXISTS idx_shadow_libraries_codec ON shadow_libraries(codec_config_id);
+
+-- shadow_tracks
+CREATE INDEX IF NOT EXISTS idx_shadow_tracks_library ON shadow_tracks(shadow_library_id);
+CREATE INDEX IF NOT EXISTS idx_shadow_tracks_source ON shadow_tracks(source_track_id);
+CREATE INDEX IF NOT EXISTS idx_shadow_tracks_status ON shadow_tracks(status);
 `;

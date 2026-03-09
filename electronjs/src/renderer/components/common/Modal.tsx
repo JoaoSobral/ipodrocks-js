@@ -11,6 +11,8 @@ interface ModalProps {
   closeOnBackdropClick?: boolean;
   /** When true, modal is ~15% wider (e.g. for multi-step forms). */
   wide?: boolean;
+  /** Icon for the top-right close button. Default "✕". Use "−" for minimize/background. */
+  closeIcon?: string;
 }
 
 export function Modal({
@@ -21,6 +23,7 @@ export function Modal({
   className = "",
   closeOnBackdropClick = false,
   wide = false,
+  closeIcon = "✕",
 }: ModalProps) {
   useEffect(() => {
     if (!open) return;
@@ -53,10 +56,12 @@ export function Modal({
             {title}
           </h3>
           <button
+            type="button"
             onClick={onClose}
-            className="text-[#5a5f68] hover:text-white transition-colors text-lg leading-none [.theme-light_&]:text-[#6b7280] [.theme-light_&]:hover:text-[#1a1a1a]"
+            className="text-[#5a5f68] hover:text-white transition-colors text-lg leading-none w-8 h-8 flex items-center justify-center [.theme-light_&]:text-[#6b7280] [.theme-light_&]:hover:text-[#1a1a1a]"
+            title={closeIcon === "−" ? "Minimize (build continues in background)" : "Close"}
           >
-            ✕
+            {closeIcon}
           </button>
         </div>
         <div className="p-6 [.theme-light_&]:text-[#1a1a1a]">{children}</div>

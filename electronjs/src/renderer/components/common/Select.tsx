@@ -17,13 +17,14 @@ interface SelectProps {
 
 export function Select({
   label,
-  options,
+  options: optionsProp,
   value = "",
   onChange,
   placeholder = "Select…",
   className = "",
   disabled = false,
 }: SelectProps) {
+  const options = Array.isArray(optionsProp) ? optionsProp : [];
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 

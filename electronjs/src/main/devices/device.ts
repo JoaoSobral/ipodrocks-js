@@ -43,6 +43,10 @@ export class Device {
     return this.profile.podcastFolder ?? "Podcasts";
   }
 
+  get audiobookFolder(): string {
+    return this.profile.audiobookFolder ?? "Audiobooks";
+  }
+
   get playlistFolder(): string {
     return this.profile.playlistFolder ?? "Playlists";
   }
@@ -55,6 +59,9 @@ export class Device {
         break;
       case "podcast":
         folder = this.podcastFolder;
+        break;
+      case "audiobook":
+        folder = this.audiobookFolder;
         break;
       case "playlist":
         folder = this.playlistFolder;

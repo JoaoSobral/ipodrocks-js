@@ -26,6 +26,7 @@ export interface Device {
   mountPath: string;
   musicFolder: string;
   podcastFolder: string;
+  audiobookFolder: string;
   playlistFolder: string;
   modelId: number | null;
   defaultCodecConfigId: number | null;
@@ -41,6 +42,8 @@ export interface DeviceProfile extends Device {
   overrideBits: number | null;
   playbackRockboxEnable: boolean;
   partialSyncEnabled: boolean;
+  sourceLibraryType: "primary" | "shadow";
+  shadowLibraryId: number | null;
   transferModeName: string | null;
   codecConfigName: string | null;
   codecConfigBitrate: number | null;
@@ -51,7 +54,7 @@ export interface DeviceProfile extends Device {
   modelInternalValue: string | null;
 }
 
-export type ContentType = "music" | "podcast" | "playlist";
+export type ContentType = "music" | "podcast" | "audiobook" | "playlist";
 
 export interface DeviceTrackInfo {
   filename: string;
@@ -86,10 +89,13 @@ export interface AddDeviceConfig {
   defaultCodecConfigId?: number | null;
   musicFolder?: string;
   podcastFolder?: string;
+  audiobookFolder?: string;
   playlistFolder?: string;
   description?: string | null;
   playbackRockboxEnable?: boolean;
   modelId?: number | null;
+  sourceLibraryType?: "primary" | "shadow";
+  shadowLibraryId?: number | null;
 }
 
 export interface DeviceValidation {
@@ -243,6 +249,7 @@ export interface CustomSelections {
   artists: string[];
   genres: string[];
   podcasts: string[];
+  audiobooks: string[];
   playlists: string[];
 }
 
@@ -256,6 +263,8 @@ export interface SyncOptions {
   includeMusic?: boolean;
   /** For full sync: include podcast tracks (default true). */
   includePodcasts?: boolean;
+  /** For full sync: include audiobook tracks (default true). */
+  includeAudiobooks?: boolean;
   /** For full sync: write M3U playlists to device (default true). */
   includePlaylists?: boolean;
 }
@@ -265,6 +274,39 @@ export interface ScanResult {
   filesProcessed: number;
   cancelled: boolean;
   errors?: string[];
+  addedTrackPaths?: string[];
+  removedTrackPaths?: string[];
+  updatedTrackPaths?: string[];
+}
+
+export interface ShadowLibrary {
+  id: number;
+  name: string;
+  path: string;
+  codecConfigId: number;
+  codecConfigName: string;
+  codecName: string;
+  /** Bitrate in kbps (e.g. 320), or null if codec uses quality/bits. */
+  codecBitrateValue: number | null;
+  /** Quality value (e.g. MPC Q5), or null. */
+  codecQualityValue: number | null;
+  /** Bits per sample (e.g. FLAC 24), or null. */
+  codecBitsPerSample: number | null;
+   /** Approximate total size of the shadow library in bytes (from primary track file_size). */
+  totalBytes: number;
+  status: "pending" | "building" | "ready" | "error";
+  trackCount: number;
+  createdAt: string;
+}
+
+export interface ShadowBuildProgress {
+  shadowLibraryId: number;
+  processed: number;
+  total: number;
+  currentFile: string;
+  status: "building" | "complete" | "error" | "cancelled";
+  logMessage?: string;
+  logLevel?: "info" | "success" | "skip" | "error";
 }
 
 export interface IpcApi {

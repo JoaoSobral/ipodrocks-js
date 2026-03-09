@@ -4,9 +4,9 @@ import { Button } from "../common/Button";
 import { Select } from "../common/Select";
 import { useDeviceStore } from "../../stores/device-store";
 import { useSyncStore } from "../../stores/sync-store";
-import { getTracks, getPlaylists, getPlaylistTracks } from "../../ipc/api";
+import { getTracks, getPlaylists, getPlaylistTracks, getShadowLibraries } from "../../ipc/api";
 import { SyncProgressModal } from "../modals/SyncProgressModal";
-import type { Track, Playlist } from "@shared/types";
+import type { Track, Playlist, ShadowLibrary } from "@shared/types";
 import type { CustomSelections, SyncOptions } from "@shared/types";
 
 const statusColors = { success: "#22c55e", error: "#ef4444", warning: "#f5bf42" } as const;
@@ -18,14 +18,17 @@ const statusLabels = {
 
 export function SyncPanel() {
   const { devices, fetchDevices } = useDeviceStore();
+  const deviceList = Array.isArray(devices) ? devices : [];
   const { results, setResults } = useSyncStore();
   const [showSyncModal, setShowSyncModal] = useState(false);
   const [syncOptionsForModal, setSyncOptionsForModal] = useState<SyncOptions | null>(null);
 
   const [deviceId, setDeviceId] = useState<number | "">("");
+  const [shadowLibs, setShadowLibs] = useState<ShadowLibrary[]>([]);
   const [syncType, setSyncType] = useState("full");
   const [fullIncludeMusic, setFullIncludeMusic] = useState(true);
   const [fullIncludePodcasts, setFullIncludePodcasts] = useState(true);
+  const [fullIncludeAudiobooks, setFullIncludeAudiobooks] = useState(true);
   const [fullIncludePlaylists, setFullIncludePlaylists] = useState(true);
   const [extraTrackPolicy, setExtraTrackPolicy] = useState("keep");
   const [ignoreSpaceCheck, setIgnoreSpaceCheck] = useState(false);
@@ -40,51 +43,69 @@ export function SyncPanel() {
     artists: new Set(),
     genres: new Set(),
     podcasts: new Set(),
+    audiobooks: new Set(),
     playlists: new Set(),
   });
 
   const albums = useMemo(() => {
+    const list = Array.isArray(tracks) ? tracks : [];
     const seen = new Set<string>();
-    tracks
-      .filter((t) => (t.contentType || "music") === "music")
+    list
+      .filter((t) => (t?.contentType || "music") === "music")
       .forEach((t) => {
-        const a = (t.album || "Unknown Album").trim();
-        const r = (t.artist || "Unknown Artist").trim();
+        const a = (t?.album || "Unknown Album").trim();
+        const r = (t?.artist || "Unknown Artist").trim();
         seen.add(`${a} — ${r}`);
       });
     return [...seen].sort();
   }, [tracks]);
 
   const artists = useMemo(() => {
+    const list = Array.isArray(tracks) ? tracks : [];
     const seen = new Set<string>();
-    tracks
-      .filter((t) => (t.contentType || "music") === "music")
-      .forEach((t) => seen.add((t.artist || "Unknown Artist").trim()));
+    list
+      .filter((t) => (t?.contentType || "music") === "music")
+      .forEach((t) => seen.add((t?.artist || "Unknown Artist").trim()));
     return [...seen].sort();
   }, [tracks]);
 
   const genres = useMemo(() => {
+    const list = Array.isArray(tracks) ? tracks : [];
     const seen = new Set<string>();
-    tracks
-      .filter((t) => (t.contentType || "music") === "music")
-      .forEach((t) => seen.add((t.genre || "Unknown Genre").trim()));
+    list
+      .filter((t) => (t?.contentType || "music") === "music")
+      .forEach((t) => seen.add((t?.genre || "Unknown Genre").trim()));
     return [...seen].sort();
   }, [tracks]);
 
   const podcasts = useMemo(() => {
+    const list = Array.isArray(tracks) ? tracks : [];
     const seen = new Set<string>();
-    tracks
-      .filter((t) => (t.contentType || "music") === "podcast")
+    list
+      .filter((t) => (t?.contentType || "music") === "podcast")
       .forEach((t) => {
-        const title = (t.title || t.filename || "Untitled").trim();
-        const artist = (t.artist ?? "").trim();
+        const title = (t?.title ?? t?.filename ?? "Untitled").trim();
+        const artist = (t?.artist ?? "").trim();
+        seen.add(artist ? `${title} — ${artist}` : title);
+      });
+    return [...seen].sort();
+  }, [tracks]);
+
+  const audiobooks = useMemo(() => {
+    const list = Array.isArray(tracks) ? tracks : [];
+    const seen = new Set<string>();
+    list
+      .filter((t) => (t?.contentType || "music") === "audiobook")
+      .forEach((t) => {
+        const title = (t?.title ?? t?.filename ?? "Untitled").trim();
+        const artist = (t?.artist ?? "").trim();
         seen.add(artist ? `${title} — ${artist}` : title);
       });
     return [...seen].sort();
   }, [tracks]);
 
   const playlistNames = useMemo(
-    () => [...new Set(playlists.map((p) => p.name))].sort(),
+    () => [...new Set((Array.isArray(playlists) ? playlists : []).map((p) => p?.name ?? ""))].sort(),
     [playlists]
   );
 
@@ -94,7 +115,7 @@ export function SyncPanel() {
   );
 
   useEffect(() => {
-    if (syncType !== "custom" || selectedItems.playlists.size === 0 || playlists.length === 0) {
+    if (syncType !== "custom" || selectedItems.playlists.size === 0 || (Array.isArray(playlists) ? playlists : []).length === 0) {
       setPlaylistAffectedAlbums(new Set());
       setPlaylistAffectedArtists(new Set());
       setPlaylistAffectedGenres(new Set());
@@ -105,8 +126,9 @@ export function SyncPanel() {
     const artistSet = new Set<string>();
     const genreSet = new Set<string>();
     (async () => {
+      const plList = Array.isArray(playlists) ? playlists : [];
       for (const name of selectedItems.playlists) {
-        const pl = playlists.find((p) => p.name === name);
+        const pl = plList.find((p) => (p?.name ?? "") === name);
         if (!pl || cancelled) continue;
         try {
           const playlistTracks = await getPlaylistTracks(pl.id);
@@ -139,6 +161,7 @@ export function SyncPanel() {
       artists: new Set(),
       genres: new Set(),
       podcasts: new Set(),
+      audiobooks: new Set(),
       playlists: new Set(),
     };
     const partial: Record<string, Set<string>> = {
@@ -146,11 +169,14 @@ export function SyncPanel() {
       artists: new Set(),
       genres: new Set(),
       podcasts: new Set(),
+      audiobooks: new Set(),
       playlists: new Set(),
     };
 
-    const musicTracks = tracks.filter((t) => (t.contentType || "music") === "music");
-    const podcastTracks = tracks.filter((t) => (t.contentType || "music") === "podcast");
+    const trackList = Array.isArray(tracks) ? tracks : [];
+    const musicTracks = trackList.filter((t) => (t?.contentType || "music") === "music");
+    const podcastTracks = trackList.filter((t) => (t?.contentType || "music") === "podcast");
+    const audiobookTracks = trackList.filter((t) => (t?.contentType || "music") === "audiobook");
 
     const syncMusic = (t: Track) => {
       const album = (t.album ?? "Unknown Album").trim();
@@ -169,14 +195,22 @@ export function SyncPanel() {
       const label = artist ? `${title} — ${artist}` : title;
       return selectedItems.podcasts.has(label) || selectedItems.podcasts.has(title);
     };
+    const syncAudiobook = (t: Track) => {
+      const title = (t.title ?? t.filename ?? "Untitled").trim();
+      const artist = (t.artist ?? "").trim();
+      const label = artist ? `${title} — ${artist}` : title;
+      return selectedItems.audiobooks.has(label) || selectedItems.audiobooks.has(title);
+    };
 
     const syncedMusic = musicTracks.filter(syncMusic);
     const syncedPodcast = podcastTracks.filter(syncPodcast);
+    const syncedAudiobook = audiobookTracks.filter(syncAudiobook);
 
     const syncedAlbums = new Set<string>();
     const syncedArtists = new Set<string>();
     const syncedGenres = new Set<string>();
     const syncedPodcastLabels = new Set<string>();
+    const syncedAudiobookLabels = new Set<string>();
 
     syncedMusic.forEach((t) => {
       const a = (t.album ?? "Unknown Album").trim();
@@ -191,6 +225,11 @@ export function SyncPanel() {
       const artist = (t.artist ?? "").trim();
       syncedPodcastLabels.add(artist ? `${title} — ${artist}` : title);
     });
+    syncedAudiobook.forEach((t) => {
+      const title = (t.title ?? t.filename ?? "Untitled").trim();
+      const artist = (t.artist ?? "").trim();
+      syncedAudiobookLabels.add(artist ? `${title} — ${artist}` : title);
+    });
 
     [syncedAlbums, syncedArtists, syncedGenres].forEach((set, i) => {
       const key = ["albums", "artists", "genres"][i];
@@ -202,6 +241,10 @@ export function SyncPanel() {
     syncedPodcastLabels.forEach((label) => {
       if (selectedItems.podcasts.has(label)) selected.podcasts.add(label);
       else partial.podcasts.add(label);
+    });
+    syncedAudiobookLabels.forEach((label) => {
+      if (selectedItems.audiobooks.has(label)) selected.audiobooks.add(label);
+      else partial.audiobooks.add(label);
     });
     selectedItems.playlists.forEach((name) => selected.playlists.add(name));
 
@@ -235,6 +278,7 @@ export function SyncPanel() {
 
   useEffect(() => {
     fetchDevices();
+    getShadowLibraries().then(setShadowLibs).catch(console.error);
   }, [fetchDevices]);
 
   useEffect(() => {
@@ -245,10 +289,36 @@ export function SyncPanel() {
   }, [syncType]);
 
   useEffect(() => {
-    if (devices.length > 0 && !deviceId) {
-      setDeviceId(devices[0].id);
+    if (deviceList.length > 0 && !deviceId) {
+      setDeviceId(deviceList[0]?.id ?? "");
     }
-  }, [devices, deviceId]);
+  }, [deviceList, deviceId]);
+
+  const selectedDevice = useMemo(
+    () => (deviceId ? deviceList.find((d) => d?.id === deviceId) : undefined),
+    [deviceList, deviceId]
+  );
+
+  const transferModeLabel = useMemo(() => {
+    if (!selectedDevice) return null;
+    const src = selectedDevice.sourceLibraryType ?? "primary";
+    const codecName = selectedDevice.codecName ?? "DIRECT COPY";
+    const isDirect = codecName.toUpperCase() === "DIRECT COPY";
+
+    if (src === "shadow" && selectedDevice.shadowLibraryId != null) {
+      const shadow = shadowLibs.find(
+        (s) => s.id === selectedDevice.shadowLibraryId
+      );
+      const shadowLabel = shadow
+        ? `${shadow.name} (${shadow.codecName})`
+        : `Shadow #${selectedDevice.shadowLibraryId}`;
+      return { mode: "Direct Copy", source: shadowLabel, color: "#a78bfa" };
+    }
+    if (isDirect) {
+      return { mode: "Direct Copy", source: "Primary Library", color: "#22c55e" };
+    }
+    return { mode: "Transcode", source: codecName, color: "#f5bf42" };
+  }, [selectedDevice, shadowLibs]);
 
   const handleStart = useCallback(() => {
     if (!deviceId) return;
@@ -259,6 +329,7 @@ export function SyncPanel() {
             artists: [...selectedItems.artists],
             genres: [...selectedItems.genres],
             podcasts: [...selectedItems.podcasts],
+            audiobooks: [...selectedItems.audiobooks],
             playlists: [...selectedItems.playlists],
           }
         : undefined;
@@ -272,6 +343,7 @@ export function SyncPanel() {
       ...(syncType === "full" && {
         includeMusic: fullIncludeMusic,
         includePodcasts: fullIncludePodcasts,
+        includeAudiobooks: fullIncludeAudiobooks,
         includePlaylists: fullIncludePlaylists,
       }),
     });
@@ -281,6 +353,7 @@ export function SyncPanel() {
     syncType,
     fullIncludeMusic,
     fullIncludePodcasts,
+    fullIncludeAudiobooks,
     fullIncludePlaylists,
     extraTrackPolicy,
     ignoreSpaceCheck,
@@ -296,8 +369,29 @@ export function SyncPanel() {
           label="Target Device"
           value={String(deviceId)}
           onChange={(v) => setDeviceId(Number(v))}
-          options={devices.map((d) => ({ value: String(d.id), label: d.name }))}
+          options={deviceList.map((d) => ({ value: String(d?.id ?? ""), label: d?.name ?? "" }))}
         />
+        {transferModeLabel && (
+          <div
+            className="mt-3 flex items-center gap-2 rounded-md px-3 py-2 text-xs"
+            style={{
+              backgroundColor: `${transferModeLabel.color}10`,
+              border: `1px solid ${transferModeLabel.color}30`,
+            }}
+          >
+            <span
+              className="inline-block h-2 w-2 rounded-full shrink-0"
+              style={{ backgroundColor: transferModeLabel.color }}
+            />
+            <span className="text-[#e0e0e0]">
+              <span className="font-medium" style={{ color: transferModeLabel.color }}>
+                {transferModeLabel.mode}
+              </span>
+              {" — "}
+              {transferModeLabel.source}
+            </span>
+          </div>
+        )}
       </Card>
 
       {/* Configuration */}
@@ -342,6 +436,15 @@ export function SyncPanel() {
                 <label className="flex items-center gap-2 cursor-default">
                   <input
                     type="checkbox"
+                    checked={fullIncludeAudiobooks}
+                    onChange={(e) => setFullIncludeAudiobooks(e.target.checked)}
+                    className="accent-[#4a9eff] rounded"
+                  />
+                  <span className="text-sm text-[#e0e0e0]">Audiobooks</span>
+                </label>
+                <label className="flex items-center gap-2 cursor-default">
+                  <input
+                    type="checkbox"
                     checked={fullIncludePlaylists}
                     onChange={(e) => setFullIncludePlaylists(e.target.checked)}
                     className="accent-[#4a9eff] rounded"
@@ -382,6 +485,7 @@ export function SyncPanel() {
               { key: "artists", title: "Artists", items: artists },
               { key: "genres", title: "Genres", items: genres },
               { key: "podcasts", title: "Podcasts", items: podcasts },
+              { key: "audiobooks", title: "Audiobooks", items: audiobooks },
               { key: "playlists", title: "Playlists", items: playlistNames },
             ].map(({ key, title, items }) => (
               <div
@@ -400,7 +504,7 @@ export function SyncPanel() {
                       const bg =
                         isSelected ? "bg-[#22c55e]/20 text-[#22c55e]" :
                         isPartial ? "bg-[#f5bf42]/20 text-[#f5bf42]" : "";
-                      const pl = key === "playlists" ? playlists.find((p) => p.name === label) : null;
+                      const pl = key === "playlists" ? (Array.isArray(playlists) ? playlists : []).find((p) => (p?.name ?? "") === label) : null;
                       const typeLabel =
                         pl?.typeName === "genius" ? "Genius" : pl?.typeName === "smart" ? "Smart" : null;
                       return (
