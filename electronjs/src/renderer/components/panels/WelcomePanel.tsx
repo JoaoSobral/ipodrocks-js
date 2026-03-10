@@ -27,6 +27,26 @@ const FEATURES: { title: string; desc: string }[] = [
     desc: "Rule-based playlists by genre, artist, album, with track limits",
   },
   {
+    title: "Savant playlists",
+    desc: "AI-powered playlists from mood and energy (requires OpenRouter API key)",
+  },
+  {
+    title: "Mood Chat",
+    desc: "Conversational playlist creation — describe your mood, get a tailored playlist",
+  },
+  {
+    title: "Harmonic mixing",
+    desc: "Camelot wheel, key-aware sequencing for smooth DJ-style transitions",
+  },
+  {
+    title: "Assistant",
+    desc: "Floating chat for library help and questions",
+  },
+  {
+    title: "Dashboard",
+    desc: "Library stats, device overview, and shadow library status at a glance",
+  },
+  {
     title: "Podcasts",
     desc: "Separate podcast folders and sync; full or custom sync per content type",
   },
@@ -111,12 +131,13 @@ export function WelcomePanel() {
         className="[.theme-light_&]:bg-white [.theme-light_&]:border-[#e2e8f0]"
       >
         <p className={`text-sm leading-relaxed ${textMuted}`}>
-          Use <strong className={textPrimary}>Library</strong> to add folders and
-          scan your collection, <strong className={textPrimary}>Devices</strong> to
-          add and configure each Rockbox (or mountable) device,{" "}
-          <strong className={textPrimary}>Sync</strong> to copy music and
-          podcasts to the device, and <strong className={textPrimary}>Playlists</strong> to
-          create smart and genius playlists, then include them in sync.
+          Use <strong className={textPrimary}>Dashboard</strong> for an overview,{" "}
+          <strong className={textPrimary}>Library</strong> to add folders and scan,{" "}
+          <strong className={textPrimary}>Devices</strong> to add and configure each{" "}
+          Rockbox (or mountable) device, <strong className={textPrimary}>Playlists</strong> to
+          create smart, genius, or Savant playlists, and <strong className={textPrimary}>Sync</strong> to{" "}
+          copy music and podcasts to the device. Open <strong className={textPrimary}>Settings</strong> (gear{" "}
+          icon) to add your OpenRouter API key for Savant and Assistant features.
         </p>
       </Card>
     </div>

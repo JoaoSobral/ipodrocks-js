@@ -75,6 +75,8 @@ export class LibraryScanner {
   private upsertTrackStmt: Database.Statement;
   private loadHashesStmt: Database.Statement;
   private loadMtimesStmt: Database.Statement;
+  private getTrackIdByPathStmt: Database.Statement;
+  private updateTrackFeaturesStmt: Database.Statement;
 
   constructor(db: Database.Database) {
     this.db = db;
@@ -148,6 +150,12 @@ export class LibraryScanner {
     );
     this.loadMtimesStmt = db.prepare(
       "SELECT file_path, last_modified FROM content_hashes WHERE file_path LIKE ?"
+    );
+    this.getTrackIdByPathStmt = db.prepare(
+      "SELECT id FROM tracks WHERE path = ?"
+    );
+    this.updateTrackFeaturesStmt = db.prepare(
+      "UPDATE tracks SET key = ?, bpm = ?, camelot = ?, features_scanned = 1 WHERE id = ?"
     );
   }
 
@@ -249,9 +257,10 @@ export class LibraryScanner {
           continue;
         }
 
-        const [metadata, audioInfo] = await Promise.all([
+        const [metadata, audioInfo, features] = await Promise.all([
           this.metadataExtractor.extractMetadata(filePath, contentType),
           this.metadataExtractor.extractAudioInfo(filePath),
+          this.metadataExtractor.extractAudioFeatures(filePath),
         ]);
 
         const fileSize = stat.size;
@@ -286,6 +295,18 @@ export class LibraryScanner {
           showTitle: metadata.showTitle,
           episodeNumber: metadata.episodeNumber,
         });
+
+        const trackRow = this.getTrackIdByPathStmt.get(filePath) as
+          | { id: number }
+          | undefined;
+        if (trackRow) {
+          this.updateTrackFeaturesStmt.run(
+            features.key,
+            features.bpm,
+            features.camelot,
+            trackRow.id
+          );
+        }
 
         if (fileSize > 0 && mtimeMs > 0) {
           this.hashManager.storeHash({
@@ -470,6 +491,43 @@ export class LibraryScanner {
     this.insertCodecStmt.run(name);
     const row = this.getCodecStmt.get(name) as { id: number };
     return row.id;
+  }
+
+  /**
+   * Backfill key/BPM/Camelot for tracks with features_scanned = 0.
+   * Processes one batch (up to 50 tracks) for Savant harmonic sequencing.
+   * @returns Number of tracks processed.
+   */
+  async backfillFeatures(batchSize = 50): Promise<number> {
+    const rows = this.db
+      .prepare(
+        `SELECT id, path FROM tracks
+         WHERE features_scanned = 0 AND content_type = 'music'
+         LIMIT ?`
+      )
+      .all(batchSize) as { id: number; path: string }[];
+
+    for (const row of rows) {
+      try {
+        const features = await this.metadataExtractor.extractAudioFeatures(
+          row.path
+        );
+        this.updateTrackFeaturesStmt.run(
+          features.key,
+          features.bpm,
+          features.camelot,
+          row.id
+        );
+      } catch {
+        // Mark as scanned even on error to avoid retrying indefinitely
+        this.db
+          .prepare(
+            "UPDATE tracks SET features_scanned = 1 WHERE id = ?"
+          )
+          .run(row.id);
+      }
+    }
+    return rows.length;
   }
 
   /**

@@ -7,6 +7,7 @@
 
 import path from "path";
 import { parseFile } from "music-metadata";
+import { normalizeKey, toCamelot } from "../harmonic/camelotWheel";
 
 /** Tag metadata extracted from an audio file. */
 export interface TrackMetadata {
@@ -18,6 +19,13 @@ export interface TrackMetadata {
   discNumber: string;
   showTitle?: string;
   episodeNumber?: string;
+}
+
+/** Key, BPM, and Camelot for harmonic mixing (Savant). */
+export interface AudioFeatures {
+  key: string | null;
+  bpm: number | null;
+  camelot: string | null;
 }
 
 /** Technical audio properties of a file. */
@@ -120,6 +128,45 @@ export class MetadataExtractor {
         trackNumber: "",
         discNumber: "",
       };
+    }
+  }
+
+  /**
+   * Extract key, BPM, and Camelot for harmonic mixing (Savant playlists).
+   * Reads TKEY and TBPM from ID3/native tags via music-metadata.
+   */
+  async extractAudioFeatures(filePath: string): Promise<AudioFeatures> {
+    try {
+      const metadata = await parseFile(filePath, {
+        skipCovers: true,
+        duration: false,
+      });
+      const native = metadata.native as Record<
+        string,
+        Array<{ id: string; value?: unknown }>
+      > | undefined;
+      let rawKey: string | null = null;
+      if (native) {
+        for (const format of ["ID3v2.4", "ID3v2.3", "ID3v2.2"]) {
+          const tags = native[format];
+          if (tags) {
+            const tkey = tags.find((t) => t.id === "TKEY");
+            if (tkey?.value != null) {
+              rawKey = String(tkey.value);
+              break;
+            }
+          }
+        }
+      }
+      const rawBpm = metadata.common.bpm ?? null;
+      const key = normalizeKey(rawKey);
+      return {
+        key,
+        bpm: rawBpm ? Math.round(rawBpm * 10) / 10 : null,
+        camelot: toCamelot(key),
+      };
+    } catch {
+      return { key: null, bpm: null, camelot: null };
     }
   }
 

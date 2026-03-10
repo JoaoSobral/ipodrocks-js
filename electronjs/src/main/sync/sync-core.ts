@@ -5,9 +5,10 @@ import { Device, Track } from "../../shared/types";
 import {
   CompareOptions,
   CompareResult,
+  SkippedTrack,
   compareLibraries,
 } from "./name-size-sync";
-import { updateExtension } from "./sync-conversion";
+import { updateExtension, estimateConvertedSize } from "./sync-conversion";
 import {
   CopyProgress,
   CopyToDeviceOptions,
@@ -36,8 +37,6 @@ export interface RunSyncOptions {
   progressCallback?: ProgressCallback;
   cancelSignal?: AbortSignal;
   ignoreSpaceCheck?: boolean;
-  /** When true, compare step emits [SYNC-DIAG] / [ORPHAN-DIAG] to progressCallback (e.g. --dev). */
-  enableSyncDiagnostics?: boolean;
 }
 
 export interface ContentAnalysis {
@@ -162,7 +161,22 @@ export function buildLibraryDestMap(
 
     if (needsConversion) {
       relPath = updateExtension(relPath, codecLower);
-      expectedSizes[trackPath] = 0;
+      const originalSize =
+        (trackInfo.fileSize as number) ??
+        (trackInfo.file_size as number) ??
+        0;
+      if (originalSize > 0) {
+        // Use a heuristic expected size so we can detect codec changes
+        // (e.g. ALAC → AAC both using .m4a) via significant size differences.
+        const assumedBitrate = 256;
+        expectedSizes[trackPath] = estimateConvertedSize(
+          originalSize,
+          codecLower,
+          assumedBitrate
+        );
+      } else {
+        expectedSizes[trackPath] = 0;
+      }
     } else {
       expectedSizes[trackPath] =
         (trackInfo.fileSize as number) ?? (trackInfo.file_size as number) ?? 0;
@@ -177,6 +191,48 @@ export function buildLibraryDestMap(
   }
 
   return { destMap, expectedSizes, expectedMtimes };
+}
+
+function classifyCodecCategory(codecName: string): "lossless" | "lossy" | "unknown" {
+  const lower = codecName.toLowerCase();
+  if (["alac", "flac", "pcm"].includes(lower)) return "lossless";
+  if (["aac", "mp3", "ogg", "opus", "mpc"].includes(lower)) return "lossy";
+  return "unknown";
+}
+
+function classifyDeviceCodecFromSamples(
+  samples: SkippedTrack[],
+  libraryTracks: Record<string, Record<string, unknown>>,
+  deviceFilesMap: Record<string, { file_size: number; mtime?: number }>
+): "lossless" | "lossy" | "unknown" {
+  const ratios: number[] = [];
+  const maxSamples = 5;
+
+  for (const s of samples) {
+    if (ratios.length >= maxSamples) break;
+    const libInfo = libraryTracks[s.library_path];
+    const devInfo = deviceFilesMap[s.device_path];
+    if (!libInfo || !devInfo) continue;
+
+    const libSize =
+      (libInfo.fileSize as number) ??
+      (libInfo.file_size as number) ??
+      0;
+    const devSize = devInfo.file_size ?? 0;
+    if (libSize <= 0 || devSize <= 0) continue;
+
+    const ratio = devSize / libSize;
+    if (!Number.isFinite(ratio) || ratio <= 0) continue;
+    ratios.push(ratio);
+  }
+
+  if (ratios.length === 0) return "unknown";
+
+  const avg = ratios.reduce((a, b) => a + b, 0) / ratios.length;
+
+  if (avg >= 0.5) return "lossless";
+  if (avg <= 0.4) return "lossy";
+  return "unknown";
 }
 
 export function getProfileCodecExt(codecName: string): string | null {
@@ -194,8 +250,7 @@ export function analyzeContentType(
   codecName: string,
   libraryFolderPaths?: Map<number, string>,
   cancelSignal?: AbortSignal,
-  progressCallback?: ProgressCallback,
-  enableSyncDiagnostics?: boolean
+  progressCallback?: ProgressCallback
 ): ContentAnalysis {
   if (cancelSignal?.aborted) throw new SyncCancelled();
 
@@ -224,11 +279,6 @@ export function analyzeContentType(
         total: libCount + total,
       });
     },
-    ...(enableSyncDiagnostics && {
-      debugCallback: (msg: string) => {
-        progressCallback?.({ event: "log", message: msg });
-      },
-    }),
   };
 
   let result: CompareResult;
@@ -247,8 +297,39 @@ export function analyzeContentType(
     throw err;
   }
 
-  let { missingTracks } = result;
-  if (missingTracks.size === 0 && Object.keys(libraryTracks).length > 0 && Object.keys(deviceFilesMap).length === 0) {
+  let { missingTracks, tracksToSkip } = result;
+
+  if (
+    missingTracks.size === 0 &&
+    Object.keys(libraryTracks).length > 0 &&
+    Object.keys(deviceFilesMap).length > 0 &&
+    tracksToSkip.length > 0
+  ) {
+    const targetCategory = classifyCodecCategory(codecName);
+    const deviceCategory = classifyDeviceCodecFromSamples(
+      tracksToSkip,
+      libraryTracks,
+      deviceFilesMap
+    );
+
+    if (
+      targetCategory !== "unknown" &&
+      deviceCategory !== "unknown" &&
+      targetCategory !== deviceCategory
+    ) {
+      progressCallback?.({
+        event: "log",
+        message: `Detected codec mismatch between device files (${deviceCategory}) and target profile (${targetCategory}); forcing full resync for this content type.`,
+      });
+      missingTracks = new Set(Object.keys(libraryTracks));
+    }
+  }
+
+  if (
+    missingTracks.size === 0 &&
+    Object.keys(libraryTracks).length > 0 &&
+    Object.keys(deviceFilesMap).length === 0
+  ) {
     missingTracks = new Set(Object.keys(libraryTracks));
   }
 
@@ -405,8 +486,7 @@ export async function runSync(
     codecName,
     libraryFolderPaths,
     cancelSignal,
-    progressCallback,
-    options.enableSyncDiagnostics
+    progressCallback
   );
 
   progressCallback?.({

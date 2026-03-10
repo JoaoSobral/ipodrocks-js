@@ -401,6 +401,49 @@ export class PlaylistCore {
 
 
   /**
+   * Create a Savant playlist with pre-resolved track IDs and config JSON.
+   *
+   * @param name - Playlist display name.
+   * @param trackIds - Ordered track IDs (after harmonic sequencing).
+   * @param savantConfig - JSON string with intent, model, reasoning, generatedAt.
+   * @returns New playlist id.
+   */
+  createSavantPlaylist(
+    name: string,
+    trackIds: number[],
+    savantConfig: string
+  ): number {
+    const typeId = this._playlistTypeId("savant");
+    if (!typeId) throw new Error("Playlist type 'savant' not found");
+    const now = new Date().toISOString();
+
+    const stmtInsertSavant = this.db.prepare(`
+      INSERT INTO playlists (name, description, playlist_type_id, savant_config, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `);
+
+    const run = this.db.transaction(() => {
+      const info = stmtInsertSavant.run(
+        name,
+        "",
+        typeId,
+        savantConfig,
+        now,
+        now
+      );
+      const playlistId = Number(info.lastInsertRowid);
+
+      for (let pos = 0; pos < trackIds.length; pos++) {
+        this.stmtInsertItem.run(playlistId, trackIds[pos], pos + 1);
+      }
+
+      return playlistId;
+    });
+
+    return run();
+  }
+
+  /**
    * Get genius config for a playlist.
    * @param playlistId - Playlist id.
    */

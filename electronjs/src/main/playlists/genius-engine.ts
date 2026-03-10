@@ -717,7 +717,7 @@ export function generateGeniusPlaylist(
 ): PlaylistGenerationResult {
   if (!events.length) {
     return emptyResult(
-      "None of the played tracks were found in your library. " +
+      "None of the played tracks in the playback log were found in your library. " +
       "Check that your library path is configured correctly.",
       geniusType
     );

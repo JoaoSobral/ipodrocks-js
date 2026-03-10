@@ -68,6 +68,10 @@ CREATE TABLE IF NOT EXISTS tracks (
     show_title TEXT,
     episode_number INTEGER,
     metadata_hash TEXT,
+    key TEXT,
+    bpm REAL,
+    camelot TEXT,
+    features_scanned INTEGER DEFAULT 0,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (library_folder_id) REFERENCES library_folders (id),
     FOREIGN KEY (artist_id) REFERENCES artists (id),
@@ -154,7 +158,6 @@ CREATE TABLE IF NOT EXISTS devices (
     override_bitrate INTEGER,
     override_quality INTEGER,
     override_bits INTEGER,
-    playback_rockbox_enable BOOLEAN NOT NULL DEFAULT 1,
     partial_sync_enabled BOOLEAN NOT NULL DEFAULT 0,
     source_library_type TEXT NOT NULL DEFAULT 'primary' CHECK(source_library_type IN ('primary', 'shadow')),
     shadow_library_id INTEGER,
@@ -166,29 +169,6 @@ CREATE TABLE IF NOT EXISTS devices (
     FOREIGN KEY (default_codec_config_id) REFERENCES codec_configurations (id),
     FOREIGN KEY (model_id) REFERENCES device_models (id),
     FOREIGN KEY (shadow_library_id) REFERENCES shadow_libraries (id)
-);
-
-CREATE TABLE IF NOT EXISTS device_log_cache (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    device_id TEXT NOT NULL UNIQUE,
-    device_name TEXT,
-    last_log_size INTEGER DEFAULT 0,
-    last_log_hash TEXT,
-    last_sync_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    total_entries INTEGER DEFAULT 0
-);
-
-CREATE TABLE IF NOT EXISTS device_file_cache (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    device_id INTEGER NOT NULL,
-    file_path TEXT NOT NULL,
-    file_size INTEGER NOT NULL,
-    mtime INTEGER NOT NULL,
-    metadata_json TEXT NOT NULL,
-    metadata_hash TEXT,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (device_id) REFERENCES devices (id),
-    UNIQUE(device_id, file_path)
 );
 
 CREATE TABLE IF NOT EXISTS device_synced_tracks (
@@ -213,7 +193,6 @@ CREATE TABLE IF NOT EXISTS sync_configurations (
     include_podcasts INTEGER NOT NULL DEFAULT 1,
     include_audiobooks INTEGER NOT NULL DEFAULT 1,
     include_playlists INTEGER NOT NULL DEFAULT 1,
-    last_codec_config_id INTEGER,
     created_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     last_used_date TIMESTAMP,
     FOREIGN KEY (device_id) REFERENCES devices (id),
@@ -239,35 +218,6 @@ CREATE TABLE IF NOT EXISTS sync_rules (
     FOREIGN KEY (override_codec_id) REFERENCES codecs (id)
 );
 
-CREATE TABLE IF NOT EXISTS sync_history (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    device_id INTEGER NOT NULL,
-    sync_config_id INTEGER,
-    sync_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    total_items_synced INTEGER DEFAULT 0,
-    duration_ms INTEGER,
-    success_status BOOLEAN NOT NULL DEFAULT 1,
-    error_message TEXT,
-    FOREIGN KEY (device_id) REFERENCES devices (id),
-    FOREIGN KEY (sync_config_id) REFERENCES sync_configurations (id)
-);
-
-CREATE TABLE IF NOT EXISTS sync_items (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    sync_history_id INTEGER NOT NULL,
-    track_id INTEGER NOT NULL,
-    transfer_mode_id INTEGER NOT NULL,
-    codec_id INTEGER NOT NULL,
-    bitrate_used INTEGER,
-    file_size_bytes INTEGER,
-    sync_status TEXT NOT NULL CHECK(sync_status IN ('success', 'failed', 'skipped')),
-    error_message TEXT,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (sync_history_id) REFERENCES sync_history (id),
-    FOREIGN KEY (track_id) REFERENCES tracks (id),
-    FOREIGN KEY (transfer_mode_id) REFERENCES device_transfer_modes (id),
-    FOREIGN KEY (codec_id) REFERENCES codecs (id)
-);
 
 -- ============================================================
 -- Playlists
@@ -285,6 +235,7 @@ CREATE TABLE IF NOT EXISTS playlists (
     name TEXT NOT NULL,
     description TEXT,
     playlist_type_id INTEGER NOT NULL,
+    savant_config TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (playlist_type_id) REFERENCES playlist_types (id)
@@ -526,9 +477,6 @@ CREATE INDEX IF NOT EXISTS idx_library_folders_content_type ON library_folders(c
 -- devices
 CREATE INDEX IF NOT EXISTS idx_devices_name ON devices(name);
 
--- device_file_cache
-CREATE INDEX IF NOT EXISTS idx_device_cache_lookup ON device_file_cache(device_id, file_path);
-
 -- device_synced_tracks
 CREATE INDEX IF NOT EXISTS idx_device_synced_device ON device_synced_tracks(device_id);
 
@@ -540,15 +488,6 @@ CREATE INDEX IF NOT EXISTS idx_sync_configs_active ON sync_configurations(is_act
 CREATE INDEX IF NOT EXISTS idx_sync_rules_config ON sync_rules(sync_config_id);
 CREATE INDEX IF NOT EXISTS idx_sync_rules_type_target ON sync_rules(rule_type, target_id);
 CREATE INDEX IF NOT EXISTS idx_sync_rules_overrides ON sync_rules(override_transfer_mode_id, override_codec_id);
-
--- sync_history
-CREATE INDEX IF NOT EXISTS idx_sync_history_device ON sync_history(device_id);
-CREATE INDEX IF NOT EXISTS idx_sync_history_date ON sync_history(sync_date);
-
--- sync_items
-CREATE INDEX IF NOT EXISTS idx_sync_items_history ON sync_items(sync_history_id);
-CREATE INDEX IF NOT EXISTS idx_sync_items_track ON sync_items(track_id);
-CREATE INDEX IF NOT EXISTS idx_sync_items_status ON sync_items(sync_status);
 
 -- playlists
 CREATE INDEX IF NOT EXISTS idx_playlists_type ON playlists(playlist_type_id);

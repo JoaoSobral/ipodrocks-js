@@ -4,7 +4,13 @@ import { Button } from "../common/Button";
 import { Select } from "../common/Select";
 import { useDeviceStore } from "../../stores/device-store";
 import { useSyncStore } from "../../stores/sync-store";
-import { getTracks, getPlaylists, getPlaylistTracks, getShadowLibraries } from "../../ipc/api";
+import {
+  getTracks,
+  getPlaylists,
+  getPlaylistTracks,
+  getShadowLibraries,
+  getLibraryStats,
+} from "../../ipc/api";
 import { SyncProgressModal } from "../modals/SyncProgressModal";
 import type { Track, Playlist, ShadowLibrary } from "@shared/types";
 import type { CustomSelections, SyncOptions } from "@shared/types";
@@ -22,6 +28,7 @@ export function SyncPanel() {
   const { results, setResults } = useSyncStore();
   const [showSyncModal, setShowSyncModal] = useState(false);
   const [syncOptionsForModal, setSyncOptionsForModal] = useState<SyncOptions | null>(null);
+  const [precheckError, setPrecheckError] = useState<string | null>(null);
 
   const [deviceId, setDeviceId] = useState<number | "">("");
   const [shadowLibs, setShadowLibs] = useState<ShadowLibrary[]>([]);
@@ -321,7 +328,41 @@ export function SyncPanel() {
   }, [selectedDevice, shadowLibs]);
 
   const handleStart = useCallback(() => {
-    if (!deviceId) return;
+    void (async () => {
+      if (!deviceId || !selectedDevice) return;
+      setPrecheckError(null);
+
+      try {
+        if (
+          (selectedDevice.sourceLibraryType ?? "primary") === "shadow" &&
+          selectedDevice.shadowLibraryId != null
+        ) {
+          const shadow = shadowLibs.find((s) => s.id === selectedDevice.shadowLibraryId);
+          if (!shadow || shadow.status !== "ready" || shadow.trackCount <= 0) {
+            setPrecheckError(
+              "Shadow library contains no files to sync. Build or select a shadow library that has tracks."
+            );
+            return;
+          }
+        } else {
+          const stats = await getLibraryStats();
+          const hasTracks =
+            (stats.totalTracks ?? 0) > 0 ||
+            (stats.podcastTrackCount ?? 0) > 0 ||
+            (stats.audiobookTrackCount ?? 0) > 0;
+          if (!hasTracks) {
+            setPrecheckError(
+              "Library contains no music, podcast, or audiobook files to sync. Add library folders and scan first."
+            );
+            return;
+          }
+        }
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        setPrecheckError(msg || "Unable to check library contents before sync.");
+        return;
+      }
+
     const selections: CustomSelections | undefined =
       syncType === "custom"
         ? {
@@ -348,8 +389,11 @@ export function SyncPanel() {
       }),
     });
     setShowSyncModal(true);
+    })();
   }, [
     deviceId,
+    selectedDevice,
+    shadowLibs,
     syncType,
     fullIncludeMusic,
     fullIncludePodcasts,
@@ -539,6 +583,11 @@ export function SyncPanel() {
       )}
 
       {/* Start button */}
+      {precheckError && (
+        <div className="rounded-lg border border-[#ef4444]/30 bg-[#ef4444]/10 px-3 py-2 text-sm text-[#ef4444] max-w-lg">
+          {precheckError}
+        </div>
+      )}
       <Button
         variant="primary"
         size="sm"

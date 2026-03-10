@@ -1,92 +1,117 @@
-# iPodRocks — Electron Edition
+# iPodRocks v1.0.0 — Electron Edition
 
-Desktop iPod sync and library manager, built with Electron + React + TypeScript.
+Desktop iPod sync and library manager for Rockbox and any mountable device. Built with Electron, React, and TypeScript.
 
 ## Screenshots
 
-> _Screenshots coming soon._
+<!-- Add screenshots to docs/screenshots/ and update the paths below -->
+
+| Dashboard | Library | Devices |
+|-----------|---------|---------|
+| ![Dashboard](docs/screenshots/dashboard.png) | ![Library](docs/screenshots/library.png) | ![Devices](docs/screenshots/devices.png) |
+
+| Sync | Playlists |
+|------|-----------|
+| ![Sync](docs/screenshots/sync.png) | ![Playlists](docs/screenshots/playlists.png) |
 
 ## Features
 
-- **Library scanning** with metadata extraction (MP3, FLAC, AAC, OGG, Opus, WavPack, Musepack, WAV, AIFF, and more)
+- **Library scanning** — Metadata extraction for MP3, FLAC, AAC, OGG, Opus, WavPack, Musepack, WAV, AIFF, and more
 - **Device management** — iPod, Rockbox players, any FAT32/exFAT-mounted device
-- **Smart sync** with name+size comparison and FAT32-safe path sanitization
-- **Audio conversion** via FFmpeg (AAC, MP3, Opus, OGG, Musepack)
-- **Parallel direct copy** using OS-level fast copy
-- **Smart playlists** — by genre, artist, album, recently added, and more
-- **Genius playlists** generated from Rockbox playback logs
-- **M3U8 playlist export**
-- **Sync error logging**
-- **Dark theme UI**
+- **Smart sync** — Name+size comparison, FAT32-safe path sanitization
+- **Audio conversion** — FFmpeg (AAC, MP3, Opus, OGG, Musepack) with metadata preserved
+- **Smart playlists** — By genre, artist, album, recently added, and more
+- **Genius playlists** — From Rockbox playback logs (Rediscovery, Forgotten Gems, etc.)
+- **Savant playlists** — AI-powered playlists from mood/energy (OpenRouter)
+- **Mood Chat** — Conversational playlist creation
+- **Harmonic mixing** — Camelot wheel, key-aware sequencing
+- **Assistant** — Floating chat for library help
+- **Shadow libraries** — Pre-transcoded mirrors for faster sync
+- **M3U8 export** — Playlist export for devices
+- **Dark & light themes**
 
-## Tech Stack
+## Installation
 
-| Layer     | Technology                              |
-|-----------|-----------------------------------------|
-| Shell     | Electron 34                             |
-| Frontend  | React 19, Tailwind CSS 4, Zustand 5    |
-| Backend   | TypeScript, better-sqlite3, music-metadata |
-| Tooling   | Vite 6, Vitest, electron-builder       |
+### Download (recommended)
 
-## Prerequisites
+Download the installer for your platform from the [Releases](https://github.com/your-username/ipodrocks-js/releases) page:
 
-- Node.js 18+
-- npm
-- FFmpeg (required for audio conversion only)
+- **Linux** — AppImage, `.deb`, or `.rpm`
+- **macOS** — `.dmg` or `.zip`
+- **Windows** — `.exe` (NSIS) or portable
 
-## Getting Started
+### Build from source
+
+**Requirements:** Node.js 18+, npm, FFmpeg (for audio conversion)
 
 ```bash
 cd electronjs
 npm install
 npm run build
-npm run preview    # production mode
-npm run dev        # development mode with hot-reload
+npm run preview    # run in production mode
 ```
 
-## Project Structure
+## Quick Start
 
-```
-src/
-├── main/                  # Electron main process (backend)
-│   ├── index.ts           # App entry, window creation
-│   ├── preload.ts         # Context bridge
-│   ├── ipc.ts             # IPC handler registration
-│   ├── database/          # SQLite schema and access
-│   ├── library/           # Library scanning, metadata, hashing
-│   ├── devices/           # Device detection and management
-│   ├── sync/              # Sync engine, conversion, error logging
-│   └── playlists/         # Smart, genius, and M3U8 playlists
-├── renderer/              # React frontend
-│   ├── main.tsx           # React entry
-│   ├── App.tsx            # Root component
-│   ├── components/
-│   │   ├── panels/        # Dashboard, Library, Device, Sync, Playlist
-│   │   ├── modals/        # AddDevice, AddFolder, ScanProgress, SyncProgress, Confirm
-│   │   └── common/        # Button, Card, Input, Select, Modal, Toast, ProgressBar
-│   ├── stores/            # Zustand stores (library, device, sync)
-│   └── ipc/               # Renderer-side IPC API
-└── shared/
-    └── types.ts           # Shared type definitions
-```
+1. **Add library folder** — Open **Library**, click **Add Folder**, choose your music directory, and scan.
+2. **Add device** — Open **Devices**, click **+ Add Device**, pick the mount path (e.g. `/media/ipod`).
+3. **Create playlists** (optional) — Open **Playlists** to create smart, genius, or Savant playlists.
+4. **Sync** — Open **Sync**, select your device, choose full or custom sync, and click **Start Sync**.
 
-## Development Commands
+## Usage Guide
 
-| Command           | Description                                  |
-|-------------------|----------------------------------------------|
-| `npm run dev`     | Start dev server with hot-reload             |
-| `npm run build`   | Compile main process + bundle renderer       |
-| `npm run preview` | Build and launch in production mode          |
-| `npm run test`    | Run tests with Vitest                        |
-| `npm run dist`    | Build and package for current platform       |
+### Library
 
-## Architecture
+- Add folders for music, podcasts, or audiobooks
+- Scan to extract metadata and build the catalog
+- View tracks with search, sort, and filters
+- Create shadow libraries for pre-transcoded sync
 
-The app follows Electron's multi-process model:
+### Devices
 
-- **Main process** — Runs the backend: SQLite database, library scanning, device management, sync engine, playlist generation, and FFmpeg conversion. All heavy I/O stays here.
-- **Renderer process** — React SPA with Zustand state management and Tailwind styling. Communicates with the main process exclusively through IPC.
-- **Preload / IPC bridge** — A typed API exposed via `contextBridge` that serializes calls between renderer and main. The renderer never accesses Node.js APIs directly.
+- Add multiple devices with custom folder layouts
+- Configure codec per device (direct copy, MP3, AAC, etc.)
+- Use shadow libraries for devices that need pre-converted files
+- Check device status and orphan files
+
+### Playlists
+
+- **Smart** — Rule-based (genre, artist, album) with track limits
+- **Genius** — From Rockbox playback logs; analyze device first
+- **Savant** — AI-generated from mood (requires OpenRouter API key in Settings)
+
+### Sync
+
+- **Full sync** — Music, podcasts, audiobooks, playlists
+- **Custom sync** — Pick albums, artists, genres, playlists
+- Progress and error logging
+
+### Settings
+
+- OpenRouter API key for Savant and Assistant
+- Test connection before saving
+
+## Development
+
+| Command       | Description                    |
+|---------------|--------------------------------|
+| `npm run dev` | Dev server with hot-reload     |
+| `npm run build` | Compile main + bundle renderer |
+| `npm run test` | Run tests (Vitest)             |
+| `npm run dist` | Package for current platform   |
+
+## Tech Stack
+
+| Layer    | Technology                    |
+|----------|-------------------------------|
+| Shell    | Electron 34                   |
+| Frontend | React 19, Tailwind CSS 4, Zustand 5 |
+| Backend  | TypeScript, better-sqlite3, music-metadata |
+| Tooling  | Vite 6, Vitest, electron-builder |
+
+## Contributing
+
+From v1.0.0.1 onward, development uses a **dev** branch. All PRs to **main** must pass CI (tests + build). See [CONTRIBUTING.md](../CONTRIBUTING.md) in the repo root for details.
 
 ## License
 

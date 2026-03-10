@@ -1,15 +1,8 @@
 import * as fs from "fs";
 import * as path from "path";
 
-let syncErrorLogPath: string | null = null;
-
-export function getSyncErrorLogPath(): string {
-  if (syncErrorLogPath) return syncErrorLogPath;
+function getSyncErrorLogPath(): string {
   return path.join(process.cwd(), "sync_error.log");
-}
-
-export function setSyncErrorLogPath(p: string): void {
-  syncErrorLogPath = p;
 }
 
 export function appendSyncError(

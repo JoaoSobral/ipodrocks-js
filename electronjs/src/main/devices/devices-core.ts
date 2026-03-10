@@ -25,7 +25,6 @@ interface DeviceRow {
   override_bitrate: number | null;
   override_quality: number | null;
   override_bits: number | null;
-  playback_rockbox_enable: number;
   partial_sync_enabled: number;
   source_library_type: string;
   shadow_library_id: number | null;
@@ -44,7 +43,7 @@ const DEVICES_QUERY = `
          d.audiobook_folder, d.playlist_folder, d.description, d.last_sync_date, d.total_synced_items,
          d.default_transfer_mode_id, d.default_codec_config_id, d.model_id,
          d.override_bitrate, d.override_quality, d.override_bits,
-         d.playback_rockbox_enable, d.partial_sync_enabled,
+         d.partial_sync_enabled,
          d.source_library_type, d.shadow_library_id,
          dtm.name as transfer_mode_name,
          cc.name as codec_config_name, cc.bitrate_value, cc.quality_value,
@@ -69,7 +68,6 @@ const ALLOWED_UPDATE_FIELDS = new Set([
   "override_quality",
   "override_bits",
   "description",
-  "playback_rockbox_enable",
   "partial_sync_enabled",
   "model_id",
   "last_sync_date",
@@ -88,7 +86,6 @@ const FIELD_MAP: Record<string, string> = {
   overrideBitrate: "override_bitrate",
   overrideQuality: "override_quality",
   overrideBits: "override_bits",
-  playbackRockboxEnable: "playback_rockbox_enable",
   partialSyncEnabled: "partial_sync_enabled",
   modelId: "model_id",
   lastSyncDate: "last_sync_date",
@@ -143,9 +140,9 @@ export class DevicesCore {
         `INSERT INTO devices
          (name, mount_path, music_folder, podcast_folder, audiobook_folder, playlist_folder,
           default_transfer_mode_id, default_codec_config_id, description,
-          playback_rockbox_enable, model_id, source_library_type,
+          model_id, source_library_type,
           shadow_library_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         config.name,
@@ -157,7 +154,6 @@ export class DevicesCore {
         transferMode.id,
         config.defaultCodecConfigId ?? null,
         config.description ?? null,
-        config.playbackRockboxEnable !== false ? 1 : 0,
         config.modelId ?? null,
         config.sourceLibraryType ?? "primary",
         config.shadowLibraryId ?? null
@@ -190,7 +186,9 @@ export class DevicesCore {
       const dbField = FIELD_MAP[key] ?? key;
       if (!ALLOWED_UPDATE_FIELDS.has(dbField)) continue;
       fields.push(`${dbField} = ?`);
-      values.push(value);
+      const normalized =
+        dbField === "partial_sync_enabled" ? (value ? 1 : 0) : value;
+      values.push(normalized);
     }
 
     if (fields.length === 0) return false;
@@ -306,7 +304,6 @@ export class DevicesCore {
       overrideBitrate: row.override_bitrate,
       overrideQuality: row.override_quality,
       overrideBits: row.override_bits,
-      playbackRockboxEnable: !!row.playback_rockbox_enable,
       partialSyncEnabled: !!row.partial_sync_enabled,
       sourceLibraryType: (row.source_library_type as "primary" | "shadow") ?? "primary",
       shadowLibraryId: row.shadow_library_id,

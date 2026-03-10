@@ -262,12 +262,6 @@ async function convertMusepack(
   }
 }
 
-export function formatQualityDisplay(codec: string, bitrate: number): string {
-  if (codec === "alac" || codec === "flac") return `${bitrate}-bit`;
-  if (codec === "mpc") return `Q${bitrate}`;
-  return `${bitrate}kbps`;
-}
-
 export function estimateConvertedSize(
   originalSize: number,
   codec: string,

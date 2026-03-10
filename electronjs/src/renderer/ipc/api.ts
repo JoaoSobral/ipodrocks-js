@@ -19,6 +19,10 @@ import type {
   PlaylistGenerationResult,
   ShadowLibrary,
   ShadowBuildProgress,
+  SavantIntent,
+  OpenRouterConfig,
+  SavantKeyData,
+  GenerateSavantResult,
 } from "@shared/types";
 
 export type {
@@ -42,6 +46,10 @@ export type {
   PlaylistGenerationResult,
   ShadowLibrary,
   ShadowBuildProgress,
+  SavantIntent,
+  OpenRouterConfig,
+  SavantKeyData,
+  GenerateSavantResult,
 };
 
 export interface LibraryStats {
@@ -367,6 +375,97 @@ export async function saveGeniusPlaylist(
     trackIds,
     trackLimit
   ) as Promise<Playlist>;
+}
+
+// ---------------------------------------------------------------------------
+// Savant Playlists
+// ---------------------------------------------------------------------------
+
+export async function generateSavantPlaylist(
+  intent: SavantIntent
+): Promise<GenerateSavantResult | { error: string }> {
+  return window.api.invoke("savant:generate", intent) as Promise<
+    GenerateSavantResult | { error: string }
+  >;
+}
+
+export async function checkSavantKeyData(): Promise<SavantKeyData> {
+  return window.api.invoke("savant:checkKeyData") as Promise<SavantKeyData>;
+}
+
+export async function backfillSavantFeatures(): Promise<{ processed: number }> {
+  return window.api.invoke("savant:backfillFeatures") as Promise<{
+    processed: number;
+  }>;
+}
+
+export async function startMoodChat(): Promise<
+  | { sessionId: string; aiMessage: string }
+  | { error: string }
+> {
+  return window.api.invoke("savant:chat:start") as Promise<
+    | { sessionId: string; aiMessage: string }
+    | { error: string }
+  >;
+}
+
+export async function sendMoodChatTurn(
+  sessionId: string,
+  userMessage: string
+): Promise<
+  | { aiMessage: string; isComplete: boolean; moodSummary: string | null }
+  | { error: string }
+> {
+  return window.api.invoke("savant:chat:turn", {
+    sessionId,
+    userMessage,
+  }) as Promise<
+    | { aiMessage: string; isComplete: boolean; moodSummary: string | null }
+    | { error: string }
+  >;
+}
+
+export async function skipMoodChat(sessionId: string): Promise<void> {
+  return window.api.invoke("savant:chat:skip", sessionId) as Promise<void>;
+}
+
+export async function sendAssistantChat(
+  messages: Array<{ role: "user" | "assistant"; content: string }>
+): Promise<{ reply: string } | { error: string }> {
+  return window.api.invoke("assistant:chat", messages) as Promise<
+    { reply: string } | { error: string }
+  >;
+}
+
+// ---------------------------------------------------------------------------
+// Settings (OpenRouter)
+// ---------------------------------------------------------------------------
+
+export async function getOpenRouterConfig(): Promise<OpenRouterConfig | null> {
+  return window.api.invoke("settings:getOpenRouterConfig") as Promise<
+    OpenRouterConfig | null
+  >;
+}
+
+export async function setOpenRouterConfig(
+  config: OpenRouterConfig | null
+): Promise<void> {
+  return window.api.invoke("settings:setOpenRouterConfig", config) as Promise<
+    void
+  >;
+}
+
+export async function testOpenRouterConnection(config?: {
+  apiKey: string;
+  model: string;
+} | null): Promise<{
+  ok: boolean;
+  error?: string;
+}> {
+  return window.api.invoke("settings:testOpenRouter", config) as Promise<{
+    ok: boolean;
+    error?: string;
+  }>;
 }
 
 // ---------------------------------------------------------------------------

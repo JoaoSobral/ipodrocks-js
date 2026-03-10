@@ -143,7 +143,6 @@ export function DevicePanel() {
     setMountPath(device.mountPath);
     setDescription(device.description ?? "");
     setIsDefault(defaultDeviceId === device.id);
-    setPlaybackLogEnabled(device.playbackRockboxEnable ?? true);
     setMusicFolder(device.musicFolder ?? "Music");
     setPodcastFolder(device.podcastFolder ?? "Podcasts");
     setAudiobookFolder(device.audiobookFolder ?? "Audiobooks");
@@ -207,7 +206,6 @@ export function DevicePanel() {
       modelId,
       defaultCodecConfigId: resolvedCodecConfigId,
       description: description || null,
-      playbackRockboxEnable: playbackLogEnabled,
       musicFolder,
       podcastFolder,
       audiobookFolder,
@@ -623,23 +621,6 @@ export function DevicePanel() {
               />
               <span className="text-sm text-[#e0e0e0]">Set as Default Device</span>
             </label>
-
-            <div>
-              <label className="flex items-center gap-2.5 cursor-pointer">
-                <input
-                  type="checkbox"
-                  className={checkboxClass}
-                  checked={playbackLogEnabled}
-                  onChange={(e) => setPlaybackLogEnabled(e.target.checked)}
-                />
-                <span className="text-sm text-[#e0e0e0] [.theme-light_&]:text-[#1a1a1a]">
-                  Enable Rockbox Playback Log
-                </span>
-              </label>
-              <p className="text-[11px] text-[#5a5f68] mt-1 ml-[26px]">
-                In Rockbox, go to Settings → Playback → Logging → yes to enable playback logs
-              </p>
-            </div>
           </div>
 
           {/* Actions */}

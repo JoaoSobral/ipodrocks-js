@@ -6,6 +6,7 @@ import { Input } from "../common/Input";
 import { Select } from "../common/Select";
 import { Modal } from "../common/Modal";
 import { EmptyState } from "../common/EmptyState";
+import { MoodChat } from "../savant/MoodChat";
 import { useDeviceStore } from "../../stores/device-store";
 import {
   getPlaylists,
@@ -20,6 +21,10 @@ import {
   getGeniusTypes,
   generateGeniusPlaylist,
   saveGeniusPlaylist,
+  generateSavantPlaylist,
+  checkSavantKeyData,
+  backfillSavantFeatures,
+  getOpenRouterConfig,
 } from "../../ipc/api";
 import type {
   Playlist,
@@ -32,9 +37,11 @@ import type {
   GeniusTypeOption,
   PlaylistGenerationResult,
   AnalyzeResult,
+  SavantKeyData,
+  GenerateSavantResult,
 } from "../../ipc/api";
 
-type Tab = "all" | "smart" | "genius";
+type Tab = "all" | "smart" | "genius" | "savant";
 
 type GeniusStep =
   | "idle"
@@ -120,6 +127,34 @@ export function PlaylistPanel() {
   const [geniusError, setGeniusError] = useState<string | null>(null);
   const [geniusSaveName, setGeniusSaveName] = useState("");
 
+  // -- savant flow state ---------------------------------------------------
+  const [hasOpenRouterKey, setHasOpenRouterKey] = useState<boolean | null>(null);
+  const [savantKeyData, setSavantKeyData] = useState<SavantKeyData | null>(null);
+  const [savantMood, setSavantMood] = useState("");
+  const [savantMoodCustom, setSavantMoodCustom] = useState("");
+  const [savantSeedArtist, setSavantSeedArtist] = useState("");
+  const [savantAdventure, setSavantAdventure] = useState<
+    "conservative" | "mixed" | "adventurous"
+  >("mixed");
+  const [savantTargetCount, setSavantTargetCount] = useState(100);
+  const [savantGenerating, setSavantGenerating] = useState(false);
+  const [savantResult, setSavantResult] = useState<GenerateSavantResult | null>(
+    null
+  );
+  const [savantError, setSavantError] = useState<string | null>(null);
+  const [savantResultTracks, setSavantResultTracks] = useState<
+    PlaylistTrack[] | null
+  >(null);
+  const [savantBackfilling, setSavantBackfilling] = useState(false);
+  const [savantArtists, setSavantArtists] = useState<ArtistInfo[]>([]);
+  const [savantChatActive, setSavantChatActive] = useState(false);
+  const [savantMoodFromChat, setSavantMoodFromChat] = useState<string | null>(
+    null
+  );
+  const [savantChatHistory, setSavantChatHistory] = useState<
+    Array<{ role: "user" | "assistant"; content: string }>
+  >([]);
+
   // -- fetch playlists ----------------------------------------------------
   const fetchAll = useCallback(async () => {
     setLoading(true);
@@ -135,6 +170,26 @@ export function PlaylistPanel() {
     fetchAll();
     fetchDevices();
   }, [fetchAll, fetchDevices]);
+
+  useEffect(() => {
+    if (activeTab !== "savant") return;
+    let cancelled = false;
+    (async () => {
+      const [config, keyData, artistList] = await Promise.all([
+        getOpenRouterConfig(),
+        checkSavantKeyData(),
+        getArtists(),
+      ]);
+      if (!cancelled) {
+        setHasOpenRouterKey(!!config?.apiKey?.trim());
+        setSavantKeyData(keyData);
+        setSavantArtists(artistList ?? []);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab]);
 
   const playlistList = Array.isArray(playlists) ? playlists : [];
   const filtered =
@@ -262,7 +317,7 @@ export function PlaylistPanel() {
       setGeniusArtists(res.artists ?? []);
       if (res.summary.matchedPlays === 0) {
         setGeniusError(
-          "None of the played tracks were found in your library. " +
+          "None of the played tracks in the playback log were found in your library. " +
             "Check that your library path is configured correctly."
         );
         setGeniusStep("idle");
@@ -348,6 +403,74 @@ export function PlaylistPanel() {
     setGeniusPreview(null);
     setGeniusSelectedType(null);
     setGeniusError(null);
+  }
+
+  // -- savant flow --------------------------------------------------------
+  const MOOD_CHIPS = [
+    "Deep Focus",
+    "Night Drive",
+    "Workout",
+    "Melancholy",
+    "Happy",
+    "Party",
+    "Chill",
+    "Discover",
+  ];
+
+  async function handleSavantGenerate() {
+    const mood =
+      savantMoodFromChat ??
+      (savantMoodCustom.trim() || savantMood || "Chill");
+    setSavantGenerating(true);
+    setSavantError(null);
+    setSavantResult(null);
+    setSavantResultTracks(null);
+    try {
+      const result = await generateSavantPlaylist({
+        mood,
+        seedArtist: savantSeedArtist.trim() || undefined,
+        adventureLevel: savantAdventure,
+        targetCount: savantTargetCount,
+        moodDiscoveryChat:
+          savantChatHistory.length > 0 ? savantChatHistory : undefined,
+      });
+      if ("error" in result) {
+        setSavantError(result.error);
+        return;
+      }
+      setSavantResult(result);
+      const tracks = await getPlaylistTracks(result.playlistId);
+      setSavantResultTracks(tracks);
+      fetchAll();
+    } catch (err) {
+      setSavantError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSavantGenerating(false);
+    }
+  }
+
+  function handleSavantRegenerate() {
+    setSavantResult(null);
+    setSavantResultTracks(null);
+    handleSavantGenerate();
+  }
+
+  function handleSavantDiscard() {
+    setSavantResult(null);
+    setSavantResultTracks(null);
+  }
+
+  async function handleSavantBackfill() {
+    setSavantBackfilling(true);
+    try {
+      const { processed } = await backfillSavantFeatures();
+      if (processed > 0) {
+        const keyData = await checkSavantKeyData();
+        setSavantKeyData(keyData);
+      }
+    } finally {
+      setSavantBackfilling(false);
+    }
   }
 
   function closeCreateModal() {
@@ -790,6 +913,281 @@ export function PlaylistPanel() {
   }
 
   // =====================================================================
+  // Savant tab flow
+  // =====================================================================
+  function renderSavantFlow() {
+    if (hasOpenRouterKey === false) {
+      return (
+        <Card>
+          <div className="space-y-4">
+            <p className="text-sm text-[#8a8f98]">
+              Savant uses AI to build playlists tailored to your mood. Add your
+              OpenRouter API key in Settings to enable this feature.
+            </p>
+            <p className="text-xs text-[#5a5f68]">
+              Go to Settings (gear icon) → AI Settings to configure.
+            </p>
+          </div>
+        </Card>
+      );
+    }
+
+    const keyedCount = savantKeyData?.keyedCount ?? 0;
+    const totalCount = savantKeyData?.totalCount ?? 0;
+    const coveragePct = savantKeyData?.coveragePct ?? 0;
+
+    if (savantResult) {
+      const tracks = savantResultTracks ?? [];
+      return (
+        <div className="flex flex-col gap-5">
+          {savantError && (
+            <div className="rounded-lg border border-[#ef4444]/30 bg-[#ef4444]/10 px-4 py-3 text-sm text-[#ef4444]">
+              {savantError}
+            </div>
+          )}
+          <Card title={savantResult.name}>
+            <p className="text-xs text-[#8a8f98] mb-3">
+              {savantResult.reasoning}
+            </p>
+            <p className="text-sm text-[#5a5f68]">
+              {savantResult.trackCount} tracks
+              {coveragePct >= 30
+                ? ` · Harmonic sequencing applied`
+                : " · Harmonic sequencing unavailable (low key coverage)"}
+            </p>
+          </Card>
+          <Card>
+            <div className="flex items-center gap-2 px-3 py-2 text-[10px] font-semibold text-[#5a5f68] uppercase tracking-wider border-b border-white/[0.06]">
+              <span className="w-8 text-center">#</span>
+              <span className="flex-[3]">Title</span>
+              <span className="flex-[2]">Artist</span>
+              <span className="flex-[2]">Album</span>
+              <span className="w-16 text-right">Duration</span>
+            </div>
+            <div className="max-h-[40vh] overflow-auto">
+              {tracks.slice(0, 8).map((t, i) => (
+                <div
+                  key={t.id}
+                  className="flex items-center gap-2 px-3 py-2 text-sm hover:bg-white/[0.02] border-b border-white/[0.03] transition-colors"
+                >
+                  <span className="w-8 text-center text-[#5a5f68] text-xs tabular-nums">
+                    {i + 1}
+                  </span>
+                  <span className="flex-[3] truncate text-white">{t.title}</span>
+                  <span className="flex-[2] truncate text-[#8a8f98]">
+                    {t.artist}
+                  </span>
+                  <span className="flex-[2] truncate text-[#8a8f98]">
+                    {t.album}
+                  </span>
+                  <span className="w-16 text-right text-[#5a5f68] tabular-nums">
+                    {formatDuration(t.duration)}
+                  </span>
+                </div>
+              ))}
+            </div>
+            {tracks.length > 8 && (
+              <p className="text-[10px] text-[#5a5f68] px-3 py-2">
+                + {tracks.length - 8} more tracks
+              </p>
+            )}
+          </Card>
+          <div className="flex gap-2">
+            <Button size="sm" onClick={() => handleSelect(savantResult.playlistId)}>
+              View Playlist
+            </Button>
+            <Button variant="secondary" size="sm" onClick={handleSavantRegenerate}>
+              Regenerate
+            </Button>
+            <Button variant="secondary" size="sm" onClick={handleSavantDiscard}>
+              Discard
+            </Button>
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <div className="flex flex-col gap-5">
+        {savantError && (
+          <div className="rounded-lg border border-[#ef4444]/30 bg-[#ef4444]/10 px-4 py-3 text-sm text-[#ef4444]">
+            {savantError}
+          </div>
+        )}
+        <Card>
+          <div className="space-y-3">
+            <p className="text-sm text-[#8a8f98]">
+              Savant uses AI to build a playlist tailored to your mood.
+            </p>
+            <p className="text-xs text-[#5a5f68]">
+              {keyedCount} / {totalCount} tracks have harmonic data (
+              {coveragePct}%). Re-scan your library or run backfill to improve.
+            </p>
+            {totalCount > 0 && coveragePct < 100 && (
+              <Button
+                size="sm"
+                variant="secondary"
+                disabled={savantBackfilling}
+                onClick={handleSavantBackfill}
+              >
+                {savantBackfilling ? "Backfilling…" : "Backfill Key Data"}
+              </Button>
+            )}
+          </div>
+        </Card>
+
+        <Card title="1. Mood">
+          {savantMoodFromChat ? (
+            <div className="rounded-lg bg-[#4a9eff]/10 border border-[#4a9eff]/30 p-3">
+              <p className="text-[10px] font-semibold text-[#4a9eff] mb-1">
+                🎵 Mood from chat
+              </p>
+              <p className="text-sm text-[#e0e0e0] whitespace-pre-wrap">
+                {savantMoodFromChat}
+              </p>
+              <button
+                type="button"
+                onClick={() => {
+                  setSavantMoodFromChat(null);
+                  setSavantChatHistory([]);
+                }}
+                className="text-[10px] text-[#5a5f68] hover:text-[#8a8f98] mt-2"
+              >
+                Change mood
+              </button>
+            </div>
+          ) : (
+            <>
+              {!savantChatActive && (
+                <>
+                  <div className="flex flex-wrap gap-2 mb-3">
+                    {MOOD_CHIPS.map((m) => (
+                      <button
+                        key={m}
+                        type="button"
+                        onClick={() => setSavantMood(savantMood === m ? "" : m)}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors cursor-default ${
+                          savantMood === m
+                            ? "bg-[#4a9eff]/20 text-[#4a9eff] border border-[#4a9eff]/40"
+                            : "bg-white/[0.04] text-[#8a8f98] border border-white/[0.06] hover:bg-white/[0.08]"
+                        }`}
+                      >
+                        {m}
+                      </button>
+                    ))}
+                  </div>
+                  <Input
+                    label="Or describe your mood"
+                    value={savantMoodCustom}
+                    onChange={(e) => setSavantMoodCustom(e.target.value)}
+                    placeholder="e.g. Late night coding, rainy afternoon"
+                  />
+                </>
+              )}
+              {hasOpenRouterKey && (
+                <div className={savantChatActive ? "" : "mt-3"}>
+                  <MoodChat
+                    onConfirm={(moodSummary, chatHistory) => {
+                      setSavantMoodFromChat(moodSummary);
+                      setSavantChatHistory(chatHistory);
+                      setSavantChatActive(false);
+                    }}
+                    onSkip={() => setSavantChatActive(false)}
+                    onExpandedChange={(expanded) => setSavantChatActive(expanded)}
+                  />
+                </div>
+              )}
+            </>
+          )}
+        </Card>
+
+        <Card title="2. Seed Artist (optional)">
+          <Select
+            label="Artist to lean on"
+            options={[
+              { value: "", label: "None" },
+              ...(Array.isArray(savantArtists) ? savantArtists : [])
+                .slice(0, 100)
+                .map((a) => ({ value: a.name, label: a.name })),
+            ]}
+            value={savantSeedArtist}
+            onChange={(v) => setSavantSeedArtist(v)}
+          />
+        </Card>
+
+        <Card title="3. Adventure Level">
+          <div className="space-y-2">
+            {(
+              [
+                {
+                  value: "conservative" as const,
+                  label: "Stay close",
+                  desc: "Only tracks you've played before",
+                },
+                {
+                  value: "mixed" as const,
+                  label: "Mix surprises",
+                  desc: "Played + some new discoveries",
+                },
+                {
+                  value: "adventurous" as const,
+                  label: "Take me somewhere new",
+                  desc: "Full library",
+                },
+              ]
+            ).map((opt) => (
+              <label
+                key={opt.value}
+                className="flex items-center gap-3 p-3 rounded-lg border border-white/[0.06] hover:bg-white/[0.02] cursor-pointer"
+              >
+                <input
+                  type="radio"
+                  name="savant-adventure"
+                  checked={savantAdventure === opt.value}
+                  onChange={() => setSavantAdventure(opt.value)}
+                  className="accent-[#4a9eff]"
+                />
+                <div>
+                  <span className="text-sm font-medium text-white">
+                    {opt.label}
+                  </span>
+                  <p className="text-[11px] text-[#5a5f68]">{opt.desc}</p>
+                </div>
+              </label>
+            ))}
+          </div>
+          <div className="mt-4">
+            <label className="block text-xs font-medium text-[#8a8f98] mb-1.5">
+              Track count: {savantTargetCount}
+            </label>
+            <input
+              type="range"
+              min={10}
+              max={100}
+              step={5}
+              value={savantTargetCount}
+              onChange={(e) =>
+                setSavantTargetCount(Number(e.target.value))
+              }
+              className="w-full accent-[#4a9eff]"
+            />
+          </div>
+        </Card>
+
+        <Button
+          variant="primary"
+          disabled={savantGenerating}
+          onClick={handleSavantGenerate}
+        >
+          {savantGenerating
+            ? "Consulting the AI curator…"
+            : "Create Playlist"}
+        </Button>
+      </div>
+    );
+  }
+
+  // =====================================================================
   // List view
   // =====================================================================
   return (
@@ -807,7 +1205,7 @@ export function PlaylistPanel() {
 
       {/* Tabs */}
       <div className="flex gap-1 p-1 rounded-lg bg-white/[0.04] w-fit">
-        {(["all", "smart", "genius"] as Tab[]).map((tab) => (
+        {(["all", "smart", "genius", "savant"] as Tab[]).map((tab) => (
           <button
             key={tab}
             className={`px-4 py-1.5 rounded-md text-xs font-medium transition-colors cursor-default capitalize ${
@@ -822,8 +1220,10 @@ export function PlaylistPanel() {
         ))}
       </div>
 
-      {/* Playlist list (genius flow is only via Create → Genius) */}
-      {loading ? (
+      {/* Savant tab: show flow instead of list */}
+      {activeTab === "savant" ? (
+        renderSavantFlow()
+      ) : loading ? (
         <div className="flex items-center justify-center py-16">
           <div className="w-6 h-6 border-2 border-[#4a9eff]/30 border-t-[#4a9eff] rounded-full animate-spin" />
         </div>

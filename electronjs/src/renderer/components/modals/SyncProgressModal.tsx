@@ -70,10 +70,18 @@ export function SyncProgressModal({
     // #region agent log
     if (!progressLoggedRef.current) {
       progressLoggedRef.current = true;
-      void (window as unknown as { api: { invoke: (c: string, p: unknown) => Promise<unknown> } }).api.invoke("debug:log", {
-        message: "renderer: first progress received",
-        data: { event: p.event, path: p.path, status: p.status },
-      });
+      fetch("http://127.0.0.1:7317/ingest/d6ac44d9-ea47-46ce-9a5a-0a5158fe028d", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "c10d58" },
+        body: JSON.stringify({
+          sessionId: "c10d58",
+          location: "SyncProgressModal.tsx:handleProgress",
+          message: "renderer: first progress received",
+          data: { event: p.event, path: p.path, status: p.status },
+          timestamp: Date.now(),
+          hypothesisId: "H4",
+        }),
+      }).catch(() => {});
     }
     // #endregion
     setProgress(p);
@@ -151,10 +159,18 @@ export function SyncProgressModal({
     startSync(opts)
       .then((result: { synced?: number; removed?: number; errors?: number; error?: string }) => {
         // #region agent log
-        void (window as unknown as { api: { invoke: (c: string, p: unknown) => Promise<unknown> } }).api.invoke("debug:log", {
-          message: "renderer: startSync resolved",
-          data: { hasError: !!result?.error, error: result?.error, synced: result?.synced },
-        });
+        fetch("http://127.0.0.1:7317/ingest/d6ac44d9-ea47-46ce-9a5a-0a5158fe028d", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "c10d58" },
+          body: JSON.stringify({
+            sessionId: "c10d58",
+            location: "SyncProgressModal.tsx:startSync.then",
+            message: "renderer: startSync resolved",
+            data: { hasError: !!result?.error, error: result?.error, synced: result?.synced },
+            timestamp: Date.now(),
+            hypothesisId: "H2",
+          }),
+        }).catch(() => {});
         // #endregion
         setFinished(true);
         const errMsg = result?.error != null ? String(result.error) : "";
@@ -176,10 +192,18 @@ export function SyncProgressModal({
       .catch((e) => {
         const msg = e instanceof Error ? e.message : String(e);
         // #region agent log
-        void (window as unknown as { api: { invoke: (c: string, p: unknown) => Promise<unknown> } }).api.invoke("debug:log", {
-          message: "renderer: startSync rejected",
-          data: { error: msg },
-        });
+        fetch("http://127.0.0.1:7317/ingest/d6ac44d9-ea47-46ce-9a5a-0a5158fe028d", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "c10d58" },
+          body: JSON.stringify({
+            sessionId: "c10d58",
+            location: "SyncProgressModal.tsx:startSync.catch",
+            message: "renderer: startSync rejected",
+            data: { error: msg },
+            timestamp: Date.now(),
+            hypothesisId: "H2",
+          }),
+        }).catch(() => {});
         // #endregion
         const isCancelled = msg.toLowerCase().includes("cancelled");
         if (isCancelled) {

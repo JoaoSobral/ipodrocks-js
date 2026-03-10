@@ -5,6 +5,8 @@ import { LibraryPanel } from "./components/panels/LibraryPanel";
 import { DevicePanel } from "./components/panels/DevicePanel";
 import { SyncPanel } from "./components/panels/SyncPanel";
 import { PlaylistPanel } from "./components/panels/PlaylistPanel";
+import { SettingsPanel } from "./components/panels/SettingsPanel";
+import { FloatChat } from "./components/assistant/FloatChat";
 import { ThemeToggle } from "./components/common/ThemeToggle";
 import { useThemeStore } from "./stores/theme-store";
 
@@ -21,8 +23,8 @@ const navItems: NavItem[] = [
   { id: "dashboard", label: "Dashboard", icon: "◈" },
   { id: "library", label: "Library", icon: "♫" },
   { id: "devices", label: "Devices", icon: "⊞" },
-  { id: "sync", label: "Sync", icon: "⟳" },
   { id: "playlists", label: "Playlists", icon: "≡" },
+  { id: "sync", label: "Sync", icon: "⟳" },
 ];
 
 const panels: Record<Panel, () => JSX.Element> = {
@@ -45,6 +47,7 @@ const SHOW_THEME_TOGGLE: Panel[] = [
 
 export function App() {
   const [active, setActive] = useState<Panel>("welcome");
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const { theme } = useThemeStore();
   const current = navItems.find((n) => n.id === active)!;
   const showThemeToggle = SHOW_THEME_TOGGLE.includes(active);
@@ -96,11 +99,17 @@ export function App() {
             <span>{current.icon}</span>
             {current.label}
           </h2>
-          {showThemeToggle && (
-            <div className="[-webkit-app-region:no-drag]">
-              <ThemeToggle />
-            </div>
-          )}
+          <div className="[-webkit-app-region:no-drag] flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setSettingsOpen(true)}
+              className="p-1.5 rounded-lg text-[#5a5f68] hover:text-white hover:bg-white/5 transition-colors [.theme-light_&]:text-[#6b7280] [.theme-light_&]:hover:text-[#1a1a1a]"
+              title="Settings"
+            >
+              ⚙
+            </button>
+            {showThemeToggle && <ThemeToggle />}
+          </div>
         </header>
         <div className="flex-1 overflow-auto px-8 py-6">
           {(() => {
@@ -109,6 +118,10 @@ export function App() {
           })()}
         </div>
       </main>
+
+      <SettingsPanel open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+
+      <FloatChat />
     </div>
   );
 }

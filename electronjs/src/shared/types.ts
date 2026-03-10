@@ -40,7 +40,6 @@ export interface DeviceProfile extends Device {
   overrideBitrate: number | null;
   overrideQuality: number | null;
   overrideBits: number | null;
-  playbackRockboxEnable: boolean;
   partialSyncEnabled: boolean;
   sourceLibraryType: "primary" | "shadow";
   shadowLibraryId: number | null;
@@ -92,7 +91,6 @@ export interface AddDeviceConfig {
   audiobookFolder?: string;
   playlistFolder?: string;
   description?: string | null;
-  playbackRockboxEnable?: boolean;
   modelId?: number | null;
   sourceLibraryType?: "primary" | "shadow";
   shadowLibraryId?: number | null;
@@ -226,6 +224,35 @@ export interface GeniusGenerateOptions {
   maxTracks?: number;
   minPlays?: number;
   artist?: string;
+}
+
+export interface SavantIntent {
+  mood: string;
+  seedArtist?: string;
+  adventureLevel: "conservative" | "mixed" | "adventurous";
+  targetCount: number;
+  /** Full mood discovery chat history for richer LLM context. */
+  moodDiscoveryChat?: Array<{ role: "user" | "assistant"; content: string }>;
+}
+
+export interface OpenRouterConfig {
+  apiKey: string;
+  model: string;
+  siteUrl?: string;
+  siteName?: string;
+}
+
+export interface SavantKeyData {
+  keyedCount: number;
+  totalCount: number;
+  coveragePct: number;
+}
+
+export interface GenerateSavantResult {
+  playlistId: number;
+  name: string;
+  trackCount: number;
+  reasoning: string;
 }
 
 export interface ScanProgress {

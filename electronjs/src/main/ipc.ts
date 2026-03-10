@@ -29,7 +29,20 @@ import {
 } from "./sync/sync-core";
 import { compareLibraries } from "./sync/name-size-sync";
 import { isMpcencAvailable } from "./utils/mpcenc";
-import { getMpcRemindDisabled, setMpcRemindDisabled } from "./utils/prefs";
+import {
+  getMpcRemindDisabled,
+  setMpcRemindDisabled,
+  getOpenRouterConfig,
+  setOpenRouterConfig,
+} from "./utils/prefs";
+import { generateSavantPlaylist } from "./savant/savantEngine";
+import {
+  startMoodChat,
+  processMoodChatTurn,
+  type MoodChatState,
+} from "./savant/moodChat";
+import { sendAssistantMessage } from "./assistant/assistantChat";
+import { randomUUID } from "crypto";
 
 // ---------------------------------------------------------------------------
 // Singleton state
@@ -44,6 +57,9 @@ let activeShadowBuildAbort: AbortController | null = null;
 
 /** In-memory cache of matched playback events keyed by device ID. */
 const geniusEventsCache = new Map<number, MatchedPlayEvent[]>();
+
+/** Ephemeral mood chat sessions keyed by session ID. */
+const moodChatSessions = new Map<string, MoodChatState>();
 
 function getLibrary(): Library {
   if (!library) {
@@ -87,52 +103,7 @@ function safe(fn: Handler): Handler {
   };
 }
 
-// ---------------------------------------------------------------------------
-// Dev mode (--dev flag): enables orphan/sync diagnostics and debug:log
-// ---------------------------------------------------------------------------
-
-const isDevMode = process.argv.includes("--dev");
-
-const DEBUG_LOG_PATH = "/home/pedro/Documents/GitHub/ipodrocks/.cursor/debug-466793.log";
-
-function appendDebugLog(payload: Record<string, unknown>): void {
-  if (!isDevMode) return;
-  try {
-    fs.appendFileSync(DEBUG_LOG_PATH, JSON.stringify({ ...payload, timestamp: Date.now() }) + "\n");
-  } catch {
-    // ignore
-  }
-}
-
-function syncDebugLog(
-  message: string,
-  data: Record<string, unknown>,
-  hypothesisId?: string
-): void {
-  try {
-    const line =
-      JSON.stringify({
-        sessionId: "466793",
-        location: "ipc.ts:sync:start",
-        message,
-        data,
-        hypothesisId,
-        timestamp: Date.now(),
-      }) + "\n";
-    fs.appendFileSync(DEBUG_LOG_PATH, line);
-  } catch {
-    // ignore
-  }
-}
-
 export function registerIpcHandlers(): void {
-  ipcMain.handle("debug:log", (_event, payload: { message?: string; data?: Record<string, unknown> }) => {
-    if (isDevMode) {
-      appendDebugLog({ location: "renderer", message: payload.message ?? "", data: payload.data ?? {} });
-    }
-    return undefined;
-  });
-
   // ---- App prefs and tool availability ----
   ipcMain.handle(
     "app:isMpcencAvailable",
@@ -608,11 +579,6 @@ export function registerIpcHandlers(): void {
         {
           profileCodecExt,
           libraryExpectedMtimes: musicDest.expectedMtimes,
-          ...(isDevMode && {
-            debugCallback: (msg: string) => {
-              if (msg.startsWith("[ORPHAN-DIAG]")) console.log(msg);
-            },
-          }),
         }
       );
 
@@ -630,11 +596,6 @@ export function registerIpcHandlers(): void {
         {
           profileCodecExt,
           libraryExpectedMtimes: podcastDest.expectedMtimes,
-          ...(isDevMode && {
-            debugCallback: (msg: string) => {
-              if (msg.startsWith("[ORPHAN-DIAG]")) console.log(msg);
-            },
-          }),
         }
       );
 
@@ -652,11 +613,6 @@ export function registerIpcHandlers(): void {
         {
           profileCodecExt,
           libraryExpectedMtimes: audiobookDest.expectedMtimes,
-          ...(isDevMode && {
-            debugCallback: (msg: string) => {
-              if (msg.startsWith("[ORPHAN-DIAG]")) console.log(msg);
-            },
-          }),
         }
       );
 
@@ -779,19 +735,6 @@ export function registerIpcHandlers(): void {
         }
       }
 
-      // #region agent log
-      syncDebugLog("sync build maps", {
-        syncType: opts.syncType,
-        includeMusic: opts.includeMusic,
-        includePodcasts: opts.includePodcasts,
-        includeAudiobooks: opts.includeAudiobooks,
-        includePlaylists: opts.includePlaylists,
-        musicCount: Object.keys(musicLibraryTracks).length,
-        podcastCount: Object.keys(podcastLibraryTracks).length,
-        audiobookCount: Object.keys(audiobookLibraryTracks).length,
-      }, "H1");
-      // #endregion
-
       let codecName = device.profile.codecName ?? "copy";
       const folders = lib.getLibraryFolders();
       const libraryFolderPaths = new Map<number, string>();
@@ -836,24 +779,13 @@ export function registerIpcHandlers(): void {
         }
       }
 
-      let progressSendCount = 0;
       const syncOpts: RunSyncOptions = {
         syncType: opts.syncType,
         extraTrackPolicy: opts.extraTrackPolicy,
         cancelSignal: activeSyncAbort.signal,
         ignoreSpaceCheck: opts.ignoreSpaceCheck,
-        enableSyncDiagnostics: isDevMode,
         progressCallback: (progressEvent) => {
-          progressSendCount++;
-          const isDestroyed = event.sender.isDestroyed();
-          if (progressSendCount === 1) {
-            appendDebugLog({
-              location: "main:firstProgress",
-              message: "first progressCallback",
-              data: { event: progressEvent.event, path: progressEvent.path, isDestroyed, willSend: !isDestroyed },
-            });
-          }
-          if (!isDestroyed) {
+          if (!event.sender.isDestroyed()) {
             event.sender.send("sync:progress", progressEvent);
           }
         },
@@ -871,14 +803,19 @@ export function registerIpcHandlers(): void {
       const willRunMusic = Object.keys(musicLibraryTracks).length > 0;
       const willRunPodcast = Object.keys(podcastLibraryTracks).length > 0;
       const willRunAudiobook = Object.keys(audiobookLibraryTracks).length > 0;
-      if (!willRunMusic && !willRunPodcast && !willRunAudiobook) {
-        syncOpts.progressCallback?.({ event: "log", message: "No music, podcast, audiobook or playlist to sync." });
+      const isEmptyLibrary = !willRunMusic && !willRunPodcast && !willRunAudiobook;
+
+      if (isEmptyLibrary) {
+        const isShadow = device.profile.sourceLibraryType === "shadow" && device.profile.shadowLibraryId != null;
+        const emptyMessage = isShadow
+          ? "Shadow library contains no files to sync. Build or select a shadow library that has tracks."
+          : "Library contains no music, podcast, or audiobook files to sync. Add library folders and scan first.";
+        syncOpts.progressCallback?.({ event: "log", message: emptyMessage });
         syncOpts.progressCallback?.({ event: "total", path: "0" });
+        activeSyncAbort = null;
+        return { error: emptyMessage };
       }
 
-      // #region agent log
-      syncDebugLog("entering music sync?", { willRunMusic }, "H1");
-      // #endregion
       if (willRunMusic) {
         const deviceMusicPath = device.getContentPath("music");
         const deviceMusicRaw = device.getTracks("music", { cancelSignal: activeSyncAbort.signal });
@@ -906,9 +843,6 @@ export function registerIpcHandlers(): void {
         result.missingFiles = [...result.missingFiles, ...musicResult.missingFiles];
       }
 
-      // #region agent log
-      syncDebugLog("entering podcast sync?", { willRunPodcast }, "H5");
-      // #endregion
       if (willRunPodcast) {
         const devicePodcastPath = device.getContentPath("podcast");
         const devicePodcastRaw = device.getTracks("podcast", { cancelSignal: activeSyncAbort.signal });
@@ -972,23 +906,8 @@ export function registerIpcHandlers(): void {
           ? (opts.selections?.playlists?.length ?? 0) > 0
           : opts.includePlaylists !== false);
 
-      // #region agent log
-      syncDebugLog("playlist write decision", {
-        shouldWritePlaylists,
-        resultErrors: result.errors,
-        includePlaylists: opts.includePlaylists,
-        playlistFolderTruthy: !!device.getContentPath("playlist"),
-      }, "H2");
-      // #endregion
-
       if (shouldWritePlaylists) {
         const playlistFolder = device.getContentPath("playlist");
-        // #region agent log
-        syncDebugLog("playlist folder", {
-          playlistFolder: playlistFolder ?? "(falsy)",
-          hasFolder: !!playlistFolder,
-        }, "H3");
-        // #endregion
         if (playlistFolder) {
           try {
             const core = getPlaylistCore();
@@ -997,12 +916,6 @@ export function registerIpcHandlers(): void {
               const selectedSet = new Set(opts.selections.playlists);
               playlistsToWrite = playlistsToWrite.filter((pl) => selectedSet.has(pl.name));
             }
-            // #region agent log
-            syncDebugLog("playlists to write", {
-              count: playlistsToWrite.length,
-              names: playlistsToWrite.map((p) => p.name),
-            }, "H4");
-            // #endregion
             const musicFolder = device.profile.musicFolder ?? "Music";
             const m3uOpts = {
               musicFolder,
@@ -1039,11 +952,6 @@ export function registerIpcHandlers(): void {
               });
             }
           } catch (err) {
-            // #region agent log
-            syncDebugLog("playlist write error", {
-              error: err instanceof Error ? err.message : String(err),
-            }, "H4");
-            // #endregion
             console.error("[ipc] Sync playlists to device failed:", err);
           }
         }
@@ -1060,14 +968,6 @@ export function registerIpcHandlers(): void {
         }
       }
 
-      // #region agent log
-      syncDebugLog("sync handler returning", {
-        status: result.status,
-        synced: result.synced,
-        errors: result.errors,
-        progressSendCount,
-      }, "H1");
-      // #endregion
       return result;
     })
   );
@@ -1183,5 +1083,138 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     "playlist:getAlbums",
     safe(async () => getPlaylistCore().getAlbums())
+  );
+
+  // ---- Savant Playlists -------------------------------------------------
+
+  ipcMain.handle(
+    "savant:generate",
+    safe(async (_event, intent: import("../shared/types").SavantIntent) => {
+      const config = getOpenRouterConfig();
+      if (!config) return { error: "OpenRouter API key not configured. Add it in Settings." };
+      const db = getLibrary().getConnection();
+      const core = getPlaylistCore();
+      return generateSavantPlaylist(
+        intent,
+        config,
+        db,
+        (name, trackIds, savantConfig) =>
+          core.createSavantPlaylist(name, trackIds, savantConfig)
+      );
+    })
+  );
+
+  ipcMain.handle(
+    "savant:checkKeyData",
+    safe(async () => {
+      const db = getLibrary().getConnection();
+      const keyed = db
+        .prepare(
+          "SELECT COUNT(*) as c FROM tracks WHERE content_type = 'music' AND camelot IS NOT NULL"
+        )
+        .get() as { c: number };
+      const total = db
+        .prepare(
+          "SELECT COUNT(*) as c FROM tracks WHERE content_type = 'music'"
+        )
+        .get() as { c: number };
+      const coveragePct =
+        total.c > 0 ? Math.round((keyed.c / total.c) * 100) : 0;
+      return {
+        keyedCount: keyed.c,
+        totalCount: total.c,
+        coveragePct,
+      };
+    })
+  );
+
+  ipcMain.handle(
+    "savant:backfillFeatures",
+    safe(async () => {
+      const scanner = new LibraryScanner(getLibrary().getConnection());
+      const processed = await scanner.backfillFeatures(50);
+      return { processed };
+    })
+  );
+
+  ipcMain.handle(
+    "savant:chat:start",
+    safe(async () => {
+      const config = getOpenRouterConfig();
+      if (!config?.apiKey?.trim())
+        return { error: "OpenRouter API key not configured" };
+      const sessionId = randomUUID();
+      const { state, aiMessage } = await startMoodChat(config);
+      moodChatSessions.set(sessionId, state);
+      return { sessionId, aiMessage };
+    })
+  );
+
+  ipcMain.handle(
+    "savant:chat:turn",
+    safe(async (
+      _event,
+      { sessionId, userMessage }: { sessionId: string; userMessage: string }
+    ) => {
+      const config = getOpenRouterConfig();
+      if (!config?.apiKey?.trim())
+        return { error: "OpenRouter API key not configured" };
+      const state = moodChatSessions.get(sessionId);
+      if (!state) return { error: "Chat session not found" };
+      const result = await processMoodChatTurn(state, userMessage, config);
+      if (result.isComplete) moodChatSessions.delete(sessionId);
+      return result;
+    })
+  );
+
+  ipcMain.handle(
+    "savant:chat:skip",
+    safe(async (_event, sessionId: string) => {
+      moodChatSessions.delete(sessionId);
+    })
+  );
+
+  ipcMain.handle(
+    "assistant:chat",
+    safe(async (
+      _event,
+      messages: Array<{ role: "user" | "assistant"; content: string }>
+    ) => {
+      const config = getOpenRouterConfig();
+      if (!config?.apiKey?.trim())
+        return { error: "OpenRouter API key not configured" };
+      const db = getLibrary().getConnection();
+      const reply = await sendAssistantMessage(messages, db, config);
+      return { reply };
+    })
+  );
+
+  // ---- Settings (OpenRouter) ---------------------------------------------
+
+  ipcMain.handle(
+    "settings:getOpenRouterConfig",
+    safe(async () => getOpenRouterConfig())
+  );
+
+  ipcMain.handle(
+    "settings:setOpenRouterConfig",
+    safe(async (_event, config: import("../shared/types").OpenRouterConfig | null) => {
+      setOpenRouterConfig(config);
+    })
+  );
+
+  ipcMain.handle(
+    "settings:testOpenRouter",
+    safe(async (_event, configOverride?: { apiKey: string; model: string } | null) => {
+      const config = configOverride ?? getOpenRouterConfig();
+      if (!config?.apiKey?.trim()) return { ok: false, error: "No API key" };
+      const { callOpenRouter } = await import("./llm/openRouterClient");
+      await callOpenRouter(
+        [{ role: "user", content: "Reply with exactly: OK" }],
+        { apiKey: config.apiKey, model: config.model?.trim() || "anthropic/claude-sonnet-4.6" },
+        false
+      );
+      return { ok: true };
+    })
   );
 }

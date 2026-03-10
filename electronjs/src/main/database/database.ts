@@ -19,6 +19,45 @@ export class AppDatabase {
     this.db.exec(SCHEMA_SQL);
     this.migrateDevicesTable();
     this.migrateAudiobooks();
+    this.migrateSavant();
+  }
+
+  private migrateSavant(): void {
+    if (!this.db) return;
+    try {
+      const trackRows = this.db
+        .prepare("PRAGMA table_info(tracks)")
+        .all() as { name: string }[];
+      const trackNames = new Set(trackRows.map((r) => r.name));
+      if (!trackNames.has("key")) {
+        this.db.prepare("ALTER TABLE tracks ADD COLUMN key TEXT").run();
+      }
+      if (!trackNames.has("bpm")) {
+        this.db.prepare("ALTER TABLE tracks ADD COLUMN bpm REAL").run();
+      }
+      if (!trackNames.has("camelot")) {
+        this.db.prepare("ALTER TABLE tracks ADD COLUMN camelot TEXT").run();
+      }
+      if (!trackNames.has("features_scanned")) {
+        this.db
+          .prepare(
+            "ALTER TABLE tracks ADD COLUMN features_scanned INTEGER DEFAULT 0"
+          )
+          .run();
+      }
+
+      const playlistRows = this.db
+        .prepare("PRAGMA table_info(playlists)")
+        .all() as { name: string }[];
+      const playlistNames = new Set(playlistRows.map((r) => r.name));
+      if (!playlistNames.has("savant_config")) {
+        this.db
+          .prepare("ALTER TABLE playlists ADD COLUMN savant_config TEXT")
+          .run();
+      }
+    } catch {
+      // best effort
+    }
   }
 
   private migrateDevicesTable(): void {

@@ -1,6 +1,6 @@
 {
   "name": "ipodrocks",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "iPod sync and library management",
   "main": "dist/main/main/index.js",
   "scripts": {
@@ -29,6 +29,8 @@
     "zustand": "^5.0.0"
   },
   "devDependencies": {
+    "@testing-library/jest-dom": "^6.6.0",
+    "@testing-library/react": "^16.0.0",
     "@tailwindcss/vite": "^4.0.0",
     "@types/better-sqlite3": "^7.6.0",
     "@types/js-yaml": "^4.0.0",
@@ -42,6 +44,7 @@
     "electron-rebuild": "^3.2.0",
     "tailwindcss": "^4.0.0",
     "typescript": "^5.0.0",
+    "jsdom": "^25.0.0",
     "vite": "^6.0.0",
     "vitest": "^3.0.0",
     "wait-on": "^8.0.0"

@@ -28,7 +28,6 @@ export interface CompareOptions {
   cancelCallback?: () => boolean;
   profileCodecExt?: string | null;
   progressCallback?: (current: number, total: number) => void;
-  debugCallback?: (message: string) => void;
   /** Library path -> mtime in ms; skip if device mtime matches within MTIME_TOLERANCE_MS. */
   libraryExpectedMtimes?: Record<string, number>;
 }
@@ -103,7 +102,6 @@ export function compareLibraries(
     cancelCallback,
     profileCodecExt,
     progressCallback,
-    debugCallback,
     libraryExpectedMtimes = {},
   } = options;
 
@@ -241,42 +239,9 @@ export function compareLibraries(
         });
       } else {
         missingTracks.add(libPath);
-        if (debugCallback) {
-          debugCallback(
-            `[SYNC-DIAG] RESYNC (matched but not skipped): ${path.basename(libPath)}\n` +
-              `  lib_path:      ${libPath}\n` +
-              `  rel_path:      ${relPath}\n` +
-              `  norm_key:      ${relPathNorm}\n` +
-              `  device_path:   ${devicePath}\n` +
-              `  expected_size: ${expectedSize}\n` +
-              `  device_size:   ${deviceSize}\n` +
-              `  size_diff:     ${Math.abs(deviceSize - expectedSize)}\n` +
-              `  profile_ext:   ${profileExtNorm}\n` +
-              `  device_ext:    ${normalizeKey(extOf(devicePath))}`
-          );
-        }
       }
     } else {
       missingTracks.add(libPath);
-      if (debugCallback) {
-        const fnameLower = path.basename(relPath).toLowerCase();
-        const close: string[] = [];
-        for (const [r, [dp, sz]] of deviceByRel) {
-          if (path.basename(r).toLowerCase() === fnameLower) {
-            close.push(`    ${r} (size=${sz})`);
-            if (close.length >= 5) break;
-          }
-        }
-        debugCallback(
-          `[SYNC-DIAG] MISSING (no path match): ${path.basename(libPath)}\n` +
-            `  lib_path:      ${libPath}\n` +
-            `  rel_path:      ${relPath}\n` +
-            `  norm_key:      ${relPathNorm}\n` +
-            `  expected_size: ${expectedSize}\n` +
-            `  stem_key:      ${stemKey}\n` +
-            `  Same filename on device:\n${close.length ? close.join("\n") : "    (none)"}`
-        );
-      }
     }
   }
 
@@ -291,28 +256,6 @@ export function compareLibraries(
   for (const [relStr, [dp]] of deviceByRel) {
     if (!matchedDevicePaths.has(dp)) {
       extras.push(dp);
-      if (debugCallback) {
-        const relNorm = normalizeRelPathForMatch(relStr);
-        const inLibrary = libraryNormKeys.has(relNorm);
-        const fname = path.basename(relStr).toLowerCase();
-        const sameNameInLibrary: string[] = [];
-        for (const libRel of Object.values(libraryDestMap)) {
-          if (path.basename(libRel).toLowerCase() === fname) {
-            sameNameInLibrary.push(libRel);
-            if (sameNameInLibrary.length >= 3) break;
-          }
-        }
-        debugCallback(
-          `[ORPHAN-DIAG] ${path.basename(dp)}\n` +
-            `  device_rel:   ${relStr}\n` +
-            `  norm_key:     ${relNorm}\n` +
-            `  in_library:   ${inLibrary}\n` +
-            (sameNameInLibrary.length > 0
-              ? `  same_filename_in_library: ${sameNameInLibrary.join(" | ")}\n` +
-                `  note:         likely same track; path differs by apostrophe/hyphen/ligature (device vs library metadata). Re-sync to match.\n`
-              : "  (no library track with same filename)\n")
-        );
-      }
     }
   }
 
@@ -321,18 +264,5 @@ export function compareLibraries(
     tracksToSkip,
     extras: extras.sort(),
     codecMismatchPaths: codecMismatchPaths.sort(),
-  };
-}
-
-export function getSyncSummary(
-  missingTracks: Set<string>,
-  tracksToSkip: SkippedTrack[],
-  extras: string[]
-): { tracksToSync: number; tracksToSkip: number; extras: number; totalLibrary: number } {
-  return {
-    tracksToSync: missingTracks.size,
-    tracksToSkip: tracksToSkip.length,
-    extras: extras.length,
-    totalLibrary: missingTracks.size + tracksToSkip.length,
   };
 }
