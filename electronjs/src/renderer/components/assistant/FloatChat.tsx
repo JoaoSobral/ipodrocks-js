@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { sendAssistantChat, getOpenRouterConfig } from "../../ipc/api";
+import { MarkdownContent } from "../common/MarkdownContent";
 
 const OPENING_MESSAGE =
   "How can I help with your music library? I know your tracks, playlists, and artists.";
@@ -62,7 +63,7 @@ export function FloatChat() {
         type="button"
         onClick={() => setOpen((o) => !o)}
         className="fixed bottom-6 right-6 z-50 w-14 h-14 rounded-full bg-[#4a9eff] text-white shadow-lg hover:bg-[#3a8eef] active:scale-95 transition-all flex items-center justify-center text-2xl"
-        title={open ? "Close chat" : "Open chat"}
+        title={open ? "Close chat" : "Music Assistant"}
       >
         💬
       </button>
@@ -102,7 +103,7 @@ export function FloatChat() {
           <div className="flex-1 overflow-y-auto min-h-[200px] max-h-[280px] p-4 space-y-3">
             {messages.length === 0 ? (
               <div className="flex justify-start">
-                <div className="max-w-[85%] rounded-xl px-3 py-2 bg-white/[0.06] text-sm text-[#e0e0e0] [.theme-light_&]:bg-[#f3f4f6] [.theme-light_&]:text-[#374151]">
+                <div className="max-w-[85%] rounded-xl px-3 py-2 bg-white/[0.06] text-sm text-[#e0e0e0] [.theme-light_&]:bg-[#f3f4f6] [.theme-light_&]:text-[#374151] select-text">
                   {OPENING_MESSAGE}
                 </div>
               </div>
@@ -113,13 +114,17 @@ export function FloatChat() {
                   className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}
                 >
                   <div
-                    className={`max-w-[85%] rounded-xl px-3 py-2 text-sm whitespace-pre-wrap ${
+                    className={`max-w-[85%] rounded-xl px-3 py-2 text-sm select-text ${
                       m.role === "user"
-                        ? "bg-[#4a9eff]/20 text-white"
+                        ? "bg-[#4a9eff]/20 text-white whitespace-pre-wrap"
                         : "bg-white/[0.06] text-[#e0e0e0] [.theme-light_&]:bg-[#f3f4f6] [.theme-light_&]:text-[#374151]"
                     }`}
                   >
-                    {m.content}
+                    {m.role === "assistant" ? (
+                      <MarkdownContent content={m.content} />
+                    ) : (
+                      <span className="whitespace-pre-wrap">{m.content}</span>
+                    )}
                   </div>
                 </div>
               ))

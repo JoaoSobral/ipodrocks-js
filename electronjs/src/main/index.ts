@@ -1,15 +1,29 @@
 import { app, BrowserWindow } from "electron";
+import * as fs from "fs";
 import * as path from "path";
 import { registerIpcHandlers } from "./ipc";
 
 const devServerUrl = process.env.VITE_DEV_SERVER_URL;
 
+function getIconPath(): string {
+  if (app.isPackaged) {
+    return path.join(process.resourcesPath, "icon.png");
+  }
+  const candidates = [
+    path.join(app.getAppPath(), "resources", "icon.png"),
+    path.join(__dirname, "../../../resources/icon.png"),
+    path.join(process.cwd(), "resources", "icon.png"),
+  ];
+  for (const p of candidates) {
+    if (fs.existsSync(p)) return p;
+  }
+  return candidates[0];
+}
+
 function createWindow(): BrowserWindow {
   const preloadPath = path.join(__dirname, "preload.js");
+  const iconPath = getIconPath();
 
-  const iconPath = app.isPackaged
-    ? path.join(process.resourcesPath, "icon.png")
-    : path.join(__dirname, "../../../resources/icon.png");
   const win = new BrowserWindow({
     width: 1200,
     height: 800,

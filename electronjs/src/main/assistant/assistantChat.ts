@@ -1,13 +1,13 @@
 /**
- * Assistant chat — context-aware bot with library and playlist knowledge.
- * Used by the floating chat widget.
+ * Assistant chat — context-aware bot with full library and playlist knowledge.
+ * Used by the floating chat widget. Provides read-only access to the full DB.
  */
 
 import Database from "better-sqlite3";
 import { callOpenRouter, OpenRouterConfig, OpenRouterMessage } from "../llm/openRouterClient";
 
-const MAX_CONTEXT_TRACKS = 200;
-const MAX_CONTEXT_PLAYLISTS = 50;
+const MAX_CONTEXT_TRACKS = 2500;
+const MAX_PLAYLIST_TRACKS = 150;
 
 function buildLibraryContext(db: Database.Database): string {
   const stats = db
@@ -29,21 +29,58 @@ function buildLibraryContext(db: Database.Database): string {
     genres: number;
   };
 
+  const keyedCount = (
+    db.prepare(
+      "SELECT COUNT(*) as c FROM tracks WHERE content_type = 'music' AND camelot IS NOT NULL"
+    ).get() as { c: number }
+  ).c;
+  const harmonicPct =
+    stats.music > 0 ? Math.round((keyedCount / stats.music) * 100) : 0;
+
+  const artistCounts = db
+    .prepare(
+      `SELECT a.name, COUNT(t.id) as cnt
+       FROM artists a
+       JOIN tracks t ON t.artist_id = a.id AND t.content_type = 'music'
+       GROUP BY a.id
+       ORDER BY cnt DESC`
+    )
+    .all() as Array<{ name: string; cnt: number }>;
+
+  const genreCounts = db
+    .prepare(
+      `SELECT g.name, COUNT(t.id) as cnt
+       FROM genres g
+       JOIN tracks t ON t.genre_id = g.id AND t.content_type = 'music'
+       GROUP BY g.id
+       ORDER BY cnt DESC`
+    )
+    .all() as Array<{ name: string; cnt: number }>;
+
   const playlists = db
     .prepare(
       `SELECT p.id, p.name, pt.name as type_name,
         (SELECT COUNT(*) FROM playlist_items pi WHERE pi.playlist_id = p.id) as track_count
        FROM playlists p
        JOIN playlist_types pt ON p.playlist_type_id = pt.id
-       ORDER BY p.name
-       LIMIT ?`
+       ORDER BY p.name`
     )
-    .all(MAX_CONTEXT_PLAYLISTS) as Array<{
+    .all() as Array<{
     id: number;
     name: string;
     type_name: string;
     track_count: number;
   }>;
+
+  const getPlaylistTracks = db.prepare(
+    `SELECT t.title, a.name as artist
+       FROM playlist_items pi
+       JOIN tracks t ON t.id = pi.track_id AND t.content_type = 'music'
+       LEFT JOIN artists a ON t.artist_id = a.id
+       WHERE pi.playlist_id = ?
+       ORDER BY pi.position
+       LIMIT ?`
+  );
 
   const tracks = db
     .prepare(
@@ -64,60 +101,106 @@ function buildLibraryContext(db: Database.Database): string {
     genre: string | null;
   }>;
 
-  const artistCounts = db
+  const statsRows = db
     .prepare(
-      `SELECT a.name, COUNT(t.id) as cnt
-       FROM artists a
-       JOIN tracks t ON t.artist_id = a.id AND t.content_type = 'music'
-       GROUP BY a.id
-       ORDER BY cnt DESC
-       LIMIT 30`
+      `SELECT t.id, a.name as artist, t.title as track_title,
+              ps.total_plays, ps.avg_completion_rate
+       FROM playback_stats ps
+       JOIN tracks t ON t.id = ps.track_id
+       LEFT JOIN artists a ON t.artist_id = a.id
+       WHERE t.content_type = 'music'`
     )
-    .all() as Array<{ name: string; cnt: number }>;
-
-  const genreCounts = db
-    .prepare(
-      `SELECT g.name, COUNT(t.id) as cnt
-       FROM genres g
-       JOIN tracks t ON t.genre_id = g.id AND t.content_type = 'music'
-       GROUP BY g.id
-       ORDER BY cnt DESC
-       LIMIT 20`
-    )
-    .all() as Array<{ name: string; cnt: number }>;
+    .all() as Array<{
+    artist: string | null;
+    track_title: string | null;
+    total_plays: number;
+    avg_completion_rate: number;
+  }>;
 
   const lines: string[] = [
     "## Library summary",
     `- Music: ${stats.music} tracks, ${stats.artists} artists, ${stats.albums} albums, ${stats.genres} genres`,
     `- Podcasts: ${stats.podcast} tracks`,
     `- Audiobooks: ${stats.audiobook} tracks`,
+    `- Harmonic data (key/BPM): ${keyedCount}/${stats.music} tracks (${harmonicPct}%)`,
     "",
-    "## Top artists (by track count)",
+    "## All artists (by track count)",
     artistCounts.map((a) => `- ${a.name}: ${a.cnt} tracks`).join("\n"),
     "",
-    "## Top genres",
+    "## All genres",
     genreCounts.map((g) => `- ${g.name}: ${g.cnt} tracks`).join("\n"),
     "",
-    "## Playlists",
-    playlists
-      .map((p) => `- "${p.name}" (${p.type_name}): ${p.track_count} tracks`)
-      .join("\n"),
+    "## All playlists (with track lists)",
+  ];
+
+  for (const p of playlists) {
+    const items = getPlaylistTracks.all(
+      p.id,
+      MAX_PLAYLIST_TRACKS
+    ) as Array<{ title: string | null; artist: string | null }>;
+    const trackList = items
+      .map((i) => `${i.title ?? "?"} — ${i.artist ?? "?"}`)
+      .join("; ");
+    const suffix =
+      p.track_count > MAX_PLAYLIST_TRACKS
+        ? ` (showing first ${MAX_PLAYLIST_TRACKS} of ${p.track_count})`
+        : "";
+    lines.push(`- "${p.name}" (${p.type_name}): ${p.track_count} tracks${suffix}`);
+    if (trackList) lines.push(`  Tracks: ${trackList}`);
+  }
+
+  if (statsRows.length > 0) {
+    const artistPlays = new Map<string, number>();
+    const skippedArtists = new Set<string>();
+    for (const r of statsRows) {
+      const artist = r.artist ?? "Unknown";
+      artistPlays.set(artist, (artistPlays.get(artist) ?? 0) + r.total_plays);
+      if (r.avg_completion_rate < 0.25 && r.total_plays > 1) {
+        skippedArtists.add(artist);
+      }
+    }
+    const topByPlays = [...artistPlays.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 15)
+      .map(([artist, plays]) => `${artist} (${plays} plays)`);
+    const topTracks = statsRows
+      .filter((r) => r.total_plays > 0)
+      .sort((a, b) => (b.avg_completion_rate ?? 0) - (a.avg_completion_rate ?? 0))
+      .slice(0, 20)
+      .map(
+        (r) =>
+          `${r.track_title ?? "?"} — ${r.artist ?? "?"} (${Math.round((r.avg_completion_rate ?? 0) * 100)}% completion)`
+      );
+    lines.push(
+      "",
+      "## Playlog (listening history)",
+      `- Top artists by plays: ${topByPlays.join(", ") || "none"}`,
+      `- Favorites (high completion): ${topTracks.join("; ") || "none"}`,
+      `- Artists they tend to skip: ${[...skippedArtists].slice(0, 8).join(", ") || "none"}`
+    );
+  }
+
+  const trackSuffix =
+    stats.music > MAX_CONTEXT_TRACKS
+      ? ` (showing first ${MAX_CONTEXT_TRACKS} of ${stats.music})`
+      : "";
+  lines.push(
     "",
-    "## Sample tracks (title, artist, album, genre)",
+    `## All tracks (title | artist | album | genre)${trackSuffix}`,
     tracks
       .map(
         (t) =>
           `- ${t.title ?? "?"} | ${t.artist ?? "?"} | ${t.album ?? "?"} | ${t.genre ?? "?"}`
       )
-      .join("\n"),
-  ];
+      .join("\n")
+  );
 
   return lines.join("\n");
 }
 
 const ASSISTANT_SYSTEM_PROMPT = `You are a helpful music assistant for iPodRocks, a personal music library and iPod sync app.
-You have access to the user's library (tracks, artists, albums, genres) and playlists.
-Answer questions about their music, suggest playlists, help find tracks, or assist with mood-based recommendations.
+You have read-only access to the user's full database: all tracks, artists, albums, genres, playlists (with track lists), playlog (listening history), and harmonic data.
+Use this context to answer questions about their music, suggest playlists, help find tracks, recommend based on mood or listening habits, or discuss any aspect of their library.
 Keep responses concise (1–4 sentences unless the user asks for more).
 If asked about creating a Savant (AI) playlist, direct them to the Playlists > Savant tab.`;
 

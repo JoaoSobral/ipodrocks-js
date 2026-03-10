@@ -1,5 +1,6 @@
 appId: com.ipodrocks.app
 productName: iPodRocks
+icon: resources/icon.png
 directories:
   output: out
   buildResources: resources

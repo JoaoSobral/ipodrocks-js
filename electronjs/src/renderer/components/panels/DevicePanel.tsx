@@ -352,7 +352,7 @@ export function DevicePanel() {
                     </span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-[#5a5f68]">Last Sync</span>
+                    <span className="text-[#5a5f68]">Last sync date</span>
                     <span className="text-[#8a8f98]">
                       {d?.lastSyncDate
                         ? new Date(d.lastSyncDate).toLocaleDateString()
@@ -360,8 +360,12 @@ export function DevicePanel() {
                     </span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-[#5a5f68]">Synced Items</span>
+                    <span className="text-[#5a5f68]">Total on device</span>
                     <span className="text-[#8a8f98]">{(d?.totalSyncedItems ?? 0).toLocaleString()}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-[#5a5f68]">Items in last sync</span>
+                    <span className="text-[#8a8f98]">{(d?.lastSyncCount ?? 0).toLocaleString()}</span>
                   </div>
                 </div>
 

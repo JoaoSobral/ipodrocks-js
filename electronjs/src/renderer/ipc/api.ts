@@ -393,10 +393,23 @@ export async function checkSavantKeyData(): Promise<SavantKeyData> {
   return window.api.invoke("savant:checkKeyData") as Promise<SavantKeyData>;
 }
 
-export async function backfillSavantFeatures(): Promise<{ processed: number }> {
-  return window.api.invoke("savant:backfillFeatures") as Promise<{
+export async function backfillSavantFeatures(opts?: {
+  percent?: number;
+}): Promise<{ processed: number; cancelled?: boolean }> {
+  return window.api.invoke("savant:backfillFeatures", opts) as Promise<{
     processed: number;
+    cancelled?: boolean;
   }>;
+}
+
+export async function cancelBackfill(): Promise<void> {
+  await window.api.invoke("savant:backfillCancel");
+}
+
+export function onBackfillProgress(
+  cb: (progress: import("@shared/types").BackfillProgress) => void
+): () => void {
+  return window.api.on("savant:backfillProgress", cb as (...args: unknown[]) => void);
 }
 
 export async function startMoodChat(): Promise<
@@ -427,6 +440,50 @@ export async function sendMoodChatTurn(
 
 export async function skipMoodChat(sessionId: string): Promise<void> {
   return window.api.invoke("savant:chat:skip", sessionId) as Promise<void>;
+}
+
+export interface SavantPlaylistIntent {
+  mood: string;
+  seedArtist?: string;
+  adventureLevel: "conservative" | "mixed" | "adventurous";
+}
+
+export async function startSavantPlaylistChat(): Promise<
+  | { sessionId: string; aiMessage: string }
+  | { error: string }
+> {
+  return window.api.invoke("savant:playlistChat:start") as Promise<
+    | { sessionId: string; aiMessage: string }
+    | { error: string }
+  >;
+}
+
+export async function sendSavantPlaylistChatTurn(
+  sessionId: string,
+  userMessage: string
+): Promise<
+  | {
+      aiMessage: string;
+      isComplete: boolean;
+      intent?: SavantPlaylistIntent;
+    }
+  | { error: string }
+> {
+  return window.api.invoke("savant:playlistChat:turn", {
+    sessionId,
+    userMessage,
+  }) as Promise<
+    | {
+        aiMessage: string;
+        isComplete: boolean;
+        intent?: SavantPlaylistIntent;
+      }
+    | { error: string }
+  >;
+}
+
+export async function skipSavantPlaylistChat(sessionId: string): Promise<void> {
+  return window.api.invoke("savant:playlistChat:skip", sessionId) as Promise<void>;
 }
 
 export async function sendAssistantChat(
@@ -466,6 +523,21 @@ export async function testOpenRouterConnection(config?: {
     ok: boolean;
     error?: string;
   }>;
+}
+
+export interface HarmonicPrefs {
+  scanHarmonicData?: boolean;
+  backfillPercent?: number;
+  analyzeWithEssentia?: boolean;
+  analyzePercent?: number;
+}
+
+export async function getHarmonicPrefs(): Promise<HarmonicPrefs> {
+  return window.api.invoke("settings:getHarmonicPrefs") as Promise<HarmonicPrefs>;
+}
+
+export async function setHarmonicPrefs(prefs: HarmonicPrefs): Promise<void> {
+  return window.api.invoke("settings:setHarmonicPrefs", prefs) as Promise<void>;
 }
 
 // ---------------------------------------------------------------------------

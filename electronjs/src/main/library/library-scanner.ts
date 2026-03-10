@@ -165,14 +165,17 @@ export class LibraryScanner {
    * @param contentType  "music", "podcast", or "audiobook"
    * @param progressCallback  Optional callback invoked for each file
    * @param signal  Optional AbortSignal for cancellation
+   * @param options  Optional: scanHarmonicData (default true) - extract key/BPM when true
    * @returns Summary of files processed and added
    */
   async scanFolder(
     folderPath: string,
     contentType: string = "music",
     progressCallback?: (progress: ScanProgress) => void,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    options?: { scanHarmonicData?: boolean }
   ): Promise<ScanResult> {
+    const scanHarmonicData = options?.scanHarmonicData !== false;
     const folder = path.resolve(folderPath.trim());
     if (!fs.existsSync(folder)) {
       return { filesAdded: 0, filesProcessed: 0, cancelled: false };
@@ -257,10 +260,19 @@ export class LibraryScanner {
           continue;
         }
 
+        const metadataPromise = this.metadataExtractor.extractMetadata(
+          filePath,
+          contentType
+        );
+        const audioInfoPromise =
+          this.metadataExtractor.extractAudioInfo(filePath);
+        const featuresPromise = scanHarmonicData
+          ? this.metadataExtractor.extractAudioFeatures(filePath)
+          : Promise.resolve({ key: null, bpm: null, camelot: null });
         const [metadata, audioInfo, features] = await Promise.all([
-          this.metadataExtractor.extractMetadata(filePath, contentType),
-          this.metadataExtractor.extractAudioInfo(filePath),
-          this.metadataExtractor.extractAudioFeatures(filePath),
+          metadataPromise,
+          audioInfoPromise,
+          featuresPromise,
         ]);
 
         const fileSize = stat.size;
@@ -299,7 +311,7 @@ export class LibraryScanner {
         const trackRow = this.getTrackIdByPathStmt.get(filePath) as
           | { id: number }
           | undefined;
-        if (trackRow) {
+        if (trackRow && scanHarmonicData && contentType === "music") {
           this.updateTrackFeaturesStmt.run(
             features.key,
             features.bpm,
@@ -494,20 +506,56 @@ export class LibraryScanner {
   }
 
   /**
-   * Backfill key/BPM/Camelot for tracks with features_scanned = 0.
-   * Processes one batch (up to 50 tracks) for Savant harmonic sequencing.
+   * Backfill key/BPM/Camelot for tracks that need it (tag-based only).
+   * Includes: features_scanned = 0 OR camelot IS NULL (retry unkeyed tracks).
+   * @param maxTracks  Max tracks to process (from percent of library). Default 500.
+   * @param progressCallback  Optional callback for progress updates.
+   * @param signal  Optional AbortSignal to cancel the operation.
    * @returns Number of tracks processed.
    */
-  async backfillFeatures(batchSize = 50): Promise<number> {
+  async backfillFeatures(
+    maxTracks = 500,
+    progressCallback?: (p: {
+      path: string;
+      processed: number;
+      total: number;
+      success: boolean;
+      status: "analyzing" | "complete" | "error" | "cancelled";
+    }) => void,
+    signal?: AbortSignal
+  ): Promise<number> {
     const rows = this.db
       .prepare(
         `SELECT id, path FROM tracks
-         WHERE features_scanned = 0 AND content_type = 'music'
+         WHERE content_type = 'music'
+           AND (features_scanned = 0 OR camelot IS NULL)
          LIMIT ?`
       )
-      .all(batchSize) as { id: number; path: string }[];
+      .all(maxTracks) as { id: number; path: string }[];
 
-    for (const row of rows) {
+    const total = rows.length;
+    let processed = 0;
+
+    for (let i = 0; i < rows.length; i++) {
+      if (signal?.aborted) {
+        progressCallback?.({
+          path: "",
+          processed: i,
+          total,
+          success: false,
+          status: "cancelled",
+        });
+        break;
+      }
+      const row = rows[i];
+      let ok = false;
+      progressCallback?.({
+        path: row.path,
+        processed: i,
+        total,
+        success: false,
+        status: "analyzing",
+      });
       try {
         const features = await this.metadataExtractor.extractAudioFeatures(
           row.path
@@ -518,16 +566,170 @@ export class LibraryScanner {
           features.camelot,
           row.id
         );
+        processed++;
+        ok = !!features.key || !!features.bpm || !!features.camelot;
       } catch {
-        // Mark as scanned even on error to avoid retrying indefinitely
         this.db
-          .prepare(
-            "UPDATE tracks SET features_scanned = 1 WHERE id = ?"
-          )
+          .prepare("UPDATE tracks SET features_scanned = 1 WHERE id = ?")
           .run(row.id);
       }
+      progressCallback?.({
+        path: row.path,
+        processed: i + 1,
+        total,
+        success: ok,
+        status: signal?.aborted
+          ? "cancelled"
+          : i + 1 === total
+            ? "complete"
+            : "analyzing",
+      });
     }
-    return rows.length;
+    return processed;
+  }
+
+  /**
+   * Sample tracks by genre for round-robin distribution.
+   * Returns array of {id, path} in round-robin order across genres.
+   */
+  private sampleTracksByGenre(
+    totalMusic: number,
+    percent: number
+  ): Array<{ id: number; path: string }> {
+    const targetCount = Math.min(
+      totalMusic,
+      Math.max(1, Math.ceil((totalMusic * percent) / 100))
+    );
+    const rows = this.db
+      .prepare(
+        `SELECT t.id, t.path, COALESCE(t.genre_id, 0) as genre_id
+         FROM tracks t
+         WHERE t.content_type = 'music'`
+      )
+      .all() as Array<{ id: number; path: string; genre_id: number }>;
+
+    const byGenre = new Map<number, Array<{ id: number; path: string }>>();
+    for (const r of rows) {
+      const gid = r.genre_id;
+      if (!byGenre.has(gid)) byGenre.set(gid, []);
+      byGenre.get(gid)!.push({ id: r.id, path: r.path });
+    }
+
+    const genreIds = [...byGenre.keys()];
+    for (const gid of genreIds) {
+      const arr = byGenre.get(gid)!;
+      for (let i = arr.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [arr[i], arr[j]] = [arr[j], arr[i]];
+      }
+    }
+
+    const selected: Array<{ id: number; path: string }> = [];
+    let gi = 0;
+    while (selected.length < targetCount && genreIds.length > 0) {
+      const gid = genreIds[gi % genreIds.length];
+      const arr = byGenre.get(gid)!;
+      if (arr.length > 0) {
+        selected.push(arr.pop()!);
+      }
+      if (arr.length === 0) {
+        const idx = genreIds.indexOf(gid);
+        if (idx >= 0) genreIds.splice(idx, 1);
+      }
+      gi++;
+    }
+    return selected;
+  }
+
+  /**
+   * Backfill key/BPM using Essentia.js audio analysis.
+   * Samples tracks by genre (round-robin) per the given percent.
+   * @param percent  Percent of library to analyze (1–100).
+   * @param progressCallback  Optional callback for progress updates.
+   * @param signal  Optional AbortSignal to cancel the operation.
+   * @returns Number of tracks processed.
+   */
+  async backfillFeaturesWithEssentia(
+    percent: number,
+    progressCallback?: (p: {
+      path: string;
+      processed: number;
+      total: number;
+      success: boolean;
+      status: "analyzing" | "complete" | "error" | "cancelled";
+    }) => void,
+    signal?: AbortSignal
+  ): Promise<number> {
+    const totalMusic = (
+      this.db
+        .prepare(
+          "SELECT COUNT(*) as c FROM tracks WHERE content_type = 'music'"
+        )
+        .get() as { c: number }
+    ).c;
+    if (totalMusic === 0) return 0;
+
+    const { analyzeAudioWithEssentia } = await import(
+      "../harmonic/essentia-analyzer"
+    );
+    const sampled = this.sampleTracksByGenre(totalMusic, percent);
+    const total = sampled.length;
+    let processed = 0;
+
+    for (let i = 0; i < sampled.length; i++) {
+      if (signal?.aborted) {
+        progressCallback?.({
+          path: "",
+          processed: i,
+          total,
+          success: false,
+          status: "cancelled",
+        });
+        break;
+      }
+      const row = sampled[i];
+      let ok = false;
+      progressCallback?.({
+        path: row.path,
+        processed: i,
+        total,
+        success: false,
+        status: "analyzing",
+      });
+      try {
+        const features = analyzeAudioWithEssentia(row.path);
+        if (features) {
+          this.updateTrackFeaturesStmt.run(
+            features.key,
+            features.bpm,
+            features.camelot,
+            row.id
+          );
+          processed++;
+          ok = true;
+        } else {
+          this.db
+            .prepare("UPDATE tracks SET features_scanned = 1 WHERE id = ?")
+            .run(row.id);
+        }
+      } catch {
+        this.db
+          .prepare("UPDATE tracks SET features_scanned = 1 WHERE id = ?")
+          .run(row.id);
+      }
+      progressCallback?.({
+        path: row.path,
+        processed: i + 1,
+        total,
+        success: ok,
+        status: signal?.aborted
+          ? "cancelled"
+          : i + 1 === total
+            ? "complete"
+            : "analyzing",
+      });
+    }
+    return processed;
   }
 
   /**

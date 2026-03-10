@@ -19,6 +19,7 @@ interface DeviceRow {
   description: string | null;
   last_sync_date: string | null;
   total_synced_items: number;
+  last_sync_count: number;
   default_transfer_mode_id: number;
   default_codec_config_id: number | null;
   model_id: number | null;
@@ -40,7 +41,7 @@ interface DeviceRow {
 
 const DEVICES_QUERY = `
   SELECT d.id, d.name, d.mount_path, d.music_folder, d.podcast_folder,
-         d.audiobook_folder, d.playlist_folder, d.description, d.last_sync_date, d.total_synced_items,
+         d.audiobook_folder, d.playlist_folder, d.description, d.last_sync_date, d.total_synced_items, d.last_sync_count,
          d.default_transfer_mode_id, d.default_codec_config_id, d.model_id,
          d.override_bitrate, d.override_quality, d.override_bits,
          d.partial_sync_enabled,
@@ -72,6 +73,7 @@ const ALLOWED_UPDATE_FIELDS = new Set([
   "model_id",
   "last_sync_date",
   "total_synced_items",
+  "last_sync_count",
   "source_library_type",
   "shadow_library_id",
 ]);
@@ -90,6 +92,7 @@ const FIELD_MAP: Record<string, string> = {
   modelId: "model_id",
   lastSyncDate: "last_sync_date",
   totalSyncedItems: "total_synced_items",
+  lastSyncCount: "last_sync_count",
   sourceLibraryType: "source_library_type",
   shadowLibraryId: "shadow_library_id",
 };
@@ -298,6 +301,7 @@ export class DevicesCore {
       description: row.description,
       lastSyncDate: row.last_sync_date,
       totalSyncedItems: row.total_synced_items,
+      lastSyncCount: row.last_sync_count ?? 0,
       defaultTransferModeId: row.default_transfer_mode_id,
       defaultCodecConfigId: row.default_codec_config_id,
       modelId: row.model_id,

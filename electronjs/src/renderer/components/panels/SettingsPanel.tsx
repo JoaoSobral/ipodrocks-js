@@ -7,6 +7,8 @@ import {
   setOpenRouterConfig,
   testOpenRouterConnection,
   checkSavantKeyData,
+  getHarmonicPrefs,
+  setHarmonicPrefs,
 } from "../../ipc/api";
 import type { OpenRouterConfig, SavantKeyData } from "../../ipc/api";
 
@@ -24,17 +26,28 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
   const [testError, setTestError] = useState<string | null>(null);
   const [keyData, setKeyData] = useState<SavantKeyData | null>(null);
   const [saving, setSaving] = useState(false);
+  const [scanHarmonicData, setScanHarmonicData] = useState(true);
+  const [backfillPercent, setBackfillPercent] = useState(100);
+  const [analyzeWithEssentia, setAnalyzeWithEssentia] = useState(false);
+  const [analyzePercent, setAnalyzePercent] = useState(10);
 
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
     (async () => {
-      const config = await getOpenRouterConfig();
-      const data = await checkSavantKeyData();
+      const [config, data, harmonic] = await Promise.all([
+        getOpenRouterConfig(),
+        checkSavantKeyData(),
+        getHarmonicPrefs(),
+      ]);
       if (!cancelled) {
         setApiKey(config?.apiKey ?? "");
         setModel(config?.model ?? "anthropic/claude-sonnet-4.6");
         setKeyData(data);
+        setScanHarmonicData(harmonic.scanHarmonicData ?? true);
+        setBackfillPercent(harmonic.backfillPercent ?? 100);
+        setAnalyzeWithEssentia(harmonic.analyzeWithEssentia ?? false);
+        setAnalyzePercent(harmonic.analyzePercent ?? 10);
       }
     })();
     return () => {
@@ -71,6 +84,12 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
         model: modelId,
       };
       await setOpenRouterConfig(apiKey.trim() ? config : null);
+      await setHarmonicPrefs({
+        scanHarmonicData,
+        backfillPercent: Math.min(100, Math.max(1, backfillPercent)),
+        analyzeWithEssentia,
+        analyzePercent: Math.min(100, Math.max(1, analyzePercent)),
+      });
       onClose();
     } finally {
       setSaving(false);
@@ -146,18 +165,90 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
           </div>
         </section>
 
-        {keyData && (
-          <section>
-            <h4 className="text-sm font-semibold text-white mb-2">
-              Harmonic Data
-            </h4>
-            <p className="text-xs text-[#5a5f68]">
+        <section>
+          <h4 className="text-sm font-semibold text-white mb-3 [.theme-light_&]:text-[#1a1a1a]">
+            Harmonic Data (Key / BPM)
+          </h4>
+          {keyData && (
+            <p className="text-xs text-[#5a5f68] mb-4 [.theme-light_&]:text-[#6b7280]">
               {keyData.keyedCount} / {keyData.totalCount} tracks have key/BPM
-              data ({keyData.coveragePct}%). Re-scan your library to extract
-              more.
+              data ({keyData.coveragePct}%).
             </p>
-          </section>
-        )}
+          )}
+          <label className="flex items-center gap-3 mb-3 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={scanHarmonicData}
+              onChange={(e) => setScanHarmonicData(e.target.checked)}
+              className="accent-[#4a9eff] rounded"
+            />
+            <span className="text-sm text-[#e0e0e0] [.theme-light_&]:text-[#374151]">
+              Extract harmonic data when scanning library
+            </span>
+          </label>
+          <p className="text-[11px] text-[#5a5f68] mb-4 [.theme-light_&]:text-[#6b7280]">
+            When enabled, key and BPM are read from file tags during scan. Most
+            files need &quot;Backfill Key Data&quot; on the Savant tab.
+          </p>
+          <div className="flex items-center gap-3">
+            <label className="text-sm text-[#e0e0e0] [.theme-light_&]:text-[#374151]">
+              Backfill: process up to
+            </label>
+            <input
+              type="number"
+              min={1}
+              max={100}
+              value={backfillPercent}
+              onChange={(e) =>
+                setBackfillPercent(parseInt(e.target.value, 10) || 100)
+              }
+              className="w-16 rounded-lg bg-white/[0.04] border border-white/[0.08] px-2 py-1.5 text-sm text-[#e0e0e0] [.theme-light_&]:bg-white [.theme-light_&]:border-[#e2e8f0] [.theme-light_&]:text-[#1a1a1a]"
+            />
+            <span className="text-sm text-[#5a5f68] [.theme-light_&]:text-[#6b7280]">
+              % of library
+            </span>
+          </div>
+          <p className="text-[11px] text-[#5a5f68] mt-1 [.theme-light_&]:text-[#6b7280]">
+            Each backfill run processes up to this percentage of your music
+            tracks.
+          </p>
+          <label className="flex items-center gap-3 mb-3 cursor-pointer mt-4">
+            <input
+              type="checkbox"
+              checked={analyzeWithEssentia}
+              onChange={(e) => setAnalyzeWithEssentia(e.target.checked)}
+              className="accent-[#4a9eff] rounded"
+            />
+            <span className="text-sm text-[#e0e0e0] [.theme-light_&]:text-[#374151]">
+              Analyze audio with Essentia.js (key/BPM from waveform)
+            </span>
+          </label>
+          <p className="text-[11px] text-[#5a5f68] mb-4 [.theme-light_&]:text-[#6b7280]">
+            When enabled, Backfill uses Essentia.js to detect key and BPM from
+            the audio itself (not tags). Disabled by default. Samples across
+            genres for diversity.
+          </p>
+          {analyzeWithEssentia && (
+            <div className="flex items-center gap-3 mb-4">
+              <label className="text-sm text-[#e0e0e0] [.theme-light_&]:text-[#374151]">
+                Analyze:
+              </label>
+              <input
+                type="number"
+                min={1}
+                max={100}
+                value={analyzePercent}
+                onChange={(e) =>
+                  setAnalyzePercent(parseInt(e.target.value, 10) || 10)
+                }
+                className="w-16 rounded-lg bg-white/[0.04] border border-white/[0.08] px-2 py-1.5 text-sm text-[#e0e0e0] [.theme-light_&]:bg-white [.theme-light_&]:border-[#e2e8f0] [.theme-light_&]:text-[#1a1a1a]"
+              />
+              <span className="text-sm text-[#5a5f68] [.theme-light_&]:text-[#6b7280]">
+                % of library (spread by genre)
+              </span>
+            </div>
+          )}
+        </section>
 
         <div className="flex justify-end gap-2 pt-2">
           <Button variant="secondary" onClick={onClose}>

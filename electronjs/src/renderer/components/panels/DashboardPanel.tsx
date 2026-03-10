@@ -145,7 +145,7 @@ export function DashboardPanel() {
                         : "Never synced"}
                     </p>
                     <p>
-                      {(d?.totalSyncedItems ?? 0).toLocaleString()} tracks synced
+                      {(d?.totalSyncedItems ?? 0).toLocaleString()} total · {(d?.lastSyncCount ?? 0).toLocaleString()} in last sync
                     </p>
                   </div>
                 </div>

@@ -5,9 +5,21 @@ import type { OpenRouterConfig } from "../../shared/types";
 
 const PREFS_FILENAME = "ipodrocks-prefs.json";
 
+export interface HarmonicPrefs {
+  /** When true, extract key/BPM during library scan. Default true. */
+  scanHarmonicData?: boolean;
+  /** Percent of library to process when backfilling (1–100). Default 100. */
+  backfillPercent?: number;
+  /** When true, use Essentia.js to analyze audio for key/BPM (not just tags). Default false. */
+  analyzeWithEssentia?: boolean;
+  /** Percent of library to analyze with Essentia (1–100). Sampled by genre. Default 10. */
+  analyzePercent?: number;
+}
+
 interface Prefs {
   mpcRemindDisabled?: boolean;
   openRouterConfig?: OpenRouterConfig;
+  harmonic?: HarmonicPrefs;
 }
 
 function getPrefsPath(): string {
@@ -57,4 +69,20 @@ export function setOpenRouterConfig(config: OpenRouterConfig | null): void {
   const prefs = readPrefs();
   prefs.openRouterConfig = config ?? undefined;
   writePrefs(prefs);
+}
+
+export function getHarmonicPrefs(): HarmonicPrefs {
+  const h = readPrefs().harmonic;
+  return {
+    scanHarmonicData: h?.scanHarmonicData ?? true,
+    backfillPercent: Math.min(100, Math.max(1, h?.backfillPercent ?? 100)),
+    analyzeWithEssentia: h?.analyzeWithEssentia ?? false,
+    analyzePercent: Math.min(100, Math.max(1, h?.analyzePercent ?? 10)),
+  };
+}
+
+export function setHarmonicPrefs(prefs: HarmonicPrefs): void {
+  const all = readPrefs();
+  all.harmonic = { ...all.harmonic, ...prefs };
+  writePrefs(all);
 }

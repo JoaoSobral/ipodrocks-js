@@ -34,6 +34,9 @@ import {
   setMpcRemindDisabled,
   getOpenRouterConfig,
   setOpenRouterConfig,
+  getHarmonicPrefs,
+  setHarmonicPrefs,
+  type HarmonicPrefs,
 } from "./utils/prefs";
 import { generateSavantPlaylist } from "./savant/savantEngine";
 import {
@@ -41,6 +44,11 @@ import {
   processMoodChatTurn,
   type MoodChatState,
 } from "./savant/moodChat";
+import {
+  startSavantPlaylistChat,
+  processSavantPlaylistChatTurn,
+  type SavantPlaylistChatState,
+} from "./savant/savantPlaylistChat";
 import { sendAssistantMessage } from "./assistant/assistantChat";
 import { randomUUID } from "crypto";
 
@@ -54,12 +62,16 @@ let playlistCore: PlaylistCore | null = null;
 let activeSyncAbort: AbortController | null = null;
 let activeScanAbort: AbortController | null = null;
 let activeShadowBuildAbort: AbortController | null = null;
+let activeBackfillAbort: AbortController | null = null;
 
 /** In-memory cache of matched playback events keyed by device ID. */
 const geniusEventsCache = new Map<number, MatchedPlayEvent[]>();
 
 /** Ephemeral mood chat sessions keyed by session ID. */
 const moodChatSessions = new Map<string, MoodChatState>();
+
+/** Ephemeral Savant playlist chat sessions keyed by session ID. */
+const savantPlaylistChatSessions = new Map<string, SavantPlaylistChatState>();
 
 function getLibrary(): Library {
   if (!library) {
@@ -207,6 +219,7 @@ export function registerIpcHandlers(): void {
       const lib = getLibrary();
       const scanner = new LibraryScanner(lib.getConnection());
       activeScanAbort = new AbortController();
+      const harmonicPrefs = getHarmonicPrefs();
 
       let totalAdded = 0;
       let totalProcessed = 0;
@@ -221,7 +234,8 @@ export function registerIpcHandlers(): void {
             folder.path,
             folder.contentType,
             (progress) => event.sender.send("scan:progress", progress),
-            activeScanAbort.signal
+            activeScanAbort.signal,
+            { scanHarmonicData: harmonicPrefs.scanHarmonicData }
           );
           totalAdded += result.filesAdded;
           totalProcessed += result.filesProcessed;
@@ -630,6 +644,11 @@ export function registerIpcHandlers(): void {
         insertStmt.run(deviceId, lp);
       }
 
+      const totalOnDevice = matchedLibraryPaths.length;
+      getDevicesCore().updateDevice(deviceId, {
+        totalSyncedItems: totalOnDevice,
+      });
+
       return {
         deviceId,
         name: device.name,
@@ -959,9 +978,13 @@ export function registerIpcHandlers(): void {
 
       if (result.synced >= 0) {
         try {
+          const device = getDevicesCore().getDeviceById(opts.deviceId);
+          const prevTotal = device?.profile?.totalSyncedItems ?? 0;
+          const newTotal = Math.max(0, prevTotal + result.synced - result.removed);
           getDevicesCore().updateDevice(opts.deviceId, {
             lastSyncDate: new Date().toISOString(),
-            totalSyncedItems: result.synced,
+            lastSyncCount: result.synced,
+            totalSyncedItems: newTotal,
           });
         } catch (e) {
           console.error("[ipc] Update device last sync failed:", e);
@@ -1130,10 +1153,64 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(
     "savant:backfillFeatures",
+    safe(async (event, opts?: { percent?: number }) => {
+      activeBackfillAbort = new AbortController();
+      const signal = activeBackfillAbort.signal;
+
+      const lib = getLibrary();
+      const db = lib.getConnection();
+      const scanner = new LibraryScanner(db);
+      const harmonic = getHarmonicPrefs();
+
+      const sendProgress = (p: import("../shared/types").BackfillProgress) => {
+        event.sender.send("savant:backfillProgress", p);
+      };
+
+      try {
+        if (harmonic.analyzeWithEssentia) {
+          const percent = Math.min(
+            100,
+            Math.max(1, opts?.percent ?? harmonic.analyzePercent ?? 10)
+          );
+          const processed = await scanner.backfillFeaturesWithEssentia(
+            percent,
+            sendProgress,
+            signal
+          );
+          const cancelled = signal.aborted;
+          return { processed, cancelled };
+        }
+
+        const percent = Math.min(
+          100,
+          Math.max(1, opts?.percent ?? harmonic.backfillPercent ?? 100)
+        );
+        const totalMusic = (
+          db.prepare(
+            "SELECT COUNT(*) as c FROM tracks WHERE content_type = 'music'"
+          ).get() as { c: number }
+        ).c;
+        const maxTracks = Math.max(50, Math.ceil((totalMusic * percent) / 100));
+        const processed = await scanner.backfillFeatures(
+          maxTracks,
+          sendProgress,
+          signal
+        );
+        const cancelled = signal.aborted;
+        return { processed, cancelled };
+      } finally {
+        activeBackfillAbort = null;
+      }
+    })
+  );
+
+  ipcMain.handle(
+    "savant:backfillCancel",
     safe(async () => {
-      const scanner = new LibraryScanner(getLibrary().getConnection());
-      const processed = await scanner.backfillFeatures(50);
-      return { processed };
+      if (activeBackfillAbort) {
+        activeBackfillAbort.abort();
+        activeBackfillAbort = null;
+      }
     })
   );
 
@@ -1144,7 +1221,8 @@ export function registerIpcHandlers(): void {
       if (!config?.apiKey?.trim())
         return { error: "OpenRouter API key not configured" };
       const sessionId = randomUUID();
-      const { state, aiMessage } = await startMoodChat(config);
+      const db = getLibrary().getConnection();
+      const { state, aiMessage } = await startMoodChat(config, db);
       moodChatSessions.set(sessionId, state);
       return { sessionId, aiMessage };
     })
@@ -1161,7 +1239,8 @@ export function registerIpcHandlers(): void {
         return { error: "OpenRouter API key not configured" };
       const state = moodChatSessions.get(sessionId);
       if (!state) return { error: "Chat session not found" };
-      const result = await processMoodChatTurn(state, userMessage, config);
+      const db = getLibrary().getConnection();
+      const result = await processMoodChatTurn(state, userMessage, config, db);
       if (result.isComplete) moodChatSessions.delete(sessionId);
       return result;
     })
@@ -1171,6 +1250,50 @@ export function registerIpcHandlers(): void {
     "savant:chat:skip",
     safe(async (_event, sessionId: string) => {
       moodChatSessions.delete(sessionId);
+    })
+  );
+
+  ipcMain.handle(
+    "savant:playlistChat:start",
+    safe(async () => {
+      const config = getOpenRouterConfig();
+      if (!config?.apiKey?.trim())
+        return { error: "OpenRouter API key not configured" };
+      const sessionId = randomUUID();
+      const db = getLibrary().getConnection();
+      const { state, aiMessage } = await startSavantPlaylistChat(config, db);
+      savantPlaylistChatSessions.set(sessionId, state);
+      return { sessionId, aiMessage };
+    })
+  );
+
+  ipcMain.handle(
+    "savant:playlistChat:turn",
+    safe(async (
+      _event,
+      { sessionId, userMessage }: { sessionId: string; userMessage: string }
+    ) => {
+      const config = getOpenRouterConfig();
+      if (!config?.apiKey?.trim())
+        return { error: "OpenRouter API key not configured" };
+      const state = savantPlaylistChatSessions.get(sessionId);
+      if (!state) return { error: "Chat session not found" };
+      const db = getLibrary().getConnection();
+      const result = await processSavantPlaylistChatTurn(
+        state,
+        userMessage,
+        config,
+        db
+      );
+      if (result.isComplete) savantPlaylistChatSessions.delete(sessionId);
+      return result;
+    })
+  );
+
+  ipcMain.handle(
+    "savant:playlistChat:skip",
+    safe(async (_event, sessionId: string) => {
+      savantPlaylistChatSessions.delete(sessionId);
     })
   );
 
@@ -1215,6 +1338,20 @@ export function registerIpcHandlers(): void {
         false
       );
       return { ok: true };
+    })
+  );
+
+  // ---- Harmonic / Library scan -------------------------------------------
+
+  ipcMain.handle(
+    "settings:getHarmonicPrefs",
+    safe(async () => getHarmonicPrefs())
+  );
+
+  ipcMain.handle(
+    "settings:setHarmonicPrefs",
+    safe(async (_event, prefs: HarmonicPrefs) => {
+      setHarmonicPrefs(prefs);
     })
   );
 }

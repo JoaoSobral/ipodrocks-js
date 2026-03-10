@@ -5,9 +5,11 @@ import { Button } from "../common/Button";
 import { Input } from "../common/Input";
 import { Select } from "../common/Select";
 import { Modal } from "../common/Modal";
+import { BackfillProgressModal } from "../modals/BackfillProgressModal";
+import { SavantInlineChat } from "../savant/SavantInlineChat";
 import { EmptyState } from "../common/EmptyState";
-import { MoodChat } from "../savant/MoodChat";
 import { useDeviceStore } from "../../stores/device-store";
+import { useSavantStore } from "../../stores/savant-store";
 import {
   getPlaylists,
   getPlaylistTracks,
@@ -23,8 +25,8 @@ import {
   saveGeniusPlaylist,
   generateSavantPlaylist,
   checkSavantKeyData,
-  backfillSavantFeatures,
   getOpenRouterConfig,
+  getHarmonicPrefs,
 } from "../../ipc/api";
 import type {
   Playlist,
@@ -71,6 +73,7 @@ function formatDate(iso: string): string {
 
 export function PlaylistPanel() {
   const { devices, fetchDevices } = useDeviceStore();
+  const { setSavantTabActive } = useSavantStore();
   const deviceList = Array.isArray(devices) ? devices : [];
 
   // -- playlist list state ------------------------------------------------
@@ -130,12 +133,12 @@ export function PlaylistPanel() {
   // -- savant flow state ---------------------------------------------------
   const [hasOpenRouterKey, setHasOpenRouterKey] = useState<boolean | null>(null);
   const [savantKeyData, setSavantKeyData] = useState<SavantKeyData | null>(null);
-  const [savantMood, setSavantMood] = useState("");
-  const [savantMoodCustom, setSavantMoodCustom] = useState("");
-  const [savantSeedArtist, setSavantSeedArtist] = useState("");
-  const [savantAdventure, setSavantAdventure] = useState<
-    "conservative" | "mixed" | "adventurous"
-  >("mixed");
+  const [savantIntentFromChat, setSavantIntentFromChat] = useState<{
+    mood: string;
+    seedArtist?: string;
+    adventureLevel: "conservative" | "mixed" | "adventurous";
+    chatHistory: Array<{ role: "user" | "assistant"; content: string }>;
+  } | null>(null);
   const [savantTargetCount, setSavantTargetCount] = useState(100);
   const [savantGenerating, setSavantGenerating] = useState(false);
   const [savantResult, setSavantResult] = useState<GenerateSavantResult | null>(
@@ -145,15 +148,7 @@ export function PlaylistPanel() {
   const [savantResultTracks, setSavantResultTracks] = useState<
     PlaylistTrack[] | null
   >(null);
-  const [savantBackfilling, setSavantBackfilling] = useState(false);
-  const [savantArtists, setSavantArtists] = useState<ArtistInfo[]>([]);
-  const [savantChatActive, setSavantChatActive] = useState(false);
-  const [savantMoodFromChat, setSavantMoodFromChat] = useState<string | null>(
-    null
-  );
-  const [savantChatHistory, setSavantChatHistory] = useState<
-    Array<{ role: "user" | "assistant"; content: string }>
-  >([]);
+  const [showBackfillModal, setShowBackfillModal] = useState(false);
 
   // -- fetch playlists ----------------------------------------------------
   const fetchAll = useCallback(async () => {
@@ -172,18 +167,21 @@ export function PlaylistPanel() {
   }, [fetchAll, fetchDevices]);
 
   useEffect(() => {
+    setSavantTabActive(activeTab === "savant");
+    return () => setSavantTabActive(false);
+  }, [activeTab, setSavantTabActive]);
+
+  useEffect(() => {
     if (activeTab !== "savant") return;
     let cancelled = false;
     (async () => {
-      const [config, keyData, artistList] = await Promise.all([
+      const [config, keyData] = await Promise.all([
         getOpenRouterConfig(),
         checkSavantKeyData(),
-        getArtists(),
       ]);
       if (!cancelled) {
         setHasOpenRouterKey(!!config?.apiKey?.trim());
         setSavantKeyData(keyData);
-        setSavantArtists(artistList ?? []);
       }
     })();
     return () => {
@@ -406,33 +404,22 @@ export function PlaylistPanel() {
   }
 
   // -- savant flow --------------------------------------------------------
-  const MOOD_CHIPS = [
-    "Deep Focus",
-    "Night Drive",
-    "Workout",
-    "Melancholy",
-    "Happy",
-    "Party",
-    "Chill",
-    "Discover",
-  ];
-
   async function handleSavantGenerate() {
-    const mood =
-      savantMoodFromChat ??
-      (savantMoodCustom.trim() || savantMood || "Chill");
+    if (!savantIntentFromChat) return;
     setSavantGenerating(true);
     setSavantError(null);
     setSavantResult(null);
     setSavantResultTracks(null);
     try {
       const result = await generateSavantPlaylist({
-        mood,
-        seedArtist: savantSeedArtist.trim() || undefined,
-        adventureLevel: savantAdventure,
+        mood: savantIntentFromChat.mood,
+        seedArtist: savantIntentFromChat.seedArtist?.trim() || undefined,
+        adventureLevel: savantIntentFromChat.adventureLevel,
         targetCount: savantTargetCount,
         moodDiscoveryChat:
-          savantChatHistory.length > 0 ? savantChatHistory : undefined,
+          savantIntentFromChat.chatHistory.length > 0
+            ? savantIntentFromChat.chatHistory
+            : undefined,
       });
       if ("error" in result) {
         setSavantError(result.error);
@@ -460,17 +447,22 @@ export function PlaylistPanel() {
     setSavantResultTracks(null);
   }
 
+  const [backfillOpts, setBackfillOpts] = useState<{ percent?: number } | undefined>();
+
   async function handleSavantBackfill() {
-    setSavantBackfilling(true);
-    try {
-      const { processed } = await backfillSavantFeatures();
-      if (processed > 0) {
-        const keyData = await checkSavantKeyData();
-        setSavantKeyData(keyData);
-      }
-    } finally {
-      setSavantBackfilling(false);
-    }
+    const harmonic = await getHarmonicPrefs();
+    const percent = harmonic.analyzeWithEssentia
+      ? harmonic.analyzePercent
+      : harmonic.backfillPercent;
+    setBackfillOpts({ percent: percent ?? 100 });
+    setShowBackfillModal(true);
+  }
+
+  async function handleBackfillComplete() {
+    setShowBackfillModal(false);
+    setBackfillOpts(undefined);
+    const keyData = await checkSavantKeyData();
+    setSavantKeyData(keyData);
   }
 
   function closeCreateModal() {
@@ -1014,174 +1006,74 @@ export function PlaylistPanel() {
             {savantError}
           </div>
         )}
-        <Card>
-          <div className="space-y-3">
-            <p className="text-sm text-[#8a8f98]">
-              Savant uses AI to build a playlist tailored to your mood.
-            </p>
-            <p className="text-xs text-[#5a5f68]">
-              {keyedCount} / {totalCount} tracks have harmonic data (
-              {coveragePct}%). Re-scan your library or run backfill to improve.
-            </p>
-            {totalCount > 0 && coveragePct < 100 && (
-              <Button
-                size="sm"
-                variant="secondary"
-                disabled={savantBackfilling}
-                onClick={handleSavantBackfill}
-              >
-                {savantBackfilling ? "Backfilling…" : "Backfill Key Data"}
-              </Button>
-            )}
-          </div>
-        </Card>
-
-        <Card title="1. Mood">
-          {savantMoodFromChat ? (
-            <div className="rounded-lg bg-[#4a9eff]/10 border border-[#4a9eff]/30 p-3">
-              <p className="text-[10px] font-semibold text-[#4a9eff] mb-1">
-                🎵 Mood from chat
+        <div className="flex gap-5">
+          <Card title="1. Backfill" className="flex-1 min-w-0">
+            <div className="space-y-3">
+              <p className="text-sm text-[#8a8f98]">
+                Savant uses AI to build a playlist tailored to your mood.
               </p>
-              <p className="text-sm text-[#e0e0e0] whitespace-pre-wrap">
-                {savantMoodFromChat}
+              <p className="text-xs text-[#5a5f68]">
+                {keyedCount} / {totalCount} tracks have harmonic data (
+                {coveragePct}%). Re-scan your library or run backfill to improve.
               </p>
-              <button
-                type="button"
-                onClick={() => {
-                  setSavantMoodFromChat(null);
-                  setSavantChatHistory([]);
-                }}
-                className="text-[10px] text-[#5a5f68] hover:text-[#8a8f98] mt-2"
-              >
-                Change mood
-              </button>
-            </div>
-          ) : (
-            <>
-              {!savantChatActive && (
+              {totalCount > 0 && (
                 <>
-                  <div className="flex flex-wrap gap-2 mb-3">
-                    {MOOD_CHIPS.map((m) => (
-                      <button
-                        key={m}
-                        type="button"
-                        onClick={() => setSavantMood(savantMood === m ? "" : m)}
-                        className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors cursor-default ${
-                          savantMood === m
-                            ? "bg-[#4a9eff]/20 text-[#4a9eff] border border-[#4a9eff]/40"
-                            : "bg-white/[0.04] text-[#8a8f98] border border-white/[0.06] hover:bg-white/[0.08]"
-                        }`}
-                      >
-                        {m}
-                      </button>
-                    ))}
-                  </div>
-                  <Input
-                    label="Or describe your mood"
-                    value={savantMoodCustom}
-                    onChange={(e) => setSavantMoodCustom(e.target.value)}
-                    placeholder="e.g. Late night coding, rainy afternoon"
+                  <Button
+                    size="sm"
+                    variant="primary"
+                    disabled={showBackfillModal}
+                    onClick={handleSavantBackfill}
+                  >
+                    Backfill Key Data
+                  </Button>
+                  <BackfillProgressModal
+                    open={showBackfillModal}
+                    onClose={handleBackfillComplete}
+                    backfillOpts={backfillOpts}
+                    onComplete={handleBackfillComplete}
                   />
                 </>
               )}
-              {hasOpenRouterKey && (
-                <div className={savantChatActive ? "" : "mt-3"}>
-                  <MoodChat
-                    onConfirm={(moodSummary, chatHistory) => {
-                      setSavantMoodFromChat(moodSummary);
-                      setSavantChatHistory(chatHistory);
-                      setSavantChatActive(false);
-                    }}
-                    onSkip={() => setSavantChatActive(false)}
-                    onExpandedChange={(expanded) => setSavantChatActive(expanded)}
-                  />
-                </div>
-              )}
-            </>
-          )}
-        </Card>
+            </div>
+          </Card>
 
-        <Card title="2. Seed Artist (optional)">
-          <Select
-            label="Artist to lean on"
-            options={[
-              { value: "", label: "None" },
-              ...(Array.isArray(savantArtists) ? savantArtists : [])
-                .slice(0, 100)
-                .map((a) => ({ value: a.name, label: a.name })),
-            ]}
-            value={savantSeedArtist}
-            onChange={(v) => setSavantSeedArtist(v)}
-          />
-        </Card>
-
-        <Card title="3. Adventure Level">
-          <div className="space-y-2">
-            {(
-              [
-                {
-                  value: "conservative" as const,
-                  label: "Stay close",
-                  desc: "Only tracks you've played before",
-                },
-                {
-                  value: "mixed" as const,
-                  label: "Mix surprises",
-                  desc: "Played + some new discoveries",
-                },
-                {
-                  value: "adventurous" as const,
-                  label: "Take me somewhere new",
-                  desc: "Full library",
-                },
-              ]
-            ).map((opt) => (
-              <label
-                key={opt.value}
-                className="flex items-center gap-3 p-3 rounded-lg border border-white/[0.06] hover:bg-white/[0.02] cursor-pointer"
-              >
-                <input
-                  type="radio"
-                  name="savant-adventure"
-                  checked={savantAdventure === opt.value}
-                  onChange={() => setSavantAdventure(opt.value)}
-                  className="accent-[#4a9eff]"
-                />
-                <div>
-                  <span className="text-sm font-medium text-white">
-                    {opt.label}
-                  </span>
-                  <p className="text-[11px] text-[#5a5f68]">{opt.desc}</p>
-                </div>
+          <Card title="2. Max Songs" className="flex-1 min-w-0">
+            <div>
+              <label className="block text-xs font-medium text-[#8a8f98] mb-1.5">
+                Track count: {savantTargetCount}
               </label>
-            ))}
-          </div>
-          <div className="mt-4">
-            <label className="block text-xs font-medium text-[#8a8f98] mb-1.5">
-              Track count: {savantTargetCount}
-            </label>
-            <input
-              type="range"
-              min={10}
-              max={100}
-              step={5}
-              value={savantTargetCount}
-              onChange={(e) =>
-                setSavantTargetCount(Number(e.target.value))
-              }
-              className="w-full accent-[#4a9eff]"
-            />
-          </div>
+              <input
+                type="range"
+                min={10}
+                max={100}
+                step={5}
+                value={savantTargetCount}
+                onChange={(e) =>
+                  setSavantTargetCount(Number(e.target.value))
+                }
+                className="w-full accent-[#4a9eff]"
+              />
+            </div>
+          </Card>
+        </div>
+
+        <Card title="3. Talk to Savant">
+          <SavantInlineChat
+            onIntentReady={setSavantIntentFromChat}
+            onIntentClear={() => setSavantIntentFromChat(null)}
+          />
         </Card>
 
         <Button
           variant="primary"
-          disabled={savantGenerating}
+          disabled={savantGenerating || !savantIntentFromChat}
           onClick={handleSavantGenerate}
         >
           {savantGenerating
             ? "Consulting the AI curator…"
-            : "Create Playlist"}
+            : savantIntentFromChat
+              ? "Create Playlist"
+              : "Complete the chat to create"}
         </Button>
       </div>
     );

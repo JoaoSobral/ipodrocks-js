@@ -594,10 +594,10 @@ export function LibraryPanel() {
           </div>
 
           {/* Table with horizontal scroll — contained so list and scrollbar stay inside card */}
-          <div className="flex-1 min-h-[100px] overflow-auto border border-white/[0.06] rounded-lg bg-[#131626] [.theme-light_&]:bg-white mt-2.5">
+          <div className="flex-1 min-h-[100px] overflow-auto border border-white/[0.06] rounded-lg bg-[#131626] [.theme-light_&]:bg-white [.theme-light_&]:border-[#dadce0] mt-2.5">
             <div className="min-w-[900px]">
               {/* Header */}
-              <div className="theme-box flex items-center gap-2 px-3 py-2 text-[10px] font-semibold text-[#5a5f68] uppercase tracking-wider border-b border-white/[0.06] sticky top-0 bg-[#131626] z-10">
+              <div className="theme-box flex items-center gap-2 px-3 py-2 text-[10px] font-semibold text-[#5a5f68] uppercase tracking-wider border-b border-white/[0.06] sticky top-0 bg-[#131626] z-10 [.theme-light_&]:bg-[#f8f9fa] [.theme-light_&]:text-[#202124] [.theme-light_&]:border-[#dadce0]">
                 {columns.map((col) => (
                   <button
                     key={col.field}
@@ -624,29 +624,29 @@ export function LibraryPanel() {
                 filtered.map((t) => (
                   <div
                     key={t.id}
-                    className="flex items-center gap-2 px-3 py-2 text-sm hover:bg-white/[0.02] border-b border-white/[0.03] transition-colors"
+                    className="flex items-center gap-2 px-3 py-2 text-sm hover:bg-white/[0.02] [.theme-light_&]:hover:bg-[#f1f3f4] border-b border-white/[0.03] [.theme-light_&]:border-[#e8eaed] transition-colors"
                   >
-                    <span className="flex-[3] min-w-[120px] truncate text-white">{t.title}</span>
-                    <span className="flex-[2] min-w-[100px] truncate text-[#8a8f98]">{t.artist}</span>
-                    <span className="flex-[2] min-w-[100px] truncate text-[#8a8f98]">{t.album}</span>
-                    <span className="w-24 min-w-[80px] truncate text-[#5a5f68]">{t.genre}</span>
-                    <span className="w-16 min-w-[56px] text-[#8a8f98] tabular-nums">
+                    <span className="flex-[3] min-w-[120px] truncate text-white [.theme-light_&]:text-[#202124]">{t.title}</span>
+                    <span className="flex-[2] min-w-[100px] truncate text-[#8a8f98] [.theme-light_&]:text-[#5f6368]">{t.artist}</span>
+                    <span className="flex-[2] min-w-[100px] truncate text-[#8a8f98] [.theme-light_&]:text-[#5f6368]">{t.album}</span>
+                    <span className="w-24 min-w-[80px] truncate text-[#5a5f68] [.theme-light_&]:text-[#5f6368]">{t.genre}</span>
+                    <span className="w-16 min-w-[56px] text-[#8a8f98] [.theme-light_&]:text-[#5f6368] tabular-nums">
                       {formatDuration(t.duration)}
                     </span>
-                    <span className="w-14 min-w-[48px] text-[#5a5f68] text-xs">{t.codec}</span>
-                    <span className="w-20 min-w-[64px] text-[#5a5f68] text-xs">
+                    <span className="w-14 min-w-[48px] text-[#5a5f68] [.theme-light_&]:text-[#5f6368] text-xs">{t.codec}</span>
+                    <span className="w-20 min-w-[64px] text-[#5a5f68] [.theme-light_&]:text-[#5f6368] text-xs">
                       {formatBitrate(t.bitrate)}
                     </span>
-                    <span className="w-12 min-w-[36px] text-[#5a5f68] text-xs">
+                    <span className="w-12 min-w-[36px] text-[#5a5f68] [.theme-light_&]:text-[#5f6368] text-xs">
                       {t.bitsPerSample ? `${t.bitsPerSample}-bit` : "—"}
                     </span>
-                    <span className="w-16 min-w-[56px] text-[#5a5f68] text-xs capitalize">
+                    <span className="w-16 min-w-[56px] text-[#5a5f68] [.theme-light_&]:text-[#5f6368] text-xs capitalize">
                       {t.contentType || "—"}
                     </span>
                     <span className="w-16 min-w-[56px] text-right text-[#22c55e]">
                       {selectedDeviceId != null && syncedPaths.has(t.path) ? "✓" : "—"}
                     </span>
-                    <span className="w-16 min-w-[56px] text-right text-[#5a5f68] text-xs tabular-nums">
+                    <span className="w-16 min-w-[56px] text-right text-[#5a5f68] [.theme-light_&]:text-[#5f6368] text-xs tabular-nums">
                       {formatSize(t.fileSize)}
                     </span>
                   </div>
@@ -657,7 +657,7 @@ export function LibraryPanel() {
         </Card>
           ) : (
         <Card title="Playlists" className="flex-1 flex flex-col min-h-0">
-          <div className="flex items-center justify-between gap-2 px-3 py-2 text-[10px] font-semibold text-[#5a5f68] uppercase tracking-wider border-b border-white/[0.06]">
+          <div className="flex items-center justify-between gap-2 px-3 py-2 text-[10px] font-semibold text-[#5a5f68] uppercase tracking-wider border-b border-white/[0.06] [.theme-light_&]:bg-[#f8f9fa] [.theme-light_&]:text-[#202124] [.theme-light_&]:border-[#dadce0]">
             <span className="flex-[3]">Name</span>
             <span className="w-24 text-right">Songs</span>
             <span className="w-28">Type</span>
@@ -668,15 +668,15 @@ export function LibraryPanel() {
                 <div className="w-5 h-5 border-2 border-[#4a9eff]/30 border-t-[#4a9eff] rounded-full animate-spin" />
               </div>
             ) : playlists.length === 0 ? (
-              <p className="text-center text-xs text-[#5a5f68] py-8">No playlists</p>
+              <p className="text-center text-xs text-[#5a5f68] [.theme-light_&]:text-[#5f6368] py-8">No playlists</p>
             ) : (
               playlists.map((pl) => (
                 <div
                   key={pl.id}
-                  className="flex items-center gap-2 px-3 py-2 text-sm hover:bg-white/[0.02] border-b border-white/[0.03] transition-colors"
+                  className="flex items-center gap-2 px-3 py-2 text-sm hover:bg-white/[0.02] [.theme-light_&]:hover:bg-[#f1f3f4] border-b border-white/[0.03] [.theme-light_&]:border-[#e8eaed] transition-colors"
                 >
-                  <span className="flex-[3] truncate text-white font-medium">{pl.name}</span>
-                  <span className="w-24 text-right text-[#8a8f98] tabular-nums">
+                  <span className="flex-[3] truncate text-white font-medium [.theme-light_&]:text-[#202124]">{pl.name}</span>
+                  <span className="w-24 text-right text-[#8a8f98] [.theme-light_&]:text-[#5f6368] tabular-nums">
                     {pl.trackCount}
                   </span>
                   <span className="w-28 px-2 py-0.5 rounded-full text-[10px] font-medium bg-[#4a9eff]/10 text-[#4a9eff] capitalize">

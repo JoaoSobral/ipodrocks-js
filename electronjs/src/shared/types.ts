@@ -36,6 +36,7 @@ export interface DeviceProfile extends Device {
   description: string | null;
   lastSyncDate: string | null;
   totalSyncedItems: number;
+  lastSyncCount: number;
   defaultTransferModeId: number;
   overrideBitrate: number | null;
   overrideQuality: number | null;
@@ -268,6 +269,15 @@ export interface SyncProgress {
   destination?: string;
   status: "pending" | "syncing" | "complete" | "error" | "cancelled";
   contentType?: string;
+  message?: string;
+}
+
+export interface BackfillProgress {
+  path: string;
+  processed: number;
+  total: number;
+  success: boolean;
+  status: "analyzing" | "complete" | "error" | "cancelled";
   message?: string;
 }
 

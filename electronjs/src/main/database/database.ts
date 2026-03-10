@@ -81,6 +81,13 @@ export class AppDatabase {
           )
           .run();
       }
+      if (!names.has("last_sync_count")) {
+        this.db
+          .prepare(
+            "ALTER TABLE devices ADD COLUMN last_sync_count INTEGER DEFAULT 0"
+          )
+          .run();
+      }
     } catch {
       // best effort migration; if it fails we leave the table unchanged
     }
