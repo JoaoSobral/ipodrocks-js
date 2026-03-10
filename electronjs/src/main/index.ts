@@ -7,6 +7,9 @@ const devServerUrl = process.env.VITE_DEV_SERVER_URL;
 function createWindow(): BrowserWindow {
   const preloadPath = path.join(__dirname, "preload.js");
 
+  const iconPath = app.isPackaged
+    ? path.join(process.resourcesPath, "icon.png")
+    : path.join(__dirname, "../../../resources/icon.png");
   const win = new BrowserWindow({
     width: 1200,
     height: 800,
@@ -14,6 +17,7 @@ function createWindow(): BrowserWindow {
     minHeight: 600,
     backgroundColor: "#0d1015",
     titleBarStyle: "hiddenInset",
+    icon: iconPath,
     webPreferences: {
       preload: preloadPath,
       contextIsolation: true,

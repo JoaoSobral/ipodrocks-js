@@ -10,6 +10,8 @@ files:
 extraResources:
   - source: ffmpeg-bin/*
     destination: ffmpeg
+  - source: resources/icon.png
+    destination: icon.png
 linux:
   target:
     - AppImage
