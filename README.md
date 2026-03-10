@@ -1,7 +1,9 @@
 # iPodRocks v1.0.0 — Electron Edition
 
-Desktop iPod sync and library manager for Rockbox and any mountable device. Built with Electron, React, and TypeScript.
-
+Desktop Rockbox device sync manager for Rockbox and any mountable device inspired by the iPods. Built with Electron, React, and TypeScript.
+<p align="center">
+<img src="https://github.com/JoaoSobral/ipodrocks-js/blob/main/electronjs/assets/ipodRocks_transp.png?raw=true" width="20%">
+</p>
 ## Screenshots
 
 <!-- Add screenshots to docs/screenshots/ and update the paths below -->
