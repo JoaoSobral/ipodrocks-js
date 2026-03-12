@@ -15,6 +15,10 @@ iPodRocks is a sync manager for rockbox devices. Multiple libraries, shadow tran
 ---
 
 ## Screenshots
+<img src="https://github.com/JoaoSobral/ipodrocks-js/blob/main/ipodrocks-js/docs/screenshots/dashboard.png" width="70%">
+
+
+<img src="https://github.com/JoaoSobral/ipodrocks-js/blob/main/ipodrocks-js/docs/screenshots/devices_dark.png" width="70%">
 
 
 ---
