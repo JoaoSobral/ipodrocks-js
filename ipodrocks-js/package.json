@@ -4,11 +4,11 @@
   "description": "iPod sync and library management",
   "main": "dist/main/main/index.js",
   "scripts": {
-    "dev": "concurrently -k \"npm run dev:main\" \"npm run dev:renderer\" \"npm run dev:electron\"",
+    "dev": "npx concurrently -k \"npm run dev:main\" \"npm run dev:renderer\" \"npm run dev:electron\"",
     "dev:main": "tsc -p tsconfig.main.json --watch",
     "dev:renderer": "vite",
-    "dev:electron": "wait-on http://localhost:5173 && cross-env VITE_DEV_SERVER_URL=http://localhost:5173 electron .",
-    "dev:electron:verbose": "wait-on http://localhost:5173 && cross-env VITE_DEV_SERVER_URL=http://localhost:5173 electron . --dev",
+    "dev:electron": "npx wait-on http://localhost:5173 && npx cross-env VITE_DEV_SERVER_URL=http://localhost:5173 electron .",
+    "dev:electron:verbose": "npx wait-on http://localhost:5173 && npx cross-env VITE_DEV_SERVER_URL=http://localhost:5173 electron . --dev",
     "build": "tsc -p tsconfig.main.json && vite build",
     "preview": "npm run build && electron .",
     "test": "vitest",
@@ -17,20 +17,21 @@
     "dist:linux": "npm run build && npm run copy-ffmpeg && electron-builder --linux",
     "dist:mac": "npm run build && npm run copy-ffmpeg && electron-builder --mac",
     "dist:win": "npm run build && npm run copy-ffmpeg && electron-builder --win",
-    "postinstall": "electron-rebuild"
+    "postinstall": "electron-rebuild || true"
   },
   "dependencies": {
     "@ffmpeg-installer/ffmpeg": "^1.1.0",
-    "better-sqlite3": "^11.0.0",
+    "better-sqlite3": "^12.0.0",
     "essentia.js": "^0.1.3",
     "js-yaml": "^4.1.0",
-    "music-metadata": "^10.0.0",
+    "music-metadata": "^11.0.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-markdown": "^10.1.0",
     "zustand": "^5.0.0"
   },
   "devDependencies": {
+    "@electron/rebuild": "^4.0.0",
     "@tailwindcss/vite": "^4.0.0",
     "@testing-library/jest-dom": "^6.6.0",
     "@testing-library/react": "^16.0.0",
@@ -40,15 +41,14 @@
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^4.0.0",
     "concurrently": "^9.0.0",
-    "cross-env": "^7.0.0",
-    "electron": "^34.0.0",
-    "electron-builder": "^25.0.0",
-    "electron-rebuild": "^3.2.0",
-    "jsdom": "^25.0.0",
+    "cross-env": "^10.0.0",
+    "electron": "^35.7.5",
+    "electron-builder": "^26.0.0",
+    "jsdom": "^26.0.0",
     "tailwindcss": "^4.0.0",
     "typescript": "^5.0.0",
     "vite": "^6.0.0",
     "vitest": "^3.0.0",
-    "wait-on": "^8.0.0"
+    "wait-on": "^9.0.0"
   }
 }

@@ -6,8 +6,15 @@ export type Theme = "dark" | "light";
 
 function readStored(): Theme {
   if (typeof window === "undefined") return "dark";
-  const v = localStorage.getItem(STORAGE_KEY);
-  return v === "light" ? "light" : "dark";
+  try {
+    const v =
+      typeof localStorage?.getItem === "function"
+        ? localStorage.getItem(STORAGE_KEY)
+        : null;
+    return v === "light" ? "light" : "dark";
+  } catch {
+    return "dark";
+  }
 }
 
 interface ThemeState {
