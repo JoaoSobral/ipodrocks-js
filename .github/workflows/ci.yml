@@ -16,13 +16,13 @@ jobs:
         with:
           node-version: "20"
           cache: "npm"
-          cache-dependency-path: electronjs/package-lock.json
+          cache-dependency-path: ipodrocks-js/package-lock.json
 
       - name: Install dependencies
-        run: cd electronjs && npm ci
+        run: cd ipodrocks-js && npm ci
 
       - name: Run tests
-        run: cd electronjs && npm run test -- --run
+        run: cd ipodrocks-js && npm run test -- --run
 
       - name: Build
-        run: cd electronjs && npm run build
+        run: cd ipodrocks-js && npm run build

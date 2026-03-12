@@ -3,26 +3,19 @@
 **The smart sync manager for Rockbox and any mountable device.** Built with Electron, React, and TypeScript.
 
 <p align="center">
-<img src="https://github.com/JoaoSobral/ipodrocks-js/blob/main/electronjs/assets/ipodRocks_transp.png?raw=true" width="20%">
+<img src="https://github.com/JoaoSobral/ipodrocks-js/blob/main/ipodrocks-js/assets/ipodRocks_transp.png?raw=true" width="20%">
 </p>
 
 ---
 
 ## ✨ Why iPodRocks?
 
-Think **iTunes Genius meets Rockbox** — but better. Multiple libraries, shadow transcoding, AI-powered playlists, harmonic mixing, and a floating assistant that knows your entire collection. All in one desktop app.
+iPodRocks is a sync manager for rockbox devices. Multiple libraries, shadow transcoding, AI-powered playlists, harmonic mixing, and a floating assistant that knows your entire collection. All in one desktop app.
 
 ---
 
 ## Screenshots
 
-| Dashboard | Library | Devices |
-|-----------|---------|---------|
-| ![Dashboard](docs/screenshots/dashboard.png) | ![Library](docs/screenshots/library.png) | ![Devices](docs/screenshots/devices.png) |
-
-| Sync | Playlists |
-|------|-----------|
-| ![Sync](docs/screenshots/sync.png) | ![Playlists](docs/screenshots/playlists.png) |
 
 ---
 
@@ -38,7 +31,7 @@ Think **iTunes Genius meets Rockbox** — but better. Multiple libraries, shadow
 - Per-device codec configs (direct copy, MP3, AAC, Musepack, Opus, OGG)
 - Device check: compare what’s on disk vs library, spot orphans
 
-### Genius Playlists (like Apple’s Genius)
+### Genius Playlists
 - **Analyze your Rockbox playback logs** — Rediscovery, Forgotten Gems, Most Played, and more
 - Uses real listening data from your device
 - Rule-based smart playlists by genre, artist, album, track limits
@@ -48,7 +41,7 @@ Think **iTunes Genius meets Rockbox** — but better. Multiple libraries, shadow
 - **AI-generated playlists** — Powered by OpenRouter (Claude, etc.)
 - Harmonic sequencing — Camelot wheel, key-aware ordering for smooth transitions
 
-### Harmonic Mixing
+### Harmonic Mixing ("similar to Apple Genius playlists")
 - **Key & BPM** — From tags or Essentia.js audio analysis
 - Camelot wheel compatibility for DJ-style flow
 - Optional backfill with genre-based sampling
@@ -90,7 +83,7 @@ Download the installer for your platform from the [Releases](https://github.com/
 - **Musepack (mpcenc)** — optional, for Musepack (MPC) encoding
 
 ```bash
-cd electronjs
+cd ipodrocks-js
 npm install
 npm run build
 npm run preview    # run in production mode
