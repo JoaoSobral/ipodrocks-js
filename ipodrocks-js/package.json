@@ -2,6 +2,7 @@
   "name": "ipodrocks",
   "version": "1.0.0",
   "description": "iPod sync and library management",
+  "license": "GPL-3.0-only",
   "main": "dist/main/main/index.js",
   "scripts": {
     "dev": "npx concurrently -k \"npm run dev:main\" \"npm run dev:renderer\" \"npm run dev:electron\"",
