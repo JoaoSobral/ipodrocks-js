@@ -192,4 +192,4 @@ From v1.0.0.1 onward, development uses a **dev** branch. All PRs to **main** mus
 
 ## License
 
-MIT
+This project is licensed under the GNU General Public License v3.0 (GPL-3.0). See [LICENSE](LICENSE) for the full text.
