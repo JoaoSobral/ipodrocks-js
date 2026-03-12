@@ -1,0 +1,1648 @@
+import { useEffect, useState, useCallback } from "react";
+
+import { Card } from "../common/Card";
+import { Button } from "../common/Button";
+import { Input } from "../common/Input";
+import { Select } from "../common/Select";
+import { Modal } from "../common/Modal";
+import { BackfillProgressModal } from "../modals/BackfillProgressModal";
+import { SavantInlineChat } from "../savant/SavantInlineChat";
+import { EmptyState } from "../common/EmptyState";
+import { useDeviceStore } from "../../stores/device-store";
+import { useSavantStore } from "../../stores/savant-store";
+import {
+  getPlaylists,
+  getPlaylistTracks,
+  createPlaylist,
+  deletePlaylist,
+  exportPlaylist,
+  getGenres,
+  getArtists,
+  getAlbums,
+  analyzeDevicePlayback,
+  readDevicePlaybackLog,
+  getGeniusSummaryFromDb,
+  getGeniusTypes,
+  generateGeniusPlaylist,
+  saveGeniusPlaylist,
+  generateSavantPlaylist,
+  checkSavantKeyData,
+  getOpenRouterConfig,
+  getHarmonicPrefs,
+} from "../../ipc/api";
+import type {
+  Playlist,
+  PlaylistTrack,
+  GenreInfo,
+  ArtistInfo,
+  AlbumInfo,
+  SmartPlaylistRule,
+  AnalysisSummary,
+  GeniusTypeOption,
+  PlaylistGenerationResult,
+  AnalyzeResult,
+  SavantKeyData,
+  GenerateSavantResult,
+} from "../../ipc/api";
+
+type Tab = "all" | "smart" | "genius" | "savant";
+
+type GeniusStep =
+  | "idle"
+  | "analyzing"
+  | "summary"
+  | "configuring"
+  | "generating"
+  | "preview";
+
+function formatDuration(seconds: number): string {
+  const m = Math.floor(seconds / 60);
+  const s = Math.floor(seconds % 60);
+  return `${m}:${s.toString().padStart(2, "0")}`;
+}
+
+function formatDate(iso: string): string {
+  try {
+    return new Date(iso).toLocaleDateString();
+  } catch {
+    return iso;
+  }
+}
+
+// =========================================================================
+// Component
+// =========================================================================
+
+export function PlaylistPanel() {
+  const { devices, fetchDevices } = useDeviceStore();
+  const { setSavantTabActive } = useSavantStore();
+  const deviceList = Array.isArray(devices) ? devices : [];
+
+  // -- playlist list state ------------------------------------------------
+  const [playlists, setPlaylists] = useState<Playlist[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState<Tab>("all");
+  const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [tracks, setTracks] = useState<PlaylistTrack[]>([]);
+  const [tracksLoading, setTracksLoading] = useState(false);
+  const [showCreate, setShowCreate] = useState(false);
+  /** When true, user chose Smart from Create; when 'genius', chose Genius. */
+  const [createKind, setCreateKind] = useState<"smart" | "genius" | null>(
+    null
+  );
+
+  // -- smart create state -------------------------------------------------
+  const [newName, setNewName] = useState("");
+  const [strategy, setStrategy] = useState("by_genre");
+  const [trackLimit, setTrackLimit] = useState(50);
+  const [trackLimitAll, setTrackLimitAll] = useState(false);
+  const [createStep, setCreateStep] = useState<1 | 2>(1);
+  const [genres, setGenres] = useState<GenreInfo[]>([]);
+  const [artists, setArtists] = useState<ArtistInfo[]>([]);
+  const [albums, setAlbums] = useState<AlbumInfo[]>([]);
+  const [selectedGenreIds, setSelectedGenreIds] = useState<Set<number>>(
+    new Set()
+  );
+  const [selectedArtistIds, setSelectedArtistIds] = useState<Set<number>>(
+    new Set()
+  );
+  const [selectedAlbumIds, setSelectedAlbumIds] = useState<Set<number>>(
+    new Set()
+  );
+  const [optionsLoading, setOptionsLoading] = useState(false);
+
+  // -- genius flow state --------------------------------------------------
+  const [geniusStep, setGeniusStep] = useState<GeniusStep>("idle");
+  const [geniusDeviceId, setGeniusDeviceId] = useState<number | null>(null);
+  const [geniusSummary, setGeniusSummary] = useState<AnalysisSummary | null>(
+    null
+  );
+  const [geniusArtists, setGeniusArtists] = useState<
+    Array<{ name: string; playCount: number }>
+  >([]);
+  const [geniusTypes, setGeniusTypes] = useState<GeniusTypeOption[]>([]);
+  const [geniusSelectedType, setGeniusSelectedType] = useState<string | null>(
+    null
+  );
+  const [geniusMaxTracks, setGeniusMaxTracks] = useState(25);
+  const [geniusMinPlays, setGeniusMinPlays] = useState(1);
+  const [geniusArtistPick, setGeniusArtistPick] = useState("");
+  const [geniusTargetMonth, setGeniusTargetMonth] = useState(
+    () => new Date().getMonth() + 1
+  );
+  const [geniusTargetYear, setGeniusTargetYear] = useState(
+    () => new Date().getFullYear()
+  );
+  const [geniusRangeStart, setGeniusRangeStart] = useState(48);
+  const [geniusRangeEnd, setGeniusRangeEnd] = useState(24);
+  const [geniusPreview, setGeniusPreview] =
+    useState<PlaylistGenerationResult | null>(null);
+  const [geniusError, setGeniusError] = useState<string | null>(null);
+  const [geniusSaveName, setGeniusSaveName] = useState("");
+
+  // -- savant flow state ---------------------------------------------------
+  const [hasOpenRouterKey, setHasOpenRouterKey] = useState<boolean | null>(null);
+  const [savantKeyData, setSavantKeyData] = useState<SavantKeyData | null>(null);
+  const [savantMode, setSavantMode] = useState<"quick" | "chat">("quick");
+  const [savantQuickPrompt, setSavantQuickPrompt] = useState("");
+  const [savantIntentFromChat, setSavantIntentFromChat] = useState<{
+    mood: string;
+    seedArtist?: string;
+    adventureLevel: "conservative" | "mixed" | "adventurous";
+    chatHistory: Array<{ role: "user" | "assistant"; content: string }>;
+  } | null>(null);
+  const [savantTargetCount, setSavantTargetCount] = useState(100);
+  const [savantGenerating, setSavantGenerating] = useState(false);
+  const [savantResult, setSavantResult] = useState<GenerateSavantResult | null>(
+    null
+  );
+  const [savantError, setSavantError] = useState<string | null>(null);
+  const [savantResultTracks, setSavantResultTracks] = useState<
+    PlaylistTrack[] | null
+  >(null);
+  const [showBackfillModal, setShowBackfillModal] = useState(false);
+
+  // -- fetch playlists ----------------------------------------------------
+  const fetchAll = useCallback(async () => {
+    setLoading(true);
+    try {
+      const data = await getPlaylists();
+      setPlaylists(data);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchAll();
+    fetchDevices();
+  }, [fetchAll, fetchDevices]);
+
+  useEffect(() => {
+    setSavantTabActive(activeTab === "savant");
+    return () => setSavantTabActive(false);
+  }, [activeTab, setSavantTabActive]);
+
+  useEffect(() => {
+    if (activeTab !== "savant") return;
+    let cancelled = false;
+    (async () => {
+      const [config, keyData] = await Promise.all([
+        getOpenRouterConfig(),
+        checkSavantKeyData(),
+      ]);
+      if (!cancelled) {
+        setHasOpenRouterKey(!!config?.apiKey?.trim());
+        setSavantKeyData(keyData);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab]);
+
+  const playlistList = Array.isArray(playlists) ? playlists : [];
+  const filtered =
+    activeTab === "all"
+      ? playlistList
+      : playlistList.filter((p) =>
+          (p?.typeName ?? "").toLowerCase().includes(activeTab)
+        );
+
+  // -- playlist actions ---------------------------------------------------
+  async function handleSelect(id: number) {
+    setSelectedId(id);
+    setTracksLoading(true);
+    try {
+      setTracks(await getPlaylistTracks(id));
+    } finally {
+      setTracksLoading(false);
+    }
+  }
+
+  async function handleDelete(id: number) {
+    await deletePlaylist(id);
+    if (selectedId === id) setSelectedId(null);
+    fetchAll();
+  }
+
+  async function handleExport(id: number) {
+    await exportPlaylist(id);
+  }
+
+  // -- smart create -------------------------------------------------------
+  async function goToStep2() {
+    setOptionsLoading(true);
+    try {
+      if (strategy === "by_genre") {
+        setGenres(await getGenres());
+        setSelectedArtistIds(new Set());
+        setSelectedAlbumIds(new Set());
+      } else if (strategy === "by_artist") {
+        setArtists(await getArtists());
+        setSelectedGenreIds(new Set());
+        setSelectedAlbumIds(new Set());
+      } else {
+        setAlbums(await getAlbums());
+        setSelectedGenreIds(new Set());
+        setSelectedArtistIds(new Set());
+      }
+      setCreateStep(2);
+    } finally {
+      setOptionsLoading(false);
+    }
+  }
+
+  function toggleSet<T>(setter: React.Dispatch<React.SetStateAction<Set<T>>>, val: T) {
+    setter((prev) => {
+      const next = new Set(prev);
+      if (next.has(val)) next.delete(val);
+      else next.add(val);
+      return next;
+    });
+  }
+
+  function buildRules(): SmartPlaylistRule[] {
+    if (strategy === "by_genre") {
+      return (Array.isArray(genres) ? genres : [])
+        .filter((g) => g != null && selectedGenreIds.has(g.id))
+        .map((g) => ({
+          ruleType: "genre",
+          targetId: g.id,
+          targetLabel: g.name ?? "",
+        }));
+    }
+    if (strategy === "by_artist") {
+      return (Array.isArray(artists) ? artists : [])
+        .filter((a) => a != null && selectedArtistIds.has(a.id))
+        .map((a) => ({
+          ruleType: "artist",
+          targetId: a.id,
+          targetLabel: a.name ?? "",
+        }));
+    }
+    return (Array.isArray(albums) ? albums : [])
+      .filter((a) => a != null && selectedAlbumIds.has(a.id))
+      .map((a) => ({
+        ruleType: "album",
+        targetId: a.id,
+        targetLabel: `${a?.title ?? ""} — ${a?.artist ?? ""}`,
+      }));
+  }
+
+  async function handleCreate() {
+    if (!newName) return;
+    const rules = buildRules();
+    if (rules.length === 0) return;
+    await createPlaylist({
+      name: newName,
+      strategy,
+      trackLimit: trackLimitAll ? undefined : trackLimit,
+      rules,
+    });
+    setShowCreate(false);
+    setNewName("");
+    setTrackLimit(50);
+    setTrackLimitAll(false);
+    setCreateStep(1);
+    setSelectedGenreIds(new Set());
+    setSelectedArtistIds(new Set());
+    setSelectedAlbumIds(new Set());
+    fetchAll();
+  }
+
+  // -- genius flow --------------------------------------------------------
+  async function handleLoadFromDb() {
+    setGeniusStep("analyzing");
+    setGeniusError(null);
+    try {
+      const res = await getGeniusSummaryFromDb();
+      setGeniusSummary(res.summary);
+      setGeniusArtists(res.artists ?? []);
+      if (res.summary.matchedPlays === 0) {
+        setGeniusError(
+          "No playback history in database. Connect a device and click Recheck device."
+        );
+        setGeniusStep("idle");
+        return;
+      }
+      const types = await getGeniusTypes();
+      setGeniusTypes(types);
+      setGeniusStep("summary");
+    } catch (err) {
+      setGeniusError(err instanceof Error ? err.message : String(err));
+      setGeniusStep("idle");
+    }
+  }
+
+  async function handleRecheckDevice() {
+    if (geniusDeviceId == null) return;
+    setGeniusStep("analyzing");
+    setGeniusError(null);
+    try {
+      const res = await readDevicePlaybackLog(geniusDeviceId);
+      if (res.error) {
+        setGeniusError(res.error);
+        setGeniusStep("idle");
+        return;
+      }
+      setGeniusSummary(res.summary);
+      setGeniusArtists(
+        "artists" in res && Array.isArray(res.artists) ? res.artists : []
+      );
+      if (res.summary.matchedPlays === 0) {
+        setGeniusError(
+          "No playback data found. Make sure the device has been used with Rockbox."
+        );
+        setGeniusStep("idle");
+        return;
+      }
+      const types = await getGeniusTypes();
+      setGeniusTypes(types);
+      setGeniusStep("summary");
+    } catch (err) {
+      setGeniusError(err instanceof Error ? err.message : String(err));
+      setGeniusStep("idle");
+    }
+  }
+
+  async function handleAnalyze() {
+    if (geniusDeviceId == null) return;
+    setGeniusStep("analyzing");
+    setGeniusError(null);
+    try {
+      const res: AnalyzeResult = await analyzeDevicePlayback(geniusDeviceId);
+      if (res.error) {
+        setGeniusError(res.error);
+        setGeniusStep("idle");
+        return;
+      }
+      setGeniusSummary(res.summary);
+      setGeniusArtists(res.artists ?? []);
+      if (res.summary.matchedPlays === 0) {
+        setGeniusError(
+          "None of the played tracks in the playback log were found in your library. " +
+            "Check that your library path is configured correctly."
+        );
+        setGeniusStep("idle");
+        return;
+      }
+      const types = await getGeniusTypes();
+      setGeniusTypes(types);
+      setGeniusStep("summary");
+    } catch (err) {
+      setGeniusError(
+        err instanceof Error ? err.message : String(err)
+      );
+      setGeniusStep("idle");
+    }
+  }
+
+  function handlePickType(typeKey: string) {
+    setGeniusSelectedType(typeKey);
+    setGeniusMaxTracks(25);
+    setGeniusMinPlays(1);
+    setGeniusArtistPick(geniusArtists[0]?.name ?? "");
+    setGeniusTargetMonth(new Date().getMonth() + 1);
+    setGeniusTargetYear(new Date().getFullYear());
+    setGeniusRangeStart(48);
+    setGeniusRangeEnd(24);
+    setGeniusStep("configuring");
+  }
+
+  async function handleGenerate() {
+    if (!geniusSelectedType) return;
+    setGeniusStep("generating");
+    setGeniusError(null);
+    try {
+      const result = await generateGeniusPlaylist(
+        null,
+        geniusSelectedType,
+        {
+          maxTracks: geniusMaxTracks,
+          minPlays: geniusMinPlays,
+          artist:
+            geniusSelectedType === "deep_dive"
+              ? geniusArtistPick
+              : undefined,
+          targetMonth:
+            geniusSelectedType === "time_capsule"
+              ? geniusTargetMonth
+              : undefined,
+          targetYear:
+            geniusSelectedType === "time_capsule"
+              ? geniusTargetYear
+              : undefined,
+          rangeStartMonthsAgo:
+            geniusSelectedType === "golden_era"
+              ? geniusRangeStart
+              : undefined,
+          rangeEndMonthsAgo:
+            geniusSelectedType === "golden_era"
+              ? geniusRangeEnd
+              : undefined,
+        }
+      );
+      if ((result as unknown as { error?: string }).error) {
+        setGeniusError(
+          (result as unknown as { error: string }).error
+        );
+        setGeniusStep("configuring");
+        return;
+      }
+      setGeniusPreview(result);
+      setGeniusSaveName(result.playlistName);
+      setGeniusStep("preview");
+    } catch (err) {
+      setGeniusError(
+        err instanceof Error ? err.message : String(err)
+      );
+      setGeniusStep("configuring");
+    }
+  }
+
+  async function handleSaveGenius() {
+    if (!geniusPreview || !geniusSelectedType) return;
+    const trackIds = (Array.isArray(geniusPreview?.tracks) ? geniusPreview.tracks : []).map((t) => t?.id);
+    await saveGeniusPlaylist(
+      geniusSaveName || geniusPreview.playlistName,
+      geniusSelectedType,
+      null,
+      trackIds,
+      geniusMaxTracks
+    );
+    setGeniusStep("idle");
+    setGeniusPreview(null);
+    setGeniusSummary(null);
+    setGeniusSelectedType(null);
+    setShowCreate(false);
+    setCreateKind(null);
+    fetchAll();
+  }
+
+  /** Reset genius flow to device picker (stay in genius create modal). */
+  function resetGenius() {
+    setGeniusStep("idle");
+    setGeniusSummary(null);
+    setGeniusPreview(null);
+    setGeniusSelectedType(null);
+    setGeniusError(null);
+  }
+
+  // -- savant flow --------------------------------------------------------
+  async function handleSavantGenerate() {
+    const intent =
+      savantMode === "quick"
+        ? {
+            mood: savantQuickPrompt.trim(),
+            adventureLevel: "mixed" as const,
+            targetCount: savantTargetCount,
+          }
+        : savantIntentFromChat
+          ? {
+              mood: savantIntentFromChat.mood,
+              seedArtist: savantIntentFromChat.seedArtist?.trim() || undefined,
+              adventureLevel: savantIntentFromChat.adventureLevel,
+              targetCount: savantTargetCount,
+              moodDiscoveryChat:
+                savantIntentFromChat.chatHistory.length > 0
+                  ? savantIntentFromChat.chatHistory
+                  : undefined,
+            }
+          : null;
+    if (!intent) return;
+    setSavantGenerating(true);
+    setSavantError(null);
+    setSavantResult(null);
+    setSavantResultTracks(null);
+    try {
+      const result = await generateSavantPlaylist(intent);
+      if ("error" in result) {
+        setSavantError(result.error);
+        return;
+      }
+      setSavantResult(result);
+      const tracks = await getPlaylistTracks(result.playlistId);
+      setSavantResultTracks(tracks);
+      fetchAll();
+    } catch (err) {
+      setSavantError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSavantGenerating(false);
+    }
+  }
+
+  function handleSavantRegenerate() {
+    setSavantResult(null);
+    setSavantResultTracks(null);
+    handleSavantGenerate();
+  }
+
+  function handleSavantDiscard() {
+    setSavantResult(null);
+    setSavantResultTracks(null);
+  }
+
+  const [backfillOpts, setBackfillOpts] = useState<{ percent?: number } | undefined>();
+
+  async function handleSavantBackfill() {
+    const harmonic = await getHarmonicPrefs();
+    const percent = harmonic.analyzeWithEssentia
+      ? harmonic.analyzePercent
+      : harmonic.backfillPercent;
+    setBackfillOpts({ percent: percent ?? 100 });
+    setShowBackfillModal(true);
+  }
+
+  async function handleBackfillComplete() {
+    setShowBackfillModal(false);
+    setBackfillOpts(undefined);
+    const keyData = await checkSavantKeyData();
+    setSavantKeyData(keyData);
+  }
+
+  function closeCreateModal() {
+    setShowCreate(false);
+    setCreateStep(1);
+    setCreateKind(null);
+    setGeniusError(null);
+    if (createKind === "genius") {
+      setGeniusStep("idle");
+      setGeniusSummary(null);
+      setGeniusPreview(null);
+      setGeniusSelectedType(null);
+    }
+  }
+
+  const selectedPlaylist = playlists.find((p) => p.id === selectedId);
+
+  // =====================================================================
+  // Detail view
+  // =====================================================================
+  if (selectedId && selectedPlaylist) {
+    return (
+      <div className="panel-content flex flex-col gap-5">
+        <div className="flex items-center gap-3">
+          <Button size="sm" onClick={() => setSelectedId(null)}>
+            &larr; Back
+          </Button>
+          <h3 className="text-lg font-semibold text-white">
+            {selectedPlaylist.name}
+          </h3>
+          <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-[#4a9eff]/10 text-[#4a9eff]">
+            {selectedPlaylist.typeName}
+          </span>
+          <div className="ml-auto">
+            <Button size="sm" onClick={() => handleExport(selectedId)}>
+              Export M3U
+            </Button>
+          </div>
+        </div>
+
+        <Card>
+          {tracksLoading ? (
+            <div className="flex items-center justify-center py-12">
+              <div className="w-5 h-5 border-2 border-[#4a9eff]/30 border-t-[#4a9eff] rounded-full animate-spin" />
+            </div>
+          ) : (Array.isArray(tracks) ? tracks : []).length === 0 ? (
+            <p className="text-center text-xs text-[#5a5f68] py-8">
+              No tracks in this playlist
+            </p>
+          ) : (
+            <>
+              <div className="flex items-center gap-2 px-3 py-2 text-[10px] font-semibold text-[#5a5f68] uppercase tracking-wider border-b border-white/[0.06]">
+                <span className="w-8 text-center">#</span>
+                <span className="flex-[3]">Title</span>
+                <span className="flex-[2]">Artist</span>
+                <span className="flex-[2]">Album</span>
+                <span className="w-16 text-right">Duration</span>
+              </div>
+              <div className="max-h-[60vh] overflow-auto">
+                {(Array.isArray(tracks) ? tracks : []).map((t, i) => (
+                  <div
+                    key={t.id}
+                    className="flex items-center gap-2 px-3 py-2 text-sm hover:bg-white/[0.02] border-b border-white/[0.03] transition-colors"
+                  >
+                    <span className="w-8 text-center text-[#5a5f68] text-xs tabular-nums">
+                      {i + 1}
+                    </span>
+                    <span className="flex-[3] truncate text-white">
+                      {t.title}
+                    </span>
+                    <span className="flex-[2] truncate text-[#8a8f98]">
+                      {t.artist}
+                    </span>
+                    <span className="flex-[2] truncate text-[#8a8f98]">
+                      {t.album}
+                    </span>
+                    <span className="w-16 text-right text-[#5a5f68] tabular-nums">
+                      {formatDuration(t.duration)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </Card>
+      </div>
+    );
+  }
+
+  // =====================================================================
+  // Genius tab inline flow
+  // =====================================================================
+  function renderGeniusFlow() {
+    // Error banner
+    const errorBanner = geniusError && (
+      <div className="rounded-lg border border-[#ef4444]/30 bg-[#ef4444]/10 px-4 py-3 text-sm text-[#ef4444]">
+        {geniusError}
+      </div>
+    );
+
+    // -- idle: load from DB or recheck device --
+    if (geniusStep === "idle") {
+      return (
+        <div className="flex flex-col gap-4">
+          {errorBanner}
+          <Card>
+            <div className="space-y-4">
+              <p className="text-sm text-[#8a8f98]">
+                Use playback history from the database to generate intelligent
+                playlists. Data is synced when you check or sync a device.
+              </p>
+              <div className="flex flex-col sm:flex-row gap-3">
+                <Button variant="primary" onClick={handleLoadFromDb}>
+                  Load from database
+                </Button>
+                <div className="flex flex-col sm:flex-row gap-2 sm:items-end">
+                  <Select
+                    label="Device (for recheck)"
+                    options={[
+                      { value: "", label: "Select device\u2026" },
+                      ...deviceList.map((d) => ({
+                        value: String(d?.id ?? ""),
+                        label: d?.name ?? "",
+                      })),
+                    ]}
+                    value={geniusDeviceId != null ? String(geniusDeviceId) : ""}
+                    onChange={(v) => setGeniusDeviceId(v ? Number(v) : null)}
+                  />
+                  <Button
+                    variant="secondary"
+                    disabled={geniusDeviceId == null}
+                    onClick={handleRecheckDevice}
+                  >
+                    Recheck device for playback.log
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </Card>
+        </div>
+      );
+    }
+
+    // -- analyzing: spinner --
+    if (geniusStep === "analyzing") {
+      return (
+        <Card>
+          <div className="flex flex-col items-center justify-center py-12 gap-3">
+            <div className="w-6 h-6 border-2 border-[#4a9eff]/30 border-t-[#4a9eff] rounded-full animate-spin" />
+            <p className="text-sm text-[#8a8f98]">
+              Reading playback log&hellip;
+            </p>
+          </div>
+        </Card>
+      );
+    }
+
+    // -- summary + type picker --
+    if (geniusStep === "summary" && geniusSummary) {
+      return (
+        <div className="flex flex-col gap-5">
+          {errorBanner}
+
+          {/* Summary card */}
+          <Card title="Analysis Summary">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
+              <div>
+                <p className="text-lg font-semibold text-white">
+                  {geniusSummary.totalPlays.toLocaleString()}
+                </p>
+                <p className="text-xs text-[#5a5f68]">Total Plays</p>
+              </div>
+              <div>
+                <p className="text-lg font-semibold text-[#22c55e]">
+                  {geniusSummary.matchedPlays.toLocaleString()}
+                </p>
+                <p className="text-xs text-[#5a5f68]">Matched</p>
+              </div>
+              <div>
+                <p className="text-lg font-semibold text-[#8a8f98]">
+                  {geniusSummary.uniqueTracks}
+                </p>
+                <p className="text-xs text-[#5a5f68]">Unique Tracks</p>
+              </div>
+              <div>
+                <p className="text-lg font-semibold text-[#8a8f98]">
+                  {geniusSummary.uniqueArtists}
+                </p>
+                <p className="text-xs text-[#5a5f68]">Artists</p>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4 mt-4 text-xs">
+              <div className="flex justify-between">
+                <span className="text-[#5a5f68]">Date Range</span>
+                <span className="text-[#8a8f98]">
+                  {formatDate(geniusSummary.dateRange.first)} &ndash;{" "}
+                  {formatDate(geniusSummary.dateRange.last)}
+                </span>
+              </div>
+              {geniusSummary.topArtist && (
+                <div className="flex justify-between">
+                  <span className="text-[#5a5f68]">Top Artist</span>
+                  <span className="text-[#8a8f98]">
+                    {geniusSummary.topArtist.name} (
+                    {geniusSummary.topArtist.playCount})
+                  </span>
+                </div>
+              )}
+              {geniusSummary.topAlbum && (
+                <div className="flex justify-between col-span-2">
+                  <span className="text-[#5a5f68]">Top Album</span>
+                  <span className="text-[#8a8f98]">
+                    {geniusSummary.topAlbum.name} &mdash;{" "}
+                    {geniusSummary.topAlbum.artist} (
+                    {geniusSummary.topAlbum.playCount})
+                  </span>
+                </div>
+              )}
+            </div>
+          </Card>
+
+          {/* Type picker grid */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+            {(Array.isArray(geniusTypes) ? geniusTypes : []).map((gt) => (
+              <button
+                key={gt.value}
+                type="button"
+                onClick={() => handlePickType(gt.value)}
+                className="text-left p-4 rounded-xl border border-white/[0.06] bg-white/[0.02] hover:bg-[#4a9eff]/[0.06] hover:border-[#4a9eff]/30 transition-all cursor-pointer"
+              >
+                <div className="text-2xl mb-2">{gt.icon}</div>
+                <h4 className="text-sm font-semibold text-white">
+                  {gt.label}
+                </h4>
+                <p className="text-[11px] text-[#5a5f68] mt-1 leading-relaxed">
+                  {gt.description}
+                </p>
+              </button>
+            ))}
+          </div>
+
+          <div className="flex gap-2">
+            <Button variant="secondary" size="sm" onClick={resetGenius}>
+              &larr; Back to Device Select
+            </Button>
+            <Button variant="secondary" size="sm" onClick={() => setCreateKind(null)}>
+              Cancel
+            </Button>
+          </div>
+        </div>
+      );
+    }
+
+    // -- configuring --
+    if (geniusStep === "configuring" && geniusSelectedType) {
+      const typeInfo = (Array.isArray(geniusTypes) ? geniusTypes : []).find(
+        (t) => t.value === geniusSelectedType
+      );
+      const showMinPlays =
+        geniusSelectedType === "most_played" ||
+        geniusSelectedType === "favorites";
+      const showArtistPicker = geniusSelectedType === "deep_dive";
+      const showTimeCapsule = geniusSelectedType === "time_capsule";
+      const showGoldenEra = geniusSelectedType === "golden_era";
+
+      return (
+        <div className="flex flex-col gap-4">
+          {errorBanner}
+          <Card title={`Configure: ${typeInfo?.label ?? geniusSelectedType}`}>
+            <div className="space-y-4">
+              <p className="text-xs text-[#5a5f68]">
+                {typeInfo?.description}
+              </p>
+
+              <div>
+                <label className="block text-xs font-medium text-[#8a8f98] mb-1.5">
+                  Max Tracks: {geniusMaxTracks}
+                </label>
+                <input
+                  type="range"
+                  min={5}
+                  max={300}
+                  step={5}
+                  value={geniusMaxTracks}
+                  onChange={(e) =>
+                    setGeniusMaxTracks(Number(e.target.value))
+                  }
+                  className="w-full accent-[#4a9eff]"
+                />
+                <div className="flex justify-between text-[10px] text-[#5a5f68]">
+                  <span>5</span>
+                  <span>300</span>
+                </div>
+              </div>
+
+              {showMinPlays && (
+                <div>
+                  <label className="block text-xs font-medium text-[#8a8f98] mb-1.5">
+                    Min Plays: {geniusMinPlays}
+                  </label>
+                  <input
+                    type="range"
+                    min={1}
+                    max={20}
+                    value={geniusMinPlays}
+                    onChange={(e) =>
+                      setGeniusMinPlays(Number(e.target.value))
+                    }
+                    className="w-full accent-[#4a9eff]"
+                  />
+                  <div className="flex justify-between text-[10px] text-[#5a5f68]">
+                    <span>1</span>
+                    <span>20</span>
+                  </div>
+                </div>
+              )}
+
+              {showArtistPicker && (
+                <Select
+                  label="Artist"
+                  options={[
+                    { value: "", label: "Select artist\u2026" },
+                    ...(Array.isArray(geniusArtists) ? geniusArtists : []).map(
+                      (a) => ({
+                        value: a.name,
+                        label: `${a.name} (${a.playCount} plays)`,
+                      })
+                    ),
+                  ]}
+                  value={geniusArtistPick}
+                  onChange={(v) => setGeniusArtistPick(v)}
+                />
+              )}
+
+              {showTimeCapsule && (
+                <div className="grid grid-cols-2 gap-3">
+                  <Select
+                    label="Month"
+                    options={[
+                      { value: "1", label: "January" },
+                      { value: "2", label: "February" },
+                      { value: "3", label: "March" },
+                      { value: "4", label: "April" },
+                      { value: "5", label: "May" },
+                      { value: "6", label: "June" },
+                      { value: "7", label: "July" },
+                      { value: "8", label: "August" },
+                      { value: "9", label: "September" },
+                      { value: "10", label: "October" },
+                      { value: "11", label: "November" },
+                      { value: "12", label: "December" },
+                    ]}
+                    value={String(geniusTargetMonth)}
+                    onChange={(v) => setGeniusTargetMonth(Number(v) || 1)}
+                  />
+                  <Input
+                    label="Year"
+                    type="number"
+                    min={1990}
+                    max={new Date().getFullYear() + 1}
+                    value={String(geniusTargetYear)}
+                    onChange={(e) =>
+                      setGeniusTargetYear(
+                        Number(e.target.value) || new Date().getFullYear()
+                      )
+                    }
+                  />
+                </div>
+              )}
+
+              {showGoldenEra && (
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-xs font-medium text-[#8a8f98] mb-1.5">
+                      Range: {geniusRangeEnd}\u2013{geniusRangeStart} months ago
+                    </label>
+                    <div className="flex gap-2 items-center">
+                      <input
+                        type="range"
+                        min={6}
+                        max={120}
+                        value={geniusRangeEnd}
+                        onChange={(e) =>
+                          setGeniusRangeEnd(Number(e.target.value))
+                        }
+                        className="flex-1 accent-[#4a9eff]"
+                      />
+                      <span className="text-xs w-8">{geniusRangeEnd}m</span>
+                    </div>
+                    <div className="flex gap-2 items-center mt-1">
+                      <input
+                        type="range"
+                        min={6}
+                        max={120}
+                        value={geniusRangeStart}
+                        onChange={(e) =>
+                          setGeniusRangeStart(Number(e.target.value))
+                        }
+                        className="flex-1 accent-[#4a9eff]"
+                      />
+                      <span className="text-xs w-8">{geniusRangeStart}m</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <div className="flex gap-2 pt-2">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => setGeniusStep("summary")}
+                >
+                  &larr; Back
+                </Button>
+                <Button
+                  variant="primary"
+                  size="sm"
+                  onClick={handleGenerate}
+                >
+                  Generate Preview
+                </Button>
+              </div>
+            </div>
+          </Card>
+        </div>
+      );
+    }
+
+    // -- generating: spinner --
+    if (geniusStep === "generating") {
+      return (
+        <Card>
+          <div className="flex flex-col items-center justify-center py-12 gap-3">
+            <div className="w-6 h-6 border-2 border-[#4a9eff]/30 border-t-[#4a9eff] rounded-full animate-spin" />
+            <p className="text-sm text-[#8a8f98]">
+              Generating playlist&hellip;
+            </p>
+          </div>
+        </Card>
+      );
+    }
+
+    // -- preview --
+    if (geniusStep === "preview" && geniusPreview) {
+      return (
+        <div className="flex flex-col gap-4">
+          {errorBanner}
+          <Card title="Playlist Preview">
+            <p className="text-xs text-[#5a5f68] mb-2">
+              {geniusPreview?.criteria ?? ""}
+            </p>
+            <Input
+              label="Playlist Name"
+              value={geniusSaveName}
+              onChange={(e) => setGeniusSaveName(e.target.value)}
+            />
+          </Card>
+
+          <Card>
+            {(Array.isArray(geniusPreview?.tracks) ? geniusPreview.tracks : []).length === 0 ? (
+              <p className="text-center text-xs text-[#5a5f68] py-8">
+                No tracks matched this criteria. Try different settings.
+              </p>
+            ) : (
+              <>
+                <div className="flex items-center gap-2 px-3 py-2 text-[10px] font-semibold text-[#5a5f68] uppercase tracking-wider border-b border-white/[0.06]">
+                  <span className="w-8 text-center">#</span>
+                  <span className="flex-[3]">Title</span>
+                  <span className="flex-[2]">Artist</span>
+                  <span className="flex-[2]">Album</span>
+                  <span className="w-16 text-right">Plays</span>
+                </div>
+                <div className="max-h-[50vh] overflow-auto">
+                  {(Array.isArray(geniusPreview?.tracks) ? geniusPreview.tracks : []).map((t, i) => (
+                    <div
+                      key={`${t.id}-${i}`}
+                      className="flex items-center gap-2 px-3 py-2 text-sm hover:bg-white/[0.02] border-b border-white/[0.03] transition-colors"
+                    >
+                      <span className="w-8 text-center text-[#5a5f68] text-xs tabular-nums">
+                        {i + 1}
+                      </span>
+                      <span className="flex-[3] truncate text-white">
+                        {t.title}
+                      </span>
+                      <span className="flex-[2] truncate text-[#8a8f98]">
+                        {t.artist}
+                      </span>
+                      <span className="flex-[2] truncate text-[#8a8f98]">
+                        {t.album}
+                      </span>
+                      <span className="w-16 text-right text-[#5a5f68] tabular-nums">
+                        {t.playCount ?? "—"}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+          </Card>
+
+          <div className="flex gap-2">
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => setGeniusStep("configuring")}
+            >
+              &larr; Back
+            </Button>
+            {(Array.isArray(geniusPreview?.tracks) ? geniusPreview.tracks : []).length > 0 && (
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={handleSaveGenius}
+              >
+                Save Playlist
+              </Button>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    return null;
+  }
+
+  // =====================================================================
+  // Savant tab flow
+  // =====================================================================
+  function renderSavantFlow() {
+    if (hasOpenRouterKey === false) {
+      return (
+        <Card>
+          <div className="space-y-4">
+            <p className="text-sm text-[#8a8f98]">
+              Savant uses AI to build playlists tailored to your mood. Add your
+              OpenRouter API key in Settings to enable this feature.
+            </p>
+            <p className="text-xs text-[#5a5f68]">
+              Go to Settings (gear icon) → AI Settings to configure.
+            </p>
+          </div>
+        </Card>
+      );
+    }
+
+    const keyedCount = savantKeyData?.keyedCount ?? 0;
+    const totalCount = savantKeyData?.totalCount ?? 0;
+    const coveragePct = savantKeyData?.coveragePct ?? 0;
+
+    if (savantResult) {
+      const tracks = savantResultTracks ?? [];
+      return (
+        <div className="flex flex-col gap-5">
+          {savantError && (
+            <div className="rounded-lg border border-[#ef4444]/30 bg-[#ef4444]/10 px-4 py-3 text-sm text-[#ef4444]">
+              {savantError}
+            </div>
+          )}
+          <Card title={savantResult.name}>
+            <p className="text-xs text-[#8a8f98] mb-3">
+              {savantResult.reasoning}
+            </p>
+            <p className="text-sm text-[#5a5f68]">
+              {savantResult.trackCount} tracks
+              {coveragePct >= 30
+                ? ` · Harmonic sequencing applied`
+                : " · Harmonic sequencing unavailable (low key coverage)"}
+            </p>
+          </Card>
+          <Card>
+            <div className="flex items-center gap-2 px-3 py-2 text-[10px] font-semibold text-[#5a5f68] uppercase tracking-wider border-b border-white/[0.06]">
+              <span className="w-8 text-center">#</span>
+              <span className="flex-[3]">Title</span>
+              <span className="flex-[2]">Artist</span>
+              <span className="flex-[2]">Album</span>
+              <span className="w-16 text-right">Duration</span>
+            </div>
+            <div className="max-h-[40vh] overflow-auto">
+              {tracks.slice(0, 8).map((t, i) => (
+                <div
+                  key={t.id}
+                  className="flex items-center gap-2 px-3 py-2 text-sm hover:bg-white/[0.02] border-b border-white/[0.03] transition-colors"
+                >
+                  <span className="w-8 text-center text-[#5a5f68] text-xs tabular-nums">
+                    {i + 1}
+                  </span>
+                  <span className="flex-[3] truncate text-white">{t.title}</span>
+                  <span className="flex-[2] truncate text-[#8a8f98]">
+                    {t.artist}
+                  </span>
+                  <span className="flex-[2] truncate text-[#8a8f98]">
+                    {t.album}
+                  </span>
+                  <span className="w-16 text-right text-[#5a5f68] tabular-nums">
+                    {formatDuration(t.duration)}
+                  </span>
+                </div>
+              ))}
+            </div>
+            {tracks.length > 8 && (
+              <p className="text-[10px] text-[#5a5f68] px-3 py-2">
+                + {tracks.length - 8} more tracks
+              </p>
+            )}
+          </Card>
+          <div className="flex gap-2">
+            <Button size="sm" onClick={() => handleSelect(savantResult.playlistId)}>
+              View Playlist
+            </Button>
+            <Button variant="secondary" size="sm" onClick={handleSavantRegenerate}>
+              Regenerate
+            </Button>
+            <Button variant="secondary" size="sm" onClick={handleSavantDiscard}>
+              Discard
+            </Button>
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <div className="flex flex-col gap-5">
+        {savantError && (
+          <div className="rounded-lg border border-[#ef4444]/30 bg-[#ef4444]/10 px-4 py-3 text-sm text-[#ef4444]">
+            {savantError}
+          </div>
+        )}
+        <div className="flex gap-5">
+          <Card title="1. Backfill" className="flex-1 min-w-0">
+            <div className="space-y-3">
+              <p className="text-sm text-[#8a8f98]">
+                Savant uses AI to build a playlist tailored to your mood.
+              </p>
+              <p className="text-xs text-[#5a5f68]">
+                {keyedCount} / {totalCount} tracks have harmonic data (
+                {coveragePct}%). Re-scan your library or run backfill to improve.
+              </p>
+              {totalCount > 0 && (
+                <>
+                  <Button
+                    size="sm"
+                    variant="primary"
+                    disabled={showBackfillModal}
+                    onClick={handleSavantBackfill}
+                  >
+                    Backfill Key Data
+                  </Button>
+                  <BackfillProgressModal
+                    open={showBackfillModal}
+                    onClose={handleBackfillComplete}
+                    backfillOpts={backfillOpts}
+                    onComplete={handleBackfillComplete}
+                  />
+                </>
+              )}
+            </div>
+          </Card>
+
+          <Card title="2. Max Songs" className="flex-1 min-w-0">
+            <div>
+              <label className="block text-xs font-medium text-[#8a8f98] mb-1.5">
+                Track count: {savantTargetCount}
+              </label>
+            <input
+              type="range"
+              min={10}
+              max={300}
+              step={5}
+              value={savantTargetCount}
+                onChange={(e) =>
+                  setSavantTargetCount(Number(e.target.value))
+                }
+                className="w-full accent-[#4a9eff]"
+              />
+            </div>
+          </Card>
+        </div>
+
+        <Card title="3. Talk to Savant">
+          <div className="flex gap-1 p-1 rounded-lg bg-white/[0.04] w-fit mb-4">
+            {(["quick", "chat"] as const).map((mode) => (
+              <button
+                key={mode}
+                type="button"
+                onClick={() => setSavantMode(mode)}
+                className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors cursor-default capitalize ${
+                  savantMode === mode
+                    ? "bg-[#4a9eff]/15 text-[#4a9eff]"
+                    : "text-[#5a5f68] hover:text-[#8a8f98]"
+                }`}
+              >
+                {mode === "quick" ? "Quick prompt" : "Chat"}
+              </button>
+            ))}
+          </div>
+          {savantMode === "quick" ? (
+            <div className="space-y-2">
+              <p className="text-xs text-[#8a8f98]">
+                Describe your mood and, if you want, anchor on a specific artist.
+                Press Enter to generate.
+              </p>
+              <p className="text-[10px] text-[#5a5f68]">
+                Example: Late night coding, something like Radiohead. Or: Chill
+                Sunday morning, lean on Bon Iver.
+              </p>
+              <input
+                type="text"
+                value={savantQuickPrompt}
+                onChange={(e) => setSavantQuickPrompt(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && savantQuickPrompt.trim()) {
+                    e.preventDefault();
+                    handleSavantGenerate();
+                  }
+                }}
+                placeholder="e.g. Road trip energy, mix of 80s and modern indie…"
+                disabled={savantGenerating}
+                className="w-full rounded-lg bg-white/[0.04] border border-white/[0.08] px-3 py-2.5 text-sm text-[#e0e0e0] placeholder:text-[#5a5f68] outline-none focus:border-[#4a9eff]/50 disabled:opacity-50 [.theme-light_&]:bg-white [.theme-light_&]:border-[#e2e8f0] [.theme-light_&]:text-[#1a1a1a]"
+              />
+            </div>
+          ) : (
+            <SavantInlineChat
+              onIntentReady={setSavantIntentFromChat}
+              onIntentClear={() => setSavantIntentFromChat(null)}
+            />
+          )}
+        </Card>
+
+        <Button
+          variant="primary"
+          disabled={
+            savantGenerating ||
+            (savantMode === "quick"
+              ? !savantQuickPrompt.trim()
+              : !savantIntentFromChat)
+          }
+          onClick={handleSavantGenerate}
+        >
+          {savantGenerating
+            ? "Consulting the AI curator…"
+            : savantMode === "quick"
+              ? savantQuickPrompt.trim()
+                ? "Create Playlist"
+                : "Type a prompt to create"
+              : savantIntentFromChat
+                ? "Create Playlist"
+                : "Complete the chat to create"}
+        </Button>
+      </div>
+    );
+  }
+
+  // =====================================================================
+  // List view
+  // =====================================================================
+  return (
+    <div className="panel-content flex flex-col gap-5">
+      {/* Top bar */}
+      <div className="flex items-center gap-3">
+        <Button
+          variant="primary"
+          size="sm"
+          onClick={() => setShowCreate(true)}
+        >
+          + Create Playlist
+        </Button>
+      </div>
+
+      {/* Tabs */}
+      <div className="flex gap-1 p-1 rounded-lg bg-white/[0.04] w-fit">
+        {(["all", "smart", "genius", "savant"] as Tab[]).map((tab) => (
+          <button
+            key={tab}
+            className={`px-4 py-1.5 rounded-md text-xs font-medium transition-colors cursor-default capitalize ${
+              activeTab === tab
+                ? "bg-[#4a9eff]/15 text-[#4a9eff]"
+                : "text-[#5a5f68] hover:text-[#8a8f98]"
+            }`}
+            onClick={() => setActiveTab(tab)}
+          >
+            {tab}
+          </button>
+        ))}
+      </div>
+
+      {/* Savant tab: show flow instead of list */}
+      {activeTab === "savant" ? (
+        renderSavantFlow()
+      ) : loading ? (
+        <div className="flex items-center justify-center py-16">
+          <div className="w-6 h-6 border-2 border-[#4a9eff]/30 border-t-[#4a9eff] rounded-full animate-spin" />
+        </div>
+      ) : filtered.length === 0 ? (
+        <EmptyState
+          icon="≡"
+          title="No playlists"
+          description="Create a smart or genius playlist to get started"
+          action={
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={() => setShowCreate(true)}
+            >
+              + Create Playlist
+            </Button>
+          }
+        />
+      ) : (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {filtered.map((p) => (
+            <Card key={p.id}>
+              <div className="flex items-start gap-3 mb-3">
+                <div className="w-10 h-10 rounded-xl bg-[#4a9eff]/[0.08] flex items-center justify-center text-lg text-[#4a9eff]">
+                  {p.typeName === "genius" ? "✨" : "≡"}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <h4 className="text-sm font-semibold text-white truncate">
+                      {p.name}
+                    </h4>
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-[#4a9eff]/10 text-[#4a9eff] shrink-0">
+                      {p.typeName}
+                    </span>
+                  </div>
+                  <p className="text-[10px] text-[#5a5f68] mt-0.5">
+                    {p.trackCount} tracks &middot; Updated{" "}
+                    {new Date(p.updatedAt).toLocaleDateString()}
+                  </p>
+                </div>
+              </div>
+              {p.description && (
+                <p className="text-xs text-[#8a8f98] mb-3 line-clamp-2">
+                  {p.description}
+                </p>
+              )}
+              <div className="flex gap-2">
+                <Button size="sm" onClick={() => handleSelect(p.id)}>
+                  View
+                </Button>
+                <Button
+                  variant="danger"
+                  size="sm"
+                  onClick={() => handleDelete(p.id)}
+                >
+                  Delete
+                </Button>
+              </div>
+            </Card>
+          ))}
+        </div>
+      )}
+
+      {/* Create Playlist Modal: choice → Smart flow or Genius flow */}
+      <Modal
+        open={showCreate}
+        onClose={closeCreateModal}
+        wide={createKind === "genius"}
+        title={
+          createKind === null
+            ? "Create Playlist"
+            : createKind === "smart"
+              ? createStep === 1
+                ? "Create Smart Playlist"
+                : "Choose filters"
+              : "Create Genius Playlist"
+        }
+      >
+        <div className="space-y-4">
+          {createKind === null ? (
+            <>
+              <p className="text-sm text-[#8a8f98]">
+                Choose the type of playlist to create.
+              </p>
+              <div className="flex flex-col sm:flex-row gap-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCreateKind("smart");
+                    setCreateStep(1);
+                  }}
+                  className="flex-1 p-4 rounded-xl border border-white/[0.06] bg-white/[0.02] hover:bg-[#4a9eff]/[0.06] hover:border-[#4a9eff]/30 transition-all text-left cursor-pointer"
+                >
+                  <div className="text-2xl mb-2">≡</div>
+                  <h4 className="text-sm font-semibold text-white">
+                    Smart Playlist
+                  </h4>
+                  <p className="text-[11px] text-[#5a5f68] mt-1">
+                    Build a playlist by genre, artist, or album.
+                  </p>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCreateKind("genius");
+                    setGeniusStep("idle");
+                    setGeniusError(null);
+                    fetchDevices();
+                  }}
+                  className="flex-1 p-4 rounded-xl border border-white/[0.06] bg-white/[0.02] hover:bg-[#4a9eff]/[0.06] hover:border-[#4a9eff]/30 transition-all text-left cursor-pointer"
+                >
+                  <div className="text-2xl mb-2">✨</div>
+                  <h4 className="text-sm font-semibold text-white">
+                    Genius Playlist
+                  </h4>
+                  <p className="text-[11px] text-[#5a5f68] mt-1">
+                    Analyze device playback and generate smart playlists.
+                  </p>
+                </button>
+              </div>
+              <div className="flex justify-end pt-2">
+                <Button onClick={closeCreateModal}>Cancel</Button>
+              </div>
+            </>
+          ) : createKind === "genius" ? (
+            <>
+              {renderGeniusFlow()}
+              {geniusStep === "idle" && (
+                <div className="flex justify-end pt-2">
+                  <Button variant="secondary" onClick={closeCreateModal}>
+                    Cancel
+                  </Button>
+                </div>
+              )}
+            </>
+          ) : createStep === 1 ? (
+            <>
+              <Input
+                label="Name"
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+                placeholder="My Playlist"
+              />
+              <Select
+                label="Strategy"
+                value={strategy}
+                onChange={(v) => setStrategy(v)}
+                options={[
+                  { value: "by_genre", label: "By Genre" },
+                  { value: "by_artist", label: "By Artist" },
+                  { value: "by_album", label: "By Album" },
+                ]}
+              />
+              <div>
+                <label className="flex items-center gap-2 mb-1.5 cursor-pointer text-xs font-medium text-[#8a8f98]">
+                  <input
+                    type="checkbox"
+                    checked={trackLimitAll}
+                    onChange={(e) =>
+                      setTrackLimitAll(e.target.checked)
+                    }
+                    className="accent-[#4a9eff]"
+                  />
+                  All
+                </label>
+                <label className="block text-xs font-medium text-[#8a8f98] mb-1.5">
+                  Track Limit: {trackLimitAll ? "All" : trackLimit}
+                </label>
+                <input
+                  type="range"
+                  min={10}
+                  max={300}
+                  step={10}
+                  value={trackLimit}
+                  onChange={(e) =>
+                    setTrackLimit(Number(e.target.value))
+                  }
+                  disabled={trackLimitAll}
+                  className={`w-full accent-[#4a9eff] ${trackLimitAll ? "opacity-50 cursor-not-allowed" : ""}`}
+                />
+                <div className="flex justify-between text-[10px] text-[#5a5f68]">
+                  <span>10</span>
+                  <span>300</span>
+                </div>
+              </div>
+              <div className="flex justify-end gap-2 pt-2">
+                <Button onClick={closeCreateModal}>Cancel</Button>
+                <Button
+                  variant="primary"
+                  onClick={goToStep2}
+                  disabled={!newName || optionsLoading}
+                >
+                  {optionsLoading ? "Loading\u2026" : "Next"}
+                </Button>
+              </div>
+            </>
+          ) : (
+            <>
+              <p className="text-xs text-[#8a8f98]">
+                {strategy === "by_genre" &&
+                  "Select one or more genres."}
+                {strategy === "by_artist" &&
+                  "Select one or more artists."}
+                {strategy === "by_album" &&
+                  "Select one or more albums."}
+              </p>
+              <div className="max-h-56 overflow-y-auto rounded-lg border border-white/10 bg-black/20 p-2 space-y-1">
+                {strategy === "by_genre" &&
+                  (Array.isArray(genres) ? genres : []).map((g) => (
+                    <label
+                      key={g.id}
+                      className="flex items-center gap-2 py-1.5 px-2 rounded hover:bg-white/[0.04] cursor-pointer text-sm"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={selectedGenreIds.has(g.id)}
+                        onChange={() =>
+                          toggleSet(setSelectedGenreIds, g.id)
+                        }
+                        className="accent-[#4a9eff]"
+                      />
+                      <span className="text-white truncate">
+                        {g.name}
+                      </span>
+                      <span className="text-[10px] text-[#5a5f68] shrink-0">
+                        {g.trackCount} tracks
+                      </span>
+                    </label>
+                  ))}
+                {strategy === "by_artist" &&
+                  (Array.isArray(artists) ? artists : []).map((a) => (
+                    <label
+                      key={a.id}
+                      className="flex items-center gap-2 py-1.5 px-2 rounded hover:bg-white/[0.04] cursor-pointer text-sm"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={selectedArtistIds.has(a.id)}
+                        onChange={() =>
+                          toggleSet(setSelectedArtistIds, a.id)
+                        }
+                        className="accent-[#4a9eff]"
+                      />
+                      <span className="text-white truncate">
+                        {a.name}
+                      </span>
+                      <span className="text-[10px] text-[#5a5f68] shrink-0">
+                        {a.trackCount} tracks
+                      </span>
+                    </label>
+                  ))}
+                {strategy === "by_album" &&
+                  (Array.isArray(albums) ? albums : []).map((a) => (
+                    <label
+                      key={a.id}
+                      className="flex items-center gap-2 py-1.5 px-2 rounded hover:bg-white/[0.04] cursor-pointer text-sm"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={selectedAlbumIds.has(a.id)}
+                        onChange={() =>
+                          toggleSet(setSelectedAlbumIds, a.id)
+                        }
+                        className="accent-[#4a9eff]"
+                      />
+                      <span className="text-white truncate">
+                        {a.title} &mdash; {a.artist}
+                      </span>
+                      <span className="text-[10px] text-[#5a5f68] shrink-0">
+                        {a.trackCount} tracks
+                      </span>
+                    </label>
+                  ))}
+              </div>
+              <div className="flex justify-end gap-2 pt-2">
+                <Button onClick={() => setCreateStep(1)}>Back</Button>
+                <Button
+                  variant="primary"
+                  onClick={handleCreate}
+                  disabled={
+                    (strategy === "by_genre" &&
+                      selectedGenreIds.size === 0) ||
+                    (strategy === "by_artist" &&
+                      selectedArtistIds.size === 0) ||
+                    (strategy === "by_album" &&
+                      selectedAlbumIds.size === 0)
+                  }
+                >
+                  Create Playlist
+                </Button>
+              </div>
+            </>
+          )}
+        </div>
+      </Modal>
+    </div>
+  );
+}

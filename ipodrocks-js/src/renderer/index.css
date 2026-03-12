@@ -1,0 +1,140 @@
+@import "tailwindcss";
+
+@keyframes fadeSlideIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Light theme: Gmail-like — clean white, high contrast, dark text */
+.theme-light {
+  color: #202124;
+}
+.theme-light > div {
+  background-color: #fff;
+}
+.theme-light nav {
+  background-color: #fff;
+  border-color: #dadce0;
+}
+.theme-light nav h1,
+.theme-light nav .text-white {
+  color: #202124;
+}
+.theme-light nav .nav-inactive {
+  color: #5f6368;
+}
+.theme-light nav .nav-inactive:hover {
+  background-color: #f1f3f4;
+  color: #202124;
+}
+.theme-light nav .nav-active {
+  background-color: rgba(46, 204, 113, 0.18);
+  color: #16a34a;
+}
+.theme-light main {
+  background-color: #fff;
+}
+.theme-light main > div.overflow-auto {
+  background-color: #fff;
+}
+
+/* Panel content: headings and labels use dark text in light theme; keep button text */
+.theme-light .panel-content .text-white {
+  color: #202124;
+}
+.theme-light .panel-content button.text-white {
+  color: white;
+}
+.theme-light .panel-content [class*="text-[#e0e0e0]"] {
+  color: #202124;
+}
+
+/* Dark boxes (grid cells, table headers, etc.) become light */
+.theme-light .theme-box {
+  background-color: #fff;
+  border-color: #dadce0;
+  color: #202124;
+}
+.theme-light .theme-box .text-white,
+.theme-light .theme-box [class*="text-[#e0e0e0]"] {
+  color: #202124;
+}
+.theme-light .theme-box [class*="text-[#8a8f98]"],
+.theme-light .theme-box [class*="text-[#5a5f68]"] {
+  color: #5f6368;
+}
+
+/* Gmail-like list/table headers: light grey bg, dark text */
+.theme-light .theme-box.sticky,
+.theme-light [class*="sticky"][class*="uppercase"] {
+  background-color: #f8f9fa !important;
+  color: #202124 !important;
+  border-color: #dadce0;
+}
+.theme-light .theme-box.sticky [class*="text-[#5a5f68]"],
+.theme-light .theme-box.sticky [class*="text-[#8a8f98]"],
+.theme-light [class*="sticky"][class*="uppercase"] [class*="text-[#5a5f68]"],
+.theme-light [class*="sticky"][class*="uppercase"] [class*="text-[#8a8f98]"] {
+  color: #202124 !important;
+}
+
+/* List/table rows: white bg, dark text, clear hover */
+.theme-light .panel-content [class*="hover:bg-white"]:hover {
+  background-color: #f1f3f4 !important;
+}
+.theme-light .panel-content [class*="border-white/\[0.03\]"] {
+  border-color: #e8eaed;
+}
+
+/* Primary text in lists (title, name) — near black */
+.theme-light .panel-content .flex span[class*="text-white"]:not(button) {
+  color: #202124;
+}
+/* Secondary text in lists — readable grey */
+.theme-light .panel-content [class*="text-[#8a8f98]"] {
+  color: #5f6368;
+}
+.theme-light .panel-content [class*="text-[#5a5f68]"] {
+  color: #5f6368;
+}
+
+/* List containers: white bg, clear borders */
+.theme-light .panel-content [class*="border-white/\[0.06\]"] {
+  border-color: #dadce0;
+}
+.theme-light [class*="bg-[#131626]"],
+.theme-light [class*="bg-[#1c1e22]"],
+.theme-light [class*="bg-[#2a2d33]"] {
+  background-color: #fff !important;
+}
+.theme-light [class*="border-[#2a2d33]"] {
+  border-color: #dadce0;
+}
+
+/* Inputs and bordered controls in light theme (panels and modals) */
+.theme-light input[type="text"],
+.theme-light input[type="number"],
+.theme-light input[type="checkbox"],
+.theme-light select,
+.theme-light textarea,
+.theme-light [role="combobox"] {
+  background-color: #fff;
+  border-color: #dadce0;
+  color: #202124;
+}
+.theme-light input::placeholder,
+.theme-light textarea::placeholder {
+  color: #9aa0a6;
+}
+.theme-light .panel-content [class*="bg-white/[0.02]"] {
+  background-color: #f8f9fa;
+}
+.theme-light .panel-content [class*="bg-white/[0.04]"] {
+  background-color: #f1f3f4;
+}

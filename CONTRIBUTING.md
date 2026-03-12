@@ -11,8 +11,8 @@ From v1.0.0.1 onward:
 
 1. Create a branch from **dev**
 2. Make your changes
-3. Ensure tests pass: `cd electronjs && npm run test -- --run`
-4. Ensure build succeeds: `cd electronjs && npm run build`
+3. Ensure tests pass: `cd ipodrocks-js && npm run test -- --run`
+4. Ensure build succeeds: `cd ipodrocks-js && npm run build`
 5. Open a PR into **dev**
 
 PRs to **main** must:
@@ -24,7 +24,7 @@ PRs to **main** must:
 ## Running Tests
 
 ```bash
-cd electronjs
+cd ipodrocks-js
 npm install
 npm run test -- --run
 ```
