@@ -87,6 +87,7 @@ CREATE TABLE IF NOT EXISTS tracks (
 CREATE TABLE IF NOT EXISTS playback_logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     device_id TEXT NOT NULL,
+    device_db_id INTEGER,
     device_name TEXT,
     timestamp_tick INTEGER NOT NULL,
     elapsed_ms INTEGER NOT NULL,
@@ -329,6 +330,13 @@ CREATE TABLE IF NOT EXISTS app_settings (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS activity_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    operation TEXT NOT NULL,
+    detail TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 -- ============================================================
 -- Seed Data
 -- ============================================================
@@ -467,6 +475,8 @@ CREATE INDEX IF NOT EXISTS idx_albums_artist ON albums(artist_id);
 CREATE INDEX IF NOT EXISTS idx_playback_logs_device ON playback_logs(device_id);
 CREATE INDEX IF NOT EXISTS idx_playback_logs_track ON playback_logs(matched_track_id);
 CREATE INDEX IF NOT EXISTS idx_playback_logs_timestamp ON playback_logs(timestamp_tick);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_playback_logs_device_timestamp_path
+  ON playback_logs(device_db_id, timestamp_tick, file_path) WHERE device_db_id IS NOT NULL;
 
 -- playback_stats
 CREATE INDEX IF NOT EXISTS idx_playback_stats_track ON playback_stats(track_id);
@@ -511,6 +521,9 @@ CREATE INDEX IF NOT EXISTS idx_last_modified ON content_hashes(last_modified);
 
 -- app_settings
 CREATE INDEX IF NOT EXISTS idx_app_settings_key ON app_settings(key);
+
+-- activity_log
+CREATE INDEX IF NOT EXISTS idx_activity_log_created_at ON activity_log(created_at DESC);
 
 -- shadow_libraries
 CREATE INDEX IF NOT EXISTS idx_shadow_libraries_status ON shadow_libraries(status);

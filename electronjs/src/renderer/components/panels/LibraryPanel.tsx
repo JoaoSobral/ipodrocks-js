@@ -84,6 +84,9 @@ export function LibraryPanel() {
   const [folderPath, setFolderPath] = useState("");
   const [contentType, setContentType] = useState("music");
   const [showScanProgress, setShowScanProgress] = useState(false);
+  const [foldersToScan, setFoldersToScan] = useState<
+    Array<{ name: string; path: string; contentType: string }> | null
+  >(null);
   const [devices, setDevices] = useState<DeviceProfile[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState<number | null>(null);
   const [syncedPaths, setSyncedPaths] = useState<Set<string>>(new Set());
@@ -219,11 +222,16 @@ export function LibraryPanel() {
 
   async function handleAddFolder() {
     if (!folderName || !folderPath) return;
-    await addLibraryFolder(folderName, folderPath, contentType);
+    const name = folderName.trim();
+    const pathVal = folderPath.trim();
+    const type = contentType;
+    await addLibraryFolder(name, pathVal, type);
     setShowAddFolder(false);
     setFolderName("");
     setFolderPath("");
     fetchFolders();
+    setFoldersToScan([{ name, path: pathVal, contentType: type }]);
+    setShowScanProgress(true);
   }
 
   async function handleRemoveFolder(id: number) {
@@ -233,6 +241,7 @@ export function LibraryPanel() {
 
   function handleScan() {
     if (folders.length === 0) return;
+    setFoldersToScan(null);
     setShowScanProgress(true);
   }
 
@@ -244,6 +253,7 @@ export function LibraryPanel() {
 
   function handleScanClose() {
     setShowScanProgress(false);
+    setFoldersToScan(null);
     fetchTracks();
     fetchStats();
   }
@@ -724,6 +734,9 @@ export function LibraryPanel() {
               { value: "audiobook", label: "Audiobooks" },
             ]}
           />
+          <p className="text-xs text-[#6a6f78]">
+            Supported formats: MP3, M4A, FLAC, WAV, AIFF, OGG, Opus
+          </p>
           <div className="flex justify-end gap-2 pt-2">
             <Button onClick={() => setShowAddFolder(false)}>Cancel</Button>
             <Button
@@ -740,7 +753,14 @@ export function LibraryPanel() {
       <ScanProgressModal
         open={showScanProgress}
         onClose={handleScanClose}
-        folders={folders.map((f) => ({ name: f.name, path: f.path, contentType: f.contentType }))}
+        folders={
+          foldersToScan ??
+          folders.map((f) => ({
+            name: f.name,
+            path: f.path,
+            contentType: f.contentType,
+          }))
+        }
       />
 
       {/* Create Shadow Library Modal */}

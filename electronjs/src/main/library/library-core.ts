@@ -358,11 +358,19 @@ export class LibraryCore {
   }
 
   /**
-   * Delete a track by file path.
+   * Delete a track by file path. Also removes playback_logs and playback_stats.
    *
    * @returns true if the track was deleted
    */
   deleteTrack(trackPath: string): boolean {
+    const row = this.db
+      .prepare("SELECT id FROM tracks WHERE path = ?")
+      .get(trackPath) as { id: number } | undefined;
+    if (!row) return false;
+
+    const trackId = row.id;
+    this.db.prepare("DELETE FROM playback_logs WHERE matched_track_id = ?").run(trackId);
+    this.db.prepare("DELETE FROM playback_stats WHERE track_id = ?").run(trackId);
     const info = this.stmtDeleteTrack.run(trackPath);
     return info.changes > 0;
   }
@@ -401,6 +409,23 @@ export class LibraryCore {
 
     const doRemove = this.db.transaction(() => {
       if (removeTracks) {
+        const trackIds = this.db
+          .prepare("SELECT id FROM tracks WHERE library_folder_id = ?")
+          .all(folderId) as { id: number }[];
+        const ids = trackIds.map((r) => r.id);
+        if (ids.length > 0) {
+          const placeholders = ids.map(() => "?").join(",");
+          this.db
+            .prepare(
+              `DELETE FROM playback_logs WHERE matched_track_id IN (${placeholders})`
+            )
+            .run(...ids);
+          this.db
+            .prepare(
+              `DELETE FROM playback_stats WHERE track_id IN (${placeholders})`
+            )
+            .run(...ids);
+        }
         this.db
           .prepare("DELETE FROM tracks WHERE library_folder_id = ?")
           .run(folderId);

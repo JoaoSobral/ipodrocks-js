@@ -10,13 +10,16 @@ import {
 } from "../../shared/types";
 
 const AUDIO_EXTENSIONS = new Set([
+  ".m4a",
   ".mp3",
   ".flac",
-  ".m4a",
+  ".wav",
+  ".aiff",
+  ".aif",
   ".ogg",
   ".opus",
   ".mpc",
-  ".ape",
+  ".mpp",
 ]);
 
 interface GetTracksOptions {

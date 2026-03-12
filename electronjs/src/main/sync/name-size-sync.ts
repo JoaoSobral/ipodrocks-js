@@ -109,6 +109,7 @@ export function compareLibraries(
   const deviceByRel = new Map<string, [string, number]>();
   const deviceByRelNorm = new Map<string, [string, number, string]>();
   const deviceByStem = new Map<string, [string, number, string][]>();
+  const deviceByBasename = new Map<string, [string, number, string][]>();
 
   const deviceEntries = Object.entries(deviceFilesMap);
   for (let i = 0; i < deviceEntries.length; i++) {
@@ -130,6 +131,13 @@ export function compareLibraries(
       deviceByStem.set(stemKey, []);
     }
     deviceByStem.get(stemKey)!.push([devicePath, size, relStr]);
+
+    const basename = path.posix.basename(relStr.replace(/\\/g, "/"));
+    const basenameNorm = normalizeRelPathForMatch(basename);
+    if (!deviceByBasename.has(basenameNorm)) {
+      deviceByBasename.set(basenameNorm, []);
+    }
+    deviceByBasename.get(basenameNorm)!.push([devicePath, size, relStr]);
   }
 
   const missingTracks = new Set<string>();
@@ -171,40 +179,88 @@ export function compareLibraries(
 
       if (profileExtNorm === null || deviceExtNorm === profileExtNorm) {
         matched = true;
+
+        // If we have a meaningful expected size (e.g. direct copy or lossless),
+        // treat the file as equal when its size matches within tolerance.
         if (expectedSize > 0) {
           if (Math.abs(deviceSize - expectedSize) <= SIZE_TOLERANCE) {
             skipNotOverwrite = true;
           }
         }
-        if (!skipNotOverwrite) {
-          const libMtime = libraryExpectedMtimes[libPath];
-          const devStats = devicePath ? deviceFilesMap[devicePath] : undefined;
-          const devMtime = devStats?.mtime;
-          if (
-            libMtime != null &&
-            devMtime != null &&
-            Math.abs(devMtime - libMtime) <= MTIME_TOLERANCE_MS
-          ) {
+
+        const libMtime = libraryExpectedMtimes[libPath];
+        const devStats = devicePath ? deviceFilesMap[devicePath] : undefined;
+        const devMtime = devStats?.mtime;
+
+        if (!skipNotOverwrite && libMtime != null && devMtime != null) {
+          if (expectedSize === 0) {
+            // Lossy conversions: ignore size, and only re-sync when the
+            // library file has been modified *after* the device file.
+            if (libMtime <= devMtime + MTIME_TOLERANCE_MS) {
+              skipNotOverwrite = true;
+            }
+          } else if (Math.abs(devMtime - libMtime) <= MTIME_TOLERANCE_MS) {
+            // Non-lossy / direct copy: treat files as equal when mtime matches.
             skipNotOverwrite = true;
           }
-        }
-        if (expectedSize === 0 && !skipNotOverwrite) {
-          skipNotOverwrite = true;
         }
       }
     }
 
-    // Rule 1: Stem match for codec mismatch (old format on device)
+    // Rule 1: Stem match — same track by path stem (handles path normalization
+    // differences and codec mismatch when device has old format)
     if (!matched) {
       const stemEntries = deviceByStem.get(stemKey);
       if (stemEntries) {
         const libDestExtNorm = normalizeKey(extOf(relPath));
-        for (const [dp] of stemEntries) {
+        for (const [dp, devSize] of stemEntries) {
           const devExtNorm = normalizeKey(extOf(dp));
-          if (devExtNorm !== libDestExtNorm) {
+          const extMatch = devExtNorm === libDestExtNorm;
+          const codecMismatch = devExtNorm !== libDestExtNorm;
+          if (extMatch || codecMismatch) {
             devicePath = dp;
+            deviceSize = devSize;
             matched = true;
-            skipNotOverwrite = false;
+            if (extMatch) {
+              skipNotOverwrite =
+                expectedSize > 0
+                  ? Math.abs(devSize - expectedSize) <= SIZE_TOLERANCE
+                  : true;
+            } else {
+              skipNotOverwrite = false;
+            }
+            break;
+          }
+        }
+      }
+    }
+
+    // Rule 3: Basename match — same filename (handles different folder
+    // structure; e.g. device has Artist/Album/Track.mpc, library expects
+    // different path but same Track.mpc)
+    if (!matched && profileExtNorm) {
+      const libBasename = path.posix.basename(relPath.replace(/\\/g, "/"));
+      const basenameNorm = normalizeRelPathForMatch(libBasename);
+      const basenameEntries = deviceByBasename.get(basenameNorm);
+      if (basenameEntries) {
+        const libDestExtNorm = normalizeKey(extOf(relPath));
+        for (const [dp, devSize] of basenameEntries) {
+          if (matchedDevicePaths.has(dp)) continue;
+          const devExtNorm = normalizeKey(extOf(dp));
+          const extMatch = devExtNorm === libDestExtNorm;
+          const codecMismatch = devExtNorm !== libDestExtNorm;
+          if (extMatch || codecMismatch) {
+            devicePath = dp;
+            deviceSize = devSize;
+            matched = true;
+            if (extMatch) {
+              skipNotOverwrite =
+                expectedSize > 0
+                  ? Math.abs(devSize - expectedSize) <= SIZE_TOLERANCE
+                  : true;
+            } else {
+              skipNotOverwrite = false;
+            }
             break;
           }
         }
@@ -214,14 +270,18 @@ export function compareLibraries(
     if (matched && devicePath) {
       matchedDevicePaths.add(devicePath);
 
-      // Mark other device files with same stem but different ext as matched
+      // Mark device files with different ext for removal (same stem or basename)
       if (profileExtNorm) {
+        const libDestExt = normalizeKey(extOf(relPath));
+        const dpExt = normalizeKey(extOf(devicePath));
+        if (dpExt !== libDestExt && !codecMismatchPaths.includes(devicePath)) {
+          codecMismatchPaths.push(devicePath);
+        }
         const stemEntries = deviceByStem.get(stemKey);
         if (stemEntries) {
-          const libDestExt = normalizeKey(extOf(relPath));
           for (const [dp] of stemEntries) {
-            const dpExt = normalizeKey(extOf(dp));
-            if (dpExt !== libDestExt) {
+            const dExt = normalizeKey(extOf(dp));
+            if (dExt !== libDestExt) {
               matchedDevicePaths.add(dp);
               if (!codecMismatchPaths.includes(dp)) {
                 codecMismatchPaths.push(dp);

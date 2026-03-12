@@ -2,8 +2,9 @@ import { useEffect, useState } from "react";
 import { Card } from "../common/Card";
 import { useLibraryStore } from "../../stores/library-store";
 import { useDeviceStore } from "../../stores/device-store";
-import { getShadowLibraries } from "../../ipc/api";
+import { getShadowLibraries, getRecentActivity } from "../../ipc/api";
 import type { ShadowLibrary } from "@shared/types";
+import type { ActivityEntry } from "../../ipc/api";
 
 function formatBytes(bytes: number): string {
   if (bytes < 1e9) return `${(bytes / 1e6).toFixed(1)} MB`;
@@ -42,10 +43,35 @@ function statusColor(status: ShadowLibrary["status"]): string {
   }
 }
 
+const OPERATION_LABELS: Record<string, string> = {
+  sync: "Sync",
+  library_scan: "Library scan",
+  add_folder: "Add folder",
+  add_device: "Add device",
+  update_device: "Update device",
+  read_playback_log: "Read playback log",
+  playlist_generated: "Playlist generated",
+};
+
+function formatActivityTime(iso: string): string {
+  const d = new Date(iso);
+  const now = new Date();
+  const diffMs = now.getTime() - d.getTime();
+  const diffMins = Math.floor(diffMs / 60000);
+  const diffHours = Math.floor(diffMs / 3600000);
+  const diffDays = Math.floor(diffMs / 86400000);
+  if (diffMins < 1) return "Just now";
+  if (diffMins < 60) return `${diffMins}m ago`;
+  if (diffHours < 24) return `${diffHours}h ago`;
+  if (diffDays < 7) return `${diffDays}d ago`;
+  return d.toLocaleDateString();
+}
+
 export function DashboardPanel() {
   const { stats, fetchStats, loading: libLoading } = useLibraryStore();
   const { devices, fetchDevices, loading: devLoading } = useDeviceStore();
   const [shadowLibs, setShadowLibs] = useState<ShadowLibrary[]>([]);
+  const [activity, setActivity] = useState<ActivityEntry[]>([]);
 
   const deviceList = Array.isArray(devices) ? devices : [];
   const shadowList = Array.isArray(shadowLibs) ? shadowLibs : [];
@@ -54,6 +80,7 @@ export function DashboardPanel() {
     fetchStats();
     fetchDevices();
     getShadowLibraries().then(setShadowLibs).catch(console.error);
+    getRecentActivity().then(setActivity).catch(console.error);
   }, [fetchStats, fetchDevices]);
 
   return (
@@ -192,10 +219,35 @@ export function DashboardPanel() {
       </Card>
 
       {/* Recent Activity */}
-      <Card title="Recent Activity" subtitle="Latest operations" className="col-span-2">
-        <div className="flex items-center justify-center py-8">
-          <p className="text-xs text-[#5a5f68]">No recent activity</p>
-        </div>
+      <Card title="Recent Activity" subtitle="Last 100 operations" className="col-span-2">
+        {activity.length === 0 ? (
+          <div className="flex items-center justify-center py-8">
+            <p className="text-xs text-[#5a5f68]">No recent activity</p>
+          </div>
+        ) : (
+          <div className="max-h-64 overflow-y-auto space-y-1.5">
+            {activity.map((entry) => (
+              <div
+                key={entry.id}
+                className="flex items-center justify-between gap-3 py-2 px-2.5 rounded-lg bg-white/[0.02] [.theme-light_&]:bg-[#f3f4f6] text-sm"
+              >
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="text-[#4a9eff] shrink-0">
+                    {OPERATION_LABELS[entry.operation] ?? entry.operation}
+                  </span>
+                  {entry.detail && (
+                    <span className="text-[#8a8f98] truncate [.theme-light_&]:text-[#6b7280]">
+                      {entry.detail}
+                    </span>
+                  )}
+                </div>
+                <span className="text-[10px] text-[#5a5f68] shrink-0 [.theme-light_&]:text-[#9ca3af]">
+                  {formatActivityTime(entry.created_at)}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
       </Card>
     </div>
   );

@@ -1,7 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
 
-import { Device, Track } from "../../shared/types";
+import { Device } from "../devices/device";
 import {
   CompareOptions,
   CompareResult,
@@ -141,6 +141,7 @@ export function buildLibraryDestMap(
     codecName.toUpperCase()
   );
   const codecLower = needsConversion ? codecName.toLowerCase() : "copy";
+  const codecCategory = classifyCodecCategory(codecLower);
 
   const entries = Object.entries(libraryTracks);
   const total = entries.length;
@@ -165,9 +166,10 @@ export function buildLibraryDestMap(
         (trackInfo.fileSize as number) ??
         (trackInfo.file_size as number) ??
         0;
-      if (originalSize > 0) {
-        // Use a heuristic expected size so we can detect codec changes
-        // (e.g. ALAC → AAC both using .m4a) via significant size differences.
+
+      if (codecCategory === "lossless" && originalSize > 0) {
+        // For lossless conversions (e.g. FLAC → ALAC) keep a heuristic
+        // expected size so we can detect codec changes via large size deltas.
         const assumedBitrate = 256;
         expectedSizes[trackPath] = estimateConvertedSize(
           originalSize,
@@ -175,16 +177,23 @@ export function buildLibraryDestMap(
           assumedBitrate
         );
       } else {
+        // For lossy conversions (e.g. ALAC → AAC/MPC/MP3) the relationship
+        // between source size and encoded size is too noisy to use as a
+        // reliable equality check, so we ignore size when deciding whether
+        // a device file is up to date.
         expectedSizes[trackPath] = 0;
       }
     } else {
       expectedSizes[trackPath] =
         (trackInfo.fileSize as number) ?? (trackInfo.file_size as number) ?? 0;
-      try {
-        expectedMtimes[trackPath] = fs.statSync(trackPath).mtimeMs;
-      } catch {
-        // leave unset
-      }
+    }
+
+    // Always record library mtime (when available) so we can use it for
+    // equality checks even when size is ignored (e.g. lossy conversions).
+    try {
+      expectedMtimes[trackPath] = fs.statSync(trackPath).mtimeMs;
+    } catch {
+      // leave unset
     }
 
     destMap[trackPath] = relPath.replace(/\\/g, "/");
@@ -352,7 +361,8 @@ export async function copyMissingTracks(
   codecName: string,
   libraryFolderPaths?: Map<number, string>,
   progressCallback?: ProgressCallback,
-  cancelSignal?: AbortSignal
+  cancelSignal?: AbortSignal,
+  deviceProfile?: { codecConfigBitrate?: number | null; codecConfigQuality?: number | null }
 ): Promise<{ synced: number; missingFiles: string[]; errors: number }> {
   if (!missingPaths.length) return { synced: 0, missingFiles: [], errors: 0 };
 
@@ -379,6 +389,9 @@ export async function copyMissingTracks(
 
   const needsConversion = !["DIRECT COPY", "COPY", "NONE"].includes(codecName.toUpperCase());
   const codecLower = needsConversion ? codecName.toLowerCase() : "copy";
+  const isMpc = codecLower === "mpc";
+  const bitrate = deviceProfile?.codecConfigBitrate ?? 256;
+  const quality = deviceProfile?.codecConfigQuality ?? (isMpc ? 7 : undefined);
 
   for (const tp of existingPaths) {
     if (cancelSignal?.aborted) throw new SyncCancelled();
@@ -389,7 +402,8 @@ export async function copyMissingTracks(
       perTrackConversion[tp] = {
         transfer_mode: "convert",
         codec: codecLower,
-        bitrate: 256,
+        bitrate: isMpc ? undefined : bitrate,
+        quality: isMpc ? quality : undefined,
         rule_applied: "device_default",
       };
     } else {
@@ -526,7 +540,8 @@ export async function runSync(
     codecName,
     libraryFolderPaths,
     progressCallback,
-    cancelSignal
+    cancelSignal,
+    device.profile
   );
 
   if (analysis.codecMismatchPaths.length > 0 && synced > 0) {

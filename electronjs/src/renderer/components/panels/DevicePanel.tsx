@@ -35,6 +35,12 @@ function downloadOrphansCsv(cr: CheckResult): void {
   for (const p of cr.orphansPodcastPaths ?? []) {
     rows.push(["podcast", p]);
   }
+  for (const p of cr.orphansAudiobookPaths ?? []) {
+    rows.push(["audiobook", p]);
+  }
+  for (const p of cr.orphansPlaylistPaths ?? []) {
+    rows.push(["playlist", p]);
+  }
   const csv = rows.map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(",")).join("\n");
   const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
   const url = URL.createObjectURL(blob);
@@ -125,7 +131,7 @@ export function DevicePanel() {
     setDefaultCodecConfigId(null);
     setDescription("");
     setIsDefault(false);
-    setPlaybackLogEnabled(true);
+    setPlaybackLogEnabled(true); // true = read playback.log (default)
     setMusicFolder("Music");
     setPodcastFolder("Podcasts");
     setAudiobookFolder("Audiobooks");
@@ -165,6 +171,8 @@ export function DevicePanel() {
       setSourceLibraryType("primary");
       setShadowLibraryId(null);
     }
+
+    setPlaybackLogEnabled(!(device.skipPlaybackLog ?? false));
 
     setShowDeviceModal(true);
   }
@@ -212,6 +220,7 @@ export function DevicePanel() {
       playlistFolder,
       sourceLibraryType: resolvedSourceType,
       shadowLibraryId: resolvedShadowId,
+      skipPlaybackLog: !playbackLogEnabled,
     };
 
     if (editingDeviceId !== null) {
@@ -409,16 +418,28 @@ export function DevicePanel() {
                         </span>
                       </div>
                     )}
+                    {typeof cr.audiobookSyncedWithLibrary === "number" && (
+                      <div className="flex justify-between text-xs">
+                        <span className="text-[#5a5f68]">Audiobooks vs Library</span>
+                        <span className="text-[#8a8f98]">
+                          {cr.audiobookSyncedWithLibrary} synced · {cr.audiobookOrphans ?? 0} orphans
+                        </span>
+                      </div>
+                    )}
                     {cr.playlists != null && (
                       <div className="flex justify-between text-xs">
                         <span className="text-[#5a5f68]">Playlists</span>
                         <span className="text-[#8a8f98]">
                           {cr.playlists.fileCount ?? 0} file{(cr.playlists.fileCount ?? 0) !== 1 ? "s" : ""}
                           {(cr.playlists.totalGb ?? 0) > 0 ? ` · ${formatGb(cr.playlists.totalGb ?? 0)}` : ""}
+                          {(cr.playlistOrphans ?? 0) > 0 ? ` · ${cr.playlistOrphans} orphans` : ""}
                         </span>
                       </div>
                     )}
-                    {((cr.orphansMusicPaths?.length ?? 0) + (cr.orphansPodcastPaths?.length ?? 0)) > 0 && (
+                    {((cr.orphansMusicPaths?.length ?? 0) +
+                      (cr.orphansPodcastPaths?.length ?? 0) +
+                      (cr.orphansAudiobookPaths?.length ?? 0) +
+                      (cr.orphansPlaylistPaths?.length ?? 0)) > 0 && (
                       <Button
                         variant="secondary"
                         size="sm"
@@ -624,6 +645,15 @@ export function DevicePanel() {
                 onChange={(e) => setIsDefault(e.target.checked)}
               />
               <span className="text-sm text-[#e0e0e0]">Set as Default Device</span>
+            </label>
+            <label className="flex items-center gap-2.5 cursor-pointer">
+              <input
+                type="checkbox"
+                className={checkboxClass}
+                checked={!playbackLogEnabled}
+                onChange={(e) => setPlaybackLogEnabled(!e.target.checked)}
+              />
+              <span className="text-sm text-[#e0e0e0]">Do not read playback.log data</span>
             </label>
           </div>
 

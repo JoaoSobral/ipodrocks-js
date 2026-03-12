@@ -155,6 +155,63 @@ export function buildSavantChatContext(db: Database.Database): string {
     );
   }
 
+  lines.push(getSavantPlaylistContext(db));
+  return lines.join("\n");
+}
+
+/**
+ * Returns context string for playlists and recent Savant memory.
+ * Used by Savant generation and chat.
+ */
+export function getSavantPlaylistContext(db: Database.Database): string {
+  const playlists = db
+    .prepare(
+      `SELECT p.name, pt.name AS type_name,
+              (SELECT COUNT(*) FROM playlist_items pi WHERE pi.playlist_id = p.id) AS track_count
+       FROM playlists p
+       JOIN playlist_types pt ON p.playlist_type_id = pt.id
+       ORDER BY p.updated_at DESC
+       LIMIT 50`
+    )
+    .all() as Array<{ name: string; type_name: string; track_count: number }>;
+  const recentSavant = db
+    .prepare(
+      `SELECT p.name, p.savant_config,
+              (SELECT COUNT(*) FROM playlist_items pi WHERE pi.playlist_id = p.id) AS track_count
+       FROM playlists p
+       JOIN playlist_types pt ON p.playlist_type_id = pt.id
+       WHERE pt.name = 'savant' AND p.savant_config IS NOT NULL
+       ORDER BY p.updated_at DESC
+       LIMIT 10`
+    )
+    .all() as Array<{ name: string; savant_config: string | null; track_count: number }>;
+
+  const lines: string[] = [
+    "",
+    "## Existing playlists (read-only)",
+    playlists.length > 0
+      ? playlists
+          .map((p) => `- ${p.name} (${p.type_name}, ${p.track_count} tracks)`)
+          .join("\n")
+      : "- No playlists yet",
+  ];
+  if (recentSavant.length > 0) {
+    const savantLines = recentSavant.map((p) => {
+      let intent = "";
+      try {
+        const cfg = JSON.parse(p.savant_config ?? "{}") as {
+          intent?: { mood?: string };
+        };
+        intent = cfg.intent?.mood
+          ? ` — "${cfg.intent.mood.slice(0, 80)}${cfg.intent.mood.length > 80 ? "…" : ""}"`
+          : "";
+      } catch {
+        /* ignore */
+      }
+      return `- ${p.name} (${p.track_count} tracks)${intent}`;
+    });
+    lines.push("", "## Recent Savant playlists (memory)", ...savantLines);
+  }
   return lines.join("\n");
 }
 

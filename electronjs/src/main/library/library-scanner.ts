@@ -24,9 +24,6 @@ const AUDIO_EXTENSIONS = new Set([
   ".aif",
   ".ogg",
   ".opus",
-  ".mpc",
-  ".mpp",
-  ".ape",
 ]);
 
 interface TrackUpsertData {

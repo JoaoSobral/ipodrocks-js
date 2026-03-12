@@ -184,6 +184,151 @@ export function buildAnalysisSummary(
   };
 }
 
+/**
+ * Load MatchedPlayEvent[] from playback_logs for use with generateGeniusPlaylist.
+ */
+function loadMatchedEventsFromDb(
+  db: Database.Database
+): MatchedPlayEvent[] {
+  const rows = db
+    .prepare(
+      `SELECT pl.timestamp_tick AS timestamp, pl.elapsed_ms AS elapsedMs,
+              pl.total_ms AS totalMs, pl.file_path AS filePath,
+              pl.completion_rate AS completionRatio, pl.matched_track_id AS trackId,
+              a.name AS artist, al.title AS album, t.title AS trackTitle,
+              g.name AS genre, t.duration
+       FROM playback_logs pl
+       JOIN tracks t ON t.id = pl.matched_track_id AND t.content_type = 'music'
+       LEFT JOIN artists a ON t.artist_id = a.id
+       LEFT JOIN albums al ON t.album_id = al.id
+       LEFT JOIN genres g ON t.genre_id = g.id
+       WHERE pl.matched_track_id IS NOT NULL`
+    )
+    .all() as Array<{
+    timestamp: number;
+    elapsedMs: number;
+    totalMs: number;
+    filePath: string;
+    completionRatio: number;
+    trackId: number;
+    artist: string | null;
+    album: string | null;
+    trackTitle: string | null;
+    genre: string | null;
+    duration: number | null;
+  }>;
+
+  return rows.map((r) => ({
+    timestamp: r.timestamp,
+    elapsedMs: r.elapsedMs,
+    totalMs: r.totalMs,
+    filePath: r.filePath,
+    completionRatio: r.completionRatio,
+    trackId: r.trackId,
+    artist: r.artist ?? "Unknown",
+    album: r.album ?? "Unknown",
+    title: r.trackTitle ?? "Unknown",
+    genre: r.genre ?? "Unknown",
+    duration: r.duration ?? 0,
+  }));
+}
+
+/**
+ * Build AnalysisSummary from playback_stats and playback_logs in the database.
+ * Returns empty summary if no playback data exists.
+ */
+export function buildAnalysisSummaryFromDb(
+  db: Database.Database
+): AnalysisSummary {
+  const totalRow = db
+    .prepare(
+      "SELECT COUNT(*) as c, MIN(timestamp_tick) as first_ts, MAX(timestamp_tick) as last_ts " +
+        "FROM playback_logs WHERE matched_track_id IS NOT NULL"
+    )
+    .get() as { c: number; first_ts: number | null; last_ts: number | null };
+
+  const totalPlays = totalRow.c ?? 0;
+  const first =
+    totalRow.first_ts != null
+      ? new Date(totalRow.first_ts * 1000).toISOString()
+      : new Date().toISOString();
+  const last =
+    totalRow.last_ts != null
+      ? new Date(totalRow.last_ts * 1000).toISOString()
+      : new Date().toISOString();
+
+  if (totalPlays === 0) {
+    return {
+      totalPlays: 0,
+      matchedPlays: 0,
+      unmatchedPlays: 0,
+      dateRange: { first, last },
+      topArtist: null,
+      topAlbum: null,
+      uniqueTracks: 0,
+      uniqueArtists: 0,
+    };
+  }
+
+  const artistRows = db
+    .prepare(
+      `SELECT a.name, SUM(ps.total_plays) as plays
+       FROM playback_stats ps
+       JOIN tracks t ON t.id = ps.track_id AND t.content_type = 'music'
+       LEFT JOIN artists a ON t.artist_id = a.id
+       GROUP BY a.id
+       ORDER BY plays DESC`
+    )
+    .all() as Array<{ name: string | null; plays: number }>;
+
+  const albumRows = db
+    .prepare(
+      `SELECT al.title as album, a.name as artist, SUM(ps.total_plays) as plays
+       FROM playback_stats ps
+       JOIN tracks t ON t.id = ps.track_id AND t.content_type = 'music'
+       LEFT JOIN artists a ON t.artist_id = a.id
+       LEFT JOIN albums al ON t.album_id = al.id
+       GROUP BY al.id, a.id
+       ORDER BY plays DESC`
+    )
+    .all() as Array<{ album: string | null; artist: string | null; plays: number }>;
+
+  const topArtist =
+    artistRows.length > 0 && artistRows[0].plays > 0
+      ? {
+          name: artistRows[0].name ?? "Unknown",
+          playCount: artistRows[0].plays,
+        }
+      : null;
+
+  const topAlbum =
+    albumRows.length > 0 && albumRows[0].plays > 0
+      ? {
+          name: albumRows[0].album ?? "Unknown",
+          artist: albumRows[0].artist ?? "Unknown",
+          playCount: albumRows[0].plays,
+        }
+      : null;
+
+  const uniqueRow = db
+    .prepare(
+      "SELECT COUNT(DISTINCT track_id) as tracks, COUNT(DISTINCT t.artist_id) as artists " +
+        "FROM playback_stats ps JOIN tracks t ON t.id = ps.track_id AND t.content_type = 'music'"
+    )
+    .get() as { tracks: number; artists: number };
+
+  return {
+    totalPlays,
+    matchedPlays: totalPlays,
+    unmatchedPlays: 0,
+    dateRange: { first, last },
+    topArtist,
+    topAlbum,
+    uniqueTracks: uniqueRow.tracks ?? 0,
+    uniqueArtists: uniqueRow.artists ?? 0,
+  };
+}
+
 // -- available genius types -----------------------------------------------
 
 const GENIUS_TYPES: GeniusTypeOption[] = [
@@ -240,10 +385,67 @@ const GENIUS_TYPES: GeniusTypeOption[] = [
       "Pick an artist and get all their library tracks ordered by play count",
     icon: "\uD83D\uDD01",
   },
+  {
+    value: "oldies",
+    label: "Oldies",
+    description: "Tracks first played 36+ months ago, ordered by play count",
+    icon: "\uD83C\uDFB5",
+    minMonths: 36,
+  },
+  {
+    value: "nostalgia",
+    label: "Nostalgia",
+    description: "First played 12\u201336 months ago, ordered by play count",
+    icon: "\uD83C\uDFA7",
+    minMonths: 12,
+  },
+  {
+    value: "recent_favorites",
+    label: "Recent Favorites",
+    description: "Last played in last 6 months with high completion",
+    icon: "\uD83D\uDC9C",
+    minMonths: 6,
+  },
+  {
+    value: "time_capsule",
+    label: "Time Capsule",
+    description: "Tracks from a specific month/year you pick",
+    icon: "\u23F0",
+    minMonths: 24,
+  },
+  {
+    value: "golden_era",
+    label: "Golden Era",
+    description: "Most played in a time range (e.g. 24\u201348 months ago)",
+    icon: "\uD83C\uDFC6",
+    minMonths: 24,
+  },
 ];
 
-export function getAvailableGeniusTypes(): GeniusTypeOption[] {
-  return GENIUS_TYPES;
+const MS_PER_MONTH = 30 * 24 * 60 * 60 * 1000;
+
+/**
+ * Get approximate months of playback data (from earliest to now).
+ */
+export function getPlaybackDataMonths(db: Database.Database): number {
+  const row = db
+    .prepare(
+      "SELECT MIN(timestamp_tick) as min_ts FROM playback_logs WHERE matched_track_id IS NOT NULL"
+    )
+    .get() as { min_ts: number | null };
+  if (row.min_ts == null) return 0;
+  const now = Math.floor(Date.now() / 1000);
+  const months = (now - row.min_ts) * 1000 / MS_PER_MONTH;
+  return Math.max(0, Math.floor(months));
+}
+
+export function getAvailableGeniusTypes(
+  db?: Database.Database
+): GeniusTypeOption[] {
+  const dataMonths = db ? getPlaybackDataMonths(db) : 0;
+  return GENIUS_TYPES.filter(
+    (t) => t.minMonths == null || dataMonths >= t.minMonths
+  );
 }
 
 // -- playlist generation --------------------------------------------------
@@ -637,6 +839,162 @@ function generateRecentlyDiscovered(
   };
 }
 
+function generateOldies(
+  events: MatchedPlayEvent[],
+  opts: GeniusGenerateOptions,
+  db: Database.Database
+): PlaylistGenerationResult {
+  const limit = opts.maxTracks ?? 25;
+  const nowSec = Math.floor(Date.now() / 1000);
+  const cutoffSec = nowSec - 36 * 30 * 24 * 3600;
+  const agg = aggregateByTrack(events);
+  const filtered = [...agg.values()].filter((a) => {
+    const firstTs = Math.min(...a.timestamps);
+    return firstTs < cutoffSec;
+  });
+  const tracks = filtered
+    .sort((a, b) => b.playCount - a.playCount)
+    .slice(0, limit)
+    .map(aggToTrack);
+  return {
+    playlistName: "Oldies",
+    criteria: "Tracks first played 36+ months ago, by play count",
+    tracks,
+    generatedAt: new Date().toISOString(),
+    type: "genius",
+    subtype: "oldies",
+  };
+}
+
+function generateNostalgia(
+  events: MatchedPlayEvent[],
+  opts: GeniusGenerateOptions,
+  db: Database.Database
+): PlaylistGenerationResult {
+  const limit = opts.maxTracks ?? 25;
+  const nowSec = Math.floor(Date.now() / 1000);
+  const startSec = nowSec - 36 * 30 * 24 * 3600;
+  const endSec = nowSec - 12 * 30 * 24 * 3600;
+  const agg = aggregateByTrack(events);
+  const filtered = [...agg.values()].filter((a) => {
+    const firstTs = Math.min(...a.timestamps);
+    return firstTs >= endSec && firstTs < startSec;
+  });
+  const tracks = filtered
+    .sort((a, b) => b.playCount - a.playCount)
+    .slice(0, limit)
+    .map(aggToTrack);
+  return {
+    playlistName: "Nostalgia",
+    criteria: "First played 12\u201336 months ago, by play count",
+    tracks,
+    generatedAt: new Date().toISOString(),
+    type: "genius",
+    subtype: "nostalgia",
+  };
+}
+
+function generateRecentFavorites(
+  events: MatchedPlayEvent[],
+  opts: GeniusGenerateOptions
+): PlaylistGenerationResult {
+  const limit = opts.maxTracks ?? 25;
+  const nowSec = Math.floor(Date.now() / 1000);
+  const cutoffSec = nowSec - 6 * 30 * 24 * 3600;
+  const agg = aggregateByTrack(events);
+  const filtered = [...agg.values()].filter((a) => {
+    const lastTs = Math.max(...a.timestamps);
+    const avgComp = avgCompletion(a.completionRatios);
+    return lastTs >= cutoffSec && avgComp >= 0.85;
+  });
+  const tracks = filtered
+    .sort(
+      (a, b) =>
+        avgCompletion(b.completionRatios) - avgCompletion(a.completionRatios)
+    )
+    .slice(0, limit)
+    .map(aggToTrack);
+  return {
+    playlistName: "Recent Favorites",
+    criteria: "Last played in last 6 months, avg completion \u2265 85%",
+    tracks,
+    generatedAt: new Date().toISOString(),
+    type: "genius",
+    subtype: "recent_favorites",
+  };
+}
+
+function generateTimeCapsule(
+  events: MatchedPlayEvent[],
+  opts: GeniusGenerateOptions
+): PlaylistGenerationResult {
+  const limit = opts.maxTracks ?? 25;
+  const targetMonth = opts.targetMonth ?? 1;
+  const targetYear = opts.targetYear ?? new Date().getFullYear();
+  const startDate = new Date(targetYear, targetMonth - 1, 1);
+  const endDate = new Date(targetYear, targetMonth, 0, 23, 59, 59);
+  const startSec = Math.floor(startDate.getTime() / 1000);
+  const endSec = Math.floor(endDate.getTime() / 1000);
+  const inRange = (ts: number) => ts >= startSec && ts <= endSec;
+  const agg = aggregateByTrack(events);
+  const filtered = [...agg.values()].filter((a) =>
+    a.timestamps.some(inRange)
+  );
+  const tracks = filtered
+    .sort((a, b) => b.playCount - a.playCount)
+    .slice(0, limit)
+    .map(aggToTrack);
+  const monthName = startDate.toLocaleString("default", { month: "long" });
+  return {
+    playlistName: `Time Capsule: ${monthName} ${targetYear}`,
+    criteria: `Tracks played in ${monthName} ${targetYear}`,
+    tracks,
+    generatedAt: new Date().toISOString(),
+    type: "genius",
+    subtype: "time_capsule",
+  };
+}
+
+function generateGoldenEra(
+  events: MatchedPlayEvent[],
+  opts: GeniusGenerateOptions
+): PlaylistGenerationResult {
+  const limit = opts.maxTracks ?? 25;
+  const endMonths = opts.rangeEndMonthsAgo ?? 24;
+  const startMonths = opts.rangeStartMonthsAgo ?? 48;
+  const nowSec = Math.floor(Date.now() / 1000);
+  const startSec = nowSec - startMonths * 30 * 24 * 3600;
+  const endSec = nowSec - endMonths * 30 * 24 * 3600;
+  const inRange = (ts: number) => ts >= startSec && ts <= endSec;
+  const agg = aggregateByTrack(events);
+  const playCountInRange = new Map<number, number>();
+  for (const a of agg.values()) {
+    const count = a.timestamps.filter(inRange).length;
+    if (count > 0) {
+      playCountInRange.set(a.trackId, count);
+    }
+  }
+  const filtered = [...agg.values()].filter((a) =>
+    playCountInRange.has(a.trackId)
+  );
+  const tracks = filtered
+    .sort(
+      (a, b) =>
+        (playCountInRange.get(b.trackId) ?? 0) -
+        (playCountInRange.get(a.trackId) ?? 0)
+    )
+    .slice(0, limit)
+    .map(aggToTrack);
+  return {
+    playlistName: "Golden Era",
+    criteria: `Most played ${endMonths}\u2013${startMonths} months ago`,
+    tracks,
+    generatedAt: new Date().toISOString(),
+    type: "genius",
+    subtype: "golden_era",
+  };
+}
+
 function generateDeepDive(
   events: MatchedPlayEvent[],
   opts: GeniusGenerateOptions,
@@ -701,6 +1059,19 @@ function emptyResult(
 }
 
 /**
+ * Generate a genius playlist from playback_logs in the database.
+ * Use when device is not connected or when using DB-backed Genius.
+ */
+export function generateGeniusPlaylistFromDb(
+  geniusType: string,
+  db: Database.Database,
+  opts: GeniusGenerateOptions = {}
+): PlaylistGenerationResult {
+  const events = loadMatchedEventsFromDb(db);
+  return generateGeniusPlaylist(geniusType, events, db, opts);
+}
+
+/**
  * Generate a genius playlist from in-memory matched events.
  *
  * :param geniusType: One of the 8 algorithm keys.
@@ -717,8 +1088,8 @@ export function generateGeniusPlaylist(
 ): PlaylistGenerationResult {
   if (!events.length) {
     return emptyResult(
-      "None of the played tracks in the playback log were found in your library. " +
-      "Check that your library path is configured correctly.",
+      "No playback history in database. Connect a device and recheck for " +
+        "playback.log data, or run a sync/device check.",
       geniusType
     );
   }
@@ -740,6 +1111,16 @@ export function generateGeniusPlaylist(
       return generateRecentlyDiscovered(events, opts);
     case "deep_dive":
       return generateDeepDive(events, opts, db);
+    case "oldies":
+      return generateOldies(events, opts, db);
+    case "nostalgia":
+      return generateNostalgia(events, opts, db);
+    case "recent_favorites":
+      return generateRecentFavorites(events, opts);
+    case "time_capsule":
+      return generateTimeCapsule(events, opts);
+    case "golden_era":
+      return generateGoldenEra(events, opts);
     default:
       throw new Error(`Unknown genius playlist type: ${geniusType}`);
   }
@@ -759,4 +1140,25 @@ export function getArtistsFromEvents(
   return [...counts.entries()]
     .map(([name, playCount]) => ({ name, playCount }))
     .sort((a, b) => b.playCount - a.playCount);
+}
+
+/**
+ * Return artists from playback_stats, sorted by play count descending.
+ * Used for the Deep Dive artist picker when using DB-backed Genius.
+ */
+export function getArtistsFromPlaybackStats(
+  db: Database.Database
+): Array<{ name: string; playCount: number }> {
+  const rows = db
+    .prepare(
+      `SELECT a.name, SUM(ps.total_plays) as plays
+       FROM playback_stats ps
+       JOIN tracks t ON t.id = ps.track_id AND t.content_type = 'music'
+       LEFT JOIN artists a ON t.artist_id = a.id
+       WHERE a.name IS NOT NULL AND a.name != ''
+       GROUP BY a.id
+       ORDER BY plays DESC`
+    )
+    .all() as Array<{ name: string; plays: number }>;
+  return rows.map((r) => ({ name: r.name, playCount: r.plays }));
 }

@@ -6,6 +6,7 @@
 import Database from "better-sqlite3";
 import type { GenerateSavantResult, OpenRouterConfig, SavantIntent } from "../../shared/types";
 import { callOpenRouter, OpenRouterMessage } from "../llm/openRouterClient";
+import { getSavantPlaylistContext } from "./moodChat";
 import { harmonicSequence, SequencerTrack } from "./harmonicSequencer";
 
 export interface CandidateTrack {
@@ -231,7 +232,10 @@ async function assembleSavantContext(
   };
 }
 
-function buildSavantPrompt(ctx: SavantContext): OpenRouterMessage[] {
+function buildSavantPrompt(
+  ctx: SavantContext,
+  db: Database.Database
+): OpenRouterMessage[] {
   const system = `You are a music curator AI for a personal music player app.
 You have access to the user's library and listening history.
 Your job is to select tracks that match the user's stated mood and intent.
@@ -262,6 +266,8 @@ Mood summary derived from conversation: "${ctx.intent.mood}"
 `
       : "";
 
+  const playlistContext = getSavantPlaylistContext(db);
+
   const user = `
 The user wants a playlist with this intent:
 - Mood/vibe: "${ctx.intent.mood}"${chatContext}
@@ -271,6 +277,7 @@ The user wants a playlist with this intent:
 
 Their listening history signals:
 ${geniusBlock}
+${playlistContext}
 
 Here are ${ctx.candidateTracks.length} candidate tracks from their library to choose from:
 ${JSON.stringify(
@@ -345,7 +352,7 @@ export async function generateSavantPlaylist(
     throw new Error("No candidate tracks in library");
   }
 
-  const messages = buildSavantPrompt(context);
+  const messages = buildSavantPrompt(context, db);
   const raw = await callOpenRouter(messages, config, true);
   const llmResult = parseLLMResponse(raw);
 

@@ -81,9 +81,11 @@ export interface CheckResult {
   podcastOrphans?: number;
   audiobookSyncedWithLibrary?: number;
   audiobookOrphans?: number;
+  playlistOrphans?: number;
   orphansMusicPaths?: string[];
   orphansPodcastPaths?: string[];
   orphansAudiobookPaths?: string[];
+  orphansPlaylistPaths?: string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -96,6 +98,17 @@ export async function getTracks(filter?: TrackFilter): Promise<Track[]> {
 
 export async function getLibraryStats(): Promise<LibraryStats> {
   return window.api.invoke("library:getStats") as Promise<LibraryStats>;
+}
+
+export interface ActivityEntry {
+  id: number;
+  operation: string;
+  detail: string | null;
+  created_at: string;
+}
+
+export async function getRecentActivity(): Promise<ActivityEntry[]> {
+  return window.api.invoke("activity:getRecent") as Promise<ActivityEntry[]>;
 }
 
 export async function getLibraryFolders(): Promise<LibraryFolder[]> {
@@ -254,6 +267,26 @@ export async function checkDevice(deviceId: number): Promise<CheckResult> {
   return window.api.invoke("device:check", deviceId) as Promise<CheckResult>;
 }
 
+export interface ReadPlaybackLogResult {
+  ingested: number;
+  skipped: number;
+  summary: AnalysisSummary;
+  error?: string;
+}
+
+export async function readDevicePlaybackLog(
+  deviceId: number
+): Promise<ReadPlaybackLogResult> {
+  return window.api.invoke(
+    "device:readPlaybackLog",
+    deviceId
+  ) as Promise<ReadPlaybackLogResult>;
+}
+
+export async function getGeniusSummaryFromDb(): Promise<AnalyzeResult> {
+  return window.api.invoke("genius:getSummaryFromDb") as Promise<AnalyzeResult>;
+}
+
 export async function removeDevice(deviceId: number): Promise<void> {
   await window.api.invoke("device:remove", deviceId);
 }
@@ -348,7 +381,7 @@ export async function getGeniusTypes(): Promise<GeniusTypeOption[]> {
 }
 
 export async function generateGeniusPlaylist(
-  deviceId: number,
+  deviceId: number | null,
   geniusType: string,
   opts: GeniusGenerateOptions
 ): Promise<PlaylistGenerationResult> {
@@ -363,7 +396,7 @@ export async function generateGeniusPlaylist(
 export async function saveGeniusPlaylist(
   name: string,
   geniusType: string,
-  deviceId: number,
+  deviceId: number | null,
   trackIds: number[],
   trackLimit: number
 ): Promise<Playlist> {

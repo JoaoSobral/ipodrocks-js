@@ -64,15 +64,12 @@ const EXT_CODEC_MAP: Record<string, string> = {
   ".m4a": "AAC",
   ".ogg": "OGG",
   ".flac": "FLAC",
-  ".mpc": "MPC",
-  ".mpp": "MPC",
-  ".ape": "APE",
   ".wav": "PCM",
   ".aiff": "PCM",
   ".aif": "PCM",
 };
 
-const LOSSLESS_CODECS = new Set(["FLAC", "ALAC", "PCM", "WAV", "AIFF", "APE"]);
+const LOSSLESS_CODECS = new Set(["FLAC", "ALAC", "PCM", "WAV", "AIFF"]);
 
 /**
  * Extracts metadata and audio info from audio files using the music-metadata

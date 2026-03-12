@@ -67,3 +67,19 @@ export function parseRockboxPlaybackLog(
 
   return events;
 }
+
+/**
+ * Parse playback.log without throwing. Returns [] if file is missing or empty.
+ *
+ * :param deviceMountPath: Root mount path of the device.
+ * :returns: Array of parsed PlayEvent objects, or [] on missing/empty.
+ */
+export function parseRockboxPlaybackLogSafe(
+  deviceMountPath: string
+): PlayEvent[] {
+  try {
+    return parseRockboxPlaybackLog(deviceMountPath);
+  } catch {
+    return [];
+  }
+}

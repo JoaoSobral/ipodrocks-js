@@ -111,10 +111,25 @@ function buildProfileCommand(
   return cmd;
 }
 
+function getMpcencEnv(): NodeJS.ProcessEnv | undefined {
+  const basePath = process.env.PATH || "";
+  const delim = process.platform === "win32" ? ";" : ":";
+  const home = process.env.HOME || process.env.USERPROFILE || "";
+  const extras =
+    process.platform === "win32"
+      ? []
+      : ["/usr/local/bin", "/usr/bin", "/bin", home ? `${home}/.local/bin` : ""];
+  return {
+    ...process.env,
+    PATH: [...extras, basePath].filter(Boolean).join(delim),
+  };
+}
+
 function runLoggedSubprocess(
   cmd: string[],
   logCallback?: (line: string) => void,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  env?: NodeJS.ProcessEnv
 ): Promise<number> {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
@@ -126,6 +141,7 @@ function runLoggedSubprocess(
     try {
       proc = spawn(cmd[0], cmd.slice(1), {
         stdio: ["ignore", "pipe", "pipe"],
+        env: env ?? process.env,
       });
     } catch (err) {
       reject(err);
@@ -174,7 +190,19 @@ export async function convertWithCodec(
   const codec = settings.codec ?? "mp3";
   if (codec === "mpc") {
     logCallback?.(`Converting to MPC: ${path.basename(src)}`);
-    return convertMusepack(src, dest, settings.bitrate ?? 5, logCallback, signal);
+    const quality = settings.quality ?? 7;
+    try {
+      return await convertMusepack(src, dest, quality, logCallback, signal);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes("ENOENT") || msg.includes("spawn mpcenc")) {
+        logCallback?.(
+          "mpcenc not found. Install mpc-tools (Arch) or musepack-tools and ensure mpcenc is in PATH."
+        );
+      }
+      logCallback?.(`Conversion error: ${msg}`);
+      return false;
+    }
   }
 
   logCallback?.(`Converting to ${codec.toUpperCase()}: ${path.basename(src)}`);
@@ -249,7 +277,8 @@ async function convertMusepack(
       "--quality", `${quality}.0`,
       tmpWav, dest,
     ];
-    const mpcCode = await runLoggedSubprocess(mpcencCmd, logCallback, signal);
+    const mpcEnv = getMpcencEnv();
+    const mpcCode = await runLoggedSubprocess(mpcencCmd, logCallback, signal, mpcEnv);
     if (mpcCode !== 0) {
       logCallback?.(`mpcenc error: exit ${mpcCode}`);
       return false;

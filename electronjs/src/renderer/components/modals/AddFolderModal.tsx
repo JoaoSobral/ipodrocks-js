@@ -87,6 +87,10 @@ export function AddFolderModal({ open, onClose }: AddFolderModalProps) {
           onChange={(v) => setContentType(v)}
         />
 
+        <p className="text-xs text-[#6a6f78]">
+          Supported formats: MP3, M4A, FLAC, WAV, AIFF, OGG, Opus
+        </p>
+
         {error && (
           <div className="rounded-lg border border-[#ef4444]/30 bg-[#ef4444]/10 px-3 py-2 text-sm text-[#ef4444]">
             {error}

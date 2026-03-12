@@ -11,6 +11,7 @@ vi.mock("../renderer/ipc/api", () => ({
     totalSizeBytes: 0,
   }),
   getDevices: vi.fn().mockResolvedValue([]),
+  getRecentActivity: vi.fn().mockResolvedValue([]),
 }));
 
 describe("DashboardPanel", () => {
@@ -28,5 +29,11 @@ describe("DashboardPanel", () => {
   it("renders Shadow Libraries section", () => {
     render(<DashboardPanel />);
     expect(screen.getByText("Shadow Libraries")).toBeInTheDocument();
+  });
+
+  it("renders Recent Activity section", () => {
+    render(<DashboardPanel />);
+    expect(screen.getByText("Recent Activity")).toBeInTheDocument();
+    expect(screen.getByText("Last 100 operations")).toBeInTheDocument();
   });
 });

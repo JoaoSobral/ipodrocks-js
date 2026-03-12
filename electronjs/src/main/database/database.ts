@@ -20,6 +20,7 @@ export class AppDatabase {
     this.migrateDevicesTable();
     this.migrateAudiobooks();
     this.migrateSavant();
+    this.migratePlaybackLog();
   }
 
   private migrateSavant(): void {
@@ -88,8 +89,49 @@ export class AppDatabase {
           )
           .run();
       }
+      if (!names.has("skip_playback_log")) {
+        this.db
+          .prepare(
+            "ALTER TABLE devices ADD COLUMN skip_playback_log INTEGER NOT NULL DEFAULT 0"
+          )
+          .run();
+      }
     } catch {
       // best effort migration; if it fails we leave the table unchanged
+    }
+  }
+
+  private migratePlaybackLog(): void {
+    if (!this.db) return;
+    try {
+      const plRows = this.db
+        .prepare("PRAGMA table_info(playback_logs)")
+        .all() as { name: string }[];
+      const plNames = new Set(plRows.map((r) => r.name));
+      if (!plNames.has("device_db_id")) {
+        this.db
+          .prepare(
+            "ALTER TABLE playback_logs ADD COLUMN device_db_id INTEGER REFERENCES devices(id)"
+          )
+          .run();
+      }
+      const indexes = this.db
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='playback_logs'"
+        )
+        .all() as { name: string }[];
+      const indexNames = new Set(indexes.map((i) => i.name));
+      if (!indexNames.has("idx_playback_logs_device_timestamp_path")) {
+        this.db
+          .prepare(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_playback_logs_device_timestamp_path " +
+              "ON playback_logs(device_db_id, timestamp_tick, file_path) " +
+              "WHERE device_db_id IS NOT NULL"
+          )
+          .run();
+      }
+    } catch {
+      // best effort
     }
   }
 

@@ -57,7 +57,6 @@ export function SyncProgressModal({
   const logRef = useRef<HTMLDivElement>(null);
   const elapsedInterval = useRef<ReturnType<typeof setInterval> | null>(null);
   const syncStartedRef = useRef(false);
-  const progressLoggedRef = useRef(false);
   const progressUnsubRef = useRef<(() => void) | null>(null);
   const hasReceivedTotalRef = useRef(false);
   const onCompleteRef = useRef(onComplete);
@@ -67,23 +66,6 @@ export function SyncProgressModal({
   const pct = totalItems > 0 ? Math.round((processedItems / totalItems) * 100) : 0;
 
   const handleProgress = useCallback((p: SyncProgress) => {
-    // #region agent log
-    if (!progressLoggedRef.current) {
-      progressLoggedRef.current = true;
-      fetch("http://127.0.0.1:7317/ingest/d6ac44d9-ea47-46ce-9a5a-0a5158fe028d", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "c10d58" },
-        body: JSON.stringify({
-          sessionId: "c10d58",
-          location: "SyncProgressModal.tsx:handleProgress",
-          message: "renderer: first progress received",
-          data: { event: p.event, path: p.path, status: p.status },
-          timestamp: Date.now(),
-          hypothesisId: "H4",
-        }),
-      }).catch(() => {});
-    }
-    // #endregion
     setProgress(p);
 
     if (p.event === "log") {
@@ -91,9 +73,10 @@ export function SyncProgressModal({
       return;
     }
 
-    if (p.event === "total") {
+    if (p.event === "total" || p.event === "total_add") {
       hasReceivedTotalRef.current = true;
-      setTotalItems(Number(p.path) || 0);
+      const count = Number(p.path) || 0;
+      setTotalItems((prev) => prev + count);
       return;
     }
 
@@ -145,7 +128,6 @@ export function SyncProgressModal({
     setError(null);
     setCancelled(false);
     setElapsedSec(0);
-    progressLoggedRef.current = false;
     hasReceivedTotalRef.current = false;
 
     elapsedInterval.current = setInterval(() => {
@@ -158,20 +140,6 @@ export function SyncProgressModal({
 
     startSync(opts)
       .then((result: { synced?: number; removed?: number; errors?: number; error?: string }) => {
-        // #region agent log
-        fetch("http://127.0.0.1:7317/ingest/d6ac44d9-ea47-46ce-9a5a-0a5158fe028d", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "c10d58" },
-          body: JSON.stringify({
-            sessionId: "c10d58",
-            location: "SyncProgressModal.tsx:startSync.then",
-            message: "renderer: startSync resolved",
-            data: { hasError: !!result?.error, error: result?.error, synced: result?.synced },
-            timestamp: Date.now(),
-            hypothesisId: "H2",
-          }),
-        }).catch(() => {});
-        // #endregion
         setFinished(true);
         const errMsg = result?.error != null ? String(result.error) : "";
         const isCancelled = errMsg.toLowerCase().includes("cancelled");
@@ -191,20 +159,6 @@ export function SyncProgressModal({
       })
       .catch((e) => {
         const msg = e instanceof Error ? e.message : String(e);
-        // #region agent log
-        fetch("http://127.0.0.1:7317/ingest/d6ac44d9-ea47-46ce-9a5a-0a5158fe028d", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "c10d58" },
-          body: JSON.stringify({
-            sessionId: "c10d58",
-            location: "SyncProgressModal.tsx:startSync.catch",
-            message: "renderer: startSync rejected",
-            data: { error: msg },
-            timestamp: Date.now(),
-            hypothesisId: "H2",
-          }),
-        }).catch(() => {});
-        // #endregion
         const isCancelled = msg.toLowerCase().includes("cancelled");
         if (isCancelled) {
           setCancelled(true);
@@ -256,7 +210,7 @@ export function SyncProgressModal({
   const handleCopyLog = () => {
     const lines: string[] = [
       "=== Sync progress ===",
-      `${processedItems} / ${totalItems || "?"} tracks, ${copiedItems} copied`,
+      `${processedItems} / ${totalItems || "?"} items, ${copiedItems} copied`,
       "",
       "=== Recent files ===",
       ...recentItems.map((r) => `[${r.event}] ${r.path}`),
@@ -291,7 +245,7 @@ export function SyncProgressModal({
                 : "Preparing…"}
           </span>
           <div className="flex gap-4 tabular-nums shrink-0">
-            <span>{processedItems} / {totalItems || "?"} tracks</span>
+            <span>{processedItems} / {totalItems || "?"} items</span>
             <span className="text-[#22c55e]">{copiedItems} copied</span>
             <span className="text-[#5a5f68]">{Math.floor(elapsedSec / 60)}:{String(elapsedSec % 60).padStart(2, "0")} elapsed</span>
           </div>
@@ -315,9 +269,13 @@ export function SyncProgressModal({
         >
           {recentItems.length === 0 && (
             <p className="text-[#5a5f68]">
-              {hasReceivedTotalRef.current && totalItems === 0
-                ? "Nothing to sync — tracks and playlists already up to date."
-                : "Waiting for sync…"}
+              {finished && totalItems === 0
+                ? "Nothing to sync — items already up to date."
+                : finished && totalItems > 0
+                  ? "Sync completed."
+                  : hasReceivedTotalRef.current && totalItems > 0
+                    ? "Preparing files for sync…"
+                    : "Waiting for sync…"}
             </p>
           )}
           {recentItems.map((item, i) => (

@@ -52,6 +52,7 @@ export interface DeviceProfile extends Device {
   codecName: string | null;
   modelName: string | null;
   modelInternalValue: string | null;
+  skipPlaybackLog?: boolean;
 }
 
 export type ContentType = "music" | "podcast" | "audiobook" | "playlist";
@@ -95,6 +96,7 @@ export interface AddDeviceConfig {
   modelId?: number | null;
   sourceLibraryType?: "primary" | "shadow";
   shadowLibraryId?: number | null;
+  skipPlaybackLog?: boolean;
 }
 
 export interface DeviceValidation {
@@ -189,6 +191,8 @@ export interface GeniusTypeOption {
   label: string;
   description: string;
   icon: string;
+  /** Min months of playback data required (time-based types). */
+  minMonths?: number;
 }
 
 // -- Genius / Rockbox playback log types ----------------------------------
@@ -225,6 +229,14 @@ export interface GeniusGenerateOptions {
   maxTracks?: number;
   minPlays?: number;
   artist?: string;
+  /** For time_capsule: target month (1-12). */
+  targetMonth?: number;
+  /** For time_capsule: target year. */
+  targetYear?: number;
+  /** For golden_era: range start (months ago from now). */
+  rangeStartMonthsAgo?: number;
+  /** For golden_era: range end (months ago from now). */
+  rangeEndMonthsAgo?: number;
 }
 
 export interface SavantIntent {

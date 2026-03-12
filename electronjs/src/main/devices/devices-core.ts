@@ -37,6 +37,7 @@ interface DeviceRow {
   codec_name: string | null;
   model_name: string | null;
   model_internal_value: string | null;
+  skip_playback_log: number;
 }
 
 const DEVICES_QUERY = `
@@ -44,7 +45,7 @@ const DEVICES_QUERY = `
          d.audiobook_folder, d.playlist_folder, d.description, d.last_sync_date, d.total_synced_items, d.last_sync_count,
          d.default_transfer_mode_id, d.default_codec_config_id, d.model_id,
          d.override_bitrate, d.override_quality, d.override_bits,
-         d.partial_sync_enabled,
+         d.partial_sync_enabled, d.skip_playback_log,
          d.source_library_type, d.shadow_library_id,
          dtm.name as transfer_mode_name,
          cc.name as codec_config_name, cc.bitrate_value, cc.quality_value,
@@ -76,6 +77,7 @@ const ALLOWED_UPDATE_FIELDS = new Set([
   "last_sync_count",
   "source_library_type",
   "shadow_library_id",
+  "skip_playback_log",
 ]);
 
 const FIELD_MAP: Record<string, string> = {
@@ -95,6 +97,7 @@ const FIELD_MAP: Record<string, string> = {
   lastSyncCount: "last_sync_count",
   sourceLibraryType: "source_library_type",
   shadowLibraryId: "shadow_library_id",
+  skipPlaybackLog: "skip_playback_log",
 };
 
 export class DevicesCore {
@@ -143,9 +146,8 @@ export class DevicesCore {
         `INSERT INTO devices
          (name, mount_path, music_folder, podcast_folder, audiobook_folder, playlist_folder,
           default_transfer_mode_id, default_codec_config_id, description,
-          model_id, source_library_type,
-          shadow_library_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          model_id, source_library_type, shadow_library_id, skip_playback_log)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         config.name,
@@ -159,7 +161,8 @@ export class DevicesCore {
         config.description ?? null,
         config.modelId ?? null,
         config.sourceLibraryType ?? "primary",
-        config.shadowLibraryId ?? null
+        config.shadowLibraryId ?? null,
+        config.skipPlaybackLog ? 1 : 0
       );
 
     const newId = Number(info.lastInsertRowid);
@@ -190,7 +193,9 @@ export class DevicesCore {
       if (!ALLOWED_UPDATE_FIELDS.has(dbField)) continue;
       fields.push(`${dbField} = ?`);
       const normalized =
-        dbField === "partial_sync_enabled" ? (value ? 1 : 0) : value;
+        dbField === "partial_sync_enabled" || dbField === "skip_playback_log"
+          ? (value ? 1 : 0)
+          : value;
       values.push(normalized);
     }
 
@@ -319,6 +324,7 @@ export class DevicesCore {
       codecName: row.codec_name,
       modelName: row.model_name,
       modelInternalValue: row.model_internal_value,
+      skipPlaybackLog: !!(row.skip_playback_log ?? 0),
     };
   }
 }

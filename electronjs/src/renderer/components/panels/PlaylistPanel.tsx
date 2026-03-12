@@ -20,6 +20,8 @@ import {
   getArtists,
   getAlbums,
   analyzeDevicePlayback,
+  readDevicePlaybackLog,
+  getGeniusSummaryFromDb,
   getGeniusTypes,
   generateGeniusPlaylist,
   saveGeniusPlaylist,
@@ -125,6 +127,14 @@ export function PlaylistPanel() {
   const [geniusMaxTracks, setGeniusMaxTracks] = useState(25);
   const [geniusMinPlays, setGeniusMinPlays] = useState(1);
   const [geniusArtistPick, setGeniusArtistPick] = useState("");
+  const [geniusTargetMonth, setGeniusTargetMonth] = useState(
+    () => new Date().getMonth() + 1
+  );
+  const [geniusTargetYear, setGeniusTargetYear] = useState(
+    () => new Date().getFullYear()
+  );
+  const [geniusRangeStart, setGeniusRangeStart] = useState(48);
+  const [geniusRangeEnd, setGeniusRangeEnd] = useState(24);
   const [geniusPreview, setGeniusPreview] =
     useState<PlaylistGenerationResult | null>(null);
   const [geniusError, setGeniusError] = useState<string | null>(null);
@@ -133,6 +143,8 @@ export function PlaylistPanel() {
   // -- savant flow state ---------------------------------------------------
   const [hasOpenRouterKey, setHasOpenRouterKey] = useState<boolean | null>(null);
   const [savantKeyData, setSavantKeyData] = useState<SavantKeyData | null>(null);
+  const [savantMode, setSavantMode] = useState<"quick" | "chat">("quick");
+  const [savantQuickPrompt, setSavantQuickPrompt] = useState("");
   const [savantIntentFromChat, setSavantIntentFromChat] = useState<{
     mood: string;
     seedArtist?: string;
@@ -300,6 +312,60 @@ export function PlaylistPanel() {
   }
 
   // -- genius flow --------------------------------------------------------
+  async function handleLoadFromDb() {
+    setGeniusStep("analyzing");
+    setGeniusError(null);
+    try {
+      const res = await getGeniusSummaryFromDb();
+      setGeniusSummary(res.summary);
+      setGeniusArtists(res.artists ?? []);
+      if (res.summary.matchedPlays === 0) {
+        setGeniusError(
+          "No playback history in database. Connect a device and click Recheck device."
+        );
+        setGeniusStep("idle");
+        return;
+      }
+      const types = await getGeniusTypes();
+      setGeniusTypes(types);
+      setGeniusStep("summary");
+    } catch (err) {
+      setGeniusError(err instanceof Error ? err.message : String(err));
+      setGeniusStep("idle");
+    }
+  }
+
+  async function handleRecheckDevice() {
+    if (geniusDeviceId == null) return;
+    setGeniusStep("analyzing");
+    setGeniusError(null);
+    try {
+      const res = await readDevicePlaybackLog(geniusDeviceId);
+      if (res.error) {
+        setGeniusError(res.error);
+        setGeniusStep("idle");
+        return;
+      }
+      setGeniusSummary(res.summary);
+      setGeniusArtists(
+        "artists" in res && Array.isArray(res.artists) ? res.artists : []
+      );
+      if (res.summary.matchedPlays === 0) {
+        setGeniusError(
+          "No playback data found. Make sure the device has been used with Rockbox."
+        );
+        setGeniusStep("idle");
+        return;
+      }
+      const types = await getGeniusTypes();
+      setGeniusTypes(types);
+      setGeniusStep("summary");
+    } catch (err) {
+      setGeniusError(err instanceof Error ? err.message : String(err));
+      setGeniusStep("idle");
+    }
+  }
+
   async function handleAnalyze() {
     if (geniusDeviceId == null) return;
     setGeniusStep("analyzing");
@@ -337,16 +403,20 @@ export function PlaylistPanel() {
     setGeniusMaxTracks(25);
     setGeniusMinPlays(1);
     setGeniusArtistPick(geniusArtists[0]?.name ?? "");
+    setGeniusTargetMonth(new Date().getMonth() + 1);
+    setGeniusTargetYear(new Date().getFullYear());
+    setGeniusRangeStart(48);
+    setGeniusRangeEnd(24);
     setGeniusStep("configuring");
   }
 
   async function handleGenerate() {
-    if (!geniusSelectedType || geniusDeviceId == null) return;
+    if (!geniusSelectedType) return;
     setGeniusStep("generating");
     setGeniusError(null);
     try {
       const result = await generateGeniusPlaylist(
-        geniusDeviceId,
+        null,
         geniusSelectedType,
         {
           maxTracks: geniusMaxTracks,
@@ -354,6 +424,22 @@ export function PlaylistPanel() {
           artist:
             geniusSelectedType === "deep_dive"
               ? geniusArtistPick
+              : undefined,
+          targetMonth:
+            geniusSelectedType === "time_capsule"
+              ? geniusTargetMonth
+              : undefined,
+          targetYear:
+            geniusSelectedType === "time_capsule"
+              ? geniusTargetYear
+              : undefined,
+          rangeStartMonthsAgo:
+            geniusSelectedType === "golden_era"
+              ? geniusRangeStart
+              : undefined,
+          rangeEndMonthsAgo:
+            geniusSelectedType === "golden_era"
+              ? geniusRangeEnd
               : undefined,
         }
       );
@@ -376,12 +462,12 @@ export function PlaylistPanel() {
   }
 
   async function handleSaveGenius() {
-    if (!geniusPreview || geniusDeviceId == null || !geniusSelectedType) return;
+    if (!geniusPreview || !geniusSelectedType) return;
     const trackIds = (Array.isArray(geniusPreview?.tracks) ? geniusPreview.tracks : []).map((t) => t?.id);
     await saveGeniusPlaylist(
       geniusSaveName || geniusPreview.playlistName,
       geniusSelectedType,
-      geniusDeviceId,
+      null,
       trackIds,
       geniusMaxTracks
     );
@@ -405,22 +491,32 @@ export function PlaylistPanel() {
 
   // -- savant flow --------------------------------------------------------
   async function handleSavantGenerate() {
-    if (!savantIntentFromChat) return;
+    const intent =
+      savantMode === "quick"
+        ? {
+            mood: savantQuickPrompt.trim(),
+            adventureLevel: "mixed" as const,
+            targetCount: savantTargetCount,
+          }
+        : savantIntentFromChat
+          ? {
+              mood: savantIntentFromChat.mood,
+              seedArtist: savantIntentFromChat.seedArtist?.trim() || undefined,
+              adventureLevel: savantIntentFromChat.adventureLevel,
+              targetCount: savantTargetCount,
+              moodDiscoveryChat:
+                savantIntentFromChat.chatHistory.length > 0
+                  ? savantIntentFromChat.chatHistory
+                  : undefined,
+            }
+          : null;
+    if (!intent) return;
     setSavantGenerating(true);
     setSavantError(null);
     setSavantResult(null);
     setSavantResultTracks(null);
     try {
-      const result = await generateSavantPlaylist({
-        mood: savantIntentFromChat.mood,
-        seedArtist: savantIntentFromChat.seedArtist?.trim() || undefined,
-        adventureLevel: savantIntentFromChat.adventureLevel,
-        targetCount: savantTargetCount,
-        moodDiscoveryChat:
-          savantIntentFromChat.chatHistory.length > 0
-            ? savantIntentFromChat.chatHistory
-            : undefined,
-      });
+      const result = await generateSavantPlaylist(intent);
       if ("error" in result) {
         setSavantError(result.error);
         return;
@@ -563,7 +659,7 @@ export function PlaylistPanel() {
       </div>
     );
 
-    // -- idle: device picker + analyze button --
+    // -- idle: load from DB or recheck device --
     if (geniusStep === "idle") {
       return (
         <div className="flex flex-col gap-4">
@@ -571,30 +667,35 @@ export function PlaylistPanel() {
           <Card>
             <div className="space-y-4">
               <p className="text-sm text-[#8a8f98]">
-                Analyze your device&apos;s Rockbox playback log to generate
-                intelligent playlists based on your listening habits.
+                Use playback history from the database to generate intelligent
+                playlists. Data is synced when you check or sync a device.
               </p>
-              <Select
-                label="Device"
-                options={[
-                  { value: "", label: "Select a device\u2026" },
-                  ...deviceList.map((d) => ({
-                    value: String(d?.id ?? ""),
-                    label: d?.name ?? "",
-                  })),
-                ]}
-                value={geniusDeviceId != null ? String(geniusDeviceId) : ""}
-                onChange={(v) =>
-                  setGeniusDeviceId(v ? Number(v) : null)
-                }
-              />
-              <Button
-                variant="primary"
-                disabled={geniusDeviceId == null}
-                onClick={handleAnalyze}
-              >
-                Analyze Device
-              </Button>
+              <div className="flex flex-col sm:flex-row gap-3">
+                <Button variant="primary" onClick={handleLoadFromDb}>
+                  Load from database
+                </Button>
+                <div className="flex flex-col sm:flex-row gap-2 sm:items-end">
+                  <Select
+                    label="Device (for recheck)"
+                    options={[
+                      { value: "", label: "Select device\u2026" },
+                      ...deviceList.map((d) => ({
+                        value: String(d?.id ?? ""),
+                        label: d?.name ?? "",
+                      })),
+                    ]}
+                    value={geniusDeviceId != null ? String(geniusDeviceId) : ""}
+                    onChange={(v) => setGeniusDeviceId(v ? Number(v) : null)}
+                  />
+                  <Button
+                    variant="secondary"
+                    disabled={geniusDeviceId == null}
+                    onClick={handleRecheckDevice}
+                  >
+                    Recheck device for playback.log
+                  </Button>
+                </div>
+              </div>
             </div>
           </Card>
         </div>
@@ -720,6 +821,8 @@ export function PlaylistPanel() {
         geniusSelectedType === "most_played" ||
         geniusSelectedType === "favorites";
       const showArtistPicker = geniusSelectedType === "deep_dive";
+      const showTimeCapsule = geniusSelectedType === "time_capsule";
+      const showGoldenEra = geniusSelectedType === "golden_era";
 
       return (
         <div className="flex flex-col gap-4">
@@ -737,7 +840,7 @@ export function PlaylistPanel() {
                 <input
                   type="range"
                   min={5}
-                  max={100}
+                  max={300}
                   step={5}
                   value={geniusMaxTracks}
                   onChange={(e) =>
@@ -747,7 +850,7 @@ export function PlaylistPanel() {
                 />
                 <div className="flex justify-between text-[10px] text-[#5a5f68]">
                   <span>5</span>
-                  <span>100</span>
+                  <span>300</span>
                 </div>
               </div>
 
@@ -776,13 +879,90 @@ export function PlaylistPanel() {
               {showArtistPicker && (
                 <Select
                   label="Artist"
-                  options={(Array.isArray(geniusArtists) ? geniusArtists : []).map((a) => ({
-                    value: a.name,
-                    label: `${a.name} (${a.playCount} plays)`,
-                  }))}
+                  options={[
+                    { value: "", label: "Select artist\u2026" },
+                    ...(Array.isArray(geniusArtists) ? geniusArtists : []).map(
+                      (a) => ({
+                        value: a.name,
+                        label: `${a.name} (${a.playCount} plays)`,
+                      })
+                    ),
+                  ]}
                   value={geniusArtistPick}
                   onChange={(v) => setGeniusArtistPick(v)}
                 />
+              )}
+
+              {showTimeCapsule && (
+                <div className="grid grid-cols-2 gap-3">
+                  <Select
+                    label="Month"
+                    options={[
+                      { value: "1", label: "January" },
+                      { value: "2", label: "February" },
+                      { value: "3", label: "March" },
+                      { value: "4", label: "April" },
+                      { value: "5", label: "May" },
+                      { value: "6", label: "June" },
+                      { value: "7", label: "July" },
+                      { value: "8", label: "August" },
+                      { value: "9", label: "September" },
+                      { value: "10", label: "October" },
+                      { value: "11", label: "November" },
+                      { value: "12", label: "December" },
+                    ]}
+                    value={String(geniusTargetMonth)}
+                    onChange={(v) => setGeniusTargetMonth(Number(v) || 1)}
+                  />
+                  <Input
+                    label="Year"
+                    type="number"
+                    min={1990}
+                    max={new Date().getFullYear() + 1}
+                    value={String(geniusTargetYear)}
+                    onChange={(e) =>
+                      setGeniusTargetYear(
+                        Number(e.target.value) || new Date().getFullYear()
+                      )
+                    }
+                  />
+                </div>
+              )}
+
+              {showGoldenEra && (
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-xs font-medium text-[#8a8f98] mb-1.5">
+                      Range: {geniusRangeEnd}\u2013{geniusRangeStart} months ago
+                    </label>
+                    <div className="flex gap-2 items-center">
+                      <input
+                        type="range"
+                        min={6}
+                        max={120}
+                        value={geniusRangeEnd}
+                        onChange={(e) =>
+                          setGeniusRangeEnd(Number(e.target.value))
+                        }
+                        className="flex-1 accent-[#4a9eff]"
+                      />
+                      <span className="text-xs w-8">{geniusRangeEnd}m</span>
+                    </div>
+                    <div className="flex gap-2 items-center mt-1">
+                      <input
+                        type="range"
+                        min={6}
+                        max={120}
+                        value={geniusRangeStart}
+                        onChange={(e) =>
+                          setGeniusRangeStart(Number(e.target.value))
+                        }
+                        className="flex-1 accent-[#4a9eff]"
+                      />
+                      <span className="text-xs w-8">{geniusRangeStart}m</span>
+                    </div>
+                  </div>
+                </div>
               )}
 
               <div className="flex gap-2 pt-2">
@@ -1042,12 +1222,12 @@ export function PlaylistPanel() {
               <label className="block text-xs font-medium text-[#8a8f98] mb-1.5">
                 Track count: {savantTargetCount}
               </label>
-              <input
-                type="range"
-                min={10}
-                max={100}
-                step={5}
-                value={savantTargetCount}
+            <input
+              type="range"
+              min={10}
+              max={300}
+              step={5}
+              value={savantTargetCount}
                 onChange={(e) =>
                   setSavantTargetCount(Number(e.target.value))
                 }
@@ -1058,22 +1238,74 @@ export function PlaylistPanel() {
         </div>
 
         <Card title="3. Talk to Savant">
-          <SavantInlineChat
-            onIntentReady={setSavantIntentFromChat}
-            onIntentClear={() => setSavantIntentFromChat(null)}
-          />
+          <div className="flex gap-1 p-1 rounded-lg bg-white/[0.04] w-fit mb-4">
+            {(["quick", "chat"] as const).map((mode) => (
+              <button
+                key={mode}
+                type="button"
+                onClick={() => setSavantMode(mode)}
+                className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors cursor-default capitalize ${
+                  savantMode === mode
+                    ? "bg-[#4a9eff]/15 text-[#4a9eff]"
+                    : "text-[#5a5f68] hover:text-[#8a8f98]"
+                }`}
+              >
+                {mode === "quick" ? "Quick prompt" : "Chat"}
+              </button>
+            ))}
+          </div>
+          {savantMode === "quick" ? (
+            <div className="space-y-2">
+              <p className="text-xs text-[#8a8f98]">
+                Describe your mood and, if you want, anchor on a specific artist.
+                Press Enter to generate.
+              </p>
+              <p className="text-[10px] text-[#5a5f68]">
+                Example: Late night coding, something like Radiohead. Or: Chill
+                Sunday morning, lean on Bon Iver.
+              </p>
+              <input
+                type="text"
+                value={savantQuickPrompt}
+                onChange={(e) => setSavantQuickPrompt(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && savantQuickPrompt.trim()) {
+                    e.preventDefault();
+                    handleSavantGenerate();
+                  }
+                }}
+                placeholder="e.g. Road trip energy, mix of 80s and modern indie…"
+                disabled={savantGenerating}
+                className="w-full rounded-lg bg-white/[0.04] border border-white/[0.08] px-3 py-2.5 text-sm text-[#e0e0e0] placeholder:text-[#5a5f68] outline-none focus:border-[#4a9eff]/50 disabled:opacity-50 [.theme-light_&]:bg-white [.theme-light_&]:border-[#e2e8f0] [.theme-light_&]:text-[#1a1a1a]"
+              />
+            </div>
+          ) : (
+            <SavantInlineChat
+              onIntentReady={setSavantIntentFromChat}
+              onIntentClear={() => setSavantIntentFromChat(null)}
+            />
+          )}
         </Card>
 
         <Button
           variant="primary"
-          disabled={savantGenerating || !savantIntentFromChat}
+          disabled={
+            savantGenerating ||
+            (savantMode === "quick"
+              ? !savantQuickPrompt.trim()
+              : !savantIntentFromChat)
+          }
           onClick={handleSavantGenerate}
         >
           {savantGenerating
             ? "Consulting the AI curator…"
-            : savantIntentFromChat
-              ? "Create Playlist"
-              : "Complete the chat to create"}
+            : savantMode === "quick"
+              ? savantQuickPrompt.trim()
+                ? "Create Playlist"
+                : "Type a prompt to create"
+              : savantIntentFromChat
+                ? "Create Playlist"
+                : "Complete the chat to create"}
         </Button>
       </div>
     );
@@ -1287,7 +1519,7 @@ export function PlaylistPanel() {
                 <input
                   type="range"
                   min={10}
-                  max={500}
+                  max={300}
                   step={10}
                   value={trackLimit}
                   onChange={(e) =>
@@ -1298,7 +1530,7 @@ export function PlaylistPanel() {
                 />
                 <div className="flex justify-between text-[10px] text-[#5a5f68]">
                   <span>10</span>
-                  <span>500</span>
+                  <span>300</span>
                 </div>
               </div>
               <div className="flex justify-end gap-2 pt-2">

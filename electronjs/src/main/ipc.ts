@@ -14,10 +14,14 @@ import { Library } from "./library/library";
 import { LibraryScanner } from "./library/library-scanner";
 import { PlaylistCore } from "./playlists/playlist-core";
 import { parseRockboxPlaybackLog } from "./playlists/rockbox-log-parser";
+import { readAndIngestPlaybackLog } from "./playlists/playback-log-ingest";
 import {
   buildAnalysisSummary,
+  buildAnalysisSummaryFromDb,
   generateGeniusPlaylist,
+  generateGeniusPlaylistFromDb,
   getArtistsFromEvents,
+  getArtistsFromPlaybackStats,
   getAvailableGeniusTypes,
   matchEventsToLibrary,
 } from "./playlists/genius-engine";
@@ -26,6 +30,7 @@ import {
   RunSyncOptions,
   buildLibraryDestMap,
   getProfileCodecExt,
+  removeExtraTracks,
 } from "./sync/sync-core";
 import { compareLibraries } from "./sync/name-size-sync";
 import { isMpcencAvailable } from "./utils/mpcenc";
@@ -51,6 +56,7 @@ import {
 } from "./savant/savantPlaylistChat";
 import { sendAssistantMessage } from "./assistant/assistantChat";
 import { randomUUID } from "crypto";
+import { logActivity, getRecentActivity } from "./activity/activity-logger";
 
 // ---------------------------------------------------------------------------
 // Singleton state
@@ -152,26 +158,34 @@ export function registerIpcHandlers(): void {
   );
 
   ipcMain.handle(
+    "genius:getSummaryFromDb",
+    safe(async () => {
+      const summary = buildAnalysisSummaryFromDb(getLibrary().getConnection());
+      const artists = getArtistsFromPlaybackStats(getLibrary().getConnection());
+      return { summary, artists };
+    })
+  );
+
+  ipcMain.handle(
     "genius:types",
-    safe(async () => getAvailableGeniusTypes())
+    safe(async () => getAvailableGeniusTypes(getLibrary().getConnection()))
   );
 
   ipcMain.handle(
     "genius:generate",
     safe(async (
       _event,
-      deviceId: number,
+      deviceId: number | null,
       geniusType: string,
       opts: GeniusGenerateOptions
     ) => {
-      const cached = geniusEventsCache.get(deviceId);
-      if (!cached) {
-        return {
-          error: "No analysis data. Run Analyze Device first.",
-        };
-      }
       const db = getLibrary().getConnection();
-      return generateGeniusPlaylist(geniusType, cached, db, opts);
+      const cached =
+        deviceId != null ? geniusEventsCache.get(deviceId) : undefined;
+      if (cached && cached.length > 0) {
+        return generateGeniusPlaylist(geniusType, cached, db, opts);
+      }
+      return generateGeniusPlaylistFromDb(geniusType, db, opts);
     })
   );
 
@@ -181,7 +195,7 @@ export function registerIpcHandlers(): void {
       _event,
       name: string,
       geniusType: string,
-      deviceId: number,
+      deviceId: number | null,
       trackIds: number[],
       trackLimit: number
     ) => {
@@ -189,9 +203,14 @@ export function registerIpcHandlers(): void {
       const id = core.createGeniusPlaylist(
         geniusType,
         trackIds,
-        deviceId,
+        deviceId ?? null,
         trackLimit,
         name
+      );
+      logActivity(
+        getLibrary().getConnection(),
+        "playlist_generated",
+        `Genius: ${name} (${trackIds.length} tracks)`
       );
       return core.getPlaylistById(id);
     })
@@ -254,6 +273,11 @@ export function registerIpcHandlers(): void {
             .catch((err) => console.error("[ipc] Shadow propagation error:", err));
         }
 
+        logActivity(
+          getLibrary().getConnection(),
+          "library_scan",
+          `Scanned ${totalProcessed} files, ${totalAdded} added`
+        );
         return { filesAdded: totalAdded, filesProcessed: totalProcessed, cancelled: false, errors: allErrors };
       } finally {
         activeScanAbort = null;
@@ -286,6 +310,11 @@ export function registerIpcHandlers(): void {
   );
 
   ipcMain.handle(
+    "activity:getRecent",
+    safe(async () => getRecentActivity(getLibrary().getConnection()))
+  );
+
+  ipcMain.handle(
     "library:getFolders",
     safe(async () => getLibrary().getLibraryFolders())
   );
@@ -293,7 +322,17 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     "library:addFolder",
     safe(async (_event, folder: { name: string; path: string; contentType: string }) => {
-      return getLibrary().addLibraryFolder(folder.name, folder.path, folder.contentType as any);
+      const result = getLibrary().addLibraryFolder(
+        folder.name,
+        folder.path,
+        folder.contentType as any
+      );
+      logActivity(
+        getLibrary().getConnection(),
+        "add_folder",
+        `Added folder: ${folder.name} (${folder.path})`
+      );
+      return result;
     })
   );
 
@@ -413,6 +452,11 @@ export function registerIpcHandlers(): void {
     "device:add",
     safe(async (_event, config: AddDeviceConfig) => {
       const device = getDevicesCore().addDevice(config);
+      logActivity(
+        getLibrary().getConnection(),
+        "add_device",
+        `Added device: ${device.profile.name}`
+      );
       return device.profile;
     })
   );
@@ -468,7 +512,13 @@ export function registerIpcHandlers(): void {
     safe(async (_event, deviceId: number, updates: Record<string, unknown>) => {
       const ok = getDevicesCore().updateDevice(deviceId, updates);
       if (!ok) return { error: "Update failed" };
-      return getDevicesCore().getDeviceById(deviceId)?.profile;
+      const device = getDevicesCore().getDeviceById(deviceId)?.profile;
+      logActivity(
+        getLibrary().getConnection(),
+        "update_device",
+        `Updated device: ${device?.name ?? deviceId}`
+      );
+      return device;
     })
   );
 
@@ -486,6 +536,23 @@ export function registerIpcHandlers(): void {
       if (!device) return { error: `Device ${deviceId} not found` };
 
       const lib = getLibrary();
+      if (!device.profile.skipPlaybackLog) {
+        const ingest = readAndIngestPlaybackLog(
+          deviceId,
+          lib.getConnection(),
+          device.mountPath,
+          false,
+          device.name
+        );
+        if (ingest.ingested > 0 || ingest.skipped > 0) {
+          logActivity(
+            lib.getConnection(),
+            "read_playback_log",
+            `${device.name} (check): ${ingest.ingested} ingested, ${ingest.skipped} skipped`
+          );
+        }
+      }
+
       const musicStats = device.getContentStats("music");
       const podcastStats = device.getContentStats("podcast");
       const audiobookStats = device.getContentStats("audiobook");
@@ -630,6 +697,38 @@ export function registerIpcHandlers(): void {
         }
       );
 
+      const playlistFolder = device.getContentPath("playlist");
+      let playlistOrphans: string[] = [];
+      if (playlistFolder && fs.existsSync(playlistFolder)) {
+        const core = getPlaylistCore();
+        const libraryPlaylists = core.getPlaylists();
+        const expectedStems = new Set(
+          libraryPlaylists.map((pl) =>
+            (pl.name.replace(/[/\\?*:"<>|]/g, "_").trim() || "Playlist").toLowerCase()
+          )
+        );
+        const walkPlaylists = (dir: string): void => {
+          let entries: fs.Dirent[];
+          try {
+            entries = fs.readdirSync(dir, { withFileTypes: true });
+          } catch {
+            return;
+          }
+          for (const entry of entries) {
+            const fullPath = path.join(dir, entry.name);
+            if (entry.isDirectory()) {
+              walkPlaylists(fullPath);
+            } else if (path.extname(entry.name).toLowerCase() === ".m3u") {
+              const stem = path.parse(entry.name).name.toLowerCase();
+              if (!expectedStems.has(stem)) {
+                playlistOrphans.push(fullPath);
+              }
+            }
+          }
+        };
+        walkPlaylists(playlistFolder);
+      }
+
       const matchedLibraryPaths = [
         ...musicCompare.tracksToSkip.map((t) => t.library_path),
         ...podcastCompare.tracksToSkip.map((t) => t.library_path),
@@ -663,9 +762,42 @@ export function registerIpcHandlers(): void {
         podcastOrphans: podcastCompare.extras.length,
         audiobookSyncedWithLibrary: audiobookCompare.tracksToSkip.length,
         audiobookOrphans: audiobookCompare.extras.length,
+        playlistOrphans: playlistOrphans.length,
         orphansMusicPaths: musicCompare.extras,
         orphansPodcastPaths: podcastCompare.extras,
         orphansAudiobookPaths: audiobookCompare.extras,
+        orphansPlaylistPaths: playlistOrphans,
+      };
+    })
+  );
+
+  ipcMain.handle(
+    "device:readPlaybackLog",
+    safe(async (_event, deviceId: number) => {
+      const device = getDevicesCore().getDeviceById(deviceId);
+      if (!device) return { error: `Device ${deviceId} not found` };
+
+      const lib = getLibrary();
+      const ingest = readAndIngestPlaybackLog(
+        deviceId,
+        lib.getConnection(),
+        device.mountPath,
+        device.profile.skipPlaybackLog ?? false,
+        device.name
+      );
+      logActivity(
+        lib.getConnection(),
+        "read_playback_log",
+        `${device.name}: ${ingest.ingested} ingested, ${ingest.skipped} skipped`
+      );
+      const db = lib.getConnection();
+      const summary = buildAnalysisSummaryFromDb(db);
+      const artists = getArtistsFromPlaybackStats(db);
+      return {
+        ingested: ingest.ingested,
+        skipped: ingest.skipped,
+        summary,
+        artists,
       };
     })
   );
@@ -835,8 +967,41 @@ export function registerIpcHandlers(): void {
         return { error: emptyMessage };
       }
 
+      const deviceMusicPath = device.getContentPath("music");
+      try {
+        fs.mkdirSync(deviceMusicPath, { recursive: true });
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException).code;
+        if (code === "EACCES") {
+          activeSyncAbort = null;
+          return {
+            error:
+              `Permission denied writing to device (${deviceMusicPath}). ` +
+              "Ensure the device is mounted with write access and you have permission to create folders. " +
+              "On Linux, try ejecting and reconnecting the device, or check mount permissions.",
+          };
+        }
+        throw err;
+      }
+
+      if (!device.profile.skipPlaybackLog) {
+        syncOpts.progressCallback?.({ event: "log", message: "Reading playback.log..." });
+        const ingest = readAndIngestPlaybackLog(
+          opts.deviceId,
+          lib.getConnection(),
+          device.mountPath,
+          false,
+          device.name
+        );
+        if (ingest.ingested > 0 || ingest.skipped > 0) {
+          syncOpts.progressCallback?.({
+            event: "log",
+            message: `Ingested ${ingest.ingested} playback events (${ingest.skipped} duplicates skipped).`,
+          });
+        }
+      }
+
       if (willRunMusic) {
-        const deviceMusicPath = device.getContentPath("music");
         const deviceMusicRaw = device.getTracks("music", { cancelSignal: activeSyncAbort.signal });
         const deviceMusicMap: Record<string, { file_size: number; mtime?: number }> = {};
         for (const [p, info] of deviceMusicRaw) {
@@ -846,7 +1011,7 @@ export function registerIpcHandlers(): void {
           };
         }
         const musicResult = await runSync(
-          device.profile,
+          device,
           musicLibraryTracks,
           codecName,
           "music",
@@ -873,7 +1038,7 @@ export function registerIpcHandlers(): void {
           };
         }
         const podcastResult = await runSync(
-          device.profile,
+          device,
           podcastLibraryTracks,
           codecName,
           "podcast",
@@ -900,7 +1065,7 @@ export function registerIpcHandlers(): void {
           };
         }
         const audiobookResult = await runSync(
-          device.profile,
+          device,
           audiobookLibraryTracks,
           codecName,
           "audiobook",
@@ -917,7 +1082,6 @@ export function registerIpcHandlers(): void {
       }
 
       if (result.errors > 0) result.status = "error";
-      activeSyncAbort = null;
 
       const shouldWritePlaylists =
         result.errors === 0 &&
@@ -925,6 +1089,7 @@ export function registerIpcHandlers(): void {
           ? (opts.selections?.playlists?.length ?? 0) > 0
           : opts.includePlaylists !== false);
 
+      let playlistsWritten = 0;
       if (shouldWritePlaylists) {
         const playlistFolder = device.getContentPath("playlist");
         if (playlistFolder) {
@@ -946,7 +1111,10 @@ export function registerIpcHandlers(): void {
             }
             const normalizeM3uForCompare = (s: string) =>
               s.replace(/# Generated: .+/g, "# Generated: <date>");
-            let playlistsWritten = 0;
+            syncOpts.progressCallback?.({
+              event: "total_add",
+              path: String(playlistsToWrite.length),
+            });
             for (const pl of playlistsToWrite) {
               const content = core.buildM3uContentForDevice(pl.id, m3uOpts);
               const safeName = pl.name.replace(/[/\\?*:"<>|]/g, "_").trim() || "Playlist";
@@ -954,10 +1122,19 @@ export function registerIpcHandlers(): void {
               const existingRaw = fs.existsSync(outPath)
                 ? (fs.readFileSync(outPath, "utf-8") as string)
                 : null;
-              if (existingRaw === null || normalizeM3uForCompare(existingRaw) !== normalizeM3uForCompare(content)) {
+              const needsWrite =
+                existingRaw === null ||
+                normalizeM3uForCompare(existingRaw) !== normalizeM3uForCompare(content);
+              if (needsWrite) {
                 fs.writeFileSync(outPath, content, "utf-8");
                 playlistsWritten += 1;
               }
+              syncOpts.progressCallback?.({
+                event: "copy",
+                path: outPath,
+                status: needsWrite ? "copied" : "skipped",
+                contentType: "playlist",
+              });
             }
             if (playlistsWritten > 0) {
               syncOpts.progressCallback?.({
@@ -970,11 +1147,56 @@ export function registerIpcHandlers(): void {
                 message: "Playlist(s) already up to date.",
               });
             }
+            if (
+              opts.extraTrackPolicy === "remove" &&
+              playlistsToWrite.length > 0
+            ) {
+              const expectedStems = new Set(
+                playlistsToWrite.map((pl) =>
+                  (pl.name.replace(/[/\\?*:"<>|]/g, "_").trim() || "Playlist").toLowerCase()
+                )
+              );
+              const orphanPaths: string[] = [];
+              const walkPlaylists = (dir: string): void => {
+                let entries: fs.Dirent[];
+                try {
+                  entries = fs.readdirSync(dir, { withFileTypes: true });
+                } catch {
+                  return;
+                }
+                for (const entry of entries) {
+                  const fullPath = path.join(dir, entry.name);
+                  if (entry.isDirectory()) {
+                    walkPlaylists(fullPath);
+                  } else if (path.extname(entry.name).toLowerCase() === ".m3u") {
+                    const stem = path.parse(entry.name).name.toLowerCase();
+                    if (!expectedStems.has(stem)) {
+                      orphanPaths.push(fullPath);
+                    }
+                  }
+                }
+              };
+              walkPlaylists(playlistFolder);
+              if (orphanPaths.length > 0) {
+                const { removed } = removeExtraTracks(
+                  orphanPaths,
+                  syncOpts.progressCallback,
+                  activeSyncAbort?.signal
+                );
+                result.removed += removed;
+                syncOpts.progressCallback?.({
+                  event: "log",
+                  message: `Removed ${removed} orphan playlist(s) from device.`,
+                });
+              }
+            }
           } catch (err) {
             console.error("[ipc] Sync playlists to device failed:", err);
           }
         }
       }
+      result.synced += playlistsWritten;
+      activeSyncAbort = null;
 
       if (result.synced >= 0) {
         try {
@@ -986,6 +1208,11 @@ export function registerIpcHandlers(): void {
             lastSyncCount: result.synced,
             totalSyncedItems: newTotal,
           });
+          logActivity(
+            getLibrary().getConnection(),
+            "sync",
+            `${device?.name ?? "Device"}: ${result.synced} synced, ${result.removed} removed`
+          );
         } catch (e) {
           console.error("[ipc] Update device last sync failed:", e);
         }
@@ -1117,13 +1344,21 @@ export function registerIpcHandlers(): void {
       if (!config) return { error: "OpenRouter API key not configured. Add it in Settings." };
       const db = getLibrary().getConnection();
       const core = getPlaylistCore();
-      return generateSavantPlaylist(
+      const result = await generateSavantPlaylist(
         intent,
         config,
         db,
         (name, trackIds, savantConfig) =>
           core.createSavantPlaylist(name, trackIds, savantConfig)
       );
+      if (result && !("error" in result)) {
+        logActivity(
+          db,
+          "playlist_generated",
+          `Savant: ${result.name} (${result.trackCount} tracks)`
+        );
+      }
+      return result;
     })
   );
 
