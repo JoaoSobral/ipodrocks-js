@@ -60,6 +60,10 @@ jobs:
         if: github.event_name == 'release'
         uses: softprops/action-gh-release@v2
         with:
-          files: ipodrocks-js/out/*
+          files: |
+            ipodrocks-js/out/*.exe
+            ipodrocks-js/out/*.AppImage
+            ipodrocks-js/out/*.zip
+            ipodrocks-js/out/*.dmg
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

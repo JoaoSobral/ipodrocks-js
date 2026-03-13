@@ -23,5 +23,4 @@ mac:
   category: public.app-category.music
 win:
   target:
-    - nsis
     - portable
