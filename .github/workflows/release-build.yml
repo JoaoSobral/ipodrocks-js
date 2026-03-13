@@ -1,0 +1,56 @@
+name: Build desktop packages on release
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }} package
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: linux
+            dist-script: dist:linux
+          - os: macos-latest
+            target: mac
+            dist-script: dist:mac
+          - os: windows-latest
+            target: win
+            dist-script: dist:win
+
+    defaults:
+      run:
+        working-directory: ipodrocks-js
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ipodrocks-js/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test -- --run
+
+      - name: Build ${{ matrix.target }} installer
+        run: npm run ${{ matrix.dist-script }}
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ipodrocks-${{ matrix.target }}-${{ github.ref_name }}
+          path: |
+            dist/
+            release/
+          if-no-files-found: warn

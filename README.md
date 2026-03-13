@@ -73,7 +73,7 @@ iPodRocks is a sync manager for rockbox devices. Multiple libraries, shadow tran
 
 Download the installer for your platform from the [Releases](https://github.com/JoaoSobral/ipodrocks-js/releases/) page:
 
-- **Linux** — AppImage, `.deb`, or `.rpm`
+- **Linux** — AppImage
 - **macOS** — `.dmg` or `.zip`
 - **Windows** — `.exe` (NSIS) or portable
 
@@ -91,6 +91,20 @@ cd ipodrocks-js
 npm install
 npm run build
 npm run preview    # run in production mode
+```
+
+#### Release builds (GitHub Actions)
+
+When you publish a new GitHub Release on the repository:
+
+- A dedicated GitHub Actions workflow builds installers for **Linux (AppImage)**, **macOS (.dmg / .zip)**, and **Windows (.exe / portable)**.
+- The installers are uploaded as artifacts for that release; no build outputs are committed to `main` or `dev`.
+
+You can still build locally for the current platform with:
+
+```bash
+cd ipodrocks-js
+npm run dist       # package for current OS
 ```
 
 #### FFmpeg
@@ -119,8 +133,8 @@ If `mpcenc` is not on your PATH, iPodRocks will prompt when you select Musepack.
 
 ## Quick Start
 
-1. **Add library folder** — Open **Library**, click **Add Folder**, choose your music directory, and scan.
-2. **Add device** — Open **Devices**, click **+ Add Device**, pick the mount path (e.g. `/media/ipod`).
+1. **Add library folder** — Open **Library**, click **Add Folder**, and choose the **root folder where your album folders live** (for example, `/home/user/Music`, not individual album folders). iPodRocks will treat all subfolders as albums.
+2. **Add device** — Open **Devices**, click **+ Add Device**, and pick the **root mount path of the device** (for example, `/media/ipod`). The app will automatically create `music`, `podcasts`, and `audiobooks` folders on the device if they do not exist.
 3. **Create playlists** (optional) — Open **Playlists** for smart, genius, or Savant playlists.
 4. **Sync** — Open **Sync**, select your device, choose full or custom sync, and click **Start Sync**.
 
@@ -156,7 +170,7 @@ If `mpcenc` is not on your PATH, iPodRocks will prompt when you select Musepack.
 
 ### Settings
 
-- OpenRouter API key for Savant and Assistant
+- OpenRouter API key for Savant and Assistant — **the AI Assistant and Savant playlists are only active after you configure a valid OpenRouter API key**.
 - Harmonic data: tag extraction, Essentia.js analysis, backfill %
 - Test connection before saving
 
