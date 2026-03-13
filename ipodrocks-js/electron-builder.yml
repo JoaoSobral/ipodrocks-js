@@ -9,20 +9,17 @@ files:
   - node_modules/**/*
   - package.json
 extraResources:
-  - source: ffmpeg-bin/*
-    destination: ffmpeg
-  - source: resources/icon.png
-    destination: icon.png
+  - from: ffmpeg-bin
+    to: ffmpeg
+  - from: resources/icon.png
+    to: icon.png
 linux:
   target:
     - AppImage
-    - deb
-    - rpm
   category: Audio
 mac:
   target:
     - dmg
-    - zip
   category: public.app-category.music
 win:
   target:
