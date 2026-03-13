@@ -74,7 +74,7 @@ iPodRocks is a sync manager for rockbox devices. Multiple libraries, shadow tran
 Download the installer for your platform from the [Releases](https://github.com/JoaoSobral/ipodrocks-js/releases/) page:
 
 - **Linux** — AppImage
-- **macOS** — `.dmg` or `.zip`
+- **macOS** — `.zip`
 - **Windows** — `.exe` (NSIS) or portable
 
 ### Build from source
@@ -97,7 +97,7 @@ npm run preview    # run in production mode
 
 When you publish a new GitHub Release on the repository:
 
-- A dedicated GitHub Actions workflow builds installers for **Linux (AppImage)**, **macOS (.dmg / .zip)**, and **Windows (.exe / portable)**.
+- A dedicated GitHub Actions workflow builds installers for **Linux (AppImage)**, **macOS (.zip)**, and **Windows (.exe / portable)**.
 - The installers are uploaded as artifacts for that release; no build outputs are committed to `main` or `dev`.
 
 You can still build locally for the current platform with:

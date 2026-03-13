@@ -19,7 +19,7 @@ linux:
   category: Audio
 mac:
   target:
-    - dmg
+    - zip
   category: public.app-category.music
 win:
   target:
