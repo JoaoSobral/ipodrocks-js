@@ -37,6 +37,9 @@
     "react-window": "^1.8.11",
     "zustand": "^5.0.0"
   },
+  "overrides": {
+    "yauzl": "3.2.1"
+  },
   "devDependencies": {
     "@electron/rebuild": "^4.0.0",
     "@tailwindcss/vite": "^4.0.0",
