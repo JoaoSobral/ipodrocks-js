@@ -1,4 +1,4 @@
-# iPodRocks v1.0.0 — Electron Edition
+# iPodRocks v1.0.1 — Electron Edition
 
 **The smart sync manager for Rockbox and any mountable device.** Built with Electron, React, and TypeScript.
 
@@ -10,7 +10,11 @@
 
 ## ✨ Why iPodRocks?
 
-iPodRocks is a sync manager for rockbox devices. Multiple libraries, shadow transcoding, AI-powered playlists, harmonic mixing, and a floating assistant that knows your entire collection. All in one desktop app.
+iPodRocks is a sync manager for Rockbox devices — and any mountable player. Multiple libraries, shadow transcoding, AI-powered playlists, harmonic mixing, and a floating assistant that knows your entire collection. All in one desktop app.
+
+### What is not!
+
+iPodRocks is NOT a library manager. I strongly advise you to use beets and beets-flask as proper library managers (there are other alternatives). Once you library is ready then iPodRocks can sync to multiple RockBox devices.
 
 ---
 
@@ -38,27 +42,26 @@ iPodRocks is a sync manager for rockbox devices. Multiple libraries, shadow tran
 ### Genius Playlists
 - **Analyze your Rockbox playback logs** — Rediscovery, Forgotten Gems, Most Played, and more
 - Uses real listening data from your device
-- Rule-based smart playlists by genre, artist, album, track limits
 
 ### Savant Playlists — AI-Powered
 - **Mood Chat** — Describe your vibe in plain English; get a tailored playlist
 - **AI-generated playlists** — Powered by OpenRouter (Claude, etc.)
 - Harmonic sequencing — Camelot wheel, key-aware ordering for smooth transitions
 
-### Harmonic Mixing ("similar to Apple Genius playlists")
-- **Key & BPM** — From tags or Essentia.js audio analysis
+### Harmonic Mixing
+- **Key & BPM detection** — from existing tags or automatic audio analysis
 - Camelot wheel compatibility for DJ-style flow
 - Optional backfill with genre-based sampling
 
 ### Assistant
-- **Floating chat** — Ask about your library, playlists, artists, recommendations
-- Full read-only access to your database
+- **Floating chat** — Ask about your library, playlists, artists, and get recommendations
+- Searches across your entire collection
 - Markdown rendering, copy-paste friendly
 
 ### Sync & Conversion
 - **Full or custom sync** — Pick albums, artists, genres, playlists
 - FFmpeg conversion with metadata preserved
-- Progress modal with live feedback
+- Live progress feedback
 
 ### More
 - **M3U8 export** — Playlists for any player
@@ -75,7 +78,7 @@ Download the installer for your platform from the [Releases](https://github.com/
 
 - **Linux** — AppImage
 - **macOS** — `.zip`
-- **Windows** — `.exe` (NSIS) or portable
+- **Windows** — `.exe` (portable)
 
 ### Build from source
 
@@ -83,8 +86,6 @@ Download the installer for your platform from the [Releases](https://github.com/
 
 - Node.js 18+
 - npm
-- **OpenRouter API key** — required for AI features (Savant playlists, Assistant chat). Get one at [openrouter.ai/keys](https://openrouter.ai/keys) and add it in Settings
-- **Musepack (mpcenc)** — optional, for Musepack (MPC) encoding
 
 ```bash
 cd ipodrocks-js
@@ -93,23 +94,9 @@ npm run build
 npm run preview    # run in production mode
 ```
 
-#### Release builds (GitHub Actions)
-
-When you publish a new GitHub Release on the repository:
-
-- A dedicated GitHub Actions workflow builds installers for **Linux (AppImage)**, **macOS (.zip)**, and **Windows (.exe / portable)**.
-- The installers are uploaded as artifacts for that release; no build outputs are committed to `main` or `dev`.
-
-You can still build locally for the current platform with:
-
-```bash
-cd ipodrocks-js
-npm run dist       # package for current OS
-```
-
 #### FFmpeg
 
-FFmpeg is bundled via the `@ffmpeg-installer/ffmpeg` npm package. No separate installation is required for development or packaged builds.
+FFmpeg is bundled automatically. No separate installation is required.
 
 #### OpenRouter API key
 
@@ -133,7 +120,7 @@ If `mpcenc` is not on your PATH, iPodRocks will prompt when you select Musepack.
 
 ## Quick Start
 
-1. **Add library folder** — Open **Library**, click **Add Folder**, and choose the **root folder where your album folders live** (for example, `/home/user/Music`, not individual album folders). iPodRocks will treat all subfolders as albums.
+1. **Add library folder** — Open **Library**, click **Add Folder**, and choose your music root folder (for example, `/home/user/Music`). iPodRocks scans all subfolders recursively for audio files. Important to have your audio with tags
 2. **Add device** — Open **Devices**, click **+ Add Device**, and pick the **root mount path of the device** (for example, `/media/ipod`). The app will automatically create `music`, `podcasts`, and `audiobooks` folders on the device if they do not exist.
 3. **Create playlists** (optional) — Open **Playlists** for smart, genius, or Savant playlists.
 4. **Sync** — Open **Sync**, select your device, choose full or custom sync, and click **Start Sync**.
@@ -154,7 +141,7 @@ If `mpcenc` is not on your PATH, iPodRocks will prompt when you select Musepack.
 - Add multiple devices with custom folder layouts
 - Configure codec per device (direct copy, MP3, AAC, Musepack, etc.)
 - Use shadow libraries for devices that need pre-converted files
-- Check device status, total synced, last sync count, and orphan files
+- Check device status: synced tracks, orphan files, and sync history
 
 ### Playlists
 
@@ -166,13 +153,12 @@ If `mpcenc` is not on your PATH, iPodRocks will prompt when you select Musepack.
 
 - **Full sync** — Music, podcasts, audiobooks, playlists
 - **Custom sync** — Pick albums, artists, genres, playlists
-- Progress modal with live feedback
+- Live progress feedback
 
 ### Settings
 
-- OpenRouter API key for Savant and Assistant — **the AI Assistant and Savant playlists are only active after you configure a valid OpenRouter API key**.
-- Harmonic data: tag extraction, Essentia.js analysis, backfill %
-- Test connection before saving
+- **OpenRouter API key** — required for AI features (Savant playlists and Assistant). Add your key and test the connection before saving.
+- **Harmonic analysis** — configure key/BPM detection from tags or audio analysis
 
 ---
 
@@ -191,7 +177,7 @@ If `mpcenc` is not on your PATH, iPodRocks will prompt when you select Musepack.
 
 | Layer    | Technology                    |
 |----------|--------------------------------|
-| Shell    | Electron 34                   |
+| Shell    | Electron 35                   |
 | Frontend | React 19, Tailwind CSS 4, Zustand 5 |
 | Backend  | TypeScript, better-sqlite3, music-metadata, Essentia.js |
 | Tooling  | Vite 6, Vitest, electron-builder |
@@ -200,7 +186,7 @@ If `mpcenc` is not on your PATH, iPodRocks will prompt when you select Musepack.
 
 ## Contributing
 
-From v1.0.0.1 onward, development uses a **dev** branch. All PRs to **main** must pass CI (tests + build). See [CONTRIBUTING.md](../CONTRIBUTING.md) in the repo root for details.
+Development happens on the **dev** branch. All PRs to **main** must pass CI (tests + build). See [CONTRIBUTING.md](../CONTRIBUTING.md) for details.
 
 ---
 
