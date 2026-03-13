@@ -68,8 +68,12 @@ function formatActivityTime(iso: string): string {
 }
 
 export function DashboardPanel() {
-  const { stats, fetchStats, loading: libLoading } = useLibraryStore();
-  const { devices, fetchDevices, loading: devLoading } = useDeviceStore();
+  const stats = useLibraryStore((s) => s.stats);
+  const fetchStats = useLibraryStore((s) => s.fetchStats);
+  const libLoading = useLibraryStore((s) => s.loading);
+  const devices = useDeviceStore((s) => s.devices);
+  const fetchDevices = useDeviceStore((s) => s.fetchDevices);
+  const devLoading = useDeviceStore((s) => s.loading);
   const [shadowLibs, setShadowLibs] = useState<ShadowLibrary[]>([]);
   const [activity, setActivity] = useState<ActivityEntry[]>([]);
 

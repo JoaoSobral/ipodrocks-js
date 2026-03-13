@@ -23,7 +23,8 @@ const statusLabels = {
 } as const;
 
 export function SyncPanel() {
-  const { devices, fetchDevices } = useDeviceStore();
+  const devices = useDeviceStore((s) => s.devices);
+  const fetchDevices = useDeviceStore((s) => s.fetchDevices);
   const deviceList = Array.isArray(devices) ? devices : [];
   const { results, setResults } = useSyncStore();
   const [showSyncModal, setShowSyncModal] = useState(false);

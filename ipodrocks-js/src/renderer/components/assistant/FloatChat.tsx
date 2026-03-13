@@ -15,6 +15,8 @@ export function FloatChat() {
   const [hasApiKey, setHasApiKey] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
 
   useEffect(() => {
     getOpenRouterConfig().then((c) => setHasApiKey(!!c?.apiKey?.trim()));
@@ -30,12 +32,13 @@ export function FloatChat() {
 
     setInputValue("");
     const userMsg = { role: "user" as const, content: text };
-    setMessages((prev) => [...prev, userMsg]);
+    const history = [...messagesRef.current, userMsg];
+    messagesRef.current = history;
+    setMessages(history);
     setIsLoading(true);
     setError(null);
 
     try {
-      const history = [...messages, userMsg];
       const result = await sendAssistantChat(history);
 
       if ("error" in result) {
@@ -43,10 +46,9 @@ export function FloatChat() {
         return;
       }
 
-      setMessages((prev) => [
-        ...prev,
-        { role: "assistant", content: result.reply },
-      ]);
+      const next = [...messagesRef.current, { role: "assistant", content: result.reply }];
+      messagesRef.current = next;
+      setMessages(next);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {

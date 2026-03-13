@@ -56,8 +56,8 @@ export class AppDatabase {
           .prepare("ALTER TABLE playlists ADD COLUMN savant_config TEXT")
           .run();
       }
-    } catch {
-      // best effort
+    } catch (err) {
+      console.error("[db] migration failed (savant_config):", err);
     }
   }
 
@@ -96,8 +96,8 @@ export class AppDatabase {
           )
           .run();
       }
-    } catch {
-      // best effort migration; if it fails we leave the table unchanged
+    } catch (err) {
+      console.error("[db] migration failed (devices):", err);
     }
   }
 
@@ -130,8 +130,8 @@ export class AppDatabase {
           )
           .run();
       }
-    } catch {
-      // best effort
+    } catch (err) {
+      console.error("[db] migration failed (playback_logs):", err);
     }
   }
 
@@ -163,8 +163,8 @@ export class AppDatabase {
       }
 
       this.migrateContentTypeAudiobook();
-    } catch {
-      // best effort
+    } catch (err) {
+      console.error("[db] migration failed (migrateAudiobooks):", err);
     }
   }
 
@@ -243,7 +243,8 @@ export class AppDatabase {
           "INSERT OR REPLACE INTO app_settings (key, value, updated_at) VALUES ('migrate_audiobook_content_type_done', '1', CURRENT_TIMESTAMP)"
         )
         .run();
-    } catch {
+    } catch (err) {
+      console.error("[db] migration failed (migrateContentTypeAudiobook):", err);
       try {
         this.db?.pragma("foreign_keys = ON");
       } catch {

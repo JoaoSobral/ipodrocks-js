@@ -35,6 +35,8 @@ export function SavantInlineChat({
   const [error, setError] = useState<string | null>(null);
   const [hasApiKey, setHasApiKey] = useState<boolean | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
 
   useEffect(() => {
     getOpenRouterConfig().then((c) => setHasApiKey(!!c?.apiKey?.trim()));
@@ -64,7 +66,9 @@ export function SavantInlineChat({
     if (!sessionId || !inputValue.trim() || isLoading) return;
     const userMsg = inputValue.trim();
     setInputValue("");
-    setMessages((prev) => [...prev, { role: "user", content: userMsg }]);
+    const withUser = [...messagesRef.current, { role: "user" as const, content: userMsg }];
+    messagesRef.current = withUser;
+    setMessages(withUser);
     setIsLoading(true);
     setError(null);
     try {
@@ -76,14 +80,16 @@ export function SavantInlineChat({
       const displayContent =
         stripSavantIntentBlock(result.aiMessage) ||
         "Ready to create your playlist!";
-      setMessages((prev) => [
-        ...prev,
-        { role: "assistant", content: displayContent },
-      ]);
+      const withAssistant = [
+        ...messagesRef.current,
+        { role: "assistant" as const, content: displayContent },
+      ];
+      messagesRef.current = withAssistant;
+      setMessages(withAssistant);
       if (result.isComplete && result.intent) {
+        const base = messagesRef.current.slice(0, -1);
         const fullHistory = [
-          ...messages.map((m) => ({ role: m.role, content: m.content })),
-          { role: "user" as const, content: userMsg },
+          ...base.map((m) => ({ role: m.role, content: m.content })),
           { role: "assistant" as const, content: result.aiMessage },
         ];
         onIntentReady({

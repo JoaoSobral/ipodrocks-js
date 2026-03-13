@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo, useRef } from "react";
+import { useEffect, useState, useMemo, useRef, useCallback } from "react";
 
 import { Card } from "../common/Card";
 import { Button } from "../common/Button";
@@ -24,6 +24,8 @@ import {
   setMpcRemindDisabled,
 } from "../../ipc/api";
 import { MpcUnavailableModal } from "../modals/MpcUnavailableModal";
+import { formatCodecLabel } from "../../utils/format";
+import { getTranscodableCodecConfigs } from "../../utils/codec";
 import type { CheckResult, DeviceModel, CodecConfig } from "../../ipc/api";
 import type { DeviceProfile, ShadowLibrary } from "@shared/types";
 
@@ -51,27 +53,13 @@ function downloadOrphansCsv(cr: CheckResult): void {
   URL.revokeObjectURL(url);
 }
 
-function formatCodecLabel(cc: CodecConfig): string {
-  const codec = (cc?.codec_name ?? "").toUpperCase();
-  if (codec === "DIRECT COPY" || codec === "COPY") {
-    return `${codec} - ${cc.name}`;
-  }
-  let detail = "";
-  if (cc.bitrate_value != null) {
-    detail = `(${cc.bitrate_value}kbps)`;
-  } else if (cc.quality_value != null) {
-    detail = `(Q${cc.quality_value})`;
-  } else if (cc.bits_per_sample != null) {
-    detail = `(${cc.bits_per_sample}-bit)`;
-  }
-  return `${codec} - ${cc.name}${detail ? ` ${detail}` : ""}`;
-}
-
 const checkboxClass =
   "h-4 w-4 rounded border-white/20 bg-white/[0.04] accent-[#4a9eff] cursor-pointer";
 
 export function DevicePanel() {
-  const { devices, loading, fetchDevices } = useDeviceStore();
+  const devices = useDeviceStore((s) => s.devices);
+  const loading = useDeviceStore((s) => s.loading);
+  const fetchDevices = useDeviceStore((s) => s.fetchDevices);
   const deviceList = Array.isArray(devices) ? devices : [];
   const [showDeviceModal, setShowDeviceModal] = useState(false);
   const [editingDeviceId, setEditingDeviceId] = useState<number | null>(null);
@@ -124,7 +112,7 @@ export function DevicePanel() {
     }
   }, [codecConfigs, mpcAvailable, mpcRemindDisabled]);
 
-  function resetForm() {
+  const resetForm = useCallback(() => {
     setName("");
     setModelId(null);
     setMountPath("");
@@ -140,9 +128,10 @@ export function DevicePanel() {
     setTransferMode("direct");
     setSourceLibraryType("primary");
     setShadowLibraryId(null);
-  }
+  }, []);
 
-  function openForEdit(device: DeviceProfile) {
+  const openForEdit = useCallback(
+    (device: DeviceProfile) => {
     setEditingDeviceId(device.id);
     setName(device.name);
     setModelId(device.modelId ?? null);
@@ -175,12 +164,14 @@ export function DevicePanel() {
     setPlaybackLogEnabled(!(device.skipPlaybackLog ?? false));
 
     setShowDeviceModal(true);
-  }
+  },
+    [defaultDeviceId]
+  );
 
-  function openForAdd() {
+  const openForAdd = useCallback(() => {
     resetForm();
     setShowDeviceModal(true);
-  }
+  }, [resetForm]);
 
   const directCopyConfigId = useMemo(() => {
     const configs = Array.isArray(codecConfigs) ? codecConfigs : [];
@@ -264,18 +255,11 @@ export function DevicePanel() {
 
   const transcodableConfigs = useMemo(
     () =>
-      (Array.isArray(codecConfigs) ? codecConfigs : [])
-        .filter((cc) => (cc?.codec_name ?? "").toUpperCase() !== "DIRECT COPY")
-        .filter(
-          (cc) =>
-            mpcAvailable ||
-            (cc?.codec_name ?? "").toUpperCase() !== "MPC"
-        )
-        .sort(
-          (a, b) =>
-            (a?.codec_name ?? "").localeCompare(b?.codec_name ?? "") ||
-            (a?.name ?? "").localeCompare(b?.name ?? "")
-        ),
+      getTranscodableCodecConfigs(codecConfigs, mpcAvailable).sort(
+        (a, b) =>
+          (a?.codec_name ?? "").localeCompare(b?.codec_name ?? "") ||
+          (a?.name ?? "").localeCompare(b?.name ?? "")
+      ),
     [codecConfigs, mpcAvailable]
   );
 

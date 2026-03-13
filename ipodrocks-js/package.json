@@ -19,10 +19,10 @@
     "preview": "npm run build && electron .",
     "test": "vitest",
     "copy-ffmpeg": "node scripts/copy-ffmpeg.js",
-    "dist": "npm run build && npm run copy-ffmpeg && electron-builder",
-    "dist:linux": "npm run build && npm run copy-ffmpeg && electron-builder --linux",
-    "dist:mac": "npm run build && npm run copy-ffmpeg && electron-builder --mac",
-    "dist:win": "npm run build && npm run copy-ffmpeg && electron-builder --win",
+    "dist": "npm run build && npm run copy-ffmpeg && electron-builder --publish never",
+    "dist:linux": "npm run build && npm run copy-ffmpeg && electron-builder --linux --publish never",
+    "dist:mac": "npm run build && npm run copy-ffmpeg && electron-builder --mac --publish never",
+    "dist:win": "npm run build && npm run copy-ffmpeg && electron-builder --win --publish never",
     "postinstall": "electron-builder install-app-deps"
   },
   "dependencies": {
@@ -34,6 +34,7 @@
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-markdown": "^10.1.0",
+    "react-window": "^1.8.11",
     "zustand": "^5.0.0"
   },
   "devDependencies": {
@@ -45,6 +46,7 @@
     "@types/js-yaml": "^4.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
+    "@types/react-window": "^1.8.8",
     "@vitejs/plugin-react": "^4.0.0",
     "concurrently": "^9.0.0",
     "cross-env": "^10.0.0",
