@@ -71,7 +71,7 @@ iPodRocks is a sync manager for rockbox devices. Multiple libraries, shadow tran
 
 ### Download (recommended)
 
-Download the installer for your platform from the [Releases](https://github.com/your-username/ipodrocks-js/releases) page:
+Download the installer for your platform from the [Releases](https://github.com/JoaoSobral/ipodrocks-js/releases/) page:
 
 - **Linux** — AppImage, `.deb`, or `.rpm`
 - **macOS** — `.dmg` or `.zip`
