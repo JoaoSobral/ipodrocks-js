@@ -3,6 +3,7 @@ name: Build desktop packages on release
 on:
   release:
     types: [published]
+  workflow_dispatch:
 
 jobs:
   build:
@@ -50,7 +51,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ipodrocks-${{ matrix.target }}-${{ github.ref_name }}
-          path: |
-            dist/
-            release/
-          if-no-files-found: warn
+          path: out/
+          if-no-files-found: error

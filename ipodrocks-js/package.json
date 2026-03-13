@@ -2,6 +2,11 @@
   "name": "ipodrocks",
   "version": "1.0.0",
   "description": "iPod sync and library management",
+  "author": {
+    "name": "Joao Sobral",
+    "email": "nomail@example.com"
+  },
+  "homepage": "https://github.com/JoaoSobral/ipodrocks-js",
   "license": "GPL-3.0-only",
   "main": "dist/main/main/index.js",
   "scripts": {
@@ -18,7 +23,7 @@
     "dist:linux": "npm run build && npm run copy-ffmpeg && electron-builder --linux",
     "dist:mac": "npm run build && npm run copy-ffmpeg && electron-builder --mac",
     "dist:win": "npm run build && npm run copy-ffmpeg && electron-builder --win",
-    "postinstall": "electron-rebuild || true"
+    "postinstall": "electron-builder install-app-deps"
   },
   "dependencies": {
     "@ffmpeg-installer/ffmpeg": "^1.1.0",
