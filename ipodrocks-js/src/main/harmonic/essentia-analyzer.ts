@@ -6,7 +6,7 @@
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
-import { spawnSync } from "child_process";
+import { spawn } from "child_process";
 import { app } from "electron";
 import { toCamelot } from "./camelotWheel";
 
@@ -59,17 +59,17 @@ function getEssentia(): EssentiaPkg | null {
 }
 
 /**
- * Decode audio file to mono Float32Array at 44100Hz using ffmpeg.
+ * Decode audio file to mono Float32Array at 44100Hz using ffmpeg (async).
  */
-function decodeAudioToFloat32(filePath: string): Float32Array | null {
+function decodeAudioToFloat32(filePath: string): Promise<Float32Array | null> {
   const tmpDir = os.tmpdir();
   const tmpWav = path.join(
     tmpDir,
     `ipodrocks-essentia-${Date.now()}-${Math.random().toString(36).slice(2)}.wav`
   );
-  try {
-    const ffmpegPath = getFfmpegPath();
-    const result = spawnSync(
+  const ffmpegPath = getFfmpegPath();
+  return new Promise((resolve) => {
+    const proc = spawn(
       ffmpegPath,
       [
         "-y",
@@ -87,23 +87,34 @@ function decodeAudioToFloat32(filePath: string): Float32Array | null {
         "120",
         tmpWav,
       ],
-      { stdio: "pipe", encoding: "utf-8" }
+      { stdio: "pipe" }
     );
-    if (result.status !== 0 || !fs.existsSync(tmpWav)) return null;
-    const buf = fs.readFileSync(tmpWav);
-    const decoded = wav.decode(buf);
-    if (!decoded?.channelData?.length) return null;
-    const mono = decoded.channelData[0] as Float32Array;
-    return mono;
-  } catch {
-    return null;
-  } finally {
-    try {
-      if (fs.existsSync(tmpWav)) fs.unlinkSync(tmpWav);
-    } catch {
-      // ignore
-    }
-  }
+    proc.on("close", (code) => {
+      try {
+        if (code !== 0 || !fs.existsSync(tmpWav)) {
+          resolve(null);
+          return;
+        }
+        const buf = fs.readFileSync(tmpWav);
+        const decoded = wav.decode(buf);
+        if (!decoded?.channelData?.length) {
+          resolve(null);
+          return;
+        }
+        const mono = decoded.channelData[0] as Float32Array;
+        resolve(mono);
+      } catch {
+        resolve(null);
+      } finally {
+        try {
+          if (fs.existsSync(tmpWav)) fs.unlinkSync(tmpWav);
+        } catch {
+          // ignore
+        }
+      }
+    });
+    proc.on("error", () => resolve(null));
+  });
 }
 
 /**
@@ -120,13 +131,13 @@ function essentiaKeyToNormalized(key: string, scale: string): string | null {
  * Analyze audio file for key and BPM using Essentia.js.
  * Returns null if analysis fails or Essentia is unavailable.
  */
-export function analyzeAudioWithEssentia(
+export async function analyzeAudioWithEssentia(
   filePath: string
-): EssentiaFeatures | null {
+): Promise<EssentiaFeatures | null> {
   const pkg = getEssentia();
   if (!pkg) return null;
 
-  const audio = decodeAudioToFloat32(filePath);
+  const audio = await decodeAudioToFloat32(filePath);
   if (!audio || audio.length < 1000) return null;
 
   try {

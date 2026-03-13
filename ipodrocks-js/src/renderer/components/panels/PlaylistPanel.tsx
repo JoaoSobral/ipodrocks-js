@@ -55,11 +55,7 @@ type GeniusStep =
   | "generating"
   | "preview";
 
-function formatDuration(seconds: number): string {
-  const m = Math.floor(seconds / 60);
-  const s = Math.floor(seconds % 60);
-  return `${m}:${s.toString().padStart(2, "0")}`;
-}
+import { formatDuration } from "../../utils/format";
 
 function formatDate(iso: string): string {
   try {
@@ -74,8 +70,9 @@ function formatDate(iso: string): string {
 // =========================================================================
 
 export function PlaylistPanel() {
-  const { devices, fetchDevices } = useDeviceStore();
-  const { setSavantTabActive } = useSavantStore();
+  const devices = useDeviceStore((s) => s.devices);
+  const fetchDevices = useDeviceStore((s) => s.fetchDevices);
+  const setSavantTabActive = useSavantStore((s) => s.setSavantTabActive);
   const deviceList = Array.isArray(devices) ? devices : [];
 
   // -- playlist list state ------------------------------------------------

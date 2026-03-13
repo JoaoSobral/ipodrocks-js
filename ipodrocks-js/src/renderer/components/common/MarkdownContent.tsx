@@ -47,16 +47,20 @@ export function MarkdownContent({ content, className = "" }: MarkdownContentProp
               {children}
             </blockquote>
           ),
-          a: ({ href, children }) => (
-            <a
-              href={href}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-[#4a9eff] hover:text-[#6ab0ff] underline [.theme-light_&]:text-[#2563eb] [.theme-light_&]:hover:text-[#3b82f6]"
-            >
-              {children}
-            </a>
-          ),
+          a: ({ href, children }) => {
+            const safeHref =
+              href && /^https?:\/\//i.test(href) ? href : "#";
+            return (
+              <a
+                href={safeHref}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-[#4a9eff] hover:text-[#6ab0ff] underline [.theme-light_&]:text-[#2563eb] [.theme-light_&]:hover:text-[#3b82f6]"
+              >
+                {children}
+              </a>
+            );
+          },
           code: ({ className: langClass, children, ...props }) => {
             const isBlock = langClass?.startsWith("language-");
             const codeBg =

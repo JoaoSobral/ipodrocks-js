@@ -1,4 +1,7 @@
 import { useEffect, useState, useMemo, useRef, useCallback } from "react";
+import { FixedSizeList as List } from "react-window";
+import { formatDuration, formatSize, formatBitrate, formatShadowCodecLabel, formatShadowCodecAndBitrate, formatShadowSize } from "../../utils/format";
+import { getTranscodableCodecConfigs } from "../../utils/codec";
 import { Card } from "../common/Card";
 import { Button } from "../common/Button";
 import { Input } from "../common/Input";
@@ -44,23 +47,6 @@ type SortField =
   | "contentType";
 type SortDir = "asc" | "desc";
 
-function formatDuration(seconds: number): string {
-  const m = Math.floor(seconds / 60);
-  const s = Math.floor(seconds % 60);
-  return `${m}:${s.toString().padStart(2, "0")}`;
-}
-
-function formatSize(bytes: number): string {
-  return `${(bytes / 1e6).toFixed(1)} MB`;
-}
-
-function formatBitrate(bps: number): string {
-  if (!bps) return "—";
-  const kbps = bps / 1000;
-  if (kbps >= 1000) return `${(kbps / 1000).toFixed(1)} Mbps`;
-  return `${Math.round(kbps)} kbps`;
-}
-
 const columns: { field: SortField; label: string; width: string; minW?: string }[] = [
   { field: "title", label: "Title", width: "flex-[3]", minW: "120px" },
   { field: "artist", label: "Artist", width: "flex-[2]", minW: "100px" },
@@ -74,8 +60,13 @@ const columns: { field: SortField; label: string; width: string; minW?: string }
 ];
 
 export function LibraryPanel() {
-  const { tracks, folders, stats, loading, fetchTracks, fetchFolders, fetchStats } =
-    useLibraryStore();
+  const tracks = useLibraryStore((s) => s.tracks);
+  const folders = useLibraryStore((s) => s.folders);
+  const stats = useLibraryStore((s) => s.stats);
+  const loading = useLibraryStore((s) => s.loading);
+  const fetchTracks = useLibraryStore((s) => s.fetchTracks);
+  const fetchFolders = useLibraryStore((s) => s.fetchFolders);
+  const fetchStats = useLibraryStore((s) => s.fetchStats);
   const [search, setSearch] = useState("");
   const [sortField, setSortField] = useState<SortField>("artist");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
@@ -269,41 +260,9 @@ export function LibraryPanel() {
   }
 
   const transcodableCodecConfigs = useMemo(
-    () =>
-      (Array.isArray(codecConfigs) ? codecConfigs : [])
-        .filter((cc) => (cc?.codec_name ?? "").toUpperCase() !== "DIRECT COPY")
-        .filter(
-          (cc) =>
-            mpcAvailable ||
-            (cc?.codec_name ?? "").toUpperCase() !== "MPC"
-        ),
+    () => getTranscodableCodecConfigs(codecConfigs, mpcAvailable),
     [codecConfigs, mpcAvailable]
   );
-
-  function formatShadowCodecLabel(cc: CodecConfig): string {
-    const codec = cc.codec_name.toUpperCase();
-    let detail = "";
-    if (cc.bitrate_value != null) detail = `(${cc.bitrate_value}kbps)`;
-    else if (cc.quality_value != null) detail = `(Q${cc.quality_value})`;
-    else if (cc.bits_per_sample != null) detail = `(${cc.bits_per_sample}-bit)`;
-    return `${codec} - ${cc.name}${detail ? ` ${detail}` : ""}`;
-  }
-
-  /** Format codec + bitrate/quality/bits for shadow library subtitle. */
-  function formatShadowCodecAndBitrate(sl: ShadowLibrary): string {
-    const codec = (sl.codecName ?? "").toUpperCase();
-    let detail = "";
-    if (sl.codecBitrateValue != null) detail = `${sl.codecBitrateValue}kbps`;
-    else if (sl.codecQualityValue != null) detail = `Q${sl.codecQualityValue}`;
-    else if (sl.codecBitsPerSample != null) detail = `${sl.codecBitsPerSample}-bit`;
-    return detail ? `${codec}, ${detail}` : codec || "—";
-  }
-
-  function formatShadowSize(bytes: number): string {
-    if (!bytes || bytes <= 0) return "0.0 GB";
-    const gb = bytes / 1e9;
-    return `${gb.toFixed(1)} GB`;
-  }
 
   async function handleCreateShadow() {
     if (!shadowName || !shadowPath || shadowCodecConfigId == null) return;
@@ -631,36 +590,47 @@ export function LibraryPanel() {
               ) : filtered.length === 0 ? (
                 <p className="text-center text-xs text-[#5a5f68] py-8">No tracks found</p>
               ) : (
-                filtered.map((t) => (
-                  <div
-                    key={t.id}
-                    className="flex items-center gap-2 px-3 py-2 text-sm hover:bg-white/[0.02] [.theme-light_&]:hover:bg-[#f1f3f4] border-b border-white/[0.03] [.theme-light_&]:border-[#e8eaed] transition-colors"
-                  >
-                    <span className="flex-[3] min-w-[120px] truncate text-white [.theme-light_&]:text-[#202124]">{t.title}</span>
-                    <span className="flex-[2] min-w-[100px] truncate text-[#8a8f98] [.theme-light_&]:text-[#5f6368]">{t.artist}</span>
-                    <span className="flex-[2] min-w-[100px] truncate text-[#8a8f98] [.theme-light_&]:text-[#5f6368]">{t.album}</span>
-                    <span className="w-24 min-w-[80px] truncate text-[#5a5f68] [.theme-light_&]:text-[#5f6368]">{t.genre}</span>
-                    <span className="w-16 min-w-[56px] text-[#8a8f98] [.theme-light_&]:text-[#5f6368] tabular-nums">
-                      {formatDuration(t.duration)}
-                    </span>
-                    <span className="w-14 min-w-[48px] text-[#5a5f68] [.theme-light_&]:text-[#5f6368] text-xs">{t.codec}</span>
-                    <span className="w-20 min-w-[64px] text-[#5a5f68] [.theme-light_&]:text-[#5f6368] text-xs">
-                      {formatBitrate(t.bitrate)}
-                    </span>
-                    <span className="w-12 min-w-[36px] text-[#5a5f68] [.theme-light_&]:text-[#5f6368] text-xs">
-                      {t.bitsPerSample ? `${t.bitsPerSample}-bit` : "—"}
-                    </span>
-                    <span className="w-16 min-w-[56px] text-[#5a5f68] [.theme-light_&]:text-[#5f6368] text-xs capitalize">
-                      {t.contentType || "—"}
-                    </span>
-                    <span className="w-16 min-w-[56px] text-right text-[#22c55e]">
-                      {selectedDeviceId != null && syncedPaths.has(t.path) ? "✓" : "—"}
-                    </span>
-                    <span className="w-16 min-w-[56px] text-right text-[#5a5f68] [.theme-light_&]:text-[#5f6368] text-xs tabular-nums">
-                      {formatSize(t.fileSize)}
-                    </span>
-                  </div>
-                ))
+                <List
+                  height={400}
+                  itemCount={filtered.length}
+                  itemSize={40}
+                  width="100%"
+                  className="scrollbar-thin"
+                >
+                  {({ index, style }) => {
+                    const t = filtered[index];
+                    return (
+                      <div
+                        style={style}
+                        className="flex items-center gap-2 px-3 py-2 text-sm hover:bg-white/[0.02] [.theme-light_&]:hover:bg-[#f1f3f4] border-b border-white/[0.03] [.theme-light_&]:border-[#e8eaed] transition-colors"
+                      >
+                        <span className="flex-[3] min-w-[120px] truncate text-white [.theme-light_&]:text-[#202124]">{t.title}</span>
+                        <span className="flex-[2] min-w-[100px] truncate text-[#8a8f98] [.theme-light_&]:text-[#5f6368]">{t.artist}</span>
+                        <span className="flex-[2] min-w-[100px] truncate text-[#8a8f98] [.theme-light_&]:text-[#5f6368]">{t.album}</span>
+                        <span className="w-24 min-w-[80px] truncate text-[#5a5f68] [.theme-light_&]:text-[#5f6368]">{t.genre}</span>
+                        <span className="w-16 min-w-[56px] text-[#8a8f98] [.theme-light_&]:text-[#5f6368] tabular-nums">
+                          {formatDuration(t.duration)}
+                        </span>
+                        <span className="w-14 min-w-[48px] text-[#5a5f68] [.theme-light_&]:text-[#5f6368] text-xs">{t.codec}</span>
+                        <span className="w-20 min-w-[64px] text-[#5a5f68] [.theme-light_&]:text-[#5f6368] text-xs">
+                          {formatBitrate(t.bitrate)}
+                        </span>
+                        <span className="w-12 min-w-[36px] text-[#5a5f68] [.theme-light_&]:text-[#5f6368] text-xs">
+                          {t.bitsPerSample ? `${t.bitsPerSample}-bit` : "—"}
+                        </span>
+                        <span className="w-16 min-w-[56px] text-[#5a5f68] [.theme-light_&]:text-[#5f6368] text-xs capitalize">
+                          {t.contentType || "—"}
+                        </span>
+                        <span className="w-16 min-w-[56px] text-right text-[#22c55e]">
+                          {selectedDeviceId != null && syncedPaths.has(t.path) ? "✓" : "—"}
+                        </span>
+                        <span className="w-16 min-w-[56px] text-right text-[#5a5f68] [.theme-light_&]:text-[#5f6368] text-xs tabular-nums">
+                          {formatSize(t.fileSize)}
+                        </span>
+                      </div>
+                    );
+                  }}
+                </List>
               )}
             </div>
           </div>

@@ -2,6 +2,46 @@ import * as fs from "fs";
 import * as path from "path";
 import { BrowserWindow, dialog, ipcMain, IpcMainInvokeEvent } from "electron";
 
+/** Builds path→track maps for music, podcast, audiobook from a single getTracks call. */
+function buildLibraryTrackMaps(lib: Library): {
+  music: Record<string, Record<string, unknown>>;
+  podcast: Record<string, Record<string, unknown>>;
+  audiobook: Record<string, Record<string, unknown>>;
+} {
+  const all = lib.getTracks();
+  const music: Record<string, Record<string, unknown>> = {};
+  const podcast: Record<string, Record<string, unknown>> = {};
+  const audiobook: Record<string, Record<string, unknown>> = {};
+  for (const t of all) {
+    const rec = t as unknown as Record<string, unknown>;
+    const ct = (t.contentType ?? "music") as string;
+    if (ct === "music") music[t.path] = rec;
+    else if (ct === "podcast") podcast[t.path] = rec;
+    else if (ct === "audiobook") audiobook[t.path] = rec;
+  }
+  return { music, podcast, audiobook };
+}
+
+/** Validates a folder path for library operations. Returns resolved path or error. */
+function validateFolderPath(rawPath: string): { path: string } | { error: string } {
+  if (!rawPath || typeof rawPath !== "string") {
+    return { error: "Invalid path" };
+  }
+  const resolved = path.resolve(rawPath.trim());
+  if (resolved.split(path.sep).includes("..")) {
+    return { error: "Path must not contain parent traversal" };
+  }
+  try {
+    const stat = fs.statSync(resolved);
+    if (!stat.isDirectory()) {
+      return { error: "Path is not a directory" };
+    }
+  } catch {
+    return { error: "Path does not exist or is not accessible" };
+  }
+  return { path: resolved };
+}
+
 import {
   AddDeviceConfig,
   GeniusGenerateOptions,
@@ -73,11 +113,32 @@ let activeBackfillAbort: AbortController | null = null;
 /** In-memory cache of matched playback events keyed by device ID. */
 const geniusEventsCache = new Map<number, MatchedPlayEvent[]>();
 
+const SESSION_TTL_MS = 30 * 60 * 1000; // 30 minutes
+const SESSION_CAP = 50;
+
 /** Ephemeral mood chat sessions keyed by session ID. */
-const moodChatSessions = new Map<string, MoodChatState>();
+const moodChatSessions = new Map<string, { state: MoodChatState; createdAt: number }>();
 
 /** Ephemeral Savant playlist chat sessions keyed by session ID. */
-const savantPlaylistChatSessions = new Map<string, SavantPlaylistChatState>();
+const savantPlaylistChatSessions = new Map<
+  string,
+  { state: SavantPlaylistChatState; createdAt: number }
+>();
+
+function cleanupChatSessions<T>(
+  map: Map<string, { state: T; createdAt: number }>
+): void {
+  const now = Date.now();
+  for (const [id, entry] of map.entries()) {
+    if (now - entry.createdAt > SESSION_TTL_MS) map.delete(id);
+  }
+  while (map.size > SESSION_CAP) {
+    const oldest = [...map.entries()].reduce((a, b) =>
+      a[1].createdAt < b[1].createdAt ? a : b
+    );
+    map.delete(oldest[0]);
+  }
+}
 
 function getLibrary(): Library {
   if (!library) {
@@ -222,7 +283,8 @@ export function registerIpcHandlers(): void {
     "dialog:pickFolder",
     safe(async (event) => {
       const win = BrowserWindow.fromWebContents(event.sender);
-      const result = await dialog.showOpenDialog(win!, {
+      if (!win) return null;
+      const result = await dialog.showOpenDialog(win, {
         properties: ["openDirectory"],
       });
       if (result.canceled || result.filePaths.length === 0) return null;
@@ -249,8 +311,13 @@ export function registerIpcHandlers(): void {
       const allRemoved: string[] = [];
       try {
         for (const folder of payload.folders) {
+          const validated = validateFolderPath(folder.path);
+          if ("error" in validated) {
+            allErrors.push(`${folder.name}: ${validated.error}`);
+            continue;
+          }
           const result = await scanner.scanFolder(
-            folder.path,
+            validated.path,
             folder.contentType,
             (progress) => event.sender.send("scan:progress", progress),
             activeScanAbort.signal,
@@ -322,15 +389,17 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     "library:addFolder",
     safe(async (_event, folder: { name: string; path: string; contentType: string }) => {
+      const validated = validateFolderPath(folder.path);
+      if ("error" in validated) return { error: validated.error };
       const result = getLibrary().addLibraryFolder(
         folder.name,
-        folder.path,
+        validated.path,
         folder.contentType as any
       );
       logActivity(
         getLibrary().getConnection(),
         "add_folder",
-        `Added folder: ${folder.name} (${folder.path})`
+        `Added folder: ${folder.name} (${validated.path})`
       );
       return result;
     })
@@ -559,21 +628,10 @@ export function registerIpcHandlers(): void {
       const playlistStats = device.getContentStats("playlist");
       const space = device.getAvailableSpace();
 
-      const musicTracks = lib.getTracks({ contentType: "music" as any });
-      const podcastTracks = lib.getTracks({ contentType: "podcast" as any });
-      const audiobookTracks = lib.getTracks({ contentType: "audiobook" as any });
-      let libraryMusicMap: Record<string, Record<string, unknown>> = {};
-      for (const t of musicTracks) {
-        libraryMusicMap[t.path] = t as unknown as Record<string, unknown>;
-      }
-      let libraryPodcastMap: Record<string, Record<string, unknown>> = {};
-      for (const t of podcastTracks) {
-        libraryPodcastMap[t.path] = t as unknown as Record<string, unknown>;
-      }
-      let libraryAudiobookMap: Record<string, Record<string, unknown>> = {};
-      for (const t of audiobookTracks) {
-        libraryAudiobookMap[t.path] = t as unknown as Record<string, unknown>;
-      }
+      const maps = buildLibraryTrackMaps(lib);
+      let libraryMusicMap = maps.music;
+      let libraryPodcastMap = maps.podcast;
+      let libraryAudiobookMap = maps.audiobook;
 
       let codecName = device.profile.codecName ?? "copy";
       const folders = lib.getLibraryFolders();
@@ -814,9 +872,8 @@ export function registerIpcHandlers(): void {
 
       activeSyncAbort = new AbortController();
 
-      const musicTracks = lib.getTracks({ contentType: "music" as any });
-      const podcastTracks = lib.getTracks({ contentType: "podcast" as any });
-      const audiobookTracks = lib.getTracks({ contentType: "audiobook" as any });
+      const { music: musicMap, podcast: podcastMap, audiobook: audiobookMap } =
+        buildLibraryTrackMaps(lib);
 
       let musicLibraryTracks: Record<string, Record<string, unknown>> = {};
       let podcastLibraryTracks: Record<string, Record<string, unknown>> = {};
@@ -830,60 +887,42 @@ export function registerIpcHandlers(): void {
         const podcastSet = new Set(sel.podcasts ?? []);
         const audiobookSet = new Set(sel.audiobooks ?? []);
 
-        const matchMusic = (t: { path: string; album?: string; artist?: string; genre?: string }) => {
-          const album = (t.album ?? "Unknown Album").trim();
-          const artist = (t.artist ?? "Unknown Artist").trim();
-          const genre = (t.genre ?? "Unknown Genre").trim();
+        const matchMusic = (t: Record<string, unknown>) => {
+          const album = (String(t.album ?? "Unknown Album")).trim();
+          const artist = (String(t.artist ?? "Unknown Artist")).trim();
+          const genre = (String(t.genre ?? "Unknown Genre")).trim();
           const albumLabel = `${album} — ${artist}`;
           return albumSet.has(albumLabel) || artistSet.has(artist) || genreSet.has(genre);
         };
-        const matchPodcast = (t: { title?: string; filename?: string; artist?: string }) => {
-          const title = (t.title ?? t.filename ?? "Untitled").trim();
-          const artist = (t.artist ?? "").trim();
+        const matchPodcast = (t: Record<string, unknown>) => {
+          const title = (String(t.title ?? t.filename ?? "Untitled")).trim();
+          const artist = (String(t.artist ?? "")).trim();
           const label = artist ? `${title} — ${artist}` : title;
           return podcastSet.has(label) || podcastSet.has(title);
         };
-        const matchAudiobook = (t: { title?: string; filename?: string; artist?: string }) => {
-          const title = (t.title ?? t.filename ?? "Untitled").trim();
-          const artist = (t.artist ?? "").trim();
+        const matchAudiobook = (t: Record<string, unknown>) => {
+          const title = (String(t.title ?? t.filename ?? "Untitled")).trim();
+          const artist = (String(t.artist ?? "")).trim();
           const label = artist ? `${title} — ${artist}` : title;
           return audiobookSet.has(label) || audiobookSet.has(title);
         };
 
-        for (const t of musicTracks) {
-          if (matchMusic(t)) {
-            musicLibraryTracks[t.path] = t as unknown as Record<string, unknown>;
-          }
+        for (const [p, t] of Object.entries(musicMap)) {
+          if (matchMusic(t)) musicLibraryTracks[p] = t;
         }
-        for (const t of podcastTracks) {
-          if (matchPodcast(t)) {
-            podcastLibraryTracks[t.path] = t as unknown as Record<string, unknown>;
-          }
+        for (const [p, t] of Object.entries(podcastMap)) {
+          if (matchPodcast(t)) podcastLibraryTracks[p] = t;
         }
-        for (const t of audiobookTracks) {
-          if (matchAudiobook(t)) {
-            audiobookLibraryTracks[t.path] = t as unknown as Record<string, unknown>;
-          }
+        for (const [p, t] of Object.entries(audiobookMap)) {
+          if (matchAudiobook(t)) audiobookLibraryTracks[p] = t;
         }
       } else {
         const includeMusic = opts.syncType === "full" ? opts.includeMusic === true : true;
         const includePodcasts = opts.syncType === "full" ? opts.includePodcasts === true : true;
         const includeAudiobooks = opts.syncType === "full" ? opts.includeAudiobooks === true : true;
-        if (includeMusic) {
-          for (const t of musicTracks) {
-            musicLibraryTracks[t.path] = t as unknown as Record<string, unknown>;
-          }
-        }
-        if (includePodcasts) {
-          for (const t of podcastTracks) {
-            podcastLibraryTracks[t.path] = t as unknown as Record<string, unknown>;
-          }
-        }
-        if (includeAudiobooks) {
-          for (const t of audiobookTracks) {
-            audiobookLibraryTracks[t.path] = t as unknown as Record<string, unknown>;
-          }
-        }
+        if (includeMusic) musicLibraryTracks = { ...musicMap };
+        if (includePodcasts) podcastLibraryTracks = { ...podcastMap };
+        if (includeAudiobooks) audiobookLibraryTracks = { ...audiobookMap };
       }
 
       let codecName = device.profile.codecName ?? "copy";
@@ -1458,7 +1497,8 @@ export function registerIpcHandlers(): void {
       const sessionId = randomUUID();
       const db = getLibrary().getConnection();
       const { state, aiMessage } = await startMoodChat(config, db);
-      moodChatSessions.set(sessionId, state);
+      cleanupChatSessions(moodChatSessions);
+      moodChatSessions.set(sessionId, { state, createdAt: Date.now() });
       return { sessionId, aiMessage };
     })
   );
@@ -1472,10 +1512,15 @@ export function registerIpcHandlers(): void {
       const config = getOpenRouterConfig();
       if (!config?.apiKey?.trim())
         return { error: "OpenRouter API key not configured" };
-      const state = moodChatSessions.get(sessionId);
-      if (!state) return { error: "Chat session not found" };
+      const entry = moodChatSessions.get(sessionId);
+      if (!entry) return { error: "Chat session not found" };
       const db = getLibrary().getConnection();
-      const result = await processMoodChatTurn(state, userMessage, config, db);
+      const result = await processMoodChatTurn(
+        entry.state,
+        userMessage,
+        config,
+        db
+      );
       if (result.isComplete) moodChatSessions.delete(sessionId);
       return result;
     })
@@ -1497,7 +1542,8 @@ export function registerIpcHandlers(): void {
       const sessionId = randomUUID();
       const db = getLibrary().getConnection();
       const { state, aiMessage } = await startSavantPlaylistChat(config, db);
-      savantPlaylistChatSessions.set(sessionId, state);
+      cleanupChatSessions(savantPlaylistChatSessions);
+      savantPlaylistChatSessions.set(sessionId, { state, createdAt: Date.now() });
       return { sessionId, aiMessage };
     })
   );
@@ -1511,11 +1557,11 @@ export function registerIpcHandlers(): void {
       const config = getOpenRouterConfig();
       if (!config?.apiKey?.trim())
         return { error: "OpenRouter API key not configured" };
-      const state = savantPlaylistChatSessions.get(sessionId);
-      if (!state) return { error: "Chat session not found" };
+      const entry = savantPlaylistChatSessions.get(sessionId);
+      if (!entry) return { error: "Chat session not found" };
       const db = getLibrary().getConnection();
       const result = await processSavantPlaylistChatTurn(
-        state,
+        entry.state,
         userMessage,
         config,
         db

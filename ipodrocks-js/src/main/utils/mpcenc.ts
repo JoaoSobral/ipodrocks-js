@@ -16,11 +16,11 @@ export function isMpcencAvailable(): boolean {
     const result = spawnSync("mpcenc", ["--version"], SPAWN_OPTS);
     if (result.status === 0) return true;
     if (result.error) return false;
-    // Some mpcenc builds exit non-zero for --version; try resolving via shell PATH
+    // Some mpcenc builds exit non-zero for --version; try resolving via PATH
     const which =
       process.platform === "win32"
         ? spawnSync("where", ["mpcenc"], SPAWN_OPTS)
-        : spawnSync("sh", ["-c", "command -v mpcenc"], SPAWN_OPTS);
+        : spawnSync("which", ["mpcenc"], SPAWN_OPTS);
     return which.status === 0 && (which.stdout?.trim()?.length ?? 0) > 0;
   } catch {
     return false;

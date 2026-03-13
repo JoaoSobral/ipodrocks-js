@@ -43,7 +43,9 @@ function writePrefs(prefs: Prefs): void {
   try {
     const p = getPrefsPath();
     fs.mkdirSync(path.dirname(p), { recursive: true });
-    fs.writeFileSync(p, JSON.stringify(prefs, null, 2), "utf-8");
+    const tmp = p + ".tmp";
+    fs.writeFileSync(tmp, JSON.stringify(prefs, null, 2), "utf-8");
+    fs.renameSync(tmp, p);
   } catch (err) {
     console.error("[prefs] write failed:", err);
   }

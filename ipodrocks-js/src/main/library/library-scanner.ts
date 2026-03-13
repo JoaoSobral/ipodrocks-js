@@ -15,6 +15,11 @@ import { ScanProgress, ScanResult } from "../../shared/types";
 import { HashManager } from "./hash-manager";
 import { MetadataExtractor } from "./metadata-extractor";
 
+/** Escape LIKE special chars (% _ \) so folder paths are safe in LIKE patterns. */
+function escapeLike(s: string): string {
+  return s.replace(/[%_\\]/g, (c) => "\\" + c);
+}
+
 const AUDIO_EXTENSIONS = new Set([
   ".m4a",
   ".mp3",
@@ -143,10 +148,10 @@ export class LibraryScanner {
     `);
 
     this.loadHashesStmt = db.prepare(
-      "SELECT path, file_hash FROM tracks WHERE path LIKE ?"
+      "SELECT path, file_hash FROM tracks WHERE path LIKE ? ESCAPE '\\'"
     );
     this.loadMtimesStmt = db.prepare(
-      "SELECT file_path, last_modified FROM content_hashes WHERE file_path LIKE ?"
+      "SELECT file_path, last_modified FROM content_hashes WHERE file_path LIKE ? ESCAPE '\\'"
     );
     this.getTrackIdByPathStmt = db.prepare(
       "SELECT id FROM tracks WHERE path = ?"
@@ -413,7 +418,8 @@ export class LibraryScanner {
 
   /** Load path → file_hash map for all existing tracks under a folder. */
   private loadExistingHashes(folder: string): Map<string, string> {
-    const rows = this.loadHashesStmt.all(`${folder}%`) as {
+    const pattern = escapeLike(folder) + "%";
+    const rows = this.loadHashesStmt.all(pattern) as {
       path: string;
       file_hash: string;
     }[];
@@ -422,7 +428,8 @@ export class LibraryScanner {
 
   /** Load path → last_modified (ms) from content_hashes for mtime-based skip. */
   private loadExistingMtimes(folder: string): Map<string, number> {
-    const rows = this.loadMtimesStmt.all(`${folder}%`) as {
+    const pattern = escapeLike(folder) + "%";
+    const rows = this.loadMtimesStmt.all(pattern) as {
       file_path: string;
       last_modified: string;
     }[];
@@ -694,7 +701,7 @@ export class LibraryScanner {
         status: "analyzing",
       });
       try {
-        const features = analyzeAudioWithEssentia(row.path);
+        const features = await analyzeAudioWithEssentia(row.path);
         if (features) {
           this.updateTrackFeaturesStmt.run(
             features.key,
