@@ -21,7 +21,8 @@
     "copy-ffmpeg": "node scripts/copy-ffmpeg.js",
     "dist": "npm run build && npm run copy-ffmpeg && electron-builder --publish never",
     "dist:linux": "npm run build && npm run copy-ffmpeg && electron-builder --linux --publish never",
-    "dist:mac": "npm run build && npm run copy-ffmpeg && electron-builder --mac --publish never",
+    "dist:mac": "npm run build && npm run copy-ffmpeg && electron-builder --mac -c.mac.artifactName='${productName}-${version}-ARM64-mac.${ext}' --publish never",
+    "dist:mac:x64": "npm run build && npm run copy-ffmpeg && electron-builder --mac --x64 -c.mac.artifactName='${productName}-${version}-INTEL-mac.${ext}' --publish never",
     "dist:win": "npm run build && npm run copy-ffmpeg && electron-builder --win --publish never",
     "postinstall": "electron-builder install-app-deps"
   },
