@@ -26,14 +26,17 @@ interface SyncProgressModalProps {
 }
 
 const statusIcon: Record<string, string> = {
-  copy: "✅",
+  copied: "✅",
+  converted: "✅",
+  skipped: "⏭️",
   skip: "⏭️",
   error: "❌",
   remove: "🗑️",
+  missing: "⏭️",
 };
 
-function eventIcon(event: string): string {
-  return statusIcon[event] ?? "⏭️";
+function itemStatusIcon(status: string | undefined, event: string): string {
+  return statusIcon[String(status)] ?? statusIcon[event] ?? "⏭️";
 }
 
 export function SyncProgressModal({
@@ -213,7 +216,7 @@ export function SyncProgressModal({
       `${processedItems} / ${totalItems || "?"} items, ${copiedItems} copied`,
       "",
       "=== Recent files ===",
-      ...recentItems.map((r) => `[${r.event}] ${r.path}`),
+      ...recentItems.map((r) => `[${r.status ?? r.event}] ${r.path}`),
       "",
       "=== Conversion log ===",
       ...logLines,
@@ -280,7 +283,7 @@ export function SyncProgressModal({
           )}
           {recentItems.map((item, i) => (
             <div key={i} className="flex items-start gap-2 py-0.5 text-[#8a8f98]">
-              <span className="shrink-0">{eventIcon(item.event)}</span>
+              <span className="shrink-0">{itemStatusIcon(item.status, item.event)}</span>
               <span className="truncate">{item.path}</span>
             </div>
           ))}
