@@ -1,6 +1,11 @@
 /**
  * Audio analysis using Essentia.js for key and BPM detection.
  * Decodes audio via ffmpeg, runs KeyExtractor and RhythmExtractor2013.
+ *
+ * A single WASM Essentia instance is reused across all tracks to
+ * avoid the memory leak caused by repeatedly instantiating and
+ * shutting down the WASM module. Console output from the WASM
+ * module is suppressed to prevent "undefined" spam on stdout.
  */
 
 import * as fs from "fs";
@@ -36,17 +41,20 @@ export interface EssentiaFeatures {
   camelot: string | null;
 }
 
+type EssentiaEngine = {
+  arrayToVector: (a: Float32Array) => unknown;
+  KeyExtractor: (v: unknown) => { key: string; scale: string };
+  RhythmExtractor2013: (v: unknown) => { bpm: number };
+  shutdown: () => void;
+};
+
 type EssentiaPkg = {
-  Essentia: new (w: unknown) => {
-    arrayToVector: (a: Float32Array) => unknown;
-    KeyExtractor: (v: unknown) => { key: string; scale: string };
-    RhythmExtractor2013: (v: unknown) => { bpm: number };
-    shutdown: () => void;
-  };
+  Essentia: new (w: unknown) => EssentiaEngine;
   EssentiaWASM: unknown;
 };
 
 let essentiaInstance: EssentiaPkg | null = null;
+let cachedEngine: EssentiaEngine | null = null;
 
 function getEssentia(): EssentiaPkg | null {
   if (essentiaInstance) return essentiaInstance;
@@ -56,6 +64,25 @@ function getEssentia(): EssentiaPkg | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * Return a reusable Essentia WASM engine, creating it once.
+ * Suppresses the WASM module's stdout to avoid "undefined" spam.
+ */
+function getOrCreateEngine(): EssentiaEngine | null {
+  if (cachedEngine) return cachedEngine;
+  const pkg = getEssentia();
+  if (!pkg) return null;
+
+  const origLog = console.log;
+  console.log = () => {};
+  try {
+    cachedEngine = new pkg.Essentia(pkg.EssentiaWASM);
+  } finally {
+    console.log = origLog;
+  }
+  return cachedEngine;
 }
 
 /**
@@ -129,19 +156,24 @@ function essentiaKeyToNormalized(key: string, scale: string): string | null {
 
 /**
  * Analyze audio file for key and BPM using Essentia.js.
- * Returns null if analysis fails or Essentia is unavailable.
+ * Reuses a single WASM instance to prevent memory leaks that cause
+ * the process to die after a few hundred tracks. Console output is
+ * suppressed during algorithm calls to avoid "undefined" lines.
+ *
+ * @returns Features or null if analysis fails / Essentia unavailable.
  */
 export async function analyzeAudioWithEssentia(
   filePath: string
 ): Promise<EssentiaFeatures | null> {
-  const pkg = getEssentia();
-  if (!pkg) return null;
+  const essentia = getOrCreateEngine();
+  if (!essentia) return null;
 
   const audio = await decodeAudioToFloat32(filePath);
   if (!audio || audio.length < 1000) return null;
 
+  const origLog = console.log;
+  console.log = () => {};
   try {
-    const essentia = new pkg.Essentia(pkg.EssentiaWASM);
     const vector = essentia.arrayToVector(audio);
 
     let key: string | null = null;
@@ -173,9 +205,10 @@ export async function analyzeAudioWithEssentia(
       // BPM extraction failed
     }
 
-    essentia.shutdown();
     return { key, bpm, camelot };
   } catch {
     return null;
+  } finally {
+    console.log = origLog;
   }
 }

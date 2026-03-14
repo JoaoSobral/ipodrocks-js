@@ -7,3 +7,7 @@ ffmpeg-bin/
 *.db-journal
 *.db-wal
 sync_error.log
+
+# VitePress
+docs/.vitepress/dist
+docs/.vitepress/cache
