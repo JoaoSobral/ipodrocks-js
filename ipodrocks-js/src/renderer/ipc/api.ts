@@ -77,11 +77,18 @@ export interface CheckResult {
   disk: { totalBytes: number; freeBytes: number; totalGb: number; freeGb: number };
   musicSyncedWithLibrary?: number;
   musicOrphans?: number;
+  musicCodecMismatch?: number;
+  musicToSync?: number;
   podcastSyncedWithLibrary?: number;
   podcastOrphans?: number;
+  podcastCodecMismatch?: number;
+  podcastToSync?: number;
   audiobookSyncedWithLibrary?: number;
   audiobookOrphans?: number;
+  audiobookCodecMismatch?: number;
+  audiobookToSync?: number;
   playlistOrphans?: number;
+  profileCodecName?: string;
   orphansMusicPaths?: string[];
   orphansPodcastPaths?: string[];
   orphansAudiobookPaths?: string[];
