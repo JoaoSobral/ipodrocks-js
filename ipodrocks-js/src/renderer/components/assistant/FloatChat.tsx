@@ -5,6 +5,7 @@ import {
   clearAssistantHistory,
 } from "../../ipc/api";
 import { MarkdownContent } from "../common/MarkdownContent";
+import { ErrorBox } from "../common/ErrorBox";
 
 const OPENING_MESSAGE =
   "How can I help with your music library? I know your tracks, playlists, and artists.";
@@ -72,7 +73,7 @@ export function FloatChat() {
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
-        className="fixed bottom-6 right-6 z-50 w-14 h-14 rounded-full bg-[#4a9eff] text-white shadow-lg hover:bg-[#3a8eef] active:scale-95 transition-all flex items-center justify-center text-2xl"
+        className="fixed bottom-6 right-6 z-50 w-14 h-14 rounded-full bg-primary text-primary-foreground shadow-lg hover:bg-primary/90 active:scale-95 transition-all flex items-center justify-center text-2xl"
         title={open ? "Close chat" : "Music Assistant"}
       >
         💬
@@ -81,14 +82,14 @@ export function FloatChat() {
       {/* Chat panel - slides in from bottom-right */}
       {open && (
         <div
-          className="fixed bottom-24 right-6 z-50 w-96 max-h-[480px] flex flex-col rounded-2xl border border-white/[0.12] bg-[#131626] shadow-2xl overflow-hidden [.theme-light_&]:bg-white [.theme-light_&]:border-[#e2e8f0]"
+          className="fixed bottom-24 right-6 z-50 w-96 max-h-[480px] flex flex-col rounded-2xl border border-border bg-card shadow-2xl overflow-hidden"
           style={{ boxShadow: "0 8px 32px rgba(0,0,0,0.4)" }}
         >
           {/* Header */}
-          <div className="flex items-center justify-between px-4 py-3 border-b border-white/[0.08] [.theme-light_&]:border-[#e2e8f0]">
+          <div className="flex items-center justify-between px-4 py-3 border-b border-border">
             <div className="flex items-center gap-2">
               <span className="text-lg">💬</span>
-              <h3 className="text-sm font-semibold text-white [.theme-light_&]:text-[#1a1a1a]">
+              <h3 className="text-sm font-semibold text-foreground">
                 Music Assistant
               </h3>
             </div>
@@ -99,7 +100,7 @@ export function FloatChat() {
                   await clearAssistantHistory();
                   setMessages([]);
                 }}
-                className="p-1 rounded-lg text-[#5a5f68] hover:text-white hover:bg-white/5 [.theme-light_&]:hover:text-[#1a1a1a]"
+                className="p-1 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/50"
                 title="Clear memory (hidden past context)"
               >
                 🗑
@@ -107,7 +108,7 @@ export function FloatChat() {
               <button
                 type="button"
                 onClick={() => setOpen(false)}
-                className="p-1 rounded-lg text-[#5a5f68] hover:text-white hover:bg-white/5 [.theme-light_&]:hover:text-[#1a1a1a]"
+                className="p-1 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/50"
                 title="Minimize"
               >
                 ▼
@@ -116,8 +117,8 @@ export function FloatChat() {
           </div>
 
           {/* Greeting */}
-          <div className="px-4 py-2 border-b border-white/[0.06] [.theme-light_&]:border-[#e2e8f0]">
-            <p className="text-xs text-[#8a8f98] [.theme-light_&]:text-[#6b7280]">
+          <div className="px-4 py-2 border-b border-border">
+            <p className="text-xs text-muted-foreground">
               Questions? I know your library, tracks, and playlists.
             </p>
           </div>
@@ -126,7 +127,7 @@ export function FloatChat() {
           <div className="flex-1 overflow-y-auto min-h-[200px] max-h-[280px] p-4 space-y-3">
             {messages.length === 0 ? (
               <div className="flex justify-start">
-                <div className="max-w-[85%] rounded-xl px-3 py-2 bg-white/[0.06] text-sm text-[#e0e0e0] [.theme-light_&]:bg-[#f3f4f6] [.theme-light_&]:text-[#374151] select-text">
+                <div className="max-w-[85%] rounded-xl px-3 py-2 bg-muted/50 text-sm text-foreground select-text">
                   {OPENING_MESSAGE}
                 </div>
               </div>
@@ -139,8 +140,8 @@ export function FloatChat() {
                   <div
                     className={`max-w-[85%] rounded-xl px-3 py-2 text-sm select-text ${
                       m.role === "user"
-                        ? "bg-[#4a9eff]/20 text-white whitespace-pre-wrap"
-                        : "bg-white/[0.06] text-[#e0e0e0] [.theme-light_&]:bg-[#f3f4f6] [.theme-light_&]:text-[#374151]"
+                        ? "bg-muted text-foreground whitespace-pre-wrap"
+                        : "bg-muted/50 text-foreground"
                     }`}
                   >
                     {m.role === "assistant" ? (
@@ -154,7 +155,7 @@ export function FloatChat() {
             )}
             {isLoading && (
               <div className="flex justify-start">
-                <div className="rounded-xl px-3 py-2 bg-white/[0.06] text-sm text-[#5a5f68]">
+                <div className="rounded-xl px-3 py-2 bg-muted/50 text-sm text-muted-foreground">
                   <span className="animate-pulse">Thinking…</span>
                 </div>
               </div>
@@ -163,13 +164,13 @@ export function FloatChat() {
           </div>
 
           {error && (
-            <div className="px-4 py-2 text-xs text-[#ef4444] bg-[#ef4444]/10">
-              {error}
+            <div className="px-4 py-2">
+              <ErrorBox>{error}</ErrorBox>
             </div>
           )}
 
           {/* Input */}
-          <div className="p-3 border-t border-white/[0.08] [.theme-light_&]:border-[#e2e8f0]">
+          <div className="p-3 border-t border-border">
             <div className="flex gap-2">
               <input
                 type="text"
@@ -183,13 +184,13 @@ export function FloatChat() {
                 }}
                 placeholder="Ask about your library…"
                 disabled={isLoading}
-                className="flex-1 rounded-lg bg-white/[0.04] border border-white/[0.08] px-3 py-2 text-sm text-[#e0e0e0] placeholder:text-[#5a5f68] outline-none focus:border-[#4a9eff]/50 disabled:opacity-50 [.theme-light_&]:bg-white [.theme-light_&]:border-[#e2e8f0] [.theme-light_&]:text-[#1a1a1a]"
+                className="flex-1 rounded-lg bg-input border border-border px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground outline-none focus:border-primary/50 disabled:opacity-50"
               />
               <button
                 type="button"
                 onClick={handleSend}
                 disabled={!inputValue.trim() || isLoading}
-                className="rounded-lg bg-[#4a9eff] text-white px-4 py-2 text-sm font-medium hover:bg-[#3a8eef] disabled:opacity-40 disabled:pointer-events-none"
+                className="rounded-lg bg-primary text-primary-foreground px-4 py-2 text-sm font-medium hover:bg-primary/90 disabled:opacity-40 disabled:pointer-events-none"
               >
                 Send
               </button>

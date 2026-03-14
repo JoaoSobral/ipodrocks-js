@@ -5,6 +5,7 @@ import { Modal } from "../common/Modal";
 import { Button } from "../common/Button";
 import { Input } from "../common/Input";
 import { Select } from "../common/Select";
+import { ErrorBox } from "../common/ErrorBox";
 
 interface AddFolderModalProps {
   open: boolean;
@@ -87,14 +88,12 @@ export function AddFolderModal({ open, onClose }: AddFolderModalProps) {
           onChange={(v) => setContentType(v)}
         />
 
-        <p className="text-xs text-[#6a6f78]">
+        <p className="text-xs text-muted-foreground">
           Supported formats: MP3, M4A, FLAC, WAV, AIFF, OGG, Opus
         </p>
 
         {error && (
-          <div className="rounded-lg border border-[#ef4444]/30 bg-[#ef4444]/10 px-3 py-2 text-sm text-[#ef4444]">
-            {error}
-          </div>
+          <ErrorBox>{error}</ErrorBox>
         )}
 
         <div className="flex justify-end gap-2 pt-1">

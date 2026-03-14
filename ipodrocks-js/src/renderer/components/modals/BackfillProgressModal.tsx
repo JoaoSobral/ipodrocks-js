@@ -8,6 +8,7 @@ import {
 import { Modal } from "../common/Modal";
 import { Button } from "../common/Button";
 import { ProgressBar } from "../common/ProgressBar";
+import { ErrorBox } from "../common/ErrorBox";
 
 interface RecentItem {
   path: string;
@@ -171,8 +172,8 @@ export function BackfillProgressModal({
           </span>
           <div className="flex gap-4 tabular-nums shrink-0">
             <span>{processed} / {total || "?"} tracks</span>
-            <span className="text-[#22c55e]">{processedCount} with key/BPM</span>
-            <span className="text-[#5a5f68]">
+            <span className="text-success">{processedCount} with key</span>
+            <span className="text-muted-foreground">
               {Math.floor(elapsedSec / 60)}:
               {String(elapsedSec % 60).padStart(2, "0")} elapsed
             </span>
@@ -180,20 +181,20 @@ export function BackfillProgressModal({
         </div>
 
         <div className="flex flex-col gap-1.5">
-          <span className="text-xs font-medium text-[#8a8f98]">Progress</span>
+          <span className="text-xs font-medium text-muted-foreground">Progress</span>
           <div
             ref={listRef}
-            className="h-40 overflow-y-auto rounded-lg border border-white/10 bg-black/20 p-3 text-xs font-mono"
+            className="h-40 overflow-y-auto rounded-lg border border-border bg-muted/30 p-3 text-xs font-mono"
           >
             {recentItems.length === 0 && (
-              <p className="text-[#5a5f68]">
+              <p className="text-muted-foreground">
                 {total ? "Analyzing tracks…" : "Waiting for backfill…"}
               </p>
             )}
             {recentItems.map((item, i) => (
               <div
                 key={i}
-                className="flex items-start gap-2 py-0.5 text-[#8a8f98]"
+                className="flex items-start gap-2 py-0.5 text-muted-foreground"
               >
                 <span className="shrink-0">
                   {item.success ? "✓" : "—"}
@@ -205,28 +206,26 @@ export function BackfillProgressModal({
         </div>
 
         {error && (
-          <div className="rounded-lg border border-[#ef4444]/30 bg-[#ef4444]/10 px-3 py-2 text-sm text-[#ef4444]">
-            {error}
-          </div>
+          <ErrorBox>{error}</ErrorBox>
         )}
 
         {finished && !error && (
-          <div className="rounded-lg border border-white/10 bg-white/[0.03] p-3 text-sm">
+          <div className="rounded-lg border border-border bg-muted/30 p-3 text-sm">
             {cancelled && (
-              <p className="mb-3 text-center text-sm text-[#f59e0b]">
+              <p className="mb-3 text-center text-sm text-warning">
                 Backfill cancelled
               </p>
             )}
             <div className="grid grid-cols-2 gap-3 text-center">
               <div>
-                <p className="text-lg font-semibold text-white">{processed}</p>
-                <p className="text-xs text-[#8a8f98]">Processed</p>
+                <p className="text-lg font-semibold text-foreground">{processed}</p>
+                <p className="text-xs text-muted-foreground">Processed</p>
               </div>
               <div>
-                <p className="text-lg font-semibold text-[#22c55e]">
+                <p className="text-lg font-semibold text-success">
                   {processedCount}
                 </p>
-                <p className="text-xs text-[#8a8f98]">With key/BPM</p>
+                <p className="text-xs text-muted-foreground">With key/BPM</p>
               </div>
             </div>
           </div>

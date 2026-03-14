@@ -1457,12 +1457,18 @@ export function registerIpcHandlers(): void {
           "SELECT COUNT(*) as c FROM tracks WHERE content_type = 'music'"
         )
         .get() as { c: number };
+      const bpmOnly = db
+        .prepare(
+          "SELECT COUNT(*) as c FROM tracks WHERE content_type = 'music' AND bpm IS NOT NULL AND camelot IS NULL"
+        )
+        .get() as { c: number };
       const coveragePct =
         total.c > 0 ? Math.round((keyed.c / total.c) * 100) : 0;
       return {
         keyedCount: keyed.c,
         totalCount: total.c,
         coveragePct,
+        bpmOnlyCount: bpmOnly.c,
       };
     })
   );

@@ -8,6 +8,7 @@ import {
 } from "../../ipc/api";
 import { Button } from "../common/Button";
 import { MarkdownContent } from "../common/MarkdownContent";
+import { ErrorBox } from "../common/ErrorBox";
 
 function stripSavantIntentBlock(content: string): string {
   return content.replace(/SAVANT_INTENT:\s*[\s\S]+$/i, "").trim();
@@ -112,7 +113,7 @@ export function SavantInlineChat({
 
   if (hasApiKey === false) {
     return (
-      <p className="text-xs text-[#5a5f68] [.theme-light_&]:text-[#6b7280]">
+      <p className="text-xs text-muted-foreground">
         Add your OpenRouter API key in Settings to use the Savant chat.
       </p>
     );
@@ -122,7 +123,7 @@ export function SavantInlineChat({
     <div className="flex flex-col gap-3">
       {!sessionId && messages.length === 0 ? (
         <div className="flex flex-col items-center gap-3 py-6">
-          <p className="text-sm text-[#8a8f98] [.theme-light_&]:text-[#6b7280]">
+          <p className="text-sm text-muted-foreground">
             Chat with Savant to describe your mood, adventure level, seed artist,
             and more. I&apos;ll build the perfect playlist.
           </p>
@@ -137,7 +138,7 @@ export function SavantInlineChat({
         </div>
       ) : (
         <>
-          <div className="flex-1 overflow-y-auto min-h-[180px] max-h-[280px] p-3 rounded-lg border border-white/[0.06] bg-black/20 space-y-3 [.theme-light_&]:border-[#e2e8f0] [.theme-light_&]:bg-[#f9fafb]">
+          <div className="flex-1 overflow-y-auto min-h-[180px] max-h-[280px] p-3 rounded-lg border border-border bg-muted/30 space-y-3">
             {messages.map((m, i) => (
               <div
                 key={i}
@@ -146,8 +147,8 @@ export function SavantInlineChat({
                 <div
                   className={`max-w-[85%] rounded-xl px-3 py-2 text-sm select-text ${
                     m.role === "user"
-                      ? "bg-[#4a9eff]/20 text-white [.theme-light_&]:bg-[#16a34a]/20 [.theme-light_&]:text-[#1a1a1a]"
-                      : "bg-white/[0.06] text-[#e0e0e0] [.theme-light_&]:bg-[#f3f4f6] [.theme-light_&]:text-[#374151]"
+                      ? "bg-muted text-foreground"
+                      : "bg-muted/50 text-foreground"
                   }`}
                 >
                   {m.role === "assistant" ? (
@@ -160,7 +161,7 @@ export function SavantInlineChat({
             ))}
             {isLoading && (
               <div className="flex justify-start">
-                <div className="rounded-xl px-3 py-2 bg-white/[0.06] text-sm text-[#5a5f68] [.theme-light_&]:bg-[#f3f4f6] [.theme-light_&]:text-[#6b7280]">
+                <div className="rounded-xl px-3 py-2 bg-muted/50 text-sm text-muted-foreground">
                   <span className="animate-pulse">Thinking…</span>
                 </div>
               </div>
@@ -169,9 +170,7 @@ export function SavantInlineChat({
           </div>
 
           {error && (
-            <div className="rounded-lg px-3 py-2 text-xs text-[#ef4444] bg-[#ef4444]/10">
-              {error}
-            </div>
+            <ErrorBox>{error}</ErrorBox>
           )}
 
           {sessionId && (
@@ -188,7 +187,7 @@ export function SavantInlineChat({
                 }}
                 placeholder="Type your answer…"
                 disabled={isLoading}
-                className="flex-1 rounded-lg bg-white/[0.04] border border-white/[0.08] px-3 py-2 text-sm text-[#e0e0e0] placeholder:text-[#5a5f68] outline-none focus:border-[#4a9eff]/50 disabled:opacity-50 [.theme-light_&]:bg-white [.theme-light_&]:border-[#e2e8f0] [.theme-light_&]:text-[#1a1a1a]"
+                className="flex-1 rounded-lg bg-input border border-border px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground outline-none focus:border-primary/50 disabled:opacity-50"
               />
               <Button
                 variant="primary"
@@ -205,7 +204,7 @@ export function SavantInlineChat({
             <button
               type="button"
               onClick={handleSkip}
-              className="text-[10px] text-[#5a5f68] hover:text-[#8a8f98] self-start [.theme-light_&]:text-[#6b7280] [.theme-light_&]:hover:text-[#374151]"
+              className="text-[10px] text-muted-foreground hover:text-foreground self-start"
             >
               Start over
             </button>

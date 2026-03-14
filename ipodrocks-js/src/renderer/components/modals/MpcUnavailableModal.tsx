@@ -28,11 +28,11 @@ export function MpcUnavailableModal({
   return (
     <Modal open={open} onClose={onClose} title="Musepack (MPC) unavailable">
       <div className="space-y-4">
-        <p className="text-sm text-[#e0e0e0] [.theme-light_&]:text-[#1a1a1a]">
-          Musepack encoding is not available because <code className="rounded bg-white/10 px-1">mpcenc</code> was not
+        <p className="text-sm text-foreground">
+          Musepack encoding is not available because <code className="rounded bg-muted px-1">mpcenc</code> was not
           found on your system.
         </p>
-        <p className="text-xs text-[#8a8f98] [.theme-light_&]:text-[#6b7280]">
+        <p className="text-xs text-muted-foreground">
           {MPC_INSTALL_HINT}
         </p>
         <label className="flex items-center gap-2 cursor-pointer">
@@ -40,9 +40,9 @@ export function MpcUnavailableModal({
             type="checkbox"
             checked={dontRemind}
             onChange={(e) => setDontRemind(e.target.checked)}
-            className="h-4 w-4 rounded border-white/20 bg-white/[0.04] accent-[#4a9eff]"
+            className="h-4 w-4 rounded border-border bg-muted/50 accent-primary"
           />
-          <span className="text-sm text-[#8a8f98]">
+          <span className="text-sm text-muted-foreground">
             Do not remind me again
           </span>
         </label>

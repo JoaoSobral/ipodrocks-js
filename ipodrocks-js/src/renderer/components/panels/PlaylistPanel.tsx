@@ -8,8 +8,14 @@ import { Modal } from "../common/Modal";
 import { BackfillProgressModal } from "../modals/BackfillProgressModal";
 import { SavantInlineChat } from "../savant/SavantInlineChat";
 import { EmptyState } from "../common/EmptyState";
+import { Spinner } from "../common/Spinner";
+import { ErrorBox } from "../common/ErrorBox";
+import { Label } from "../common/Label";
+import { TableHeader } from "../common/TableHeader";
+import { Badge } from "../common/Badge";
 import { useDeviceStore } from "../../stores/device-store";
 import { useSavantStore } from "../../stores/savant-store";
+import { useUIStore } from "../../stores/ui-store";
 import {
   getPlaylists,
   getPlaylistTracks,
@@ -73,6 +79,7 @@ export function PlaylistPanel() {
   const devices = useDeviceStore((s) => s.devices);
   const fetchDevices = useDeviceStore((s) => s.fetchDevices);
   const setSavantTabActive = useSavantStore((s) => s.setSavantTabActive);
+  const openSettings = useUIStore((s) => s.openSettings);
   const deviceList = Array.isArray(devices) ? devices : [];
 
   // -- playlist list state ------------------------------------------------
@@ -583,12 +590,10 @@ export function PlaylistPanel() {
           <Button size="sm" onClick={() => setSelectedId(null)}>
             &larr; Back
           </Button>
-          <h3 className="text-lg font-semibold text-white">
+          <h3 className="text-lg font-semibold text-foreground">
             {selectedPlaylist.name}
           </h3>
-          <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-[#4a9eff]/10 text-[#4a9eff]">
-            {selectedPlaylist.typeName}
-          </span>
+          <Badge variant="primary">{selectedPlaylist.typeName}</Badge>
           <div className="ml-auto">
             <Button size="sm" onClick={() => handleExport(selectedId)}>
               Export M3U
@@ -599,40 +604,40 @@ export function PlaylistPanel() {
         <Card>
           {tracksLoading ? (
             <div className="flex items-center justify-center py-12">
-              <div className="w-5 h-5 border-2 border-[#4a9eff]/30 border-t-[#4a9eff] rounded-full animate-spin" />
+              <Spinner />
             </div>
           ) : (Array.isArray(tracks) ? tracks : []).length === 0 ? (
-            <p className="text-center text-xs text-[#5a5f68] py-8">
+            <p className="text-center text-xs text-muted-foreground py-8">
               No tracks in this playlist
             </p>
           ) : (
             <>
-              <div className="flex items-center gap-2 px-3 py-2 text-[10px] font-semibold text-[#5a5f68] uppercase tracking-wider border-b border-white/[0.06]">
+              <TableHeader>
                 <span className="w-8 text-center">#</span>
                 <span className="flex-[3]">Title</span>
                 <span className="flex-[2]">Artist</span>
                 <span className="flex-[2]">Album</span>
                 <span className="w-16 text-right">Duration</span>
-              </div>
+              </TableHeader>
               <div className="max-h-[60vh] overflow-auto">
                 {(Array.isArray(tracks) ? tracks : []).map((t, i) => (
                   <div
                     key={t.id}
-                    className="flex items-center gap-2 px-3 py-2 text-sm hover:bg-white/[0.02] border-b border-white/[0.03] transition-colors"
+                    className="flex items-center gap-2 px-3 py-2 text-sm hover:bg-muted/30 border-b border-border transition-colors"
                   >
-                    <span className="w-8 text-center text-[#5a5f68] text-xs tabular-nums">
+                    <span className="w-8 text-center text-muted-foreground text-xs tabular-nums">
                       {i + 1}
                     </span>
-                    <span className="flex-[3] truncate text-white">
+                    <span className="flex-[3] truncate text-foreground">
                       {t.title}
                     </span>
-                    <span className="flex-[2] truncate text-[#8a8f98]">
+                    <span className="flex-[2] truncate text-muted-foreground">
                       {t.artist}
                     </span>
-                    <span className="flex-[2] truncate text-[#8a8f98]">
+                    <span className="flex-[2] truncate text-muted-foreground">
                       {t.album}
                     </span>
-                    <span className="w-16 text-right text-[#5a5f68] tabular-nums">
+                    <span className="w-16 text-right text-muted-foreground tabular-nums">
                       {formatDuration(t.duration)}
                     </span>
                   </div>
@@ -651,50 +656,75 @@ export function PlaylistPanel() {
   function renderGeniusFlow() {
     // Error banner
     const errorBanner = geniusError && (
-      <div className="rounded-lg border border-[#ef4444]/30 bg-[#ef4444]/10 px-4 py-3 text-sm text-[#ef4444]">
-        {geniusError}
-      </div>
+      <ErrorBox className="px-4 py-3">{geniusError}</ErrorBox>
     );
 
     // -- idle: load from DB or recheck device --
     if (geniusStep === "idle") {
       return (
-        <div className="flex flex-col gap-4">
+        <div className="flex flex-col gap-5">
           {errorBanner}
-          <Card>
-            <div className="space-y-4">
-              <p className="text-sm text-[#8a8f98]">
-                Use playback history from the database to generate intelligent
-                playlists. Data is synced when you check or sync a device.
-              </p>
-              <div className="flex flex-col sm:flex-row gap-3">
-                <Button variant="primary" onClick={handleLoadFromDb}>
-                  Load from database
+          <p className="text-sm text-muted-foreground">
+            Choose a data source for playback history. This is used to build
+            intelligent playlists based on your listening habits.
+          </p>
+
+          <div className="grid grid-cols-2 gap-4">
+            {/* Option 1: Database */}
+            <div className="flex flex-col rounded-xl border border-border bg-card p-5 gap-4">
+              <div>
+                <div className="text-2xl mb-2">🗄️</div>
+                <h4 className="text-sm font-semibold text-foreground">
+                  Load from Database
+                </h4>
+                <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
+                  Use playback data already synced to your library. This is the
+                  fastest option if you&apos;ve synced recently.
+                </p>
+              </div>
+              <div className="mt-auto">
+                <Button variant="primary" className="w-full" onClick={handleLoadFromDb}>
+                  Load Data
                 </Button>
-                <div className="flex flex-col sm:flex-row gap-2 sm:items-end">
-                  <Select
-                    label="Device (for recheck)"
-                    options={[
-                      { value: "", label: "Select device\u2026" },
-                      ...deviceList.map((d) => ({
-                        value: String(d?.id ?? ""),
-                        label: d?.name ?? "",
-                      })),
-                    ]}
-                    value={geniusDeviceId != null ? String(geniusDeviceId) : ""}
-                    onChange={(v) => setGeniusDeviceId(v ? Number(v) : null)}
-                  />
-                  <Button
-                    variant="secondary"
-                    disabled={geniusDeviceId == null}
-                    onClick={handleRecheckDevice}
-                  >
-                    Recheck device for playback.log
-                  </Button>
-                </div>
               </div>
             </div>
-          </Card>
+
+            {/* Option 2: Re-read from device */}
+            <div className="flex flex-col rounded-xl border border-border bg-card p-5 gap-4">
+              <div>
+                <div className="text-2xl mb-2">📱</div>
+                <h4 className="text-sm font-semibold text-foreground">
+                  Re-read from Device
+                </h4>
+                <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
+                  Re-scan the playback log directly from a connected device for
+                  the most up-to-date data.
+                </p>
+              </div>
+              <div className="mt-auto space-y-3">
+                <Select
+                  label="Device"
+                  options={[
+                    { value: "", label: "Select device\u2026" },
+                    ...deviceList.map((d) => ({
+                      value: String(d?.id ?? ""),
+                      label: d?.name ?? "",
+                    })),
+                  ]}
+                  value={geniusDeviceId != null ? String(geniusDeviceId) : ""}
+                  onChange={(v) => setGeniusDeviceId(v ? Number(v) : null)}
+                />
+                <Button
+                  variant="primary"
+                  className="w-full"
+                  disabled={geniusDeviceId == null}
+                  onClick={handleRecheckDevice}
+                >
+                  Re-read Playback Log
+                </Button>
+              </div>
+            </div>
+          </div>
         </div>
       );
     }
@@ -704,8 +734,8 @@ export function PlaylistPanel() {
       return (
         <Card>
           <div className="flex flex-col items-center justify-center py-12 gap-3">
-            <div className="w-6 h-6 border-2 border-[#4a9eff]/30 border-t-[#4a9eff] rounded-full animate-spin" />
-            <p className="text-sm text-[#8a8f98]">
+            <Spinner size="md" />
+            <p className="text-sm text-muted-foreground">
               Reading playback log&hellip;
             </p>
           </div>
@@ -723,42 +753,42 @@ export function PlaylistPanel() {
           <Card title="Analysis Summary">
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
               <div>
-                <p className="text-lg font-semibold text-white">
+                <p className="text-lg font-semibold text-foreground">
                   {geniusSummary.totalPlays.toLocaleString()}
                 </p>
-                <p className="text-xs text-[#5a5f68]">Total Plays</p>
+                <p className="text-xs text-muted-foreground">Total Plays</p>
               </div>
               <div>
-                <p className="text-lg font-semibold text-[#22c55e]">
+                <p className="text-lg font-semibold text-success">
                   {geniusSummary.matchedPlays.toLocaleString()}
                 </p>
-                <p className="text-xs text-[#5a5f68]">Matched</p>
+                <p className="text-xs text-muted-foreground">Matched</p>
               </div>
               <div>
-                <p className="text-lg font-semibold text-[#8a8f98]">
+                <p className="text-lg font-semibold text-muted-foreground">
                   {geniusSummary.uniqueTracks}
                 </p>
-                <p className="text-xs text-[#5a5f68]">Unique Tracks</p>
+                <p className="text-xs text-muted-foreground">Unique Tracks</p>
               </div>
               <div>
-                <p className="text-lg font-semibold text-[#8a8f98]">
+                <p className="text-lg font-semibold text-muted-foreground">
                   {geniusSummary.uniqueArtists}
                 </p>
-                <p className="text-xs text-[#5a5f68]">Artists</p>
+                <p className="text-xs text-muted-foreground">Artists</p>
               </div>
             </div>
             <div className="grid grid-cols-2 gap-4 mt-4 text-xs">
               <div className="flex justify-between">
-                <span className="text-[#5a5f68]">Date Range</span>
-                <span className="text-[#8a8f98]">
+                <span className="text-muted-foreground">Date Range</span>
+                <span className="text-muted-foreground">
                   {formatDate(geniusSummary.dateRange.first)} &ndash;{" "}
                   {formatDate(geniusSummary.dateRange.last)}
                 </span>
               </div>
               {geniusSummary.topArtist && (
                 <div className="flex justify-between">
-                  <span className="text-[#5a5f68]">Top Artist</span>
-                  <span className="text-[#8a8f98]">
+                  <span className="text-muted-foreground">Top Artist</span>
+                  <span className="text-muted-foreground">
                     {geniusSummary.topArtist.name} (
                     {geniusSummary.topArtist.playCount})
                   </span>
@@ -766,8 +796,8 @@ export function PlaylistPanel() {
               )}
               {geniusSummary.topAlbum && (
                 <div className="flex justify-between col-span-2">
-                  <span className="text-[#5a5f68]">Top Album</span>
-                  <span className="text-[#8a8f98]">
+                  <span className="text-muted-foreground">Top Album</span>
+                  <span className="text-muted-foreground">
                     {geniusSummary.topAlbum.name} &mdash;{" "}
                     {geniusSummary.topAlbum.artist} (
                     {geniusSummary.topAlbum.playCount})
@@ -778,19 +808,19 @@ export function PlaylistPanel() {
           </Card>
 
           {/* Type picker grid */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+          <div className="grid grid-cols-4 gap-3">
             {(Array.isArray(geniusTypes) ? geniusTypes : []).map((gt) => (
               <button
                 key={gt.value}
                 type="button"
                 onClick={() => handlePickType(gt.value)}
-                className="text-left p-4 rounded-xl border border-white/[0.06] bg-white/[0.02] hover:bg-[#4a9eff]/[0.06] hover:border-[#4a9eff]/30 transition-all cursor-pointer"
+                className="text-left p-4 rounded-xl border border-border bg-muted/30 hover:bg-primary/10 hover:border-primary/30 transition-all cursor-pointer"
               >
                 <div className="text-2xl mb-2">{gt.icon}</div>
-                <h4 className="text-sm font-semibold text-white">
+                <h4 className="text-sm font-semibold text-foreground">
                   {gt.label}
                 </h4>
-                <p className="text-[11px] text-[#5a5f68] mt-1 leading-relaxed">
+                <p className="text-[11px] text-muted-foreground mt-1 leading-relaxed">
                   {gt.description}
                 </p>
               </button>
@@ -826,14 +856,14 @@ export function PlaylistPanel() {
           {errorBanner}
           <Card title={`Configure: ${typeInfo?.label ?? geniusSelectedType}`}>
             <div className="space-y-4">
-              <p className="text-xs text-[#5a5f68]">
+              <p className="text-xs text-muted-foreground">
                 {typeInfo?.description}
               </p>
 
               <div>
-                <label className="block text-xs font-medium text-[#8a8f98] mb-1.5">
+                <Label>
                   Max Tracks: {geniusMaxTracks}
-                </label>
+                </Label>
                 <input
                   type="range"
                   min={5}
@@ -843,9 +873,9 @@ export function PlaylistPanel() {
                   onChange={(e) =>
                     setGeniusMaxTracks(Number(e.target.value))
                   }
-                  className="w-full accent-[#4a9eff]"
+                  className="w-full accent-primary"
                 />
-                <div className="flex justify-between text-[10px] text-[#5a5f68]">
+                <div className="flex justify-between text-[10px] text-muted-foreground">
                   <span>5</span>
                   <span>300</span>
                 </div>
@@ -853,9 +883,9 @@ export function PlaylistPanel() {
 
               {showMinPlays && (
                 <div>
-                  <label className="block text-xs font-medium text-[#8a8f98] mb-1.5">
+                  <Label>
                     Min Plays: {geniusMinPlays}
-                  </label>
+                  </Label>
                   <input
                     type="range"
                     min={1}
@@ -864,9 +894,9 @@ export function PlaylistPanel() {
                     onChange={(e) =>
                       setGeniusMinPlays(Number(e.target.value))
                     }
-                    className="w-full accent-[#4a9eff]"
+                    className="w-full accent-primary"
                   />
-                  <div className="flex justify-between text-[10px] text-[#5a5f68]">
+                  <div className="flex justify-between text-[10px] text-muted-foreground">
                     <span>1</span>
                     <span>20</span>
                   </div>
@@ -929,9 +959,9 @@ export function PlaylistPanel() {
               {showGoldenEra && (
                 <div className="space-y-3">
                   <div>
-                    <label className="block text-xs font-medium text-[#8a8f98] mb-1.5">
+                    <Label>
                       Range: {geniusRangeEnd}\u2013{geniusRangeStart} months ago
-                    </label>
+                    </Label>
                     <div className="flex gap-2 items-center">
                       <input
                         type="range"
@@ -941,7 +971,7 @@ export function PlaylistPanel() {
                         onChange={(e) =>
                           setGeniusRangeEnd(Number(e.target.value))
                         }
-                        className="flex-1 accent-[#4a9eff]"
+                        className="flex-1 accent-primary"
                       />
                       <span className="text-xs w-8">{geniusRangeEnd}m</span>
                     </div>
@@ -954,7 +984,7 @@ export function PlaylistPanel() {
                         onChange={(e) =>
                           setGeniusRangeStart(Number(e.target.value))
                         }
-                        className="flex-1 accent-[#4a9eff]"
+                        className="flex-1 accent-primary"
                       />
                       <span className="text-xs w-8">{geniusRangeStart}m</span>
                     </div>
@@ -989,8 +1019,8 @@ export function PlaylistPanel() {
       return (
         <Card>
           <div className="flex flex-col items-center justify-center py-12 gap-3">
-            <div className="w-6 h-6 border-2 border-[#4a9eff]/30 border-t-[#4a9eff] rounded-full animate-spin" />
-            <p className="text-sm text-[#8a8f98]">
+            <Spinner size="md" />
+            <p className="text-sm text-muted-foreground">
               Generating playlist&hellip;
             </p>
           </div>
@@ -1004,7 +1034,7 @@ export function PlaylistPanel() {
         <div className="flex flex-col gap-4">
           {errorBanner}
           <Card title="Playlist Preview">
-            <p className="text-xs text-[#5a5f68] mb-2">
+            <p className="text-xs text-muted-foreground mb-2">
               {geniusPreview?.criteria ?? ""}
             </p>
             <Input
@@ -1016,37 +1046,37 @@ export function PlaylistPanel() {
 
           <Card>
             {(Array.isArray(geniusPreview?.tracks) ? geniusPreview.tracks : []).length === 0 ? (
-              <p className="text-center text-xs text-[#5a5f68] py-8">
+              <p className="text-center text-xs text-muted-foreground py-8">
                 No tracks matched this criteria. Try different settings.
               </p>
             ) : (
               <>
-                <div className="flex items-center gap-2 px-3 py-2 text-[10px] font-semibold text-[#5a5f68] uppercase tracking-wider border-b border-white/[0.06]">
+                <TableHeader>
                   <span className="w-8 text-center">#</span>
                   <span className="flex-[3]">Title</span>
                   <span className="flex-[2]">Artist</span>
                   <span className="flex-[2]">Album</span>
                   <span className="w-16 text-right">Plays</span>
-                </div>
+                </TableHeader>
                 <div className="max-h-[50vh] overflow-auto">
                   {(Array.isArray(geniusPreview?.tracks) ? geniusPreview.tracks : []).map((t, i) => (
                     <div
                       key={`${t.id}-${i}`}
-                      className="flex items-center gap-2 px-3 py-2 text-sm hover:bg-white/[0.02] border-b border-white/[0.03] transition-colors"
+                      className="flex items-center gap-2 px-3 py-2 text-sm hover:bg-muted/30 border-b border-border transition-colors"
                     >
-                      <span className="w-8 text-center text-[#5a5f68] text-xs tabular-nums">
+                      <span className="w-8 text-center text-muted-foreground text-xs tabular-nums">
                         {i + 1}
                       </span>
-                      <span className="flex-[3] truncate text-white">
+                      <span className="flex-[3] truncate text-foreground">
                         {t.title}
                       </span>
-                      <span className="flex-[2] truncate text-[#8a8f98]">
+                      <span className="flex-[2] truncate text-muted-foreground">
                         {t.artist}
                       </span>
-                      <span className="flex-[2] truncate text-[#8a8f98]">
+                      <span className="flex-[2] truncate text-muted-foreground">
                         {t.album}
                       </span>
-                      <span className="w-16 text-right text-[#5a5f68] tabular-nums">
+                      <span className="w-16 text-right text-muted-foreground tabular-nums">
                         {t.playCount ?? "—"}
                       </span>
                     </div>
@@ -1089,11 +1119,11 @@ export function PlaylistPanel() {
       return (
         <Card>
           <div className="space-y-4">
-            <p className="text-sm text-[#8a8f98]">
+            <p className="text-sm text-muted-foreground">
               Savant uses AI to build playlists tailored to your mood. Add your
               OpenRouter API key in Settings to enable this feature.
             </p>
-            <p className="text-xs text-[#5a5f68]">
+            <p className="text-xs text-muted-foreground">
               Go to Settings (gear icon) → AI Settings to configure.
             </p>
           </div>
@@ -1104,21 +1134,20 @@ export function PlaylistPanel() {
     const keyedCount = savantKeyData?.keyedCount ?? 0;
     const totalCount = savantKeyData?.totalCount ?? 0;
     const coveragePct = savantKeyData?.coveragePct ?? 0;
+    const bpmOnlyCount = savantKeyData?.bpmOnlyCount ?? 0;
 
     if (savantResult) {
       const tracks = savantResultTracks ?? [];
       return (
         <div className="flex flex-col gap-5">
           {savantError && (
-            <div className="rounded-lg border border-[#ef4444]/30 bg-[#ef4444]/10 px-4 py-3 text-sm text-[#ef4444]">
-              {savantError}
-            </div>
+            <ErrorBox className="px-4 py-3">{savantError}</ErrorBox>
           )}
           <Card title={savantResult.name}>
-            <p className="text-xs text-[#8a8f98] mb-3">
+            <p className="text-xs text-muted-foreground mb-3">
               {savantResult.reasoning}
             </p>
-            <p className="text-sm text-[#5a5f68]">
+            <p className="text-sm text-muted-foreground">
               {savantResult.trackCount} tracks
               {coveragePct >= 30
                 ? ` · Harmonic sequencing applied`
@@ -1126,37 +1155,37 @@ export function PlaylistPanel() {
             </p>
           </Card>
           <Card>
-            <div className="flex items-center gap-2 px-3 py-2 text-[10px] font-semibold text-[#5a5f68] uppercase tracking-wider border-b border-white/[0.06]">
+            <TableHeader>
               <span className="w-8 text-center">#</span>
               <span className="flex-[3]">Title</span>
               <span className="flex-[2]">Artist</span>
               <span className="flex-[2]">Album</span>
               <span className="w-16 text-right">Duration</span>
-            </div>
+            </TableHeader>
             <div className="max-h-[40vh] overflow-auto">
               {tracks.slice(0, 8).map((t, i) => (
                 <div
                   key={t.id}
-                  className="flex items-center gap-2 px-3 py-2 text-sm hover:bg-white/[0.02] border-b border-white/[0.03] transition-colors"
+                  className="flex items-center gap-2 px-3 py-2 text-sm hover:bg-muted/30 border-b border-border transition-colors"
                 >
-                  <span className="w-8 text-center text-[#5a5f68] text-xs tabular-nums">
+                  <span className="w-8 text-center text-muted-foreground text-xs tabular-nums">
                     {i + 1}
                   </span>
-                  <span className="flex-[3] truncate text-white">{t.title}</span>
-                  <span className="flex-[2] truncate text-[#8a8f98]">
+                  <span className="flex-[3] truncate text-foreground">{t.title}</span>
+                  <span className="flex-[2] truncate text-muted-foreground">
                     {t.artist}
                   </span>
-                  <span className="flex-[2] truncate text-[#8a8f98]">
+                  <span className="flex-[2] truncate text-muted-foreground">
                     {t.album}
                   </span>
-                  <span className="w-16 text-right text-[#5a5f68] tabular-nums">
+                  <span className="w-16 text-right text-muted-foreground tabular-nums">
                     {formatDuration(t.duration)}
                   </span>
                 </div>
               ))}
             </div>
             {tracks.length > 8 && (
-              <p className="text-[10px] text-[#5a5f68] px-3 py-2">
+              <p className="text-[10px] text-muted-foreground px-3 py-2">
                 + {tracks.length - 8} more tracks
               </p>
             )}
@@ -1179,30 +1208,48 @@ export function PlaylistPanel() {
     return (
       <div className="flex flex-col gap-5">
         {savantError && (
-          <div className="rounded-lg border border-[#ef4444]/30 bg-[#ef4444]/10 px-4 py-3 text-sm text-[#ef4444]">
-            {savantError}
-          </div>
+          <ErrorBox className="px-4 py-3">{savantError}</ErrorBox>
         )}
         <div className="flex gap-5">
           <Card title="1. Backfill" className="flex-1 min-w-0">
             <div className="space-y-3">
-              <p className="text-sm text-[#8a8f98]">
+              <p className="text-sm text-muted-foreground">
                 Savant uses AI to build a playlist tailored to your mood.
               </p>
-              <p className="text-xs text-[#5a5f68]">
-                {keyedCount} / {totalCount} tracks have harmonic data (
-                {coveragePct}%). Re-scan your library or run backfill to improve.
+              <p className="text-xs text-muted-foreground">
+                {keyedCount} / {totalCount} tracks have key data ({coveragePct}%)
+                {bpmOnlyCount > 0 && (
+                  <> · {bpmOnlyCount} have BPM only</>
+                )}
+                .
               </p>
+              {coveragePct < 100 && totalCount > 0 && (
+                <p className="text-xs text-muted-foreground">
+                  Most files only have BPM tags. Enable Essentia analysis in
+                  Settings and run Backfill to detect keys from audio waveforms.
+                </p>
+              )}
               {totalCount > 0 && (
                 <>
-                  <Button
-                    size="sm"
-                    variant="primary"
-                    disabled={showBackfillModal}
-                    onClick={handleSavantBackfill}
-                  >
-                    Backfill Key Data
-                  </Button>
+                  <div className="flex gap-2">
+                    <Button
+                      size="sm"
+                      variant="primary"
+                      disabled={showBackfillModal}
+                      onClick={handleSavantBackfill}
+                    >
+                      Backfill Key Data
+                    </Button>
+                    {openSettings && coveragePct < 100 && (
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={openSettings}
+                      >
+                        Open Settings
+                      </Button>
+                    )}
+                  </div>
                   <BackfillProgressModal
                     open={showBackfillModal}
                     onClose={handleBackfillComplete}
@@ -1216,9 +1263,9 @@ export function PlaylistPanel() {
 
           <Card title="2. Max Songs" className="flex-1 min-w-0">
             <div>
-              <label className="block text-xs font-medium text-[#8a8f98] mb-1.5">
+              <Label>
                 Track count: {savantTargetCount}
-              </label>
+              </Label>
             <input
               type="range"
               min={10}
@@ -1228,14 +1275,14 @@ export function PlaylistPanel() {
                 onChange={(e) =>
                   setSavantTargetCount(Number(e.target.value))
                 }
-                className="w-full accent-[#4a9eff]"
+                className="w-full accent-primary"
               />
             </div>
           </Card>
         </div>
 
         <Card title="3. Talk to Savant">
-          <div className="flex gap-1 p-1 rounded-lg bg-white/[0.04] w-fit mb-4">
+          <div className="flex gap-1 p-1 rounded-lg bg-muted/30 w-fit mb-4">
             {(["quick", "chat"] as const).map((mode) => (
               <button
                 key={mode}
@@ -1243,8 +1290,8 @@ export function PlaylistPanel() {
                 onClick={() => setSavantMode(mode)}
                 className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors cursor-default capitalize ${
                   savantMode === mode
-                    ? "bg-[#4a9eff]/15 text-[#4a9eff]"
-                    : "text-[#5a5f68] hover:text-[#8a8f98]"
+                    ? "bg-primary/15 text-primary"
+                    : "text-muted-foreground hover:text-muted-foreground"
                 }`}
               >
                 {mode === "quick" ? "Quick prompt" : "Chat"}
@@ -1253,11 +1300,11 @@ export function PlaylistPanel() {
           </div>
           {savantMode === "quick" ? (
             <div className="space-y-2">
-              <p className="text-xs text-[#8a8f98]">
+              <p className="text-xs text-muted-foreground">
                 Describe your mood and, if you want, anchor on a specific artist.
                 Press Enter to generate.
               </p>
-              <p className="text-[10px] text-[#5a5f68]">
+              <p className="text-[10px] text-muted-foreground">
                 Example: Late night coding, something like Radiohead. Or: Chill
                 Sunday morning, lean on Bon Iver.
               </p>
@@ -1273,7 +1320,7 @@ export function PlaylistPanel() {
                 }}
                 placeholder="e.g. Road trip energy, mix of 80s and modern indie…"
                 disabled={savantGenerating}
-                className="w-full rounded-lg bg-white/[0.04] border border-white/[0.08] px-3 py-2.5 text-sm text-[#e0e0e0] placeholder:text-[#5a5f68] outline-none focus:border-[#4a9eff]/50 disabled:opacity-50 [.theme-light_&]:bg-white [.theme-light_&]:border-[#e2e8f0] [.theme-light_&]:text-[#1a1a1a]"
+                className="w-full rounded-lg bg-muted/30 border border-border px-3 py-2.5 text-sm text-foreground placeholder:text-muted-foreground outline-none focus:border-primary/50 disabled:opacity-50"
               />
             </div>
           ) : (
@@ -1325,14 +1372,14 @@ export function PlaylistPanel() {
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-1 p-1 rounded-lg bg-white/[0.04] w-fit">
+      <div className="flex gap-1 p-1 rounded-lg bg-muted/30 w-fit">
         {(["all", "smart", "genius", "savant"] as Tab[]).map((tab) => (
           <button
             key={tab}
             className={`px-4 py-1.5 rounded-md text-xs font-medium transition-colors cursor-default capitalize ${
               activeTab === tab
-                ? "bg-[#4a9eff]/15 text-[#4a9eff]"
-                : "text-[#5a5f68] hover:text-[#8a8f98]"
+                ? "bg-primary/15 text-primary"
+                : "text-muted-foreground hover:text-muted-foreground"
             }`}
             onClick={() => setActiveTab(tab)}
           >
@@ -1346,7 +1393,7 @@ export function PlaylistPanel() {
         renderSavantFlow()
       ) : loading ? (
         <div className="flex items-center justify-center py-16">
-          <div className="w-6 h-6 border-2 border-[#4a9eff]/30 border-t-[#4a9eff] rounded-full animate-spin" />
+          <Spinner size="md" />
         </div>
       ) : filtered.length === 0 ? (
         <EmptyState
@@ -1368,26 +1415,26 @@ export function PlaylistPanel() {
           {filtered.map((p) => (
             <Card key={p.id}>
               <div className="flex items-start gap-3 mb-3">
-                <div className="w-10 h-10 rounded-xl bg-[#4a9eff]/[0.08] flex items-center justify-center text-lg text-[#4a9eff]">
+                <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center text-lg text-primary">
                   {p.typeName === "genius" ? "✨" : "≡"}
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
-                    <h4 className="text-sm font-semibold text-white truncate">
+                    <h4 className="text-sm font-semibold text-foreground truncate">
                       {p.name}
                     </h4>
-                    <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-[#4a9eff]/10 text-[#4a9eff] shrink-0">
+                    <Badge variant="primary" className="shrink-0">
                       {p.typeName}
-                    </span>
+                    </Badge>
                   </div>
-                  <p className="text-[10px] text-[#5a5f68] mt-0.5">
+                  <p className="text-[10px] text-muted-foreground mt-0.5">
                     {p.trackCount} tracks &middot; Updated{" "}
                     {new Date(p.updatedAt).toLocaleDateString()}
                   </p>
                 </div>
               </div>
               {p.description && (
-                <p className="text-xs text-[#8a8f98] mb-3 line-clamp-2">
+                <p className="text-xs text-muted-foreground mb-3 line-clamp-2">
                   {p.description}
                 </p>
               )}
@@ -1413,6 +1460,7 @@ export function PlaylistPanel() {
         open={showCreate}
         onClose={closeCreateModal}
         wide={createKind === "genius"}
+        width={createKind === "genius" ? "max-w-4xl" : undefined}
         title={
           createKind === null
             ? "Create Playlist"
@@ -1426,7 +1474,7 @@ export function PlaylistPanel() {
         <div className="space-y-4">
           {createKind === null ? (
             <>
-              <p className="text-sm text-[#8a8f98]">
+              <p className="text-sm text-muted-foreground">
                 Choose the type of playlist to create.
               </p>
               <div className="flex flex-col sm:flex-row gap-3">
@@ -1436,13 +1484,13 @@ export function PlaylistPanel() {
                     setCreateKind("smart");
                     setCreateStep(1);
                   }}
-                  className="flex-1 p-4 rounded-xl border border-white/[0.06] bg-white/[0.02] hover:bg-[#4a9eff]/[0.06] hover:border-[#4a9eff]/30 transition-all text-left cursor-pointer"
+                  className="flex-1 p-4 rounded-xl border border-border bg-muted/30 hover:bg-primary/10 hover:border-primary/30 transition-all text-left cursor-pointer"
                 >
                   <div className="text-2xl mb-2">≡</div>
-                  <h4 className="text-sm font-semibold text-white">
+                  <h4 className="text-sm font-semibold text-foreground">
                     Smart Playlist
                   </h4>
-                  <p className="text-[11px] text-[#5a5f68] mt-1">
+                  <p className="text-[11px] text-muted-foreground mt-1">
                     Build a playlist by genre, artist, or album.
                   </p>
                 </button>
@@ -1454,13 +1502,13 @@ export function PlaylistPanel() {
                     setGeniusError(null);
                     fetchDevices();
                   }}
-                  className="flex-1 p-4 rounded-xl border border-white/[0.06] bg-white/[0.02] hover:bg-[#4a9eff]/[0.06] hover:border-[#4a9eff]/30 transition-all text-left cursor-pointer"
+                  className="flex-1 p-4 rounded-xl border border-border bg-muted/30 hover:bg-primary/10 hover:border-primary/30 transition-all text-left cursor-pointer"
                 >
                   <div className="text-2xl mb-2">✨</div>
-                  <h4 className="text-sm font-semibold text-white">
+                  <h4 className="text-sm font-semibold text-foreground">
                     Genius Playlist
                   </h4>
-                  <p className="text-[11px] text-[#5a5f68] mt-1">
+                  <p className="text-[11px] text-muted-foreground mt-1">
                     Analyze device playback and generate smart playlists.
                   </p>
                 </button>
@@ -1499,20 +1547,20 @@ export function PlaylistPanel() {
                 ]}
               />
               <div>
-                <label className="flex items-center gap-2 mb-1.5 cursor-pointer text-xs font-medium text-[#8a8f98]">
+                <label className="flex items-center gap-2 mb-1.5 cursor-pointer text-xs font-medium text-muted-foreground">
                   <input
                     type="checkbox"
                     checked={trackLimitAll}
                     onChange={(e) =>
                       setTrackLimitAll(e.target.checked)
                     }
-                    className="accent-[#4a9eff]"
+                    className="accent-primary"
                   />
                   All
                 </label>
-                <label className="block text-xs font-medium text-[#8a8f98] mb-1.5">
+                <Label>
                   Track Limit: {trackLimitAll ? "All" : trackLimit}
-                </label>
+                </Label>
                 <input
                   type="range"
                   min={10}
@@ -1523,9 +1571,9 @@ export function PlaylistPanel() {
                     setTrackLimit(Number(e.target.value))
                   }
                   disabled={trackLimitAll}
-                  className={`w-full accent-[#4a9eff] ${trackLimitAll ? "opacity-50 cursor-not-allowed" : ""}`}
+                  className={`w-full accent-primary ${trackLimitAll ? "opacity-50 cursor-not-allowed" : ""}`}
                 />
-                <div className="flex justify-between text-[10px] text-[#5a5f68]">
+                <div className="flex justify-between text-[10px] text-muted-foreground">
                   <span>10</span>
                   <span>300</span>
                 </div>
@@ -1543,7 +1591,7 @@ export function PlaylistPanel() {
             </>
           ) : (
             <>
-              <p className="text-xs text-[#8a8f98]">
+              <p className="text-xs text-muted-foreground">
                 {strategy === "by_genre" &&
                   "Select one or more genres."}
                 {strategy === "by_artist" &&
@@ -1551,12 +1599,12 @@ export function PlaylistPanel() {
                 {strategy === "by_album" &&
                   "Select one or more albums."}
               </p>
-              <div className="max-h-56 overflow-y-auto rounded-lg border border-white/10 bg-black/20 p-2 space-y-1">
+              <div className="max-h-56 overflow-y-auto rounded-lg border border-border bg-muted/30 p-2 space-y-1">
                 {strategy === "by_genre" &&
                   (Array.isArray(genres) ? genres : []).map((g) => (
                     <label
                       key={g.id}
-                      className="flex items-center gap-2 py-1.5 px-2 rounded hover:bg-white/[0.04] cursor-pointer text-sm"
+                      className="flex items-center gap-2 py-1.5 px-2 rounded hover:bg-muted/50 cursor-pointer text-sm"
                     >
                       <input
                         type="checkbox"
@@ -1564,12 +1612,12 @@ export function PlaylistPanel() {
                         onChange={() =>
                           toggleSet(setSelectedGenreIds, g.id)
                         }
-                        className="accent-[#4a9eff]"
+                        className="accent-primary"
                       />
-                      <span className="text-white truncate">
+                      <span className="text-foreground truncate">
                         {g.name}
                       </span>
-                      <span className="text-[10px] text-[#5a5f68] shrink-0">
+                      <span className="text-[10px] text-muted-foreground shrink-0">
                         {g.trackCount} tracks
                       </span>
                     </label>
@@ -1578,7 +1626,7 @@ export function PlaylistPanel() {
                   (Array.isArray(artists) ? artists : []).map((a) => (
                     <label
                       key={a.id}
-                      className="flex items-center gap-2 py-1.5 px-2 rounded hover:bg-white/[0.04] cursor-pointer text-sm"
+                      className="flex items-center gap-2 py-1.5 px-2 rounded hover:bg-muted/50 cursor-pointer text-sm"
                     >
                       <input
                         type="checkbox"
@@ -1586,12 +1634,12 @@ export function PlaylistPanel() {
                         onChange={() =>
                           toggleSet(setSelectedArtistIds, a.id)
                         }
-                        className="accent-[#4a9eff]"
+                        className="accent-primary"
                       />
-                      <span className="text-white truncate">
+                      <span className="text-foreground truncate">
                         {a.name}
                       </span>
-                      <span className="text-[10px] text-[#5a5f68] shrink-0">
+                      <span className="text-[10px] text-muted-foreground shrink-0">
                         {a.trackCount} tracks
                       </span>
                     </label>
@@ -1600,7 +1648,7 @@ export function PlaylistPanel() {
                   (Array.isArray(albums) ? albums : []).map((a) => (
                     <label
                       key={a.id}
-                      className="flex items-center gap-2 py-1.5 px-2 rounded hover:bg-white/[0.04] cursor-pointer text-sm"
+                      className="flex items-center gap-2 py-1.5 px-2 rounded hover:bg-muted/50 cursor-pointer text-sm"
                     >
                       <input
                         type="checkbox"
@@ -1608,12 +1656,12 @@ export function PlaylistPanel() {
                         onChange={() =>
                           toggleSet(setSelectedAlbumIds, a.id)
                         }
-                        className="accent-[#4a9eff]"
+                        className="accent-primary"
                       />
-                      <span className="text-white truncate">
+                      <span className="text-foreground truncate">
                         {a.title} &mdash; {a.artist}
                       </span>
-                      <span className="text-[10px] text-[#5a5f68] shrink-0">
+                      <span className="text-[10px] text-muted-foreground shrink-0">
                         {a.trackCount} tracks
                       </span>
                     </label>

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Card } from "../common/Card";
+import { ListRow } from "../common/ListRow";
 import { useLibraryStore } from "../../stores/library-store";
 import { useDeviceStore } from "../../stores/device-store";
 import { getShadowLibraries, getRecentActivity } from "../../ipc/api";
@@ -12,7 +13,7 @@ function formatBytes(bytes: number): string {
 }
 
 function Skeleton({ className = "w-24" }: { className?: string }) {
-  return <div className={`h-4 rounded bg-white/[0.06] animate-pulse ${className}`} />;
+  return <div className={`h-4 rounded bg-muted animate-pulse ${className}`} />;
 }
 
 function statusLabel(status: ShadowLibrary["status"]): string {
@@ -33,13 +34,13 @@ function statusLabel(status: ShadowLibrary["status"]): string {
 function statusColor(status: ShadowLibrary["status"]): string {
   switch (status) {
     case "ready":
-      return "text-[#22c55e]";
+      return "text-success";
     case "building":
-      return "text-[#f5bf42]";
+      return "text-warning";
     case "error":
-      return "text-[#ef4444]";
+      return "text-destructive";
     default:
-      return "text-[#8a8f98]";
+      return "text-muted-foreground";
   }
 }
 
@@ -132,12 +133,14 @@ export function DashboardPanel() {
               },
             ].map((item) => (
               <div key={item.label} className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-lg bg-[#4a9eff]/[0.08] flex items-center justify-center text-sm text-[#4a9eff]">
+                <div className="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center text-sm text-primary">
                   {item.icon}
                 </div>
                 <div>
-                  <p className="text-base font-semibold text-white leading-tight">{item.value}</p>
-                  <p className="text-[10px] text-[#5a5f68]">{item.label}</p>
+                  <p className="text-base font-semibold text-foreground leading-tight">
+                    {item.value}
+                  </p>
+                  <p className="text-[10px] text-muted-foreground">{item.label}</p>
                 </div>
               </div>
             ))}
@@ -154,33 +157,31 @@ export function DashboardPanel() {
             ))}
           </div>
         ) : deviceList.length === 0 ? (
-          <p className="text-xs text-[#5a5f68]">No devices configured</p>
+          <p className="text-xs text-muted-foreground">No devices configured</p>
         ) : (
           <div className="space-y-3">
             {deviceList.map((d, i) => (
-              <div
-                key={d?.id ?? `device-${i}`}
-                className="flex items-center gap-3 p-2.5 rounded-lg bg-white/[0.02] [.theme-light_&]:bg-[#f3f4f6]"
-              >
-                <div className="w-8 h-8 rounded-lg bg-[#22c55e]/10 flex items-center justify-center text-sm text-[#22c55e] shrink-0">
+              <ListRow key={d?.id ?? `device-${i}`}>
+                <div className="w-8 h-8 rounded-lg bg-success/10 flex items-center justify-center text-sm text-success shrink-0">
                   ⊞
                 </div>
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-white truncate [.theme-light_&]:text-[#1a1a1a]">
+                  <p className="text-sm font-medium text-foreground truncate">
                     {d?.name ?? "Unknown device"}
                   </p>
-                  <div className="text-[10px] text-[#5a5f68] [.theme-light_&]:text-[#6b7280] space-y-0.5 mt-0.5">
+                  <div className="text-[10px] text-muted-foreground space-y-0.5 mt-0.5">
                     <p>
                       {d?.lastSyncDate
                         ? `Last sync: ${new Date(d.lastSyncDate).toLocaleDateString()}`
                         : "Never synced"}
                     </p>
                     <p>
-                      {(d?.totalSyncedItems ?? 0).toLocaleString()} total · {(d?.lastSyncCount ?? 0).toLocaleString()} in last sync
+                      {(d?.totalSyncedItems ?? 0).toLocaleString()} total ·{" "}
+                      {(d?.lastSyncCount ?? 0).toLocaleString()} in last sync
                     </p>
                   </div>
                 </div>
-              </div>
+              </ListRow>
             ))}
           </div>
         )}
@@ -189,22 +190,21 @@ export function DashboardPanel() {
       {/* Shadow Libraries */}
       <Card title="Shadow Libraries" subtitle="Pre-transcoded library mirrors" className="col-span-2">
         {shadowList.length === 0 ? (
-          <p className="text-xs text-[#5a5f68]">No shadow libraries. Create one from the Library panel.</p>
+          <p className="text-xs text-muted-foreground">
+            No shadow libraries. Create one from the Library panel.
+          </p>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             {shadowList.map((sl, i) => (
-              <div
-                key={sl?.id ?? `shadow-${i}`}
-                className="flex items-center gap-3 p-2.5 rounded-lg bg-white/[0.02] [.theme-light_&]:bg-[#f3f4f6]"
-              >
-                <div className="w-8 h-8 rounded-lg bg-[#a78bfa]/10 flex items-center justify-center text-sm text-[#a78bfa] shrink-0">
+              <ListRow key={sl?.id ?? `shadow-${i}`}>
+                <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center text-sm text-primary shrink-0">
                   ◐
                 </div>
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-white truncate [.theme-light_&]:text-[#1a1a1a]">
+                  <p className="text-sm font-medium text-foreground truncate">
                     {sl?.name ?? "Unnamed"}
                   </p>
-                  <div className="text-[10px] text-[#5a5f68] [.theme-light_&]:text-[#6b7280] space-y-0.5 mt-0.5">
+                  <div className="text-[10px] text-muted-foreground space-y-0.5 mt-0.5">
                     <p className="truncate" title={sl?.path}>
                       {sl?.codecName ?? "—"} · {(sl?.trackCount ?? 0).toLocaleString()} tracks
                       {typeof sl?.totalBytes === "number" && sl.totalBytes > 0
@@ -216,7 +216,7 @@ export function DashboardPanel() {
                     </p>
                   </div>
                 </div>
-              </div>
+              </ListRow>
             ))}
           </div>
         )}
@@ -226,29 +226,26 @@ export function DashboardPanel() {
       <Card title="Recent Activity" subtitle="Last 100 operations" className="col-span-2">
         {activity.length === 0 ? (
           <div className="flex items-center justify-center py-8">
-            <p className="text-xs text-[#5a5f68]">No recent activity</p>
+            <p className="text-xs text-muted-foreground">No recent activity</p>
           </div>
         ) : (
           <div className="max-h-64 overflow-y-auto space-y-1.5">
             {activity.map((entry) => (
-              <div
-                key={entry.id}
-                className="flex items-center justify-between gap-3 py-2 px-2.5 rounded-lg bg-white/[0.02] [.theme-light_&]:bg-[#f3f4f6] text-sm"
-              >
+              <ListRow key={entry.id} className="justify-between py-2 px-2.5">
                 <div className="flex items-center gap-2 min-w-0">
-                  <span className="text-[#4a9eff] shrink-0">
+                  <span className="text-primary shrink-0">
                     {OPERATION_LABELS[entry.operation] ?? entry.operation}
                   </span>
                   {entry.detail && (
-                    <span className="text-[#8a8f98] truncate [.theme-light_&]:text-[#6b7280]">
+                    <span className="text-muted-foreground truncate">
                       {entry.detail}
                     </span>
                   )}
                 </div>
-                <span className="text-[10px] text-[#5a5f68] shrink-0 [.theme-light_&]:text-[#9ca3af]">
+                <span className="text-[10px] text-muted-foreground shrink-0">
                   {formatActivityTime(entry.created_at)}
                 </span>
-              </div>
+              </ListRow>
             ))}
           </div>
         )}

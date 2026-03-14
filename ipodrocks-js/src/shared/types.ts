@@ -259,6 +259,7 @@ export interface SavantKeyData {
   keyedCount: number;
   totalCount: number;
   coveragePct: number;
+  bpmOnlyCount: number;
 }
 
 export interface GenerateSavantResult {

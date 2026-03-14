@@ -4,6 +4,7 @@ import { startSync, cancelSync, onSyncProgress } from "@renderer/ipc/api";
 import { Modal } from "../common/Modal";
 import { Button } from "../common/Button";
 import { ProgressBar } from "../common/ProgressBar";
+import { ErrorBox } from "../common/ErrorBox";
 
 interface RecentItem {
   path: string;
@@ -239,7 +240,7 @@ export function SyncProgressModal({
       <div className="flex flex-col gap-4">
         <ProgressBar value={pct} showPercent variant={variant} />
 
-        <div className="flex items-center justify-between text-xs text-[#8a8f98]">
+        <div className="flex items-center justify-between text-xs text-muted-foreground">
           <span className="truncate max-w-[50%]">
             {progress?.event === "log" && progress?.message
               ? progress.message
@@ -249,18 +250,18 @@ export function SyncProgressModal({
           </span>
           <div className="flex gap-4 tabular-nums shrink-0">
             <span>{processedItems} / {totalItems || "?"} items</span>
-            <span className="text-[#22c55e]">{copiedItems} copied</span>
-            <span className="text-[#5a5f68]">{Math.floor(elapsedSec / 60)}:{String(elapsedSec % 60).padStart(2, "0")} elapsed</span>
+            <span className="text-success">{copiedItems} copied</span>
+            <span className="text-muted-foreground">{Math.floor(elapsedSec / 60)}:{String(elapsedSec % 60).padStart(2, "0")} elapsed</span>
           </div>
         </div>
 
         {/* Recent items */}
         <div className="flex items-center justify-between gap-2">
-          <span className="text-xs font-medium text-[#8a8f98]">Progress</span>
+          <span className="text-xs font-medium text-muted-foreground">Progress</span>
           <button
             type="button"
             onClick={handleCopyLog}
-            className="text-xs text-[#4a9eff] hover:text-[#6ab0ff] transition-colors flex items-center gap-1"
+            className="text-xs text-primary hover:text-primary/80 transition-colors flex items-center gap-1"
             title="Copy full log to clipboard"
           >
             📋 Copy log
@@ -268,10 +269,10 @@ export function SyncProgressModal({
         </div>
         <div
           ref={listRef}
-          className="h-40 overflow-y-auto rounded-lg border border-white/10 bg-black/20 p-3 text-xs font-mono"
+          className="h-40 overflow-y-auto rounded-lg border border-border bg-muted/30 p-3 text-xs font-mono"
         >
           {recentItems.length === 0 && (
-            <p className="text-[#5a5f68]">
+            <p className="text-muted-foreground">
               {finished && totalItems === 0
                 ? "Nothing to sync — items already up to date."
                 : finished && totalItems > 0
@@ -292,10 +293,10 @@ export function SyncProgressModal({
         {/* Conversion log */}
         {logLines.length > 0 && (
           <div className="flex flex-col gap-1.5">
-            <span className="text-xs font-medium text-[#8a8f98]">Conversion Log</span>
+            <span className="text-xs font-medium text-muted-foreground">Conversion Log</span>
             <div
               ref={logRef}
-              className="h-28 overflow-y-auto rounded-lg border border-white/10 bg-black/20 p-3 text-xs font-mono text-[#8a8f98]"
+              className="h-28 overflow-y-auto rounded-lg border border-border bg-muted/30 p-3 text-xs font-mono text-muted-foreground"
             >
               {logLines.map((line, i) => (
                 <div key={i} className="py-0.5">{line}</div>
@@ -305,29 +306,27 @@ export function SyncProgressModal({
         )}
 
         {error && (
-          <div className="rounded-lg border border-[#ef4444]/30 bg-[#ef4444]/10 px-3 py-2 text-sm text-[#ef4444]">
-            {error}
-          </div>
+          <ErrorBox>{error}</ErrorBox>
         )}
 
         {finished && !error && (
-          <div className="rounded-lg border border-white/10 bg-white/[0.03] p-3 text-sm">
+          <div className="rounded-lg border border-border bg-muted/30 p-3 text-sm">
             <div className="grid grid-cols-3 gap-3 text-center">
               <div>
-                <p className="text-lg font-semibold text-white">{processedItems}</p>
-                <p className="text-xs text-[#8a8f98]">Processed</p>
+                <p className="text-lg font-semibold text-foreground">{processedItems}</p>
+                <p className="text-xs text-muted-foreground">Processed</p>
               </div>
               <div>
-                <p className="text-lg font-semibold text-[#22c55e]">{copiedItems}</p>
-                <p className="text-xs text-[#8a8f98]">Copied</p>
+                <p className="text-lg font-semibold text-success">{copiedItems}</p>
+                <p className="text-xs text-muted-foreground">Copied</p>
               </div>
               <div>
-                <p className="text-lg font-semibold text-[#8a8f98]">{processedItems - copiedItems}</p>
-                <p className="text-xs text-[#8a8f98]">Skipped</p>
+                <p className="text-lg font-semibold text-muted-foreground">{processedItems - copiedItems}</p>
+                <p className="text-xs text-muted-foreground">Skipped</p>
               </div>
             </div>
             {cancelled && (
-              <p className="mt-2 text-center text-xs text-[#f5bf42]">Sync was cancelled</p>
+              <p className="mt-2 text-center text-xs text-warning">Sync was cancelled</p>
             )}
           </div>
         )}

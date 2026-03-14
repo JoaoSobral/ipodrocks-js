@@ -1,4 +1,5 @@
 import { useRef, useEffect, useState } from "react";
+import { Label } from "./Label";
 
 interface SelectOption {
   value: string;
@@ -44,29 +45,19 @@ export function Select({
 
   return (
     <div ref={containerRef} className={`relative ${className}`}>
-      {label && (
-        <label className="block text-xs font-medium text-[#8a8f98] mb-1.5">{label}</label>
-      )}
+      {label && <Label>{label}</Label>}
       <button
         type="button"
         disabled={disabled}
         onClick={() => !disabled && setOpen((o) => !o)}
-        className="w-full rounded-lg bg-[#131626] border border-white/[0.08] px-3 py-2 text-sm text-[#e0e0e0] text-left outline-none focus:border-[#4a9eff]/50 focus:ring-1 focus:ring-[#4a9eff]/25 transition-colors flex items-center justify-between disabled:opacity-50 [.theme-light_&]:bg-white [.theme-light_&]:border-[#e2e8f0] [.theme-light_&]:text-[#1a1a1a]"
+        className="w-full rounded-lg bg-popover border border-border px-3 py-2 text-sm text-foreground text-left outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/25 transition-colors flex items-center justify-between disabled:opacity-50"
       >
-        <span
-          className={
-            value
-              ? "[.theme-light_&]:text-[#1a1a1a]"
-              : "text-[#5a5f68] [.theme-light_&]:text-[#6b7280]"
-          }
-        >
-          {display}
-        </span>
-        <span className="text-[#5a5f68] ml-1 [.theme-light_&]:text-[#6b7280]">{open ? "▲" : "▼"}</span>
+        <span className={value ? "" : "text-muted-foreground"}>{display}</span>
+        <span className="text-muted-foreground ml-1">{open ? "▲" : "▼"}</span>
       </button>
       {open && (
         <div
-          className="absolute z-50 mt-1 w-full rounded-lg border border-white/[0.08] bg-[#131626] shadow-xl max-h-56 overflow-auto [.theme-light_&]:bg-white [.theme-light_&]:border-[#e2e8f0]"
+          className="absolute z-50 mt-1 w-full rounded-lg border border-border bg-popover shadow-xl max-h-56 overflow-auto"
           role="listbox"
         >
           {options.map((opt) => (
@@ -81,8 +72,8 @@ export function Select({
               }}
               className={`w-full px-3 py-2 text-left text-sm transition-colors ${
                 opt.value === value
-                  ? "bg-[#4a9eff]/20 text-[#4a9eff]"
-                  : "text-[#e0e0e0] hover:bg-white/[0.06] [.theme-light_&]:text-[#1a1a1a] [.theme-light_&]:hover:bg-[#f3f4f6]"
+                  ? "bg-primary/20 text-primary"
+                  : "text-foreground hover:bg-muted/50"
               }`}
             >
               {opt.label}

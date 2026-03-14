@@ -236,9 +236,12 @@ function buildSavantPrompt(
   ctx: SavantContext,
   db: Database.Database
 ): OpenRouterMessage[] {
-  const system = `You are a music curator AI for a personal music player app.
+  const system = `You are a music curator AI for a personal music player app (like Apple Genius).
 You have access to the user's library and listening history.
 Your job is to select tracks that match the user's stated mood and intent.
+When tracks have Camelot key data, prefer selecting groups of tracks with
+compatible keys (same number +/-1 or same number A/B) for smooth harmonic
+transitions — similar to how a DJ mixes. This is secondary to mood fit.
 You must respond ONLY with valid JSON — no prose, no markdown.`;
 
   const geniusBlock = ctx.geniusSignals
@@ -288,6 +291,7 @@ ${JSON.stringify(
     album: t.album,
     genre: t.genre,
     bpm: t.bpm,
+    camelot: t.camelot,
     plays: t.playCount,
     completion: t.avgCompletion,
   })),
@@ -298,6 +302,8 @@ ${JSON.stringify(
 Select ${ctx.intent.targetCount} tracks that best fit the mood and intent.
 Prioritize tracks with higher completion rates when mood is relaxed/focused.
 For energetic moods, consider BPM if available.
+When tracks have camelot key data, favor clusters of harmonically compatible
+tracks (adjacent Camelot numbers or same number A/B swap) for smooth mixing.
 Avoid tracks the user consistently skips.
 
 Respond with this exact JSON structure:

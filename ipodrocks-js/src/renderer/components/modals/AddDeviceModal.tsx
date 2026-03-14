@@ -4,6 +4,7 @@ import { addDevice } from "@renderer/ipc/api";
 import { Modal } from "../common/Modal";
 import { Button } from "../common/Button";
 import { Input } from "../common/Input";
+import { ErrorBox } from "../common/ErrorBox";
 
 interface AddDeviceModalProps {
   open: boolean;
@@ -107,9 +108,7 @@ export function AddDeviceModal({ open, onClose }: AddDeviceModalProps) {
         </div>
 
         {error && (
-          <div className="rounded-lg border border-[#ef4444]/30 bg-[#ef4444]/10 px-3 py-2 text-sm text-[#ef4444]">
-            {error}
-          </div>
+          <ErrorBox>{error}</ErrorBox>
         )}
 
         <div className="flex justify-end gap-2 pt-1">

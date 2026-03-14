@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { Modal } from "../common/Modal";
 import { Button } from "../common/Button";
 import { Input } from "../common/Input";
+import { Card } from "../common/Card";
+import { Switch } from "../common/Switch";
 import {
   getOpenRouterConfig,
   setOpenRouterConfig,
@@ -60,7 +62,10 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
     setTestError(null);
     try {
       const configToTest = apiKey.trim()
-        ? { apiKey: apiKey.trim(), model: model.trim() || "anthropic/claude-sonnet-4.6" }
+        ? {
+            apiKey: apiKey.trim(),
+            model: model.trim() || "anthropic/claude-sonnet-4.6",
+          }
         : undefined;
       const result = await testOpenRouterConnection(configToTest);
       if (result.ok) {
@@ -105,152 +110,138 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
       closeOnBackdropClick
     >
       <div className="space-y-6">
-        <section>
-          <h4 className="text-sm font-semibold text-white mb-3">
-            OpenRouter
-          </h4>
-          <p className="text-xs text-[#5a5f68] mb-4">
-            Savant playlists use OpenRouter to access AI models. Get your API key
-            at{" "}
-            <a
-              href="https://openrouter.ai/keys"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-[#4a9eff] hover:underline"
-            >
-              openrouter.ai/keys
-            </a>
-          </p>
-          <Input
-            label="API Key"
-            type="password"
-            value={apiKey}
-            onChange={(e) => setApiKey(e.target.value)}
-            placeholder="sk-or-v1-..."
-          />
-          <Input
-            label="Model"
-            value={model}
-            onChange={(e) => setModel(e.target.value)}
-            placeholder="anthropic/claude-sonnet-4.6"
-          />
-          <p className="text-[11px] text-[#5a5f68] mt-1">
-            Model ID from{" "}
-            <a
-              href="https://openrouter.ai/models?fmt=cards&input_modalities=text&output_modalities=text"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-[#4a9eff] hover:underline"
-            >
-              openrouter.ai/models
-            </a>
-          </p>
-          <div className="flex items-center gap-3 mt-3">
-            <Button
-              size="sm"
-              variant="secondary"
-              disabled={testStatus === "testing"}
-              onClick={handleTest}
-            >
-              {testStatus === "testing"
-                ? "Testing…"
-                : "Test Connection"}
-            </Button>
-            {testStatus === "ok" && (
-              <span className="text-xs text-[#22c55e]">✓ Connected</span>
-            )}
-            {testStatus === "error" && testError && (
-              <span className="text-xs text-[#ef4444]">{testError}</span>
-            )}
-          </div>
-        </section>
-
-        <section>
-          <h4 className="text-sm font-semibold text-white mb-3 [.theme-light_&]:text-[#1a1a1a]">
-            Harmonic Data (Key / BPM)
-          </h4>
-          {keyData && (
-            <p className="text-xs text-[#5a5f68] mb-4 [.theme-light_&]:text-[#6b7280]">
-              {keyData.keyedCount} / {keyData.totalCount} tracks have key/BPM
-              data ({keyData.coveragePct}%).
+        <Card
+          title="OpenRouter API"
+          subtitle="Connect to AI models via OpenRouter for Savant playlists."
+        >
+          <div className="space-y-4">
+            <Input
+              label="API Key"
+              type="password"
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+              placeholder="sk-or-v1-..."
+            />
+            <Input
+              label="Model"
+              value={model}
+              onChange={(e) => setModel(e.target.value)}
+              placeholder="anthropic/claude-sonnet-4.6"
+            />
+            <p className="text-xs text-muted-foreground">
+              Get your API key at{" "}
+              <a
+                href="https://openrouter.ai/keys"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-primary hover:underline"
+              >
+                openrouter.ai/keys
+              </a>
+              . Model ID from{" "}
+              <a
+                href="https://openrouter.ai/models?fmt=cards&input_modalities=text&output_modalities=text"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-primary hover:underline"
+              >
+                openrouter.ai/models
+              </a>
+              .
             </p>
-          )}
-          <label className="flex items-center gap-3 mb-3 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={scanHarmonicData}
-              onChange={(e) => setScanHarmonicData(e.target.checked)}
-              className="accent-[#4a9eff] rounded"
-            />
-            <span className="text-sm text-[#e0e0e0] [.theme-light_&]:text-[#374151]">
-              Extract harmonic data when scanning library
-            </span>
-          </label>
-          <p className="text-[11px] text-[#5a5f68] mb-4 [.theme-light_&]:text-[#6b7280]">
-            When enabled, key and BPM are read from file tags during scan. Most
-            files need &quot;Backfill Key Data&quot; on the Savant tab.
-          </p>
-          <div className="flex items-center gap-3">
-            <label className="text-sm text-[#e0e0e0] [.theme-light_&]:text-[#374151]">
-              Backfill: process up to
-            </label>
-            <input
-              type="number"
-              min={1}
-              max={100}
-              value={backfillPercent}
-              onChange={(e) =>
-                setBackfillPercent(parseInt(e.target.value, 10) || 100)
-              }
-              className="w-16 rounded-lg bg-white/[0.04] border border-white/[0.08] px-2 py-1.5 text-sm text-[#e0e0e0] [.theme-light_&]:bg-white [.theme-light_&]:border-[#e2e8f0] [.theme-light_&]:text-[#1a1a1a]"
-            />
-            <span className="text-sm text-[#5a5f68] [.theme-light_&]:text-[#6b7280]">
-              % of library
-            </span>
+            <div className="flex items-center gap-3 pt-1">
+              <Button
+                size="sm"
+                variant="secondary"
+                disabled={testStatus === "testing"}
+                onClick={handleTest}
+              >
+                {testStatus === "testing" ? "Testing…" : "Test Connection"}
+              </Button>
+              {testStatus === "ok" && (
+                <span className="text-xs text-success">Connected</span>
+              )}
+              {testStatus === "error" && testError && (
+                <span className="text-xs text-destructive">{testError}</span>
+              )}
+            </div>
           </div>
-          <p className="text-[11px] text-[#5a5f68] mt-1 [.theme-light_&]:text-[#6b7280]">
-            Each backfill run processes up to this percentage of your music
-            tracks.
-          </p>
-          <label className="flex items-center gap-3 mb-3 cursor-pointer mt-4">
-            <input
-              type="checkbox"
-              checked={analyzeWithEssentia}
-              onChange={(e) => setAnalyzeWithEssentia(e.target.checked)}
-              className="accent-[#4a9eff] rounded"
-            />
-            <span className="text-sm text-[#e0e0e0] [.theme-light_&]:text-[#374151]">
-              Analyze audio with Essentia.js (key/BPM from waveform)
-            </span>
-          </label>
-          <p className="text-[11px] text-[#5a5f68] mb-4 [.theme-light_&]:text-[#6b7280]">
-            When enabled, Backfill uses Essentia.js to detect key and BPM from
-            the audio itself (not tags). Disabled by default. Samples across
-            genres for diversity.
-          </p>
-          {analyzeWithEssentia && (
-            <div className="flex items-center gap-3 mb-4">
-              <label className="text-sm text-[#e0e0e0] [.theme-light_&]:text-[#374151]">
-                Analyze:
-              </label>
-              <input
+        </Card>
+
+        <Card
+          title="Harmonic Analysis"
+          subtitle="Configure key/BPM detection for harmonic mixing."
+        >
+          <div className="space-y-5">
+            {keyData && (
+              <p className="text-xs text-muted-foreground">
+                {keyData.keyedCount} / {keyData.totalCount} tracks have key data (
+                {keyData.coveragePct}%).
+                {keyData.bpmOnlyCount > 0 && (
+                  <> {keyData.bpmOnlyCount} have BPM only.</>
+                )}
+              </p>
+            )}
+
+            <div className="flex items-start justify-between gap-4">
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-medium text-foreground">
+                  Extract harmonic data on scan
+                </p>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Read key and BPM from file tags during library scan.
+                </p>
+              </div>
+              <Switch
+                checked={scanHarmonicData}
+                onChange={setScanHarmonicData}
+                className="shrink-0"
+              />
+            </div>
+
+            <div className="flex items-start justify-between gap-4">
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-medium text-foreground">
+                  Analyze with Essentia.js
+                </p>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Detect key/BPM from audio waveform (slower, more accurate).
+                </p>
+              </div>
+              <Switch
+                checked={analyzeWithEssentia}
+                onChange={setAnalyzeWithEssentia}
+                className="shrink-0"
+              />
+            </div>
+
+            {analyzeWithEssentia && (
+              <Input
+                label="Analyze % of library"
                 type="number"
                 min={1}
                 max={100}
-                value={analyzePercent}
+                value={String(analyzePercent)}
                 onChange={(e) =>
                   setAnalyzePercent(parseInt(e.target.value, 10) || 10)
                 }
-                className="w-16 rounded-lg bg-white/[0.04] border border-white/[0.08] px-2 py-1.5 text-sm text-[#e0e0e0] [.theme-light_&]:bg-white [.theme-light_&]:border-[#e2e8f0] [.theme-light_&]:text-[#1a1a1a]"
               />
-              <span className="text-sm text-[#5a5f68] [.theme-light_&]:text-[#6b7280]">
-                % of library (spread by genre)
-              </span>
-            </div>
-          )}
-        </section>
+            )}
 
-        <div className="flex justify-end gap-2 pt-2">
+            <Input
+              label="Backfill: process up to % of library"
+              type="number"
+              min={1}
+              max={100}
+              value={String(backfillPercent)}
+              onChange={(e) =>
+                setBackfillPercent(parseInt(e.target.value, 10) || 100)
+              }
+            />
+          </div>
+        </Card>
+
+        <div className="flex justify-end gap-2 pt-2 border-t border-border">
           <Button variant="secondary" onClick={onClose}>
             Cancel
           </Button>

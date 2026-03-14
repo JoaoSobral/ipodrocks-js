@@ -3,9 +3,11 @@ import { useEffect, useState, useMemo, useRef, useCallback } from "react";
 import { Card } from "../common/Card";
 import { Button } from "../common/Button";
 import { Input } from "../common/Input";
+import { Label } from "../common/Label";
 import { Modal } from "../common/Modal";
 import { ProgressBar } from "../common/ProgressBar";
 import { Select } from "../common/Select";
+import { Spinner } from "../common/Spinner";
 import { EmptyState } from "../common/EmptyState";
 import { useDeviceStore } from "../../stores/device-store";
 import {
@@ -54,7 +56,7 @@ function downloadOrphansCsv(cr: CheckResult): void {
 }
 
 const checkboxClass =
-  "h-4 w-4 rounded border-white/20 bg-white/[0.04] accent-[#4a9eff] cursor-pointer";
+  "h-4 w-4 rounded border-border bg-input accent-primary cursor-pointer";
 
 export function DevicePanel() {
   const devices = useDeviceStore((s) => s.devices);
@@ -279,7 +281,7 @@ export function DevicePanel() {
         <Button variant="primary" size="sm" onClick={openForAdd}>
           + Add Device
         </Button>
-        <span className="text-xs text-[#5a5f68] ml-auto">
+        <span className="text-xs text-muted-foreground ml-auto">
           {deviceList.length} device{deviceList.length !== 1 ? "s" : ""}
         </span>
       </div>
@@ -287,7 +289,7 @@ export function DevicePanel() {
       {/* Device grid */}
       {loading ? (
         <div className="flex items-center justify-center py-16">
-          <div className="w-6 h-6 border-2 border-[#4a9eff]/30 border-t-[#4a9eff] rounded-full animate-spin" />
+          <Spinner size="md" />
         </div>
       ) : deviceList.length === 0 ? (
         <EmptyState
@@ -308,32 +310,32 @@ export function DevicePanel() {
             return (
               <Card key={d?.id ?? `device-${idx}`}>
                 <div className="flex items-start gap-3 mb-4">
-                  <div className="w-10 h-10 rounded-xl bg-[#22c55e]/10 flex items-center justify-center text-lg text-[#22c55e]">
+                  <div className="w-10 h-10 rounded-xl bg-success/10 flex items-center justify-center text-lg text-success">
                     ⊞
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
                       <h4 className="text-sm font-semibold text-white">{d?.name ?? "Unknown"}</h4>
                       {isDefaultDev && (
-                        <span className="px-1.5 py-0.5 text-[9px] font-medium rounded bg-[#4a9eff]/15 text-[#4a9eff]">
+                        <span className="px-1.5 py-0.5 text-[9px] font-medium rounded bg-primary/15 text-primary">
                           DEFAULT
                         </span>
                       )}
                     </div>
-                    <p className="text-[10px] text-[#5a5f68] truncate">{d?.mountPath ?? ""}</p>
+                    <p className="text-[10px] text-muted-foreground truncate">{d?.mountPath ?? ""}</p>
                   </div>
                 </div>
 
                 <div className="space-y-2 text-xs mb-4">
                   {d.modelName && (
                     <div className="flex justify-between">
-                      <span className="text-[#5a5f68]">Model</span>
-                      <span className="text-[#8a8f98]">{d.modelName}</span>
+                      <span className="text-muted-foreground">Model</span>
+                      <span className="text-muted-foreground">{d.modelName}</span>
                     </div>
                   )}
                   <div className="flex justify-between">
-                    <span className="text-[#5a5f68]">Transfer</span>
-                    <span className="text-[#8a8f98]">
+                    <span className="text-muted-foreground">Transfer</span>
+                    <span className="text-muted-foreground">
                       {d?.sourceLibraryType === "shadow"
                         ? `Direct Copy (Shadow #${d?.shadowLibraryId ?? "?"})`
                         : d?.codecName &&
@@ -345,43 +347,43 @@ export function DevicePanel() {
                     </span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-[#5a5f68]">Last sync date</span>
-                    <span className="text-[#8a8f98]">
+                    <span className="text-muted-foreground">Last sync date</span>
+                    <span className="text-muted-foreground">
                       {d?.lastSyncDate
                         ? new Date(d.lastSyncDate).toLocaleDateString()
                         : "Never"}
                     </span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-[#5a5f68]">Total on device</span>
-                    <span className="text-[#8a8f98]">{(d?.totalSyncedItems ?? 0).toLocaleString()}</span>
+                    <span className="text-muted-foreground">Total on device</span>
+                    <span className="text-muted-foreground">{(d?.totalSyncedItems ?? 0).toLocaleString()}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-[#5a5f68]">Items in last sync</span>
-                    <span className="text-[#8a8f98]">{(d?.lastSyncCount ?? 0).toLocaleString()}</span>
+                    <span className="text-muted-foreground">Items in last sync</span>
+                    <span className="text-muted-foreground">{(d?.lastSyncCount ?? 0).toLocaleString()}</span>
                   </div>
                 </div>
 
                 {cr && (
-                  <div className="mb-4 p-3 rounded-lg bg-white/[0.02] space-y-2">
+                  <div className="mb-4 p-3 rounded-lg bg-muted/30 space-y-2">
                     {cr.disk != null && (
                       <>
                         <div className="flex justify-between text-xs">
-                          <span className="text-[#5a5f68]">Storage</span>
-                          <span className="text-[#8a8f98]">
+                          <span className="text-muted-foreground">Storage</span>
+                          <span className="text-muted-foreground">
                             {formatGb((cr.disk.totalGb ?? 0) - (cr.disk.freeGb ?? 0))} / {formatGb(cr.disk.totalGb ?? 0)}
                           </span>
                         </div>
                         <ProgressBar
                           value={(cr.disk.totalGb ?? 0) > 0 ? (((cr.disk.totalGb ?? 0) - (cr.disk.freeGb ?? 0)) / (cr.disk.totalGb ?? 1)) * 100 : 0}
-                          color={(cr.disk.freeGb ?? 0) < 1 ? "#ef4444" : "#4a9eff"}
+                          color={(cr.disk.freeGb ?? 0) < 1 ? "var(--destructive)" : undefined}
                         />
                       </>
                     )}
                     {cr.music != null && (
                       <div className="flex justify-between text-xs">
-                        <span className="text-[#5a5f68]">Music</span>
-                        <span className="text-[#8a8f98]">
+                        <span className="text-muted-foreground">Music</span>
+                        <span className="text-muted-foreground">
                           {cr.music.fileCount ?? 0} files · {formatGb(cr.music.totalGb ?? 0)}
                         </span>
                       </div>
@@ -389,8 +391,8 @@ export function DevicePanel() {
                     {typeof cr.musicSyncedWithLibrary === "number" && (
                       <div className="flex flex-col gap-0.5">
                         <div className="flex justify-between text-xs">
-                          <span className="text-[#5a5f68]">Music vs Library</span>
-                          <span className="text-[#8a8f98]">
+                          <span className="text-muted-foreground">Music vs Library</span>
+                          <span className="text-muted-foreground">
                             {[
                               `${cr.musicSyncedWithLibrary} synced`,
                               (cr.musicCodecMismatch ?? 0) > 0 &&
@@ -403,7 +405,7 @@ export function DevicePanel() {
                           </span>
                         </div>
                         {(cr.musicCodecMismatch ?? 0) > 0 && cr.profileCodecName && (
-                          <p className="text-[10px] text-[#5a5f68]">
+                          <p className="text-[10px] text-muted-foreground">
                             Codec mismatch files will be re-encoded to{" "}
                             {cr.profileCodecName} on next sync.
                           </p>
@@ -413,8 +415,8 @@ export function DevicePanel() {
                     {typeof cr.podcastSyncedWithLibrary === "number" && (
                       <div className="flex flex-col gap-0.5">
                         <div className="flex justify-between text-xs">
-                          <span className="text-[#5a5f68]">Podcasts vs Library</span>
-                          <span className="text-[#8a8f98]">
+                          <span className="text-muted-foreground">Podcasts vs Library</span>
+                          <span className="text-muted-foreground">
                             {[
                               `${cr.podcastSyncedWithLibrary} synced`,
                               (cr.podcastCodecMismatch ?? 0) > 0 &&
@@ -427,7 +429,7 @@ export function DevicePanel() {
                           </span>
                         </div>
                         {(cr.podcastCodecMismatch ?? 0) > 0 && cr.profileCodecName && (
-                          <p className="text-[10px] text-[#5a5f68]">
+                          <p className="text-[10px] text-muted-foreground">
                             Codec mismatch files will be re-encoded to{" "}
                             {cr.profileCodecName} on next sync.
                           </p>
@@ -437,8 +439,8 @@ export function DevicePanel() {
                     {typeof cr.audiobookSyncedWithLibrary === "number" && (
                       <div className="flex flex-col gap-0.5">
                         <div className="flex justify-between text-xs">
-                          <span className="text-[#5a5f68]">Audiobooks vs Library</span>
-                          <span className="text-[#8a8f98]">
+                          <span className="text-muted-foreground">Audiobooks vs Library</span>
+                          <span className="text-muted-foreground">
                             {[
                               `${cr.audiobookSyncedWithLibrary} synced`,
                               (cr.audiobookCodecMismatch ?? 0) > 0 &&
@@ -451,7 +453,7 @@ export function DevicePanel() {
                           </span>
                         </div>
                         {(cr.audiobookCodecMismatch ?? 0) > 0 && cr.profileCodecName && (
-                          <p className="text-[10px] text-[#5a5f68]">
+                          <p className="text-[10px] text-muted-foreground">
                             Codec mismatch files will be re-encoded to{" "}
                             {cr.profileCodecName} on next sync.
                           </p>
@@ -460,8 +462,8 @@ export function DevicePanel() {
                     )}
                     {cr.playlists != null && (
                       <div className="flex justify-between text-xs">
-                        <span className="text-[#5a5f68]">Playlists</span>
-                        <span className="text-[#8a8f98]">
+                        <span className="text-muted-foreground">Playlists</span>
+                        <span className="text-muted-foreground">
                           {cr.playlists.fileCount ?? 0} file{(cr.playlists.fileCount ?? 0) !== 1 ? "s" : ""}
                           {(cr.playlists.totalGb ?? 0) > 0 ? ` · ${formatGb(cr.playlists.totalGb ?? 0)}` : ""}
                           {(cr.playlistOrphans ?? 0) > 0 ? ` · ${cr.playlistOrphans} orphans` : ""}
@@ -544,10 +546,10 @@ export function DevicePanel() {
 
           {/* Mount Path */}
           <div>
-            <label className="block text-xs font-medium text-[#8a8f98] mb-1.5">Mount Path</label>
+            <Label>Mount Path</Label>
             <div className="flex gap-2">
               <input
-                className="flex-1 rounded-lg bg-[#131626] border border-white/[0.08] px-3 py-2 text-sm text-[#e0e0e0] placeholder:text-[#5a5f68] outline-none focus:border-[#4a9eff]/50 transition-colors [.theme-light_&]:bg-white [.theme-light_&]:border-[#e2e8f0] [.theme-light_&]:text-[#1a1a1a] [.theme-light_&]:placeholder:text-[#9ca3af]"
+                className="flex-1 rounded-lg bg-input border border-border px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/25 transition-colors"
                 value={mountPath}
                 onChange={(e) => setMountPath(e.target.value)}
                 placeholder="/mnt/ipod"
@@ -560,9 +562,7 @@ export function DevicePanel() {
 
           {/* Transfer Mode */}
           <div>
-            <label className="block text-xs font-medium text-[#8a8f98] mb-1.5">
-              Transfer Mode
-            </label>
+            <Label>Transfer Mode</Label>
             <div className="flex gap-2">
               {(["direct", "transcode"] as const).map((mode) => (
                 <button
@@ -570,8 +570,8 @@ export function DevicePanel() {
                   type="button"
                   className={`flex-1 px-4 py-2 rounded-lg text-sm font-medium transition-colors border ${
                     transferMode === mode
-                      ? "bg-[#4a9eff]/15 border-[#4a9eff]/40 text-[#4a9eff]"
-                      : "bg-white/[0.04] border-white/[0.08] text-[#8a8f98] hover:bg-white/[0.06]"
+                      ? "bg-primary/15 border-primary/40 text-primary"
+                      : "bg-input border-border text-muted-foreground hover:bg-muted/50"
                   }`}
                   onClick={() => setTransferMode(mode)}
                 >
@@ -579,7 +579,7 @@ export function DevicePanel() {
                 </button>
               ))}
             </div>
-            <p className="text-[10px] text-[#5a5f68] mt-1">
+            <p className="text-[10px] text-muted-foreground mt-1">
               {transferMode === "direct"
                 ? "Copy files as-is from the primary library or a shadow library"
                 : "Convert files during sync using a codec profile"}
@@ -676,7 +676,7 @@ export function DevicePanel() {
                 checked={isDefault}
                 onChange={(e) => setIsDefault(e.target.checked)}
               />
-              <span className="text-sm text-[#e0e0e0]">Set as Default Device</span>
+              <span className="text-sm text-foreground">Set as Default Device</span>
             </label>
             <label className="flex items-center gap-2.5 cursor-pointer">
               <input
@@ -685,7 +685,7 @@ export function DevicePanel() {
                 checked={!playbackLogEnabled}
                 onChange={(e) => setPlaybackLogEnabled(!e.target.checked)}
               />
-              <span className="text-sm text-[#e0e0e0]">Do not read playback.log data</span>
+              <span className="text-sm text-foreground">Do not read playback.log data</span>
             </label>
           </div>
 
