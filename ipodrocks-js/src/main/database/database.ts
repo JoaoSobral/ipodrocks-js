@@ -21,6 +21,43 @@ export class AppDatabase {
     this.migrateAudiobooks();
     this.migrateSavant();
     this.migratePlaybackLog();
+    this.migrateAssistantChat();
+  }
+
+  private migrateAssistantChat(): void {
+    if (!this.db) return;
+    try {
+      const tableExists = this.db
+        .prepare(
+          "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'assistant_chat_history'"
+        )
+        .get();
+      if (!tableExists) {
+        this.db.exec(`
+          CREATE TABLE assistant_chat_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            role TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
+            content TEXT NOT NULL,
+            pinned INTEGER NOT NULL DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+          )
+        `);
+      } else {
+        const cols = this.db
+          .prepare("PRAGMA table_info(assistant_chat_history)")
+          .all() as { name: string }[];
+        const colNames = new Set(cols.map((r) => r.name));
+        if (!colNames.has("pinned")) {
+          this.db
+            .prepare(
+              "ALTER TABLE assistant_chat_history ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0"
+            )
+            .run();
+        }
+      }
+    } catch (err) {
+      console.error("[db] migration failed (assistant_chat_history):", err);
+    }
   }
 
   private migrateSavant(): void {

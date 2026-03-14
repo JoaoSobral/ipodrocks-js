@@ -520,11 +520,25 @@ export async function skipSavantPlaylistChat(sessionId: string): Promise<void> {
 }
 
 export async function sendAssistantChat(
-  messages: Array<{ role: "user" | "assistant"; content: string }>
-): Promise<{ reply: string } | { error: string }> {
-  return window.api.invoke("assistant:chat", messages) as Promise<
-    { reply: string } | { error: string }
+  userMessage: string
+): Promise<
+  { reply: string; playlistCreated?: string } | { error: string }
+> {
+  return window.api.invoke("assistant:chat", userMessage) as Promise<
+    { reply: string; playlistCreated?: string } | { error: string }
   >;
+}
+
+export async function loadAssistantHistory(): Promise<
+  Array<{ role: "user" | "assistant"; content: string }>
+> {
+  return window.api.invoke("assistant:history:load") as Promise<
+    Array<{ role: "user" | "assistant"; content: string }>
+  >;
+}
+
+export async function clearAssistantHistory(): Promise<void> {
+  return window.api.invoke("assistant:history:clear") as Promise<void>;
 }
 
 // ---------------------------------------------------------------------------

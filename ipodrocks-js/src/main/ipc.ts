@@ -94,7 +94,18 @@ import {
   processSavantPlaylistChatTurn,
   type SavantPlaylistChatState,
 } from "./savant/savantPlaylistChat";
-import { sendAssistantMessage } from "./assistant/assistantChat";
+import {
+  sendAssistantMessage,
+  loadAssistantHistory,
+  loadNonPinnedHistory,
+  saveAssistantMessages,
+  clearAssistantHistory,
+  parseActionTags,
+  pinMessages,
+  unpinMessages,
+  getPinnedCount,
+  MAX_PINNED_MEMORIES,
+} from "./assistant/assistantChat";
 import { randomUUID } from "crypto";
 import { logActivity, getRecentActivity } from "./activity/activity-logger";
 
@@ -1186,54 +1197,69 @@ export function registerIpcHandlers(): void {
                 message: "Playlist(s) already up to date.",
               });
             }
-            if (
-              opts.extraTrackPolicy === "remove" &&
-              playlistsToWrite.length > 0
-            ) {
-              const expectedStems = new Set(
-                playlistsToWrite.map((pl) =>
-                  (pl.name.replace(/[/\\?*:"<>|]/g, "_").trim() || "Playlist").toLowerCase()
-                )
-              );
-              const orphanPaths: string[] = [];
-              const walkPlaylists = (dir: string): void => {
-                let entries: fs.Dirent[];
-                try {
-                  entries = fs.readdirSync(dir, { withFileTypes: true });
-                } catch {
-                  return;
-                }
-                for (const entry of entries) {
-                  const fullPath = path.join(dir, entry.name);
-                  if (entry.isDirectory()) {
-                    walkPlaylists(fullPath);
-                  } else if (path.extname(entry.name).toLowerCase() === ".m3u") {
-                    const stem = path.parse(entry.name).name.toLowerCase();
-                    if (!expectedStems.has(stem)) {
-                      orphanPaths.push(fullPath);
-                    }
-                  }
-                }
-              };
-              walkPlaylists(playlistFolder);
-              if (orphanPaths.length > 0) {
-                const { removed } = removeExtraTracks(
-                  orphanPaths,
-                  syncOpts.progressCallback,
-                  activeSyncAbort?.signal
-                );
-                result.removed += removed;
-                syncOpts.progressCallback?.({
-                  event: "log",
-                  message: `Removed ${removed} orphan playlist(s) from device.`,
-                });
-              }
-            }
           } catch (err) {
             console.error("[ipc] Sync playlists to device failed:", err);
           }
         }
       }
+
+      // Always detect and optionally remove playlist orphans when device has playlist folder
+      // (runs even when not syncing playlists, e.g. includePlaylists=false or custom with none)
+      const playlistFolder = device.getContentPath("playlist");
+      if (playlistFolder && fs.existsSync(playlistFolder)) {
+        try {
+          const core = getPlaylistCore();
+          const libraryPlaylists = core.getPlaylists();
+          const expectedStems = new Set(
+            libraryPlaylists.map((pl) =>
+              (pl.name.replace(/[/\\?*:"<>|]/g, "_").trim() || "Playlist").toLowerCase()
+            )
+          );
+          const orphanPaths: string[] = [];
+          const walkPlaylists = (dir: string): void => {
+            let entries: fs.Dirent[];
+            try {
+              entries = fs.readdirSync(dir, { withFileTypes: true });
+            } catch {
+              return;
+            }
+            for (const entry of entries) {
+              const fullPath = path.join(dir, entry.name);
+              if (entry.isDirectory()) {
+                walkPlaylists(fullPath);
+              } else if (path.extname(entry.name).toLowerCase() === ".m3u") {
+                const stem = path.parse(entry.name).name.toLowerCase();
+                if (!expectedStems.has(stem)) {
+                  orphanPaths.push(fullPath);
+                }
+              }
+            }
+          };
+          walkPlaylists(playlistFolder);
+          if (orphanPaths.length > 0) {
+            result.extras = [...result.extras, ...orphanPaths];
+            syncOpts.progressCallback?.({
+              event: "log",
+              message: `${orphanPaths.length} orphan playlist(s) on device.`,
+            });
+            if (opts.extraTrackPolicy === "remove") {
+              const { removed } = removeExtraTracks(
+                orphanPaths,
+                syncOpts.progressCallback,
+                activeSyncAbort?.signal
+              );
+              result.removed += removed;
+              syncOpts.progressCallback?.({
+                event: "log",
+                message: `Removed ${removed} orphan playlist(s) from device.`,
+              });
+            }
+          }
+        } catch (err) {
+          console.error("[ipc] Playlist orphan detection failed:", err);
+        }
+      }
+
       result.synced += playlistsWritten;
       activeSyncAbort = null;
 
@@ -1256,6 +1282,14 @@ export function registerIpcHandlers(): void {
           console.error("[ipc] Update device last sync failed:", e);
         }
       }
+
+      if (result.removed > 0) {
+        syncOpts.progressCallback?.({
+          event: "log",
+          message: `Sync complete. ${result.removed} file(s) removed from device.`,
+        });
+      }
+      syncOpts.progressCallback?.({ event: "complete", path: "", status: "complete" });
 
       return result;
     })
@@ -1580,16 +1614,100 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(
     "assistant:chat",
-    safe(async (
-      _event,
-      messages: Array<{ role: "user" | "assistant"; content: string }>
-    ) => {
+    safe(async (_event, userMessage: string) => {
       const config = getOpenRouterConfig();
       if (!config?.apiKey?.trim())
         return { error: "OpenRouter API key not configured" };
       const db = getLibrary().getConnection();
-      const reply = await sendAssistantMessage(messages, db, config);
-      return { reply };
+      const recentHistory = loadNonPinnedHistory(db);
+      const fullHistory = [
+        ...recentHistory,
+        { role: "user" as const, content: userMessage },
+      ];
+      const rawReply = await sendAssistantMessage(fullHistory, db, config);
+      const {
+        cleanReply,
+        pin,
+        unpinIds,
+        replaceId,
+        smartPlaylist,
+        geniusPlaylist,
+      } = parseActionTags(rawReply);
+
+      let playlistCreated: string | undefined;
+
+      try {
+        if (smartPlaylist) {
+          const core = getPlaylistCore();
+          core.createSmartPlaylist(
+            smartPlaylist.name,
+            smartPlaylist.rules,
+            "",
+            smartPlaylist.trackLimit
+          );
+          logActivity(db, "playlist_generated", `Smart: ${smartPlaylist.name}`);
+          playlistCreated = smartPlaylist.name;
+        } else if (geniusPlaylist) {
+          const result = generateGeniusPlaylistFromDb(
+            geniusPlaylist.geniusType,
+            db,
+            geniusPlaylist.opts
+          );
+          const trackIds = result.tracks.map((t) => t.id);
+          const maxTracks = geniusPlaylist.opts.maxTracks ?? 25;
+          if (trackIds.length > 0) {
+            const core = getPlaylistCore();
+            core.createGeniusPlaylist(
+              geniusPlaylist.geniusType,
+              trackIds,
+              null,
+              maxTracks,
+              geniusPlaylist.name
+            );
+            logActivity(
+              db,
+              "playlist_generated",
+              `Genius: ${geniusPlaylist.name} (${trackIds.length} tracks)`
+            );
+            playlistCreated = geniusPlaylist.name;
+          }
+        }
+      } catch (err) {
+        console.error("[assistant] playlist creation failed:", err);
+      }
+
+      const { userMsgId, assistantMsgId } = saveAssistantMessages(
+        db,
+        userMessage,
+        cleanReply
+      );
+
+      for (const uid of unpinIds) unpinMessages(db, uid);
+      if (replaceId) unpinMessages(db, replaceId);
+
+      if (pin || replaceId) {
+        if (replaceId || getPinnedCount(db) < MAX_PINNED_MEMORIES) {
+          pinMessages(db, userMsgId, assistantMsgId);
+        }
+      }
+
+      return { reply: cleanReply, playlistCreated };
+    })
+  );
+
+  ipcMain.handle(
+    "assistant:history:load",
+    safe(async () => {
+      const db = getLibrary().getConnection();
+      return loadAssistantHistory(db);
+    })
+  );
+
+  ipcMain.handle(
+    "assistant:history:clear",
+    safe(async () => {
+      const db = getLibrary().getConnection();
+      clearAssistantHistory(db);
     })
   );
 

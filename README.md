@@ -1,4 +1,4 @@
-# iPodRocks v1.0.1 — Electron Edition
+# iPodRocks v1.0.2 — Electron Edition
 
 **The smart sync manager for Rockbox and any mountable device.** Built with Electron, React, and TypeScript.
 
@@ -53,9 +53,12 @@ iPodRocks is NOT a library manager. I strongly advise you to use beets and beets
 - Camelot wheel compatibility for DJ-style flow
 - Optional backfill with genre-based sampling
 
-### Assistant
+### Music Assistant
 - **Floating chat** — Ask about your library, playlists, artists, and get recommendations
-- Searches across your entire collection
+- **Persistent memory** — The assistant remembers important things you tell it across sessions (up to 40 pinned memories). Say "always remember my name is Pedro" or "don't forget I love jazz" and it will carry that context every time you open the app
+- **Rolling conversation history** — Keeps the last 100 exchanges as hidden context so the assistant stays informed without cluttering your chat
+- **Create playlists by talking** — Ask the assistant to make a Smart or Genius playlist in plain English: "Make me a rock playlist with 30 tracks" or "Create a late night favorites playlist from my listening history" — it handles the rest
+- **Smart memory management** — Up to 40 permanently pinned memories that survive the rolling history limit. Say "forget about that" or "actually my name is X" to update or remove memories
 - Markdown rendering, copy-paste friendly
 
 ### Sync & Conversion
@@ -148,6 +151,7 @@ If `mpcenc` is not on your PATH, iPodRocks will prompt when you select Musepack.
 - **Smart** — Rule-based (genre, artist, album) with track limits
 - **Genius** — From Rockbox playback logs; analyze device first
 - **Savant** — AI-generated from mood (requires OpenRouter API key in Settings)
+- **Via Assistant** — Ask the floating chat to create a Smart or Genius playlist for you in plain English. The assistant knows your genres, artists, albums, and listening history and builds the playlist instantly
 
 ### Sync
 
