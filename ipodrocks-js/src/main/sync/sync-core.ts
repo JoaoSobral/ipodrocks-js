@@ -5,7 +5,6 @@ import { Device } from "../devices/device";
 import {
   CompareOptions,
   CompareResult,
-  MTIME_TOLERANCE_MS,
   SkippedTrack,
   compareLibraries,
 } from "./name-size-sync";
@@ -617,10 +616,7 @@ export function copyAlbumArtworkToDevice(
 
     if (destStat?.isFile()) {
       const sizeMatch = destStat.size === srcStat.size;
-      const mtimeMatch =
-        Math.abs((destStat.mtimeMs ?? 0) - srcStat.mtimeMs) <=
-        MTIME_TOLERANCE_MS;
-      if (sizeMatch && mtimeMatch) {
+      if (sizeMatch) {
         skipped++;
         progressCallback?.({
           event: "copy",
@@ -638,8 +634,12 @@ export function copyAlbumArtworkToDevice(
       if (ok) {
         copied++;
         progressCallback?.({
+          event: "log",
+          message: `Artwork copied: ${destPath}`,
+        });
+        progressCallback?.({
           event: "copy",
-          path: srcPath,
+          path: destPath,
           destination: destPath,
           status: "copied",
           contentType: "artwork",
