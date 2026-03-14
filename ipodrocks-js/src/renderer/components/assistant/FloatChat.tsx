@@ -1,5 +1,9 @@
 import { useState, useRef, useEffect } from "react";
-import { sendAssistantChat, getOpenRouterConfig } from "../../ipc/api";
+import {
+  sendAssistantChat,
+  getOpenRouterConfig,
+  clearAssistantHistory,
+} from "../../ipc/api";
 import { MarkdownContent } from "../common/MarkdownContent";
 
 const OPENING_MESSAGE =
@@ -39,14 +43,18 @@ export function FloatChat() {
     setError(null);
 
     try {
-      const result = await sendAssistantChat(history);
+      const result = await sendAssistantChat(text);
 
       if ("error" in result) {
         setError(result.error);
         return;
       }
 
-      const next = [...messagesRef.current, { role: "assistant", content: result.reply }];
+      const replyContent =
+        result.playlistCreated
+          ? `**Playlist created: "${result.playlistCreated}"**\n\n${result.reply}`
+          : result.reply;
+      const next = [...messagesRef.current, { role: "assistant", content: replyContent }];
       messagesRef.current = next;
       setMessages(next);
     } catch (err) {
@@ -84,14 +92,27 @@ export function FloatChat() {
                 Music Assistant
               </h3>
             </div>
-            <button
-              type="button"
-              onClick={() => setOpen(false)}
-              className="p-1 rounded-lg text-[#5a5f68] hover:text-white hover:bg-white/5 [.theme-light_&]:hover:text-[#1a1a1a]"
-              title="Minimize"
-            >
-              ▼
-            </button>
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={async () => {
+                  await clearAssistantHistory();
+                  setMessages([]);
+                }}
+                className="p-1 rounded-lg text-[#5a5f68] hover:text-white hover:bg-white/5 [.theme-light_&]:hover:text-[#1a1a1a]"
+                title="Clear memory (hidden past context)"
+              >
+                🗑
+              </button>
+              <button
+                type="button"
+                onClick={() => setOpen(false)}
+                className="p-1 rounded-lg text-[#5a5f68] hover:text-white hover:bg-white/5 [.theme-light_&]:hover:text-[#1a1a1a]"
+                title="Minimize"
+              >
+                ▼
+              </button>
+            </div>
           </div>
 
           {/* Greeting */}
