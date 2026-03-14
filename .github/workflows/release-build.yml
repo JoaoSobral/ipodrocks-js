@@ -19,8 +19,11 @@ jobs:
             target: linux
             dist-script: dist:linux
           - os: macos-latest
-            target: mac
+            target: mac-arm64
             dist-script: dist:mac
+          - os: macos-13
+            target: mac-x64
+            dist-script: dist:mac:x64
           - os: windows-latest
             target: win
             dist-script: dist:win
