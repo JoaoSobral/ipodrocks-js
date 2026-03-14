@@ -56,6 +56,15 @@ type EssentiaPkg = {
 let essentiaInstance: EssentiaPkg | null = null;
 let cachedEngine: EssentiaEngine | null = null;
 
+/** Number of tracks analyzed since last engine reset. Used to periodically recreate the engine to avoid WASM memory buildup. */
+let tracksSinceReset = 0;
+
+/** Reset the cached engine so the next analysis creates a fresh instance. Call periodically to avoid memory leaks. */
+export function resetEssentiaEngine(): void {
+  cachedEngine = null;
+  tracksSinceReset = 0;
+}
+
 function getEssentia(): EssentiaPkg | null {
   if (essentiaInstance) return essentiaInstance;
   try {
@@ -63,6 +72,23 @@ function getEssentia(): EssentiaPkg | null {
     return essentiaInstance;
   } catch {
     return null;
+  }
+}
+
+/**
+ * Suppress console.log and process.stdout.write during Essentia calls
+ * to avoid "undefined" spam from the WASM module.
+ */
+function suppressOutput<T>(fn: () => T): T {
+  const origLog = console.log;
+  const origStdoutWrite = process.stdout.write.bind(process.stdout);
+  console.log = () => {};
+  process.stdout.write = () => true;
+  try {
+    return fn();
+  } finally {
+    console.log = origLog;
+    process.stdout.write = origStdoutWrite;
   }
 }
 
@@ -75,13 +101,7 @@ function getOrCreateEngine(): EssentiaEngine | null {
   const pkg = getEssentia();
   if (!pkg) return null;
 
-  const origLog = console.log;
-  console.log = () => {};
-  try {
-    cachedEngine = new pkg.Essentia(pkg.EssentiaWASM);
-  } finally {
-    console.log = origLog;
-  }
+  cachedEngine = suppressOutput(() => new pkg.Essentia(pkg.EssentiaWASM));
   return cachedEngine;
 }
 
@@ -154,61 +174,68 @@ function essentiaKeyToNormalized(key: string, scale: string): string | null {
   return k;
 }
 
+/** Recreate the Essentia engine every N tracks to avoid WASM heap growth and process death. */
+const ESSENTIA_RESET_INTERVAL = 75;
+
 /**
  * Analyze audio file for key and BPM using Essentia.js.
- * Reuses a single WASM instance to prevent memory leaks that cause
- * the process to die after a few hundred tracks. Console output is
- * suppressed during algorithm calls to avoid "undefined" lines.
+ * Reuses a single WASM instance and periodically resets it to avoid
+ * memory buildup that causes the process to die after many tracks.
+ * Console and stdout output are suppressed during analysis to avoid
+ * "undefined" spam from the WASM module.
  *
  * @returns Features or null if analysis fails / Essentia unavailable.
  */
 export async function analyzeAudioWithEssentia(
   filePath: string
 ): Promise<EssentiaFeatures | null> {
+  if (tracksSinceReset >= ESSENTIA_RESET_INTERVAL) {
+    resetEssentiaEngine();
+  }
   const essentia = getOrCreateEngine();
   if (!essentia) return null;
 
   const audio = await decodeAudioToFloat32(filePath);
   if (!audio || audio.length < 1000) return null;
 
-  const origLog = console.log;
-  console.log = () => {};
   try {
-    const vector = essentia.arrayToVector(audio);
+    const result = suppressOutput(() => {
+      const vector = essentia.arrayToVector(audio);
 
-    let key: string | null = null;
-    let camelot: string | null = null;
-    let bpm: number | null = null;
+      let key: string | null = null;
+      let camelot: string | null = null;
+      let bpm: number | null = null;
 
-    try {
-      const keyResult = essentia.KeyExtractor(vector);
-      if (keyResult?.key) {
-        const normalized = essentiaKeyToNormalized(
-          keyResult.key,
-          keyResult.scale ?? ""
-        );
-        if (normalized) {
-          key = normalized;
-          camelot = toCamelot(normalized);
+      try {
+        const keyResult = essentia.KeyExtractor(vector);
+        if (keyResult?.key) {
+          const normalized = essentiaKeyToNormalized(
+            keyResult.key,
+            keyResult.scale ?? ""
+          );
+          if (normalized) {
+            key = normalized;
+            camelot = toCamelot(normalized);
+          }
         }
+      } catch {
+        // Key extraction failed
       }
-    } catch {
-      // Key extraction failed
-    }
 
-    try {
-      const rhythmResult = essentia.RhythmExtractor2013(vector);
-      if (rhythmResult?.bpm != null && rhythmResult.bpm > 0) {
-        bpm = Math.round(rhythmResult.bpm * 10) / 10;
+      try {
+        const rhythmResult = essentia.RhythmExtractor2013(vector);
+        if (rhythmResult?.bpm != null && rhythmResult.bpm > 0) {
+          bpm = Math.round(rhythmResult.bpm * 10) / 10;
+        }
+      } catch {
+        // BPM extraction failed
       }
-    } catch {
-      // BPM extraction failed
-    }
 
-    return { key, bpm, camelot };
+      return { key, bpm, camelot };
+    });
+    tracksSinceReset++;
+    return result;
   } catch {
     return null;
-  } finally {
-    console.log = origLog;
   }
 }
