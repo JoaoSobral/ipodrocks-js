@@ -1,3 +1,4 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap");
 @import "tailwindcss";
 
 @keyframes fadeSlideIn {
@@ -11,130 +12,128 @@
   }
 }
 
-/* Light theme: Gmail-like — clean white, high contrast, dark text */
-.theme-light {
-  color: #202124;
-}
-.theme-light > div {
-  background-color: #fff;
-}
-.theme-light nav {
-  background-color: #fff;
-  border-color: #dadce0;
-}
-.theme-light nav h1,
-.theme-light nav .text-white {
-  color: #202124;
-}
-.theme-light nav .nav-inactive {
-  color: #5f6368;
-}
-.theme-light nav .nav-inactive:hover {
-  background-color: #f1f3f4;
-  color: #202124;
-}
-.theme-light nav .nav-active {
-  background-color: rgba(46, 204, 113, 0.18);
-  color: #16a34a;
-}
-.theme-light main {
-  background-color: #fff;
-}
-.theme-light main > div.overflow-auto {
-  background-color: #fff;
-}
-
-/* Panel content: headings and labels use dark text in light theme; keep button text */
-.theme-light .panel-content .text-white {
-  color: #202124;
-}
-.theme-light .panel-content button.text-white {
-  color: white;
-}
-.theme-light .panel-content [class*="text-[#e0e0e0]"] {
-  color: #202124;
+/* Light theme (default) — shadcn/ui neutral */
+:root {
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.145 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.145 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.145 0 0);
+  --primary: oklch(0.205 0 0);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.97 0 0);
+  --secondary-foreground: oklch(0.205 0 0);
+  --muted: oklch(0.97 0 0);
+  --muted-foreground: oklch(0.556 0 0);
+  --accent: oklch(0.97 0 0);
+  --accent-foreground: oklch(0.205 0 0);
+  --destructive: oklch(0.577 0.245 27.325);
+  --destructive-foreground: oklch(0.985 0 0);
+  --success: oklch(0.627 0.194 149.214);
+  --success-foreground: oklch(0.985 0 0);
+  --warning: oklch(0.796 0.184 86.047);
+  --warning-foreground: oklch(0.205 0 0);
+  --border: oklch(0.922 0 0);
+  --input: oklch(0.922 0 0);
+  --ring: oklch(0.708 0 0);
+  --radius: 0.625rem;
+  --chart-1: oklch(0.646 0.222 41.116);
+  --chart-2: oklch(0.6 0.118 184.704);
+  --chart-3: oklch(0.398 0.07 227.392);
+  --chart-4: oklch(0.828 0.189 84.429);
+  --chart-5: oklch(0.769 0.188 70.08);
+  --sidebar: oklch(0.985 0 0);
+  --sidebar-foreground: oklch(0.145 0 0);
+  --sidebar-primary: oklch(0.205 0 0);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.97 0 0);
+  --sidebar-accent-foreground: oklch(0.205 0 0);
+  --sidebar-border: oklch(0.922 0 0);
+  --sidebar-ring: oklch(0.708 0 0);
 }
 
-/* Dark boxes (grid cells, table headers, etc.) become light */
-.theme-light .theme-box {
-  background-color: #fff;
-  border-color: #dadce0;
-  color: #202124;
-}
-.theme-light .theme-box .text-white,
-.theme-light .theme-box [class*="text-[#e0e0e0]"] {
-  color: #202124;
-}
-.theme-light .theme-box [class*="text-[#8a8f98]"],
-.theme-light .theme-box [class*="text-[#5a5f68]"] {
-  color: #5f6368;
-}
-
-/* Gmail-like list/table headers: light grey bg, dark text */
-.theme-light .theme-box.sticky,
-.theme-light [class*="sticky"][class*="uppercase"] {
-  background-color: #f8f9fa !important;
-  color: #202124 !important;
-  border-color: #dadce0;
-}
-.theme-light .theme-box.sticky [class*="text-[#5a5f68]"],
-.theme-light .theme-box.sticky [class*="text-[#8a8f98]"],
-.theme-light [class*="sticky"][class*="uppercase"] [class*="text-[#5a5f68]"],
-.theme-light [class*="sticky"][class*="uppercase"] [class*="text-[#8a8f98]"] {
-  color: #202124 !important;
-}
-
-/* List/table rows: white bg, dark text, clear hover */
-.theme-light .panel-content [class*="hover:bg-white"]:hover {
-  background-color: #f1f3f4 !important;
-}
-.theme-light .panel-content [class*="border-white/\[0.03\]"] {
-  border-color: #e8eaed;
-}
-
-/* Primary text in lists (title, name) — near black */
-.theme-light .panel-content .flex span[class*="text-white"]:not(button) {
-  color: #202124;
-}
-/* Secondary text in lists — readable grey */
-.theme-light .panel-content [class*="text-[#8a8f98]"] {
-  color: #5f6368;
-}
-.theme-light .panel-content [class*="text-[#5a5f68]"] {
-  color: #5f6368;
+/* Dark theme — shadcn/ui neutral */
+.dark {
+  --background: oklch(0.145 0 0);
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.205 0 0);
+  --card-foreground: oklch(0.985 0 0);
+  --popover: oklch(0.269 0 0);
+  --popover-foreground: oklch(0.985 0 0);
+  --primary: oklch(0.922 0 0);
+  --primary-foreground: oklch(0.205 0 0);
+  --secondary: oklch(0.269 0 0);
+  --secondary-foreground: oklch(0.985 0 0);
+  --muted: oklch(0.269 0 0);
+  --muted-foreground: oklch(0.708 0 0);
+  --accent: oklch(0.371 0 0);
+  --accent-foreground: oklch(0.985 0 0);
+  --destructive: oklch(0.704 0.191 22.216);
+  --destructive-foreground: oklch(0.985 0 0);
+  --success: oklch(0.696 0.17 162.48);
+  --success-foreground: oklch(0.985 0 0);
+  --warning: oklch(0.769 0.188 70.08);
+  --warning-foreground: oklch(0.205 0 0);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 15%);
+  --ring: oklch(0.556 0 0);
+  --chart-1: oklch(0.488 0.243 264.376);
+  --chart-2: oklch(0.696 0.17 162.48);
+  --chart-3: oklch(0.769 0.188 70.08);
+  --chart-4: oklch(0.627 0.265 303.9);
+  --chart-5: oklch(0.645 0.246 16.439);
+  --sidebar: oklch(0.205 0 0);
+  --sidebar-foreground: oklch(0.985 0 0);
+  --sidebar-primary: oklch(0.922 0 0);
+  --sidebar-primary-foreground: oklch(0.205 0 0);
+  --sidebar-accent: oklch(0.269 0 0);
+  --sidebar-accent-foreground: oklch(0.985 0 0);
+  --sidebar-border: oklch(1 0 0 / 10%);
+  --sidebar-ring: oklch(0.439 0 0);
 }
 
-/* List containers: white bg, clear borders */
-.theme-light .panel-content [class*="border-white/\[0.06\]"] {
-  border-color: #dadce0;
-}
-.theme-light [class*="bg-[#131626]"],
-.theme-light [class*="bg-[#1c1e22]"],
-.theme-light [class*="bg-[#2a2d33]"] {
-  background-color: #fff !important;
-}
-.theme-light [class*="border-[#2a2d33]"] {
-  border-color: #dadce0;
-}
-
-/* Inputs and bordered controls in light theme (panels and modals) */
-.theme-light input[type="text"],
-.theme-light input[type="number"],
-.theme-light input[type="checkbox"],
-.theme-light select,
-.theme-light textarea,
-.theme-light [role="combobox"] {
-  background-color: #fff;
-  border-color: #dadce0;
-  color: #202124;
-}
-.theme-light input::placeholder,
-.theme-light textarea::placeholder {
-  color: #9aa0a6;
-}
-.theme-light .panel-content [class*="bg-white/[0.02]"] {
-  background-color: #f8f9fa;
-}
-.theme-light .panel-content [class*="bg-white/[0.04]"] {
-  background-color: #f1f3f4;
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --radius-sm: calc(var(--radius) - 0.25rem);
+  --radius-md: calc(var(--radius) - 0.125rem);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 0.25rem);
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji",
+    "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
 }

@@ -3,7 +3,7 @@ import { useThemeStore } from "../../stores/theme-store";
 import logoSrcTransp from "@assets/ipodRocks_transp.png?url";
 import logoSrcBlack from "@assets/ipodRocks_black.png?url";
 
-const APP_VERSION = "1.0.3a";
+const APP_VERSION = "1.0.3";
 
 const FEATURES: { title: string; desc: string }[] = [
   {
@@ -60,19 +60,15 @@ const FEATURES: { title: string; desc: string }[] = [
   },
 ];
 
-const textPrimary = "text-white [.theme-light_&]:text-[#1a1a1a]";
-const textMuted = "text-[#8a8f98] [.theme-light_&]:text-[#6b7280]";
-const textMutedSm = "text-[#5a5f68] [.theme-light_&]:text-[#6b7280]";
-
 export function WelcomePanel() {
   const { theme } = useThemeStore();
   const logoSrc = theme === "light" ? logoSrcTransp : logoSrcBlack;
   return (
     <div className="panel-content max-w-2xl mx-auto space-y-5">
       {/* Hero card: logo + about */}
-      <Card className="overflow-hidden border-white/[0.08] !bg-[#171716] [.theme-light_&]:!bg-gradient-to-br [.theme-light_&]:from-[#f0f4f8] [.theme-light_&]:to-[#e2e8f0] [.theme-light_&]:border-[#e2e8f0]">
-        <div className="flex flex-col sm:flex-row items-center gap-6 p-2 [.theme-light_&]:bg-transparent">
-          <div className="shrink-0 rounded-lg p-1 bg-[#171716] [.theme-light_&]:bg-transparent">
+      <Card className="overflow-hidden border-border bg-muted/30">
+        <div className="flex flex-col sm:flex-row items-center gap-6 p-2">
+          <div className="shrink-0 rounded-lg p-1 bg-muted/30">
             <img
               src={logoSrc}
               alt="iPodRocks"
@@ -80,15 +76,15 @@ export function WelcomePanel() {
             />
           </div>
           <div className="flex-1 text-center sm:text-left">
-            <h2 className={`text-2xl font-bold tracking-tight ${textPrimary}`}>
+            <h2 className="text-2xl font-bold tracking-tight text-foreground">
               iPodRocks
             </h2>
-            <p className={`text-sm mt-2 leading-relaxed ${textMuted}`}>
+            <p className="text-sm mt-2 leading-relaxed text-muted-foreground">
               A sync tool between your managed music library and a device running
               Rockbox — or any device that mounts as a drive so you can copy
               files to a folder.
             </p>
-            <p className={`text-xs mt-2 ${textMutedSm}`}>
+            <p className="text-xs mt-2 text-muted-foreground">
               Made by Pedro · v{APP_VERSION} — Electron Edition
             </p>
           </div>
@@ -96,26 +92,18 @@ export function WelcomePanel() {
       </Card>
 
       {/* Features */}
-      <Card
-        title="Features"
-        subtitle="What you can do with iPodRocks"
-        className="[.theme-light_&]:bg-white [.theme-light_&]:border-[#e2e8f0]"
-      >
+      <Card title="Features" subtitle="What you can do with iPodRocks">
         <ul className="space-y-4">
           {FEATURES.map((f, i) => (
             <li key={i} className="flex items-start gap-3">
-              <span
-                className={`mt-0.5 w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold shrink-0 bg-[#4a9eff]/20 text-[#4a9eff] [.theme-light_&]:bg-[#16a34a]/20 [.theme-light_&]:text-[#16a34a]`}
-              >
+              <span className="mt-0.5 w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold shrink-0 bg-primary/20 text-primary">
                 {i + 1}
               </span>
               <div className="min-w-0">
-                <span
-                  className={`font-semibold text-sm ${textPrimary}`}
-                >
+                <span className="font-semibold text-sm text-foreground">
                   {f.title}
                 </span>
-                <p className={`text-sm mt-0.5 leading-relaxed ${textMuted}`}>
+                <p className="text-sm mt-0.5 leading-relaxed text-muted-foreground">
                   {f.desc}
                 </p>
               </div>
@@ -125,18 +113,14 @@ export function WelcomePanel() {
       </Card>
 
       {/* Getting started */}
-      <Card
-        title="Get started"
-        subtitle="Use the sidebar to navigate"
-        className="[.theme-light_&]:bg-white [.theme-light_&]:border-[#e2e8f0]"
-      >
-        <p className={`text-sm leading-relaxed ${textMuted}`}>
-          Use <strong className={textPrimary}>Dashboard</strong> for an overview,{" "}
-          <strong className={textPrimary}>Library</strong> to add folders and scan,{" "}
-          <strong className={textPrimary}>Devices</strong> to add and configure each{" "}
-          Rockbox (or mountable) device, <strong className={textPrimary}>Playlists</strong> to
-          create smart, genius, or Savant playlists, and <strong className={textPrimary}>Sync</strong> to{" "}
-          copy music and podcasts to the device. Open <strong className={textPrimary}>Settings</strong> (gear{" "}
+      <Card title="Get started" subtitle="Use the sidebar to navigate">
+        <p className="text-sm leading-relaxed text-muted-foreground">
+          Use <strong className="text-foreground">Dashboard</strong> for an overview,{" "}
+          <strong className="text-foreground">Library</strong> to add folders and scan,{" "}
+          <strong className="text-foreground">Devices</strong> to add and configure each{" "}
+          Rockbox (or mountable) device, <strong className="text-foreground">Playlists</strong> to
+          create smart, genius, or Savant playlists, and <strong className="text-foreground">Sync</strong> to{" "}
+          copy music and podcasts to the device. Open <strong className="text-foreground">Settings</strong> (gear{" "}
           icon) to add your OpenRouter API key for Savant and Assistant features.
         </p>
       </Card>

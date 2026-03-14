@@ -511,8 +511,11 @@ export class LibraryScanner {
 
   /**
    * Backfill key/BPM/Camelot for tracks that need it (tag-based only).
-   * Includes: features_scanned = 0 OR camelot IS NULL (retry unkeyed tracks).
-   * @param maxTracks  Max tracks to process (from percent of library). Default 500.
+   * Only selects tracks not yet scanned for features — once tag extraction
+   * has been attempted, we don't retry (tags won't change unless the file
+   * does, which is caught by a normal library scan).
+   *
+   * @param maxTracks  Max tracks to process (from percent of library).
    * @param progressCallback  Optional callback for progress updates.
    * @param signal  Optional AbortSignal to cancel the operation.
    * @returns Number of tracks processed.
@@ -532,7 +535,7 @@ export class LibraryScanner {
       .prepare(
         `SELECT id, path FROM tracks
          WHERE content_type = 'music'
-           AND (features_scanned = 0 OR camelot IS NULL)
+           AND features_scanned = 0
          LIMIT ?`
       )
       .all(maxTracks) as { id: number; path: string }[];
@@ -571,7 +574,7 @@ export class LibraryScanner {
           row.id
         );
         processed++;
-        ok = !!features.key || !!features.bpm || !!features.camelot;
+        ok = !!features.camelot;
       } catch {
         this.db
           .prepare("UPDATE tracks SET features_scanned = 1 WHERE id = ?")
@@ -594,7 +597,12 @@ export class LibraryScanner {
 
   /**
    * Sample tracks by genre for round-robin distribution.
-   * Returns array of {id, path} in round-robin order across genres.
+   * Only selects tracks that still need analysis (no camelot data yet)
+   * so that already-processed tracks are never re-analyzed.
+   *
+   * @param totalMusic  Total music tracks in the library (for percent calc).
+   * @param percent  Percent of library to target (capped by available tracks).
+   * @returns Array of {id, path} in round-robin order across genres.
    */
   private sampleTracksByGenre(
     totalMusic: number,
@@ -608,7 +616,8 @@ export class LibraryScanner {
       .prepare(
         `SELECT t.id, t.path, COALESCE(t.genre_id, 0) as genre_id
          FROM tracks t
-         WHERE t.content_type = 'music'`
+         WHERE t.content_type = 'music'
+           AND t.camelot IS NULL`
       )
       .all() as Array<{ id: number; path: string; genre_id: number }>;
 
@@ -710,7 +719,7 @@ export class LibraryScanner {
             row.id
           );
           processed++;
-          ok = true;
+          ok = !!features.camelot;
         } else {
           this.db
             .prepare("UPDATE tracks SET features_scanned = 1 WHERE id = ?")

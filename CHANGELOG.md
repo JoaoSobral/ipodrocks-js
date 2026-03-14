@@ -1,8 +1,22 @@
 # Changelog
 
-## [1.0.3a] — Unreleased
+## [1.0.3] — 2026-03-14
 
 ### Features
+
+#### Harmonic Mixing & Savant AI
+
+- **AI-driven harmonic selection** — Savant playlists now send Camelot key data to the LLM and instruct it to prefer harmonically compatible tracks (Camelot ±1 or same-number A/B swap) for smooth transitions, similar to Apple Genius. The existing post-processing reorder is retained for final polish.
+- **Harmonic info banners** — Library panel and Playlist Savant tab now show harmonic coverage stats (key data count, BPM-only count, percentage) with guidance on enabling extraction in Settings.
+- **Settings redesign** — Settings panel split into "OpenRouter API" and "Harmonic Analysis" card sections with shadcn-style layout, toggle switches, field descriptions, and BPM-only count display.
+
+#### Library Panel Layout
+
+- **Compact layout** — Library Folders and Shadow Libraries now sit side-by-side in a two-column grid with tighter padding. The harmonic data banner is a slim inline alert instead of a full card. Action buttons (remove, rebuild, delete) appear only on hover. The track list starts much higher on screen.
+
+#### Look & Feel
+
+- **Updated UI across the app** — Panels, modals, buttons, inputs, and forms have been refreshed with a more consistent shadcn-inspired design. Improved spacing, typography, and component styling for a cleaner, more polished experience.
 
 #### Device Check — Codec Mismatch Clarity
 
@@ -29,6 +43,8 @@
 
 ### Bug fixes
 
+- **Backfill reported false success** — Backfill counted tracks with BPM-only as "with key/BPM", but Savant only uses Camelot data. Backfill now only counts tracks where Camelot key was actually extracted.
+- **Backfill re-processed already-analyzed tracks** — Tag-based backfill retried BPM-only tracks every run (they'll never have key tags). Essentia backfill sampled from the entire library including tracks that already had Camelot data. Both methods now skip already-processed tracks, so cancelling and re-running only processes what's left.
 - **Empty directories after orphan removal** — When removing orphan or codec-mismatch files, empty folders are now cleaned up instead of being left behind.
 - **Codec replacement files in wrong folder** — When transcoding to a different codec (e.g. MP3→OPUS), replacement files are now placed in the same folder as the originals instead of creating duplicate folders with slightly different names (e.g. `Album (20th _ Deluxe)` vs `Album (20th - Deluxe)`).
 - **Album cover art not copied during sync** — Common cover files (`cover.jpg`, `cover.jpeg`, `folder.jpg`, `front.png`, etc.) in album folders are now copied to the device alongside audio files. Previously, only audio was synced, so album art was missing on the device (e.g. when using Musepack).

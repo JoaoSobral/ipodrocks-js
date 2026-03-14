@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback, useMemo } from "react";
 import { Card } from "../common/Card";
 import { Button } from "../common/Button";
+import { ErrorBox } from "../common/ErrorBox";
 import { Select } from "../common/Select";
 import { useDeviceStore } from "../../stores/device-store";
 import { useSyncStore } from "../../stores/sync-store";
@@ -15,7 +16,11 @@ import { SyncProgressModal } from "../modals/SyncProgressModal";
 import type { Track, Playlist, ShadowLibrary } from "@shared/types";
 import type { CustomSelections, SyncOptions } from "@shared/types";
 
-const statusColors = { success: "#22c55e", error: "#ef4444", warning: "#f5bf42" } as const;
+const statusColors = {
+  success: "var(--success)",
+  error: "var(--destructive)",
+  warning: "var(--warning)",
+} as const;
 const statusLabels = {
   success: "Success",
   error: "Failed",
@@ -324,9 +329,9 @@ export function SyncPanel() {
       return { mode: "Direct Copy", source: shadowLabel, color: "#a78bfa" };
     }
     if (isDirect) {
-      return { mode: "Direct Copy", source: "Primary Library", color: "#22c55e" };
+      return { mode: "Direct Copy", source: "Primary Library", color: "var(--success)" };
     }
-    return { mode: "Transcode", source: codecName, color: "#f5bf42" };
+    return { mode: "Transcode", source: codecName, color: "var(--warning)" };
   }, [selectedDevice, shadowLibs]);
 
   const handleStart = useCallback(() => {
@@ -431,7 +436,7 @@ export function SyncPanel() {
               className="inline-block h-2 w-2 rounded-full shrink-0"
               style={{ backgroundColor: transferModeLabel.color }}
             />
-            <span className="text-[#e0e0e0]">
+            <span className="text-foreground">
               <span className="font-medium" style={{ color: transferModeLabel.color }}>
                 {transferModeLabel.mode}
               </span>
@@ -446,7 +451,7 @@ export function SyncPanel() {
       <Card title="Sync Configuration">
         <div className="grid grid-cols-2 gap-4">
           <div>
-            <p className="text-xs font-medium text-[#8a8f98] mb-2">Sync Type</p>
+            <p className="text-xs font-medium text-muted-foreground mb-2">Sync Type</p>
             <div className="flex gap-4">
               {(["full", "custom"] as const).map((type) => (
                 <label key={type} className="flex items-center gap-2 cursor-default">
@@ -455,49 +460,49 @@ export function SyncPanel() {
                     name="syncType"
                     checked={syncType === type}
                     onChange={() => setSyncType(type)}
-                    className="accent-[#4a9eff]"
+                    className="accent-primary"
                   />
-                  <span className="text-sm text-[#e0e0e0] capitalize">{type}</span>
+                  <span className="text-sm text-foreground capitalize">{type}</span>
                 </label>
               ))}
             </div>
             {syncType === "full" && (
-              <div className="flex flex-wrap gap-6 mt-3 pl-5 border-l-2 border-white/[0.06]">
+              <div className="flex flex-wrap gap-6 mt-3 pl-5 border-l-2 border-border">
                 <label className="flex items-center gap-2 cursor-default">
                   <input
                     type="checkbox"
                     checked={fullIncludeMusic}
                     onChange={(e) => setFullIncludeMusic(e.target.checked)}
-                    className="accent-[#4a9eff] rounded"
+                    className="accent-primary rounded"
                   />
-                  <span className="text-sm text-[#e0e0e0]">Music</span>
+                  <span className="text-sm text-foreground">Music</span>
                 </label>
                 <label className="flex items-center gap-2 cursor-default">
                   <input
                     type="checkbox"
                     checked={fullIncludePodcasts}
                     onChange={(e) => setFullIncludePodcasts(e.target.checked)}
-                    className="accent-[#4a9eff] rounded"
+                    className="accent-primary rounded"
                   />
-                  <span className="text-sm text-[#e0e0e0]">Podcasts</span>
+                  <span className="text-sm text-foreground">Podcasts</span>
                 </label>
                 <label className="flex items-center gap-2 cursor-default">
                   <input
                     type="checkbox"
                     checked={fullIncludeAudiobooks}
                     onChange={(e) => setFullIncludeAudiobooks(e.target.checked)}
-                    className="accent-[#4a9eff] rounded"
+                    className="accent-primary rounded"
                   />
-                  <span className="text-sm text-[#e0e0e0]">Audiobooks</span>
+                  <span className="text-sm text-foreground">Audiobooks</span>
                 </label>
                 <label className="flex items-center gap-2 cursor-default">
                   <input
                     type="checkbox"
                     checked={fullIncludePlaylists}
                     onChange={(e) => setFullIncludePlaylists(e.target.checked)}
-                    className="accent-[#4a9eff] rounded"
+                    className="accent-primary rounded"
                   />
-                  <span className="text-sm text-[#e0e0e0]">Playlists</span>
+                  <span className="text-sm text-foreground">Playlists</span>
                 </label>
               </div>
             )}
@@ -519,18 +524,18 @@ export function SyncPanel() {
               type="checkbox"
               checked={ignoreSpaceCheck}
               onChange={(e) => setIgnoreSpaceCheck(e.target.checked)}
-              className="accent-[#4a9eff] rounded"
+              className="accent-primary rounded"
             />
-            <span className="text-sm text-[#8a8f98]">Ignore space check</span>
+            <span className="text-sm text-muted-foreground">Ignore space check</span>
           </label>
           <label className="flex items-center gap-2 cursor-default">
             <input
               type="checkbox"
               checked={skipAlbumArtwork}
               onChange={(e) => setSkipAlbumArtwork(e.target.checked)}
-              className="accent-[#4a9eff] rounded"
+              className="accent-primary rounded"
             />
-            <span className="text-sm text-[#8a8f98]">Not syncing album artwork</span>
+            <span className="text-sm text-muted-foreground">Not syncing album artwork</span>
           </label>
         </div>
       </Card>
@@ -549,20 +554,20 @@ export function SyncPanel() {
             ].map(({ key, title, items }) => (
               <div
                 key={key}
-                className="theme-box rounded-lg border border-[#2a2d33] bg-[#1c1e22] p-3 flex flex-col max-h-[350px]"
+                className="theme-box rounded-lg border border-border bg-card p-3 flex flex-col max-h-[350px]"
               >
-                <p className="text-xs font-medium text-[#8a8f98] mb-2 shrink-0">{title}</p>
+                <p className="text-xs font-medium text-muted-foreground mb-2 shrink-0">{title}</p>
                 <div className="min-h-0 flex-1 overflow-y-auto space-y-1">
                   {items.length === 0 ? (
-                    <p className="text-xs text-[#5a5f68]">No items</p>
+                    <p className="text-xs text-muted-foreground">No items</p>
                   ) : (
                     items.map((label) => {
                       const isSelected = affectedItems.selected[key].has(label);
                       const isPartial = affectedItems.partial[key].has(label);
                       const checked = isSelected || isPartial;
                       const bg =
-                        isSelected ? "bg-[#22c55e]/20 text-[#22c55e]" :
-                        isPartial ? "bg-[#f5bf42]/20 text-[#f5bf42]" : "";
+                        isSelected ? "bg-success/20 text-success" :
+                        isPartial ? "bg-warning/20 text-warning" : "";
                       const pl = key === "playlists" ? (Array.isArray(playlists) ? playlists : []).find((p) => (p?.name ?? "") === label) : null;
                       const typeLabel =
                         pl?.typeName === "genius" ? "Genius" : pl?.typeName === "smart" ? "Smart" : null;
@@ -575,7 +580,7 @@ export function SyncPanel() {
                             type="checkbox"
                             checked={checked}
                             onChange={() => toggleSelection(key, label, !isSelected)}
-                            className="accent-[#4a9eff] rounded"
+                            className="accent-primary rounded"
                           />
                           <span className="truncate min-w-0">{label}</span>
                           {typeLabel && (
@@ -650,16 +655,16 @@ export function SyncPanel() {
           </div>
           <div className="grid grid-cols-4 gap-4">
             {[
-              { label: "Synced", value: results.synced, color: "#22c55e" },
-              { label: "Skipped", value: results.skipped, color: "#8a8f98" },
-              { label: "Removed", value: results.removed, color: "#f5bf42" },
-              { label: "Errors", value: results.errors, color: "#ef4444" },
+              { label: "Synced", value: results.synced, color: "var(--success)" },
+              { label: "Skipped", value: results.skipped, color: "var(--muted-foreground)" },
+              { label: "Removed", value: results.removed, color: "var(--warning)" },
+              { label: "Errors", value: results.errors, color: "var(--destructive)" },
             ].map((stat) => (
               <div key={stat.label} className="text-center">
                 <p className="text-xl font-bold" style={{ color: stat.color }}>
                   {stat.value}
                 </p>
-                <p className="text-[10px] text-[#5a5f68]">{stat.label}</p>
+                <p className="text-[10px] text-muted-foreground">{stat.label}</p>
               </div>
             ))}
           </div>

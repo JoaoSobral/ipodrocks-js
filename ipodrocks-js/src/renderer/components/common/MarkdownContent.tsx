@@ -18,32 +18,32 @@ export function MarkdownContent({ content, className = "" }: MarkdownContentProp
             <p className="mb-2 last:mb-0 leading-relaxed">{children}</p>
           ),
           strong: ({ children }) => (
-            <strong className="font-semibold text-[#e8eaed] [.theme-light_&]:text-[#1a1a1a]">
+            <strong className="font-semibold text-foreground">
               {children}
             </strong>
           ),
           em: ({ children }) => (
-            <em className="italic text-[#c0c4cc] [.theme-light_&]:text-[#4b5563]">
+            <em className="italic text-muted-foreground">
               {children}
             </em>
           ),
           h1: ({ children }) => (
-            <h1 className="text-base font-semibold mt-3 mb-1.5 first:mt-0 text-white [.theme-light_&]:text-[#1a1a1a]">
+            <h1 className="text-base font-semibold mt-3 mb-1.5 first:mt-0 text-foreground">
               {children}
             </h1>
           ),
           h2: ({ children }) => (
-            <h2 className="text-sm font-semibold mt-3 mb-1 first:mt-0 text-[#e0e0e0] [.theme-light_&]:text-[#374151]">
+            <h2 className="text-sm font-semibold mt-3 mb-1 first:mt-0 text-foreground">
               {children}
             </h2>
           ),
           h3: ({ children }) => (
-            <h3 className="text-sm font-medium mt-2 mb-1 text-[#d0d4d8] [.theme-light_&]:text-[#4b5563]">
+            <h3 className="text-sm font-medium mt-2 mb-1 text-muted-foreground">
               {children}
             </h3>
           ),
           blockquote: ({ children }) => (
-            <blockquote className="border-l-2 border-[#4a9eff]/40 pl-3 my-2 text-[#b0b4b8] [.theme-light_&]:border-[#4a9eff]/50 [.theme-light_&]:text-[#6b7280]">
+            <blockquote className="border-l-2 border-primary/40 pl-3 my-2 text-muted-foreground">
               {children}
             </blockquote>
           ),
@@ -55,7 +55,7 @@ export function MarkdownContent({ content, className = "" }: MarkdownContentProp
                 href={safeHref}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-[#4a9eff] hover:text-[#6ab0ff] underline [.theme-light_&]:text-[#2563eb] [.theme-light_&]:hover:text-[#3b82f6]"
+                className="text-primary hover:text-primary/80 underline"
               >
                 {children}
               </a>
@@ -63,8 +63,7 @@ export function MarkdownContent({ content, className = "" }: MarkdownContentProp
           },
           code: ({ className: langClass, children, ...props }) => {
             const isBlock = langClass?.startsWith("language-");
-            const codeBg =
-              "bg-white/10 [.theme-light_&]:bg-black/[0.06]";
+            const codeBg = "bg-muted/50";
             return isBlock ? (
               <code
                 className={`block p-2 rounded text-xs overflow-x-auto my-1.5 ${codeBg}`}
@@ -95,7 +94,7 @@ export function MarkdownContent({ content, className = "" }: MarkdownContentProp
             <li className="leading-relaxed pl-0.5">{children}</li>
           ),
           hr: () => (
-            <hr className="border-white/10 my-2 [.theme-light_&]:border-[#e5e7eb]" />
+            <hr className="border-border my-2" />
           ),
         }}
       >

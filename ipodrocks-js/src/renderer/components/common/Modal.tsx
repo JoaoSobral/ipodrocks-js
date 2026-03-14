@@ -11,6 +11,8 @@ interface ModalProps {
   closeOnBackdropClick?: boolean;
   /** When true, modal is ~15% wider (e.g. for multi-step forms). */
   wide?: boolean;
+  /** Override the max-width class entirely (e.g. "max-w-4xl"). */
+  width?: string;
   /** Icon for the top-right close button. Default "✕". Use "−" for minimize/background. */
   closeIcon?: string;
 }
@@ -23,6 +25,7 @@ export function Modal({
   className = "",
   closeOnBackdropClick = false,
   wide = false,
+  width,
   closeIcon = "✕",
 }: ModalProps) {
   useEffect(() => {
@@ -46,25 +49,25 @@ export function Modal({
         aria-hidden
       />
       <div
-        className={`relative bg-[#131626] rounded-2xl border border-white/[0.08] shadow-2xl w-full mx-4 [.theme-light_&]:bg-white [.theme-light_&]:border-[#e2e8f0] ${wide ? "max-w-[37rem]" : "max-w-lg"} ${className}`}
+        className={`relative bg-card rounded-2xl border border-border shadow-2xl w-full mx-4 ${width ?? (wide ? "max-w-[37rem]" : "max-w-lg")} ${className}`}
         onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"
       >
-        <div className="flex items-center justify-between px-6 py-4 border-b border-white/[0.06] [.theme-light_&]:border-[#e2e8f0]">
-          <h3 className="text-base font-semibold text-white [.theme-light_&]:text-[#1a1a1a]">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-border">
+          <h3 className="text-base font-semibold text-card-foreground">
             {title}
           </h3>
           <button
             type="button"
             onClick={onClose}
-            className="text-[#5a5f68] hover:text-white transition-colors text-lg leading-none w-8 h-8 flex items-center justify-center [.theme-light_&]:text-[#6b7280] [.theme-light_&]:hover:text-[#1a1a1a]"
+            className="text-muted-foreground hover:text-foreground transition-colors text-lg leading-none w-8 h-8 flex items-center justify-center"
             title={closeIcon === "−" ? "Minimize (build continues in background)" : "Close"}
           >
             {closeIcon}
           </button>
         </div>
-        <div className="p-6 [.theme-light_&]:text-[#1a1a1a]">{children}</div>
+        <div className="p-6 text-card-foreground overflow-y-auto max-h-[80vh]">{children}</div>
       </div>
     </div>
   );

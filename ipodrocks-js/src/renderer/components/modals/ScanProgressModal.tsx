@@ -4,6 +4,7 @@ import { scanLibrary, scanCancel, onScanProgress } from "@renderer/ipc/api";
 import { Modal } from "../common/Modal";
 import { Button } from "../common/Button";
 import { ProgressBar } from "../common/ProgressBar";
+import { ErrorBox } from "../common/ErrorBox";
 
 interface ScanFolder {
   name: string;
@@ -25,16 +26,16 @@ interface ScanProgressModalProps {
 function StatusIcon({ status }: { status: ScanProgress["status"] }) {
   switch (status) {
     case "added":
-      return <span className="text-[#22c55e]" title="Added">▶</span>;
+      return <span className="text-success" title="Added">▶</span>;
     case "skipped":
-      return <span className="text-[#f5bf42]" title="Skipped">◐</span>;
+      return <span className="text-warning" title="Skipped">◐</span>;
     case "error":
-      return <span className="text-[#ef4444]" title="Error">✕</span>;
+      return <span className="text-destructive" title="Error">✕</span>;
     case "complete":
     case "cancelled":
-      return <span className="text-[#8a8f98]">✓</span>;
+      return <span className="text-muted-foreground">✓</span>;
     default:
-      return <span className="text-[#5a5f68]">…</span>;
+      return <span className="text-muted-foreground">…</span>;
   }
 }
 
@@ -107,7 +108,7 @@ export function ScanProgressModal({ open, onClose, folders }: ScanProgressModalP
       <div className="flex flex-col gap-4">
         <ProgressBar value={pct} showPercent variant={variant} />
 
-        <div className="flex items-center justify-between text-xs text-[#8a8f98]">
+        <div className="flex items-center justify-between text-xs text-muted-foreground">
           <span className="truncate max-w-[60%]">
             {progress?.file ? `Scanning: ${progress.file}` : "Preparing…"}
           </span>
@@ -119,13 +120,13 @@ export function ScanProgressModal({ open, onClose, folders }: ScanProgressModalP
         {/* Recent files */}
         <div
           ref={listRef}
-          className="h-48 overflow-y-auto rounded-lg border border-white/10 bg-black/20 p-3 text-xs font-mono"
+          className="h-48 overflow-y-auto rounded-lg border border-border bg-muted/30 p-3 text-xs font-mono"
         >
           {recentFiles.length === 0 && (
-            <p className="text-[#5a5f68]">Waiting for files…</p>
+            <p className="text-muted-foreground">Waiting for files…</p>
           )}
           {recentFiles.map((rf, i) => (
-            <div key={i} className="flex items-start gap-2 py-0.5 text-[#8a8f98]">
+            <div key={i} className="flex items-start gap-2 py-0.5 text-muted-foreground">
               <span className="shrink-0 w-4 flex justify-center">
                 <StatusIcon status={rf.status} />
               </span>
@@ -136,43 +137,43 @@ export function ScanProgressModal({ open, onClose, folders }: ScanProgressModalP
 
         {/* Summary on completion */}
         {result && (
-          <div className="rounded-lg border border-white/10 bg-white/[0.03] p-3 text-sm">
+          <div className="rounded-lg border border-border bg-muted/30 p-3 text-sm">
             <div className="grid grid-cols-3 gap-3 text-center">
               <div>
-                <p className="text-lg font-semibold text-white">{result.filesProcessed}</p>
-                <p className="text-xs text-[#8a8f98]">Processed</p>
+                <p className="text-lg font-semibold text-foreground">{result.filesProcessed}</p>
+                <p className="text-xs text-muted-foreground">Processed</p>
               </div>
               <div>
-                <p className="text-lg font-semibold text-[#22c55e]">{result.filesAdded}</p>
-                <p className="text-xs text-[#8a8f98]">Added</p>
+                <p className="text-lg font-semibold text-success">{result.filesAdded}</p>
+                <p className="text-xs text-muted-foreground">Added</p>
               </div>
               <div>
-                <p className="text-lg font-semibold text-[#8a8f98]">
+                <p className="text-lg font-semibold text-muted-foreground">
                   {result.filesProcessed - result.filesAdded}
                 </p>
-                <p className="text-xs text-[#8a8f98]">Skipped</p>
+                <p className="text-xs text-muted-foreground">Skipped</p>
               </div>
             </div>
             {result.cancelled && (
-              <p className="mt-2 text-center text-xs text-[#f5bf42]">Scan was cancelled</p>
+              <p className="mt-2 text-center text-xs text-warning">Scan was cancelled</p>
             )}
             {result.errors && result.errors.length > 0 && (
-              <div className="mt-3 rounded-lg border border-[#ef4444]/30 bg-[#ef4444]/10 p-3">
-                <p className="text-xs font-semibold text-[#ef4444] mb-2">Problems ({result.errors.length})</p>
-                <ul className="max-h-32 overflow-y-auto text-xs text-[#e0e0e0] space-y-1 font-mono">
-                  {result.errors.map((line, i) => (
-                    <li key={i} className="truncate">{line}</li>
-                  ))}
-                </ul>
+              <div className="mt-3">
+                <ErrorBox>
+                  <p className="text-xs font-semibold mb-2">Problems ({result.errors.length})</p>
+                  <ul className="max-h-32 overflow-y-auto text-xs text-foreground space-y-1 font-mono">
+                    {result.errors.map((line, i) => (
+                      <li key={i} className="truncate">{line}</li>
+                    ))}
+                  </ul>
+                </ErrorBox>
               </div>
             )}
           </div>
         )}
 
         {error && (
-          <div className="rounded-lg border border-[#ef4444]/30 bg-[#ef4444]/10 px-3 py-2 text-sm text-[#ef4444]">
-            {error}
-          </div>
+          <ErrorBox>{error}</ErrorBox>
         )}
 
         <div className="flex justify-end gap-2 pt-1">

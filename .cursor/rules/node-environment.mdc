@@ -1,0 +1,12 @@
+---
+description: Node.js and Electron environment details for this project
+alwaysApply: true
+---
+
+# Node.js Environment
+
+- System Node.js version: **v25** (NODE_MODULE_VERSION 141)
+- Electron ships its own Node (currently v22 / MODULE_VERSION 133)
+- Native modules (e.g. `better-sqlite3`) must be compiled for Electron's Node, not the system Node
+- Use `npx electron-builder install-app-deps` (the `postinstall` script) to rebuild native modules for Electron — never use bare `npm rebuild` as it targets the system Node and breaks the Electron app
+- After any `npm install` or native dependency change, verify with `npm run preview` that the app still launches

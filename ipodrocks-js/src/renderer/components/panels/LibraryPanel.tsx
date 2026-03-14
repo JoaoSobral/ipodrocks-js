@@ -9,8 +9,14 @@ import { Select } from "../common/Select";
 import { Modal } from "../common/Modal";
 import { ProgressBar } from "../common/ProgressBar";
 import { EmptyState } from "../common/EmptyState";
+import { Spinner } from "../common/Spinner";
+import { Label } from "../common/Label";
+import { TableHeader } from "../common/TableHeader";
+import { Badge } from "../common/Badge";
+import { ListRow } from "../common/ListRow";
 import { ScanProgressModal } from "../modals/ScanProgressModal";
 import { useLibraryStore } from "../../stores/library-store";
+import { useUIStore } from "../../stores/ui-store";
 import {
   addLibraryFolder,
   removeLibraryFolder,
@@ -30,6 +36,7 @@ import {
   isMpcencAvailable,
   getMpcRemindDisabled,
   setMpcRemindDisabled,
+  checkSavantKeyData,
 } from "../../ipc/api";
 import { MpcUnavailableModal } from "../modals/MpcUnavailableModal";
 import type { CodecConfig } from "../../ipc/api";
@@ -109,6 +116,13 @@ export function LibraryPanel() {
     name: string;
   } | null>(null);
   const [keepFilesWhenDelete, setKeepFilesWhenDelete] = useState(false);
+  const [harmonicKeyData, setHarmonicKeyData] = useState<{
+    keyedCount: number;
+    totalCount: number;
+    coveragePct: number;
+    bpmOnlyCount: number;
+  } | null>(null);
+  const openSettings = useUIStore((s) => s.openSettings);
 
   const addShadowLog = useCallback(
     (message: string, level: ShadowBuildProgress["logLevel"]) => {
@@ -149,6 +163,10 @@ export function LibraryPanel() {
     getCodecConfigs().then(setCodecConfigs).catch(console.error);
     isMpcencAvailable().then((r) => setMpcAvailable(r.available)).catch(() => setMpcAvailable(false));
     getMpcRemindDisabled().then((r) => setMpcRemindDisabledState(r.disabled)).catch(console.error);
+  }, []);
+
+  useEffect(() => {
+    checkSavantKeyData().then(setHarmonicKeyData).catch(console.error);
   }, []);
 
   useEffect(() => {
@@ -361,117 +379,176 @@ export function LibraryPanel() {
         <Button
           variant="danger"
           size="sm"
-          className="ml-auto bg-[#ef4444] text-white hover:bg-[#dc2626] border-0"
+          className="ml-auto"
           onClick={handleClearCache}
           title="Clear scan cache (content hashes)"
         >
           Clear scan cache
         </Button>
         {cacheCleared !== null && (
-          <span className="text-xs text-[#22c55e]">Cleared {cacheCleared} hash entries</span>
+          <span className="text-xs text-success">Cleared {cacheCleared} hash entries</span>
         )}
-        <span className="text-xs text-[#5a5f68]">
+        <span className="text-xs text-muted-foreground">
           {stats ? `${stats.totalTracks.toLocaleString()} tracks` : ""}
         </span>
       </div>
 
-      {/* Folders */}
-      {folders.length > 0 && (
-        <Card title="Library Folders">
-          <div className="space-y-2">
-            {folders.map((f) => (
-              <div key={f.id} className="flex items-center gap-3 p-2.5 rounded-lg bg-white/[0.02]">
-                <div className="w-7 h-7 rounded bg-[#4a9eff]/10 flex items-center justify-center text-xs text-[#4a9eff]">
-                  📁
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-white truncate">{f.name}</p>
-                  <p className="text-[10px] text-[#5a5f68] truncate">
-                    {f.path} · {f.contentType}
-                  </p>
-                </div>
-                <Button variant="ghost" size="sm" onClick={() => handleRemoveFolder(f.id)}>
-                  ✕
-                </Button>
-              </div>
-            ))}
-          </div>
-        </Card>
+      {/* Harmonic data — slim inline alert */}
+      {harmonicKeyData && harmonicKeyData.totalCount > 0 && (
+        <div className="flex items-center gap-3 px-3 py-2 rounded-lg border border-border bg-muted/30 text-xs">
+          <span className="text-primary shrink-0">♫</span>
+          <span className="text-muted-foreground flex-1 min-w-0 truncate">
+            <span className="font-medium text-foreground">
+              {harmonicKeyData.keyedCount}/{harmonicKeyData.totalCount}
+            </span>
+            {" tracks have key data "}
+            <span className="text-muted-foreground">
+              ({harmonicKeyData.coveragePct}%)
+            </span>
+            {harmonicKeyData.bpmOnlyCount > 0 && (
+              <span className="text-muted-foreground">
+                {" · "}{harmonicKeyData.bpmOnlyCount} BPM-only
+              </span>
+            )}
+            {harmonicKeyData.coveragePct < 100 && (
+              <span className="text-muted-foreground">
+                {" — Enable harmonic extraction in Settings and re-scan"}
+              </span>
+            )}
+          </span>
+          {openSettings && harmonicKeyData.coveragePct < 100 && (
+            <Button variant="ghost" size="sm" onClick={openSettings}>
+              Settings
+            </Button>
+          )}
+        </div>
       )}
 
-      {/* Shadow Libraries */}
-      <Card title="Shadow Libraries">
-        {shadowLibs.length === 0 ? (
-          <p className="text-xs text-[#5a5f68] mb-3">
-            No shadow libraries yet. Create one to pre-transcode your library.
-          </p>
-        ) : (
-          <div className="space-y-2 mb-3">
-            {shadowLibs.map((sl) => (
-              <div
-                key={sl.id}
-                className="flex items-center gap-3 p-2.5 rounded-lg bg-white/[0.02]"
-              >
-                <div className="w-7 h-7 rounded bg-[#a855f7]/10 flex items-center justify-center text-xs text-[#a855f7]">
-                  ◈
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <p className="text-sm font-medium text-white truncate">
-                      {sl.name} ({formatShadowCodecAndBitrate(sl)})
+      {/* Folders + Shadow Libraries — compact side-by-side grid */}
+      <div className="grid grid-cols-2 gap-3">
+        {/* Library Folders */}
+        <Card className="!p-3">
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="text-xs font-semibold text-card-foreground">
+              Library Folders
+            </h3>
+          </div>
+          {folders.length === 0 ? (
+            <p className="text-[11px] text-muted-foreground">
+              No folders yet — add one above.
+            </p>
+          ) : (
+            <div className="space-y-1">
+              {folders.map((f) => (
+                <div
+                  key={f.id}
+                  className="flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-muted/30 transition-colors group"
+                >
+                  <span className="text-xs text-primary shrink-0">📁</span>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-medium text-foreground truncate leading-tight">
+                      {f.name}
                     </p>
-                    <span
-                      className={`px-1.5 py-0.5 text-[9px] font-medium rounded shrink-0 ${
-                        sl.status === "ready"
-                          ? "bg-[#22c55e]/15 text-[#22c55e]"
-                          : sl.status === "building"
-                            ? "bg-[#f5bf42]/15 text-[#f5bf42]"
-                            : sl.status === "error"
-                              ? "bg-[#ef4444]/15 text-[#ef4444]"
-                              : "bg-white/10 text-[#8a8f98]"
-                      }`}
-                    >
-                      {sl.status === "ready"
-                        ? "Synced"
-                        : sl.status === "building"
-                          ? "Building"
-                          : sl.status.toUpperCase()}
-                    </span>
+                    <p className="text-[10px] text-muted-foreground truncate leading-tight">
+                      {f.path} · {f.contentType}
+                    </p>
                   </div>
-                  <p className="text-[10px] text-[#5a5f68] truncate">
-                    {sl.path} · {sl.trackCount} tracks · {formatShadowSize(sl.totalBytes)}
-                  </p>
-                </div>
-                <div className="flex gap-1.5">
                   <Button
                     variant="ghost"
                     size="sm"
-                    onClick={() => handleRebuildShadow(sl.id)}
-                    title="Rebuild"
-                  >
-                    ⟳
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => openDeleteShadowModal(sl)}
-                    title="Delete"
+                    className="opacity-0 group-hover:opacity-100 transition-opacity !p-1"
+                    onClick={() => handleRemoveFolder(f.id)}
                   >
                     ✕
                   </Button>
                 </div>
-              </div>
-            ))}
+              ))}
+            </div>
+          )}
+        </Card>
+
+        {/* Shadow Libraries */}
+        <Card className="!p-3">
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="text-xs font-semibold text-card-foreground">
+              Shadow Libraries
+            </h3>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="!text-[10px] !py-0.5 !px-2"
+              onClick={() => setShowCreateShadow(true)}
+            >
+              + Create
+            </Button>
           </div>
-        )}
-        <Button
-          variant="secondary"
-          size="sm"
-          onClick={() => setShowCreateShadow(true)}
-        >
-          + Create Shadow Library
-        </Button>
-      </Card>
+          {shadowLibs.length === 0 ? (
+            <p className="text-[11px] text-muted-foreground">
+              No shadow libraries yet.
+            </p>
+          ) : (
+            <div className="space-y-1">
+              {shadowLibs.map((sl) => (
+                <div
+                  key={sl.id}
+                  className="flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-muted/30 transition-colors group"
+                >
+                  <span className="text-xs text-primary shrink-0">◈</span>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-1.5">
+                      <p className="text-xs font-medium text-foreground truncate leading-tight">
+                        {sl.name} ({formatShadowCodecAndBitrate(sl)})
+                      </p>
+                      <Badge
+                        variant={
+                          sl.status === "ready"
+                            ? "success"
+                            : sl.status === "building"
+                              ? "warning"
+                              : sl.status === "error"
+                                ? "destructive"
+                                : "muted"
+                        }
+                        className="shrink-0 !text-[8px] !px-1 !py-0"
+                      >
+                        {sl.status === "ready"
+                          ? "Synced"
+                          : sl.status === "building"
+                            ? "Building"
+                            : sl.status.toUpperCase()}
+                      </Badge>
+                    </div>
+                    <p className="text-[10px] text-muted-foreground truncate leading-tight">
+                      {sl.path} · {sl.trackCount} tracks
+                      {" · "}{formatShadowSize(sl.totalBytes)}
+                    </p>
+                  </div>
+                  <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="!p-1"
+                      onClick={() => handleRebuildShadow(sl.id)}
+                      title="Rebuild"
+                    >
+                      ⟳
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="!p-1"
+                      onClick={() => openDeleteShadowModal(sl)}
+                      title="Delete"
+                    >
+                      ✕
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </Card>
+      </div>
 
       {/* Track list or empty state */}
       {folders.length === 0 && !loading ? (
@@ -487,15 +564,15 @@ export function LibraryPanel() {
         />
       ) : (
         <div className="flex-1 flex flex-col min-h-0 min-w-0">
-          <div className="flex gap-1 p-1 rounded-lg bg-white/[0.04] w-fit shrink-0">
+          <div className="flex gap-1 p-1 rounded-lg bg-muted/30 w-fit shrink-0">
             {(["tracks", "playlists"] as const).map((view) => (
               <button
                 key={view}
                 type="button"
                 className={`px-4 py-1.5 rounded-md text-xs font-medium transition-colors capitalize ${
                   libraryView === view
-                    ? "bg-[#4a9eff]/15 text-[#4a9eff]"
-                    : "text-[#5a5f68] hover:text-[#8a8f98]"
+                    ? "bg-primary/15 text-primary"
+                    : "text-muted-foreground hover:text-muted-foreground"
                 }`}
                 onClick={() => setLibraryView(view)}
               >
@@ -516,7 +593,7 @@ export function LibraryPanel() {
           {/* Filters */}
           <div className="flex flex-wrap items-center gap-3 mb-3 text-sm">
             <div className="flex items-center gap-2">
-              <span className="text-[#5a5f68]">Device:</span>
+              <Label className="mb-0 shrink-0">Device:</Label>
               <Select
                 options={[
                   { value: "", label: "None" },
@@ -532,7 +609,7 @@ export function LibraryPanel() {
               />
             </div>
             <div className="flex items-center gap-2">
-              <span className="text-[#5a5f68]">Type:</span>
+              <Label className="mb-0 shrink-0">Type:</Label>
               <Select
                 options={[
                   { value: "all", label: "All" },
@@ -546,7 +623,7 @@ export function LibraryPanel() {
               />
             </div>
             <div className="flex items-center gap-2">
-              <span className="text-[#5a5f68]">On device:</span>
+              <Label className="mb-0 shrink-0">On device:</Label>
               <Select
                 options={[
                   { value: "all", label: "All" },
@@ -563,14 +640,14 @@ export function LibraryPanel() {
           </div>
 
           {/* Table with horizontal scroll — contained so list and scrollbar stay inside card */}
-          <div className="flex-1 min-h-[100px] overflow-auto border border-white/[0.06] rounded-lg bg-[#131626] [.theme-light_&]:bg-white [.theme-light_&]:border-[#dadce0] mt-2.5">
+          <div className="flex-1 min-h-[100px] overflow-auto border border-border rounded-lg bg-card mt-2.5">
             <div className="min-w-[900px]">
               {/* Header */}
-              <div className="theme-box flex items-center gap-2 px-3 py-2 text-[10px] font-semibold text-[#5a5f68] uppercase tracking-wider border-b border-white/[0.06] sticky top-0 bg-[#131626] z-10 [.theme-light_&]:bg-[#f8f9fa] [.theme-light_&]:text-[#202124] [.theme-light_&]:border-[#dadce0]">
+              <TableHeader sticky className="theme-box">
                 {columns.map((col) => (
                   <button
                     key={col.field}
-                    className={`${col.width} shrink-0 text-left cursor-default hover:text-[#8a8f98] transition-colors`}
+                    className={`${col.width} shrink-0 text-left cursor-default hover:text-muted-foreground transition-colors`}
                     style={col.minW ? { minWidth: col.minW } : undefined}
                     onClick={() => toggleSort(col.field)}
                   >
@@ -580,15 +657,15 @@ export function LibraryPanel() {
                 ))}
                 <span className="w-16 shrink-0 text-right min-w-[56px]">On device</span>
                 <span className="w-16 shrink-0 text-right min-w-[56px]">Size</span>
-              </div>
+              </TableHeader>
 
               {/* Rows */}
               {loading ? (
                 <div className="flex items-center justify-center py-12">
-                  <div className="w-5 h-5 border-2 border-[#4a9eff]/30 border-t-[#4a9eff] rounded-full animate-spin" />
+                  <Spinner />
                 </div>
               ) : filtered.length === 0 ? (
-                <p className="text-center text-xs text-[#5a5f68] py-8">No tracks found</p>
+                <p className="text-center text-xs text-muted-foreground py-8">No tracks found</p>
               ) : (
                 <List
                   height={400}
@@ -602,29 +679,29 @@ export function LibraryPanel() {
                     return (
                       <div
                         style={style}
-                        className="flex items-center gap-2 px-3 py-2 text-sm hover:bg-white/[0.02] [.theme-light_&]:hover:bg-[#f1f3f4] border-b border-white/[0.03] [.theme-light_&]:border-[#e8eaed] transition-colors"
+                        className="flex items-center gap-2 px-3 py-2 text-sm hover:bg-muted/30 border-b border-border transition-colors"
                       >
-                        <span className="flex-[3] min-w-[120px] truncate text-white [.theme-light_&]:text-[#202124]">{t.title}</span>
-                        <span className="flex-[2] min-w-[100px] truncate text-[#8a8f98] [.theme-light_&]:text-[#5f6368]">{t.artist}</span>
-                        <span className="flex-[2] min-w-[100px] truncate text-[#8a8f98] [.theme-light_&]:text-[#5f6368]">{t.album}</span>
-                        <span className="w-24 min-w-[80px] truncate text-[#5a5f68] [.theme-light_&]:text-[#5f6368]">{t.genre}</span>
-                        <span className="w-16 min-w-[56px] text-[#8a8f98] [.theme-light_&]:text-[#5f6368] tabular-nums">
+                        <span className="flex-[3] min-w-[120px] truncate text-foreground">{t.title}</span>
+                        <span className="flex-[2] min-w-[100px] truncate text-muted-foreground">{t.artist}</span>
+                        <span className="flex-[2] min-w-[100px] truncate text-muted-foreground">{t.album}</span>
+                        <span className="w-24 min-w-[80px] truncate text-muted-foreground">{t.genre}</span>
+                        <span className="w-16 min-w-[56px] text-muted-foreground tabular-nums">
                           {formatDuration(t.duration)}
                         </span>
-                        <span className="w-14 min-w-[48px] text-[#5a5f68] [.theme-light_&]:text-[#5f6368] text-xs">{t.codec}</span>
-                        <span className="w-20 min-w-[64px] text-[#5a5f68] [.theme-light_&]:text-[#5f6368] text-xs">
+                        <span className="w-14 min-w-[48px] text-muted-foreground text-xs">{t.codec}</span>
+                        <span className="w-20 min-w-[64px] text-muted-foreground text-xs">
                           {formatBitrate(t.bitrate)}
                         </span>
-                        <span className="w-12 min-w-[36px] text-[#5a5f68] [.theme-light_&]:text-[#5f6368] text-xs">
+                        <span className="w-12 min-w-[36px] text-muted-foreground text-xs">
                           {t.bitsPerSample ? `${t.bitsPerSample}-bit` : "—"}
                         </span>
-                        <span className="w-16 min-w-[56px] text-[#5a5f68] [.theme-light_&]:text-[#5f6368] text-xs capitalize">
+                        <span className="w-16 min-w-[56px] text-muted-foreground text-xs capitalize">
                           {t.contentType || "—"}
                         </span>
-                        <span className="w-16 min-w-[56px] text-right text-[#22c55e]">
+                        <span className="w-16 min-w-[56px] text-right text-success">
                           {selectedDeviceId != null && syncedPaths.has(t.path) ? "✓" : "—"}
                         </span>
-                        <span className="w-16 min-w-[56px] text-right text-[#5a5f68] [.theme-light_&]:text-[#5f6368] text-xs tabular-nums">
+                        <span className="w-16 min-w-[56px] text-right text-muted-foreground text-xs tabular-nums">
                           {formatSize(t.fileSize)}
                         </span>
                       </div>
@@ -637,30 +714,32 @@ export function LibraryPanel() {
         </Card>
           ) : (
         <Card title="Playlists" className="flex-1 flex flex-col min-h-0">
-          <div className="flex items-center justify-between gap-2 px-3 py-2 text-[10px] font-semibold text-[#5a5f68] uppercase tracking-wider border-b border-white/[0.06] [.theme-light_&]:bg-[#f8f9fa] [.theme-light_&]:text-[#202124] [.theme-light_&]:border-[#dadce0]">
+          <TableHeader>
             <span className="flex-[3]">Name</span>
             <span className="w-24 text-right">Songs</span>
             <span className="w-28">Type</span>
-          </div>
+          </TableHeader>
           <div className="flex-1 overflow-auto min-h-0">
             {playlistsLoading ? (
               <div className="flex justify-center py-12">
-                <div className="w-5 h-5 border-2 border-[#4a9eff]/30 border-t-[#4a9eff] rounded-full animate-spin" />
+                <Spinner />
               </div>
             ) : playlists.length === 0 ? (
-              <p className="text-center text-xs text-[#5a5f68] [.theme-light_&]:text-[#5f6368] py-8">No playlists</p>
+              <p className="text-center text-xs text-muted-foreground py-8">No playlists</p>
             ) : (
               playlists.map((pl) => (
                 <div
                   key={pl.id}
-                  className="flex items-center gap-2 px-3 py-2 text-sm hover:bg-white/[0.02] [.theme-light_&]:hover:bg-[#f1f3f4] border-b border-white/[0.03] [.theme-light_&]:border-[#e8eaed] transition-colors"
+                  className="flex items-center gap-2 px-3 py-2 text-sm hover:bg-muted/30 border-b border-border transition-colors"
                 >
-                  <span className="flex-[3] truncate text-white font-medium [.theme-light_&]:text-[#202124]">{pl.name}</span>
-                  <span className="w-24 text-right text-[#8a8f98] [.theme-light_&]:text-[#5f6368] tabular-nums">
+                  <span className="flex-[3] truncate text-foreground font-medium">{pl.name}</span>
+                  <span className="w-24 text-right text-muted-foreground tabular-nums">
                     {pl.trackCount}
                   </span>
-                  <span className="w-28 px-2 py-0.5 rounded-full text-[10px] font-medium bg-[#4a9eff]/10 text-[#4a9eff] capitalize">
-                    {pl.typeName}
+                  <span className="w-28">
+                    <Badge variant="primary" className="capitalize">
+                      {pl.typeName}
+                    </Badge>
                   </span>
                 </div>
               ))
@@ -681,10 +760,11 @@ export function LibraryPanel() {
             placeholder="My Music"
           />
           <div>
-            <label className="block text-xs font-medium text-[#8a8f98] mb-1.5">Path</label>
+            <Label htmlFor="folder-path">Path</Label>
             <div className="flex gap-2">
               <input
-                className="flex-1 rounded-lg bg-white/[0.04] border border-white/[0.08] px-3 py-2 text-sm text-[#e0e0e0] placeholder:text-[#5a5f68] outline-none focus:border-[#4a9eff]/50 transition-colors"
+                id="folder-path"
+                className="flex-1 rounded-lg bg-muted/30 border border-border px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground outline-none focus:border-primary/50 transition-colors"
                 value={folderPath}
                 onChange={(e) => setFolderPath(e.target.value)}
                 placeholder="/path/to/music"
@@ -704,7 +784,7 @@ export function LibraryPanel() {
               { value: "audiobook", label: "Audiobooks" },
             ]}
           />
-          <p className="text-xs text-[#6a6f78]">
+          <p className="text-xs text-muted-foreground">
             Supported formats: MP3, M4A, FLAC, WAV, AIFF, OGG, Opus
           </p>
           <div className="flex justify-end gap-2 pt-2">
@@ -747,12 +827,11 @@ export function LibraryPanel() {
             placeholder="MP3 320k for iPod"
           />
           <div>
-            <label className="block text-xs font-medium text-[#8a8f98] mb-1.5">
-              Path
-            </label>
+            <Label htmlFor="shadow-path">Path</Label>
             <div className="flex gap-2">
               <input
-                className="flex-1 rounded-lg bg-white/[0.04] border border-white/[0.08] px-3 py-2 text-sm text-[#e0e0e0] placeholder:text-[#5a5f68] outline-none focus:border-[#4a9eff]/50 transition-colors"
+                id="shadow-path"
+                className="flex-1 rounded-lg bg-muted/30 border border-border px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground outline-none focus:border-primary/50 transition-colors"
                 value={shadowPath}
                 onChange={(e) => setShadowPath(e.target.value)}
                 placeholder="/path/to/shadow/library"
@@ -796,19 +875,19 @@ export function LibraryPanel() {
         className="max-w-sm"
       >
         <div className="flex flex-col gap-5">
-          <p className="text-sm text-[#8a8f98] leading-relaxed">
+          <p className="text-sm text-muted-foreground leading-relaxed">
             Remove{" "}
-            <span className="font-medium text-[#e0e0e0]">
+            <span className="font-medium text-foreground">
               {shadowDeleteModal?.name ?? ""}
             </span>{" "}
             from the app. You can keep the converted files on disk or delete them.
           </p>
-          <label className="flex items-center gap-2 cursor-pointer text-sm text-[#8a8f98]">
+          <label className="flex items-center gap-2 cursor-pointer text-sm text-muted-foreground">
             <input
               type="checkbox"
               checked={keepFilesWhenDelete}
               onChange={(e) => setKeepFilesWhenDelete(e.target.checked)}
-              className="rounded border-white/20 bg-white/5 text-[#4a9eff] focus:ring-[#4a9eff]/50"
+              className="rounded border-border bg-muted/30 accent-primary focus:ring-primary/50"
             />
             Keep files on disk
           </label>
@@ -872,7 +951,7 @@ export function LibraryPanel() {
                 : "default"
             }
           />
-          <div className="flex items-center justify-between text-xs text-[#8a8f98]">
+          <div className="flex items-center justify-between text-xs text-muted-foreground">
             <span className="truncate max-w-[60%]">
               {shadowBuildProgress?.status === "error"
                 ? "Build failed"
@@ -890,17 +969,17 @@ export function LibraryPanel() {
           {/* Scrolling log */}
           <div
             ref={shadowLogRef}
-            className="h-48 overflow-y-auto rounded-lg border border-white/10 bg-black/20 p-3 text-xs font-mono"
+            className="h-48 overflow-y-auto rounded-lg border border-border bg-muted/30 p-3 text-xs font-mono"
           >
             {shadowBuildLogs.length === 0 && (
-              <p className="text-[#5a5f68]">Waiting for files…</p>
+              <p className="text-muted-foreground">Waiting for files…</p>
             )}
             {shadowBuildLogs.map((entry, i) => {
               const color =
-                entry.level === "success" ? "text-[#22c55e]"
-                : entry.level === "error" ? "text-[#ef4444]"
-                : entry.level === "skip" ? "text-[#f5bf42]"
-                : "text-[#8a8f98]";
+                entry.level === "success" ? "text-success"
+                : entry.level === "error" ? "text-destructive"
+                : entry.level === "skip" ? "text-warning"
+                : "text-muted-foreground";
               const icon =
                 entry.level === "success" ? "▶"
                 : entry.level === "error" ? "✕"
@@ -909,22 +988,22 @@ export function LibraryPanel() {
               return (
                 <div key={i} className={`flex items-start gap-2 py-0.5 ${color}`}>
                   <span className="shrink-0 w-4 flex justify-center">{icon}</span>
-                  <span className="truncate text-[#8a8f98]">{entry.message}</span>
+                  <span className="truncate text-muted-foreground">{entry.message}</span>
                 </div>
               );
             })}
           </div>
 
           {shadowBuildProgress?.status === "complete" && (
-            <p className="text-center text-sm text-[#22c55e]">
+            <p className="text-center text-sm text-success">
               Build complete — {shadowBuildProgress.processed} tracks processed
             </p>
           )}
           {shadowBuildProgress?.status === "cancelled" && (
-            <p className="text-center text-sm text-[#f5bf42]">Build cancelled</p>
+            <p className="text-center text-sm text-warning">Build cancelled</p>
           )}
           {shadowBuildProgress?.status === "error" && (
-            <p className="text-center text-sm text-[#ef4444]">Build failed</p>
+            <p className="text-center text-sm text-destructive">Build failed</p>
           )}
           <div className="flex justify-between items-center pt-1">
             <Button

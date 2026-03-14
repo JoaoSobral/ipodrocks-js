@@ -17,7 +17,12 @@ vi.mock("../renderer/ipc/api", () => ({
   generateGeniusPlaylist: vi.fn().mockResolvedValue({}),
   saveGeniusPlaylist: vi.fn().mockResolvedValue(undefined),
   generateSavantPlaylist: vi.fn().mockResolvedValue({}),
-  checkSavantKeyData: vi.fn().mockResolvedValue({ keyedCount: 0, totalCount: 0, coveragePct: 0 }),
+  checkSavantKeyData: vi.fn().mockResolvedValue({
+    keyedCount: 0,
+    totalCount: 0,
+    coveragePct: 0,
+    bpmOnlyCount: 0,
+  }),
   backfillSavantFeatures: vi.fn().mockResolvedValue(undefined),
   getOpenRouterConfig: vi.fn().mockResolvedValue(null),
 }));

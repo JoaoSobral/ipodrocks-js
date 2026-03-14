@@ -4,7 +4,12 @@ import { LibraryPanel } from "../renderer/components/panels/LibraryPanel";
 
 vi.mock("../renderer/ipc/api", () => ({
   getTracks: vi.fn().mockResolvedValue([]),
-  getLibraryStats: vi.fn().mockResolvedValue({ totalTracks: 0, totalAlbums: 0, totalArtists: 0, totalSizeBytes: 0 }),
+  getLibraryStats: vi.fn().mockResolvedValue({
+    totalTracks: 0,
+    totalAlbums: 0,
+    totalArtists: 0,
+    totalSizeBytes: 0,
+  }),
   getLibraryFolders: vi.fn().mockResolvedValue([]),
   getDevices: vi.fn().mockResolvedValue([]),
   getDefaultDeviceId: vi.fn().mockResolvedValue(null),
@@ -24,6 +29,16 @@ vi.mock("../renderer/ipc/api", () => ({
   isMpcencAvailable: vi.fn().mockResolvedValue(false),
   getMpcRemindDisabled: vi.fn().mockResolvedValue(false),
   setMpcRemindDisabled: vi.fn().mockResolvedValue(undefined),
+  checkSavantKeyData: vi.fn().mockResolvedValue({
+    keyedCount: 0,
+    totalCount: 0,
+    coveragePct: 0,
+    bpmOnlyCount: 0,
+  }),
+}));
+
+vi.mock("../renderer/stores/ui-store", () => ({
+  useUIStore: vi.fn().mockReturnValue(null),
 }));
 
 describe("LibraryPanel", () => {
