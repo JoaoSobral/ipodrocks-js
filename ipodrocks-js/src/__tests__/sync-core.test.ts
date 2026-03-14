@@ -1,7 +1,11 @@
 /**
  * @vitest-environment node
  */
-import { describe, it, expect } from "vitest";
+import * as fs from "fs";
+import * as os from "os";
+import * as path from "path";
+
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import {
   compareLibraries,
   SIZE_TOLERANCE,
@@ -11,7 +15,11 @@ import {
   sanitizeDevicePathComponent,
   computeDeviceRelativePath,
   getProfileCodecExt,
+  copyAlbumArtworkToDevice,
+  runSync,
+  cleanEmptyDirectories,
 } from "../main/sync/sync-core";
+import { Device } from "../main/devices/device";
 
 describe("name-size-sync", () => {
   describe("compareLibraries", () => {
@@ -180,6 +188,31 @@ describe("name-size-sync", () => {
       expect(result.tracksToSkip).toHaveLength(1);
       expect(result.extras).toHaveLength(1);
     });
+
+    it("populates codecMismatchMap when device has different codec (stem match)", () => {
+      const libraryDestMap = {
+        "/lib/track.flac": "3 Doors Down/The Better Life/track.opus",
+      };
+      const libraryExpectedSizes = { "/lib/track.flac": 0 };
+      const deviceContentPath = "/mnt/device/Music";
+      const deviceRel = "3 Doors Down/The Better Life/track.mp3";
+      const devicePath = `${deviceContentPath}/${deviceRel}`;
+      const deviceFilesMap: Record<string, { file_size: number }> = {
+        [devicePath]: { file_size: 3_000_000 },
+      };
+
+      const result = compareLibraries(
+        libraryDestMap,
+        libraryExpectedSizes,
+        deviceContentPath,
+        deviceFilesMap,
+        { profileCodecExt: ".opus" }
+      );
+
+      expect(result.missingTracks.has("/lib/track.flac")).toBe(true);
+      expect(result.codecMismatchPaths).toContain(devicePath);
+      expect(result.codecMismatchMap.get("/lib/track.flac")).toBe(deviceRel);
+    });
   });
 });
 
@@ -310,5 +343,553 @@ describe("sync-core utilities", () => {
       expect(getProfileCodecExt("MP3")).toBe(".mp3");
       expect(getProfileCodecExt("MPC")).toBe(".mpc");
     });
+  });
+
+  describe("cleanEmptyDirectories", () => {
+    let tmpDir: string;
+
+    beforeEach(() => {
+      tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "clean-empty-test-"));
+    });
+
+    afterEach(() => {
+      try {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      } catch {
+        /* ignore */
+      }
+    });
+
+    it("removes empty nested directories", () => {
+      const nested = path.join(tmpDir, "a", "b", "c");
+      fs.mkdirSync(nested, { recursive: true });
+
+      cleanEmptyDirectories(tmpDir);
+
+      expect(fs.existsSync(tmpDir)).toBe(false);
+    });
+
+    it("leaves directories that contain files", () => {
+      const dirWithFile = path.join(tmpDir, "keep");
+      fs.mkdirSync(dirWithFile, { recursive: true });
+      fs.writeFileSync(path.join(dirWithFile, "file.txt"), "x");
+
+      cleanEmptyDirectories(tmpDir);
+
+      expect(fs.existsSync(tmpDir)).toBe(true);
+      expect(fs.existsSync(dirWithFile)).toBe(true);
+      expect(fs.existsSync(path.join(dirWithFile, "file.txt"))).toBe(true);
+    });
+
+    it("removes empty siblings but keeps dirs with files", () => {
+      const emptyDir = path.join(tmpDir, "empty");
+      const fullDir = path.join(tmpDir, "full");
+      fs.mkdirSync(emptyDir, { recursive: true });
+      fs.mkdirSync(fullDir, { recursive: true });
+      fs.writeFileSync(path.join(fullDir, "f"), "x");
+
+      cleanEmptyDirectories(tmpDir);
+
+      expect(fs.existsSync(emptyDir)).toBe(false);
+      expect(fs.existsSync(fullDir)).toBe(true);
+    });
+  });
+});
+
+describe("copyAlbumArtworkToDevice", () => {
+  let tmpRoot: string;
+  let devicePath: string;
+
+  beforeEach(() => {
+    tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "sync-artwork-test-"));
+    devicePath = path.join(tmpRoot, "device");
+    fs.mkdirSync(devicePath, { recursive: true });
+  });
+
+  afterEach(() => {
+    try {
+      fs.rmSync(tmpRoot, { recursive: true, force: true });
+    } catch {
+      /* ignore */
+    }
+  });
+
+  it("copies .jpg and .png artwork when destination missing", () => {
+    const albumDir = path.join(tmpRoot, "Artist", "Album");
+    fs.mkdirSync(albumDir, { recursive: true });
+    fs.writeFileSync(path.join(albumDir, "track.mp3"), "audio");
+    fs.writeFileSync(path.join(albumDir, "cover.jpg"), "jpeg");
+    fs.writeFileSync(path.join(albumDir, "folder.png"), "png");
+
+    const trackPath = path.join(albumDir, "track.mp3");
+    const libraryTracks: Record<string, Record<string, unknown>> = {
+      [trackPath]: { artist: "Artist", album: "Album" },
+    };
+
+    const result = copyAlbumArtworkToDevice(
+      devicePath,
+      "music",
+      libraryTracks,
+      undefined,
+      undefined,
+      undefined
+    );
+
+    expect(result.copied).toBe(2);
+    expect(result.skipped).toBe(0);
+    expect(result.errors).toBe(0);
+    expect(result.totalCandidates).toBe(2);
+    expect(fs.existsSync(path.join(devicePath, "Artist", "Album", "cover.jpg")))
+      .toBe(true);
+    expect(fs.existsSync(path.join(devicePath, "Artist", "Album", "folder.png")))
+      .toBe(true);
+  });
+
+  it("skips artwork when destination has same size and mtime", () => {
+    const albumDir = path.join(tmpRoot, "Artist", "Album");
+    fs.mkdirSync(albumDir, { recursive: true });
+    fs.writeFileSync(path.join(albumDir, "track.mp3"), "audio");
+    const coverPath = path.join(albumDir, "cover.jpg");
+    fs.writeFileSync(coverPath, "jpeg");
+
+    const destDir = path.join(devicePath, "Artist", "Album");
+    fs.mkdirSync(destDir, { recursive: true });
+    fs.copyFileSync(coverPath, path.join(destDir, "cover.jpg"));
+
+    const trackPath = path.join(albumDir, "track.mp3");
+    const libraryTracks: Record<string, Record<string, unknown>> = {
+      [trackPath]: { artist: "Artist", album: "Album" },
+    };
+
+    const result = copyAlbumArtworkToDevice(
+      devicePath,
+      "music",
+      libraryTracks,
+      undefined,
+      undefined,
+      undefined
+    );
+
+    expect(result.copied).toBe(0);
+    expect(result.skipped).toBe(1);
+    expect(result.errors).toBe(0);
+    expect(result.totalCandidates).toBe(1);
+  });
+
+  it("re-copies artwork when destination differs", () => {
+    const albumDir = path.join(tmpRoot, "Artist", "Album");
+    fs.mkdirSync(albumDir, { recursive: true });
+    fs.writeFileSync(path.join(albumDir, "track.mp3"), "audio");
+    const srcCover = path.join(albumDir, "cover.jpg");
+    fs.writeFileSync(srcCover, Buffer.alloc(200, 0x41));
+
+    const destDir = path.join(devicePath, "Artist", "Album");
+    fs.mkdirSync(destDir, { recursive: true });
+    fs.writeFileSync(path.join(destDir, "cover.jpg"), Buffer.alloc(100, 0x42));
+
+    const trackPath = path.join(albumDir, "track.mp3");
+    const libraryTracks: Record<string, Record<string, unknown>> = {
+      [trackPath]: { artist: "Artist", album: "Album" },
+    };
+
+    const result = copyAlbumArtworkToDevice(
+      devicePath,
+      "music",
+      libraryTracks,
+      undefined,
+      undefined,
+      undefined
+    );
+
+    expect(result.copied).toBe(1);
+    expect(result.skipped).toBe(0);
+    expect(fs.statSync(path.join(destDir, "cover.jpg")).size).toBe(200);
+  });
+
+  it("returns zeros for empty libraryTracks", () => {
+    const result = copyAlbumArtworkToDevice(
+      devicePath,
+      "music",
+      {},
+      undefined,
+      undefined,
+      undefined
+    );
+    expect(result).toEqual({
+      copied: 0,
+      skipped: 0,
+      errors: 0,
+      totalCandidates: 0,
+    });
+  });
+
+  it("does not copy non-artwork files", () => {
+    const albumDir = path.join(tmpRoot, "Artist", "Album");
+    fs.mkdirSync(albumDir, { recursive: true });
+    fs.writeFileSync(path.join(albumDir, "track.mp3"), "audio");
+    fs.writeFileSync(path.join(albumDir, "readme.txt"), "text");
+
+    const trackPath = path.join(albumDir, "track.mp3");
+    const libraryTracks: Record<string, Record<string, unknown>> = {
+      [trackPath]: { artist: "Artist", album: "Album" },
+    };
+
+    const result = copyAlbumArtworkToDevice(
+      devicePath,
+      "music",
+      libraryTracks,
+      undefined,
+      undefined,
+      undefined
+    );
+
+    expect(result.copied).toBe(0);
+    expect(result.totalCandidates).toBe(0);
+    expect(fs.existsSync(path.join(devicePath, "Artist", "Album", "readme.txt")))
+      .toBe(false);
+  });
+
+  it("does not copy .jpeg files (only .jpg and .png)", () => {
+    const albumDir = path.join(tmpRoot, "Artist", "Album");
+    fs.mkdirSync(albumDir, { recursive: true });
+    fs.writeFileSync(path.join(albumDir, "track.mp3"), "audio");
+    fs.writeFileSync(path.join(albumDir, "cover.jpeg"), "jpeg");
+
+    const trackPath = path.join(albumDir, "track.mp3");
+    const libraryTracks: Record<string, Record<string, unknown>> = {
+      [trackPath]: { artist: "Artist", album: "Album" },
+    };
+
+    const result = copyAlbumArtworkToDevice(
+      devicePath,
+      "music",
+      libraryTracks,
+      undefined,
+      undefined,
+      undefined
+    );
+
+    expect(result.totalCandidates).toBe(0);
+    expect(fs.existsSync(path.join(devicePath, "Artist", "Album", "cover.jpeg")))
+      .toBe(false);
+  });
+
+  it("emits total_add with artwork candidate count", () => {
+    const albumDir = path.join(tmpRoot, "Artist", "Album");
+    fs.mkdirSync(albumDir, { recursive: true });
+    fs.writeFileSync(path.join(albumDir, "track.mp3"), "audio");
+    fs.writeFileSync(path.join(albumDir, "cover.jpg"), "jpeg");
+
+    const trackPath = path.join(albumDir, "track.mp3");
+    const libraryTracks: Record<string, Record<string, unknown>> = {
+      [trackPath]: { artist: "Artist", album: "Album" },
+    };
+
+    const events: Array<{ event: string; path?: string }> = [];
+    copyAlbumArtworkToDevice(
+      devicePath,
+      "music",
+      libraryTracks,
+      undefined,
+      (e) => events.push({ event: e.event, path: e.path as string }),
+      undefined
+    );
+
+    const totalAdd = events.find((e) => e.event === "total_add");
+    expect(totalAdd).toBeDefined();
+    expect(Number(totalAdd?.path)).toBe(1);
+  });
+});
+
+describe("runSync artwork behavior", () => {
+  let tmpRoot: string;
+  let devicePath: string;
+  let libraryPath: string;
+
+  beforeEach(() => {
+    tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "sync-run-test-"));
+    devicePath = path.join(tmpRoot, "device", "Music");
+    libraryPath = path.join(tmpRoot, "library");
+    fs.mkdirSync(devicePath, { recursive: true });
+    fs.mkdirSync(path.join(libraryPath, "Artist", "Album"), {
+      recursive: true,
+    });
+  });
+
+  afterEach(() => {
+    try {
+      fs.rmSync(tmpRoot, { recursive: true, force: true });
+    } catch {
+      /* ignore */
+    }
+  });
+
+  it("copies artwork even when no tracks need syncing", async () => {
+    const trackPath = path.join(libraryPath, "Artist", "Album", "track.mp3");
+    const coverPath = path.join(libraryPath, "Artist", "Album", "cover.jpg");
+    fs.writeFileSync(trackPath, "audio");
+    fs.writeFileSync(coverPath, "jpeg");
+
+    const deviceTrackPath = path.join(devicePath, "Artist", "Album", "track.mp3");
+    fs.mkdirSync(path.dirname(deviceTrackPath), { recursive: true });
+    fs.writeFileSync(deviceTrackPath, "audio");
+
+    const libraryTracks: Record<string, Record<string, unknown>> = {
+      [trackPath]: {
+        artist: "Artist",
+        album: "Album",
+        fileSize: 5,
+      },
+    };
+    const deviceFilesMap: Record<string, { file_size: number }> = {
+      [deviceTrackPath]: { file_size: 5 },
+    };
+
+    const profile = {
+      name: "Test",
+      mountPath: path.dirname(devicePath),
+      musicFolder: "Music",
+      podcastFolder: "Podcasts",
+      audiobookFolder: "Audiobooks",
+      playlistFolder: "Playlists",
+      modelId: null,
+      defaultCodecConfigId: null,
+      description: null,
+      lastSyncDate: null,
+      totalSyncedItems: 0,
+      lastSyncCount: 0,
+      defaultTransferModeId: 1,
+      overrideBitrate: null,
+      overrideQuality: null,
+      overrideBits: null,
+      partialSyncEnabled: false,
+      sourceLibraryType: "primary" as const,
+      shadowLibraryId: null,
+      transferModeName: null,
+      codecConfigName: "DIRECT COPY",
+      codecConfigBitrate: null,
+      codecConfigQuality: null,
+      codecConfigBits: null,
+      codecName: "DIRECT COPY",
+      modelName: null,
+      modelInternalValue: null,
+    };
+    const device = new Device(profile as never);
+
+    await runSync(
+      device,
+      libraryTracks,
+      "DIRECT COPY",
+      "music",
+      devicePath,
+      deviceFilesMap,
+      { extraTrackPolicy: "keep", skipAlbumArtwork: false },
+      undefined
+    );
+
+    expect(fs.existsSync(path.join(devicePath, "Artist", "Album", "cover.jpg")))
+      .toBe(true);
+  });
+
+  it("counts artwork errors into runSync result", async () => {
+    const trackPath = path.join(libraryPath, "Artist", "Album", "track.mp3");
+    const coverPath = path.join(libraryPath, "Artist", "Album", "cover.jpg");
+    fs.writeFileSync(trackPath, "audio");
+    fs.writeFileSync(coverPath, "jpeg");
+
+    const deviceTrackPath = path.join(devicePath, "Artist", "Album", "track.mp3");
+    const deviceAlbumDir = path.join(devicePath, "Artist", "Album");
+    fs.mkdirSync(deviceAlbumDir, { recursive: true });
+    fs.writeFileSync(deviceTrackPath, "audio");
+    fs.mkdirSync(path.join(deviceAlbumDir, "cover.jpg"), { recursive: true });
+
+    const libraryTracks: Record<string, Record<string, unknown>> = {
+      [trackPath]: {
+        artist: "Artist",
+        album: "Album",
+        fileSize: 5,
+      },
+    };
+    const deviceFilesMap: Record<string, { file_size: number }> = {
+      [deviceTrackPath]: { file_size: 5 },
+    };
+
+    const profile = {
+      name: "Test",
+      mountPath: path.dirname(devicePath),
+      musicFolder: "Music",
+      podcastFolder: "Podcasts",
+      audiobookFolder: "Audiobooks",
+      playlistFolder: "Playlists",
+      modelId: null,
+      defaultCodecConfigId: null,
+      description: null,
+      lastSyncDate: null,
+      totalSyncedItems: 0,
+      lastSyncCount: 0,
+      defaultTransferModeId: 1,
+      overrideBitrate: null,
+      overrideQuality: null,
+      overrideBits: null,
+      partialSyncEnabled: false,
+      sourceLibraryType: "primary" as const,
+      shadowLibraryId: null,
+      transferModeName: null,
+      codecConfigName: "DIRECT COPY",
+      codecConfigBitrate: null,
+      codecConfigQuality: null,
+      codecConfigBits: null,
+      codecName: "DIRECT COPY",
+      modelName: null,
+      modelInternalValue: null,
+    };
+    const device = new Device(profile as never);
+
+    const result = await runSync(
+      device,
+      libraryTracks,
+      "DIRECT COPY",
+      "music",
+      devicePath,
+      deviceFilesMap,
+      { extraTrackPolicy: "keep", skipAlbumArtwork: false },
+      undefined
+    );
+
+    expect(result.errors).toBeGreaterThan(0);
+    expect(result.status).toBe("error");
+  });
+
+  it("skips artwork when skipAlbumArtwork is true", async () => {
+    const trackPath = path.join(libraryPath, "Artist", "Album", "track.mp3");
+    const coverPath = path.join(libraryPath, "Artist", "Album", "cover.jpg");
+    fs.writeFileSync(trackPath, "audio");
+    fs.writeFileSync(coverPath, "jpeg");
+
+    const deviceTrackPath = path.join(devicePath, "Artist", "Album", "track.mp3");
+    fs.mkdirSync(path.dirname(deviceTrackPath), { recursive: true });
+    fs.writeFileSync(deviceTrackPath, "audio");
+
+    const libraryTracks: Record<string, Record<string, unknown>> = {
+      [trackPath]: {
+        artist: "Artist",
+        album: "Album",
+        fileSize: 5,
+      },
+    };
+    const deviceFilesMap: Record<string, { file_size: number }> = {
+      [deviceTrackPath]: { file_size: 5 },
+    };
+
+    const profile = {
+      name: "Test",
+      mountPath: path.dirname(devicePath),
+      musicFolder: "Music",
+      podcastFolder: "Podcasts",
+      audiobookFolder: "Audiobooks",
+      playlistFolder: "Playlists",
+      modelId: null,
+      defaultCodecConfigId: null,
+      description: null,
+      lastSyncDate: null,
+      totalSyncedItems: 0,
+      lastSyncCount: 0,
+      defaultTransferModeId: 1,
+      overrideBitrate: null,
+      overrideQuality: null,
+      overrideBits: null,
+      partialSyncEnabled: false,
+      sourceLibraryType: "primary" as const,
+      shadowLibraryId: null,
+      transferModeName: null,
+      codecConfigName: "DIRECT COPY",
+      codecConfigBitrate: null,
+      codecConfigQuality: null,
+      codecConfigBits: null,
+      codecName: "DIRECT COPY",
+      modelName: null,
+      modelInternalValue: null,
+    };
+    const device = new Device(profile as never);
+
+    await runSync(
+      device,
+      libraryTracks,
+      "DIRECT COPY",
+      "music",
+      devicePath,
+      deviceFilesMap,
+      { extraTrackPolicy: "keep", skipAlbumArtwork: true },
+      undefined
+    );
+
+    expect(fs.existsSync(path.join(devicePath, "Artist", "Album", "cover.jpg")))
+      .toBe(false);
+  });
+
+  it("removes empty directories after orphan removal", async () => {
+    const trackPath = path.join(libraryPath, "Artist", "Album", "track.mp3");
+    fs.writeFileSync(trackPath, "audio");
+
+    const deviceTrackPath = path.join(devicePath, "Artist", "Album", "track.mp3");
+    const orphanPath = path.join(devicePath, "OrphanArtist", "OrphanAlbum", "orphan.mp3");
+    fs.mkdirSync(path.dirname(deviceTrackPath), { recursive: true });
+    fs.mkdirSync(path.dirname(orphanPath), { recursive: true });
+    fs.writeFileSync(deviceTrackPath, "audio");
+    fs.writeFileSync(orphanPath, "orphan");
+
+    const libraryTracks: Record<string, Record<string, unknown>> = {
+      [trackPath]: { artist: "Artist", album: "Album", fileSize: 5 },
+    };
+    const deviceFilesMap: Record<string, { file_size: number }> = {
+      [deviceTrackPath]: { file_size: 5 },
+      [orphanPath]: { file_size: 6 },
+    };
+
+    const profile = {
+      name: "Test",
+      mountPath: path.dirname(devicePath),
+      musicFolder: "Music",
+      podcastFolder: "Podcasts",
+      audiobookFolder: "Audiobooks",
+      playlistFolder: "Playlists",
+      modelId: null,
+      defaultCodecConfigId: null,
+      description: null,
+      lastSyncDate: null,
+      totalSyncedItems: 0,
+      lastSyncCount: 0,
+      defaultTransferModeId: 1,
+      overrideBitrate: null,
+      overrideQuality: null,
+      overrideBits: null,
+      partialSyncEnabled: false,
+      sourceLibraryType: "primary" as const,
+      shadowLibraryId: null,
+      transferModeName: null,
+      codecConfigName: "DIRECT COPY",
+      codecConfigBitrate: null,
+      codecConfigQuality: null,
+      codecConfigBits: null,
+      codecName: "DIRECT COPY",
+      modelName: null,
+      modelInternalValue: null,
+    };
+    const device = new Device(profile as never);
+
+    await runSync(
+      device,
+      libraryTracks,
+      "DIRECT COPY",
+      "music",
+      devicePath,
+      deviceFilesMap,
+      { extraTrackPolicy: "remove", skipAlbumArtwork: true },
+      undefined
+    );
+
+    expect(fs.existsSync(orphanPath)).toBe(false);
+    expect(fs.existsSync(path.join(devicePath, "OrphanArtist", "OrphanAlbum"))).toBe(false);
+    expect(fs.existsSync(path.join(devicePath, "OrphanArtist"))).toBe(false);
   });
 });

@@ -8,6 +8,7 @@ import {
   convertWithCodec,
   updateExtension,
 } from "../sync/sync-conversion";
+import { cleanEmptyDirectories } from "../sync/sync-core";
 
 function computeDirectorySize(root: string): number {
   try {
@@ -220,7 +221,7 @@ export class ShadowLibraryManager {
           if (fs.existsSync(t.shadow_path)) fs.unlinkSync(t.shadow_path);
         } catch { /* best effort */ }
       }
-      this._cleanEmptyDirs(lib.path);
+      cleanEmptyDirectories(lib.path);
     }
 
     this.stmtDelete.run(id);
@@ -597,22 +598,6 @@ export class ShadowLibraryManager {
     }
 
     return settings;
-  }
-
-  private _cleanEmptyDirs(rootDir: string): void {
-    if (!fs.existsSync(rootDir)) return;
-    try {
-      const entries = fs.readdirSync(rootDir, { withFileTypes: true });
-      for (const entry of entries) {
-        if (entry.isDirectory()) {
-          this._cleanEmptyDirs(path.join(rootDir, entry.name));
-        }
-      }
-      const remaining = fs.readdirSync(rootDir);
-      if (remaining.length === 0) {
-        fs.rmdirSync(rootDir);
-      }
-    } catch { /* best effort */ }
   }
 
   private _rowToShadowLibrary(row: ShadowLibraryRow): ShadowLibrary {

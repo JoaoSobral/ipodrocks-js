@@ -316,6 +316,8 @@ export interface SyncOptions {
   includeAudiobooks?: boolean;
   /** For full sync: write M3U playlists to device (default true). */
   includePlaylists?: boolean;
+  /** When true, do not copy album artwork (*.jpg, *.png) to device (default false). */
+  skipAlbumArtwork?: boolean;
 }
 
 export interface ScanResult {

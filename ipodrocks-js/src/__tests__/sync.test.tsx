@@ -17,4 +17,11 @@ describe("SyncPanel", () => {
     expect(screen.getByText("Target Device")).toBeInTheDocument();
     expect(screen.getByText("Sync Configuration")).toBeInTheDocument();
   });
+
+  it("renders Not syncing album artwork checkbox and defaults unchecked", () => {
+    render(<SyncPanel />);
+    const checkbox = screen.getByLabelText("Not syncing album artwork");
+    expect(checkbox).toBeInTheDocument();
+    expect(checkbox).not.toBeChecked();
+  });
 });

@@ -5,6 +5,7 @@ import { Device } from "../devices/device";
 import {
   CompareOptions,
   CompareResult,
+  MTIME_TOLERANCE_MS,
   SkippedTrack,
   compareLibraries,
 } from "./name-size-sync";
@@ -12,6 +13,7 @@ import { updateExtension, estimateConvertedSize } from "./sync-conversion";
 import {
   CopyProgress,
   CopyToDeviceOptions,
+  copyFileToDevice,
   copyToDevice,
 } from "./sync-executor";
 
@@ -37,6 +39,8 @@ export interface RunSyncOptions {
   progressCallback?: ProgressCallback;
   cancelSignal?: AbortSignal;
   ignoreSpaceCheck?: boolean;
+  /** When true, do not copy album artwork (*.jpg, *.png) to device. */
+  skipAlbumArtwork?: boolean;
 }
 
 export interface ContentAnalysis {
@@ -45,9 +49,32 @@ export interface ContentAnalysis {
   missingPaths: string[];
   extras: string[];
   codecMismatchPaths: string[];
+  codecMismatchMap: Map<string, string>;
 }
 
 const FAT32_INVALID = /[\\/:*?"<>|]/g;
+
+/**
+ * Recursively removes empty directories under rootDir (post-order traversal).
+ * Best-effort; ignores errors.
+ */
+export function cleanEmptyDirectories(rootDir: string): void {
+  if (!fs.existsSync(rootDir)) return;
+  try {
+    const entries = fs.readdirSync(rootDir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        cleanEmptyDirectories(path.join(rootDir, entry.name));
+      }
+    }
+    const remaining = fs.readdirSync(rootDir);
+    if (remaining.length === 0) {
+      fs.rmdirSync(rootDir);
+    }
+  } catch {
+    /* best effort */
+  }
+}
 
 export function sanitizeDevicePathComponent(
   component: string,
@@ -350,6 +377,7 @@ export function analyzeContentType(
     missingPaths: [...missingTracks].sort(),
     extras: result.extras,
     codecMismatchPaths: result.codecMismatchPaths,
+    codecMismatchMap: result.codecMismatchMap,
   };
 }
 
@@ -362,7 +390,8 @@ export async function copyMissingTracks(
   libraryFolderPaths?: Map<number, string>,
   progressCallback?: ProgressCallback,
   cancelSignal?: AbortSignal,
-  deviceProfile?: { codecConfigBitrate?: number | null; codecConfigQuality?: number | null }
+  deviceProfile?: { codecConfigBitrate?: number | null; codecConfigQuality?: number | null },
+  codecMismatchMap?: Map<string, string>
 ): Promise<{ synced: number; missingFiles: string[]; errors: number }> {
   if (!missingPaths.length) return { synced: 0, missingFiles: [], errors: 0 };
 
@@ -396,7 +425,17 @@ export async function copyMissingTracks(
   for (const tp of existingPaths) {
     if (cancelSignal?.aborted) throw new SyncCancelled();
     const trackInfo = libraryTracks[tp] ?? {};
-    customDestinations[tp] = computeDeviceRelativePath(tp, trackInfo, contentType, libraryFolderPaths);
+    const existingDeviceRel = codecMismatchMap?.get(tp);
+    if (existingDeviceRel && needsConversion) {
+      customDestinations[tp] = updateExtension(existingDeviceRel, codecLower);
+    } else {
+      customDestinations[tp] = computeDeviceRelativePath(
+        tp,
+        trackInfo,
+        contentType,
+        libraryFolderPaths
+      );
+    }
 
     if (needsConversion) {
       perTrackConversion[tp] = {
@@ -471,6 +510,161 @@ export function removeExtraTracks(
   return { removed, bytesRemoved };
 }
 
+const ARTWORK_EXTENSIONS = [".jpg", ".png"];
+
+export interface ArtworkSyncResult {
+  copied: number;
+  skipped: number;
+  errors: number;
+  totalCandidates: number;
+}
+
+/**
+ * Copy album artwork (*.jpg, *.png) from source album folders to device.
+ * Skips unchanged files using size/mtime checks. Uses the same folder
+ * structure as tracks (Artist/Album).
+ */
+export function copyAlbumArtworkToDevice(
+  deviceContentPath: string,
+  contentType: string,
+  libraryTracks: Record<string, Record<string, unknown>>,
+  libraryFolderPaths?: Map<number, string>,
+  progressCallback?: ProgressCallback,
+  cancelSignal?: AbortSignal
+): ArtworkSyncResult {
+  if (Object.keys(libraryTracks).length === 0) {
+    return { copied: 0, skipped: 0, errors: 0, totalCandidates: 0 };
+  }
+
+  const sourceToDeviceRel = new Map<string, string>();
+
+  for (const [trackPath, trackInfo] of Object.entries(libraryTracks)) {
+    if (cancelSignal?.aborted) throw new SyncCancelled();
+    const sourceDir = path.dirname(trackPath);
+    if (sourceToDeviceRel.has(sourceDir)) continue;
+
+    const relPath = computeDeviceRelativePath(
+      trackPath,
+      trackInfo,
+      contentType,
+      libraryFolderPaths
+    );
+    const deviceRelAlbum = path.dirname(relPath).replace(/\\/g, "/");
+    sourceToDeviceRel.set(sourceDir, deviceRelAlbum);
+  }
+
+  const candidates: { srcPath: string; destPath: string }[] = [];
+
+  for (const [sourceDir, deviceRelAlbum] of sourceToDeviceRel) {
+    if (cancelSignal?.aborted) throw new SyncCancelled();
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(sourceDir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+
+    for (const entry of entries) {
+      if (!entry.isFile()) continue;
+      const ext = path.extname(entry.name).toLowerCase();
+      if (!ARTWORK_EXTENSIONS.includes(ext)) continue;
+
+      const srcPath = path.join(sourceDir, entry.name);
+      const destPath = path.join(
+        deviceContentPath,
+        deviceRelAlbum,
+        entry.name
+      );
+      candidates.push({ srcPath, destPath });
+    }
+  }
+
+  if (candidates.length > 0) {
+    progressCallback?.({
+      event: "total_add",
+      path: String(candidates.length),
+    });
+  }
+
+  let copied = 0;
+  let skipped = 0;
+  let errors = 0;
+
+  for (const { srcPath, destPath } of candidates) {
+    if (cancelSignal?.aborted) throw new SyncCancelled();
+
+    let srcStat: fs.Stats;
+    try {
+      srcStat = fs.statSync(srcPath);
+    } catch {
+      errors++;
+      progressCallback?.({
+        event: "copy",
+        path: srcPath,
+        destination: destPath,
+        status: "error",
+        contentType: "artwork",
+      });
+      continue;
+    }
+
+    let destStat: fs.Stats | null = null;
+    try {
+      destStat = fs.statSync(destPath);
+    } catch {
+      /* destination missing, will copy */
+    }
+
+    if (destStat?.isFile()) {
+      const sizeMatch = destStat.size === srcStat.size;
+      const mtimeMatch =
+        Math.abs((destStat.mtimeMs ?? 0) - srcStat.mtimeMs) <=
+        MTIME_TOLERANCE_MS;
+      if (sizeMatch && mtimeMatch) {
+        skipped++;
+        progressCallback?.({
+          event: "copy",
+          path: srcPath,
+          destination: destPath,
+          status: "skipped",
+          contentType: "artwork",
+        });
+        continue;
+      }
+    }
+
+    try {
+      const ok = copyFileToDevice(srcPath, destPath);
+      if (ok) {
+        copied++;
+        progressCallback?.({
+          event: "copy",
+          path: srcPath,
+          destination: destPath,
+          status: "copied",
+          contentType: "artwork",
+        });
+      }
+    } catch {
+      errors++;
+      progressCallback?.({
+        event: "copy",
+        path: srcPath,
+        destination: destPath,
+        status: "error",
+        contentType: "artwork",
+      });
+    }
+  }
+
+  return {
+    copied,
+    skipped,
+    errors,
+    totalCandidates: candidates.length,
+  };
+}
+
 export async function runSync(
   device: Device,
   libraryTracks: Record<string, Record<string, unknown>>,
@@ -488,7 +682,8 @@ export async function runSync(
   missingFiles: string[];
   errors: number;
 }> {
-  const { extraTrackPolicy, progressCallback, cancelSignal } = options;
+  const { extraTrackPolicy, progressCallback, cancelSignal, skipAlbumArtwork } =
+    options;
 
   progressCallback?.({ event: "log", message: `Comparing library with device (${contentType})...` });
 
@@ -532,7 +727,7 @@ export async function runSync(
     progressCallback?.({ event: "log", message: `Copying ${toSync} track(s) to device...` });
   }
 
-  const { synced, missingFiles, errors } = await copyMissingTracks(
+  let { synced, missingFiles, errors } = await copyMissingTracks(
     deviceContentPath,
     contentType,
     analysis.missingPaths,
@@ -541,8 +736,41 @@ export async function runSync(
     libraryFolderPaths,
     progressCallback,
     cancelSignal,
-    device.profile
+    device.profile,
+    analysis.codecMismatchMap
   );
+
+  if (skipAlbumArtwork !== true && Object.keys(libraryTracks).length > 0) {
+    const artworkResult = copyAlbumArtworkToDevice(
+      deviceContentPath,
+      contentType,
+      libraryTracks,
+      libraryFolderPaths,
+      progressCallback,
+      cancelSignal
+    );
+    errors += artworkResult.errors;
+    if (
+      artworkResult.copied > 0 ||
+      artworkResult.skipped > 0 ||
+      artworkResult.errors > 0
+    ) {
+      const parts: string[] = [];
+      if (artworkResult.copied > 0) {
+        parts.push(`${artworkResult.copied} copied`);
+      }
+      if (artworkResult.skipped > 0) {
+        parts.push(`${artworkResult.skipped} skipped`);
+      }
+      if (artworkResult.errors > 0) {
+        parts.push(`${artworkResult.errors} error(s)`);
+      }
+      progressCallback?.({
+        event: "log",
+        message: `Album artwork: ${parts.join(", ")}.`,
+      });
+    }
+  }
 
   if (analysis.codecMismatchPaths.length > 0 && synced > 0) {
     const { removed } = removeExtraTracks(analysis.codecMismatchPaths, progressCallback, cancelSignal);
@@ -553,6 +781,10 @@ export async function runSync(
         message: `Removed ${removed} old-codec file(s) replaced by new format`,
       });
     }
+  }
+
+  if (removedCount > 0) {
+    cleanEmptyDirectories(deviceContentPath);
   }
 
   return {

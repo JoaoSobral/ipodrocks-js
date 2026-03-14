@@ -22,6 +22,8 @@ export interface CompareResult {
   tracksToSkip: SkippedTrack[];
   extras: string[];
   codecMismatchPaths: string[];
+  /** Library path -> device relative path for codec mismatch replacements. */
+  codecMismatchMap: Map<string, string>;
 }
 
 export interface CompareOptions {
@@ -144,6 +146,7 @@ export function compareLibraries(
   const tracksToSkip: SkippedTrack[] = [];
   const matchedDevicePaths = new Set<string>();
   const codecMismatchPaths: string[] = [];
+  const codecMismatchMap = new Map<string, string>();
 
   const profileExtNorm = profileCodecExt
     ? normalizeKey(profileCodecExt)
@@ -276,6 +279,8 @@ export function compareLibraries(
         const dpExt = normalizeKey(extOf(devicePath));
         if (dpExt !== libDestExt && !codecMismatchPaths.includes(devicePath)) {
           codecMismatchPaths.push(devicePath);
+          const devRel = relativeFromDevice(devicePath, deviceContentPath);
+          if (devRel) codecMismatchMap.set(libPath, devRel);
         }
         const stemEntries = deviceByStem.get(stemKey);
         if (stemEntries) {
@@ -285,6 +290,10 @@ export function compareLibraries(
               matchedDevicePaths.add(dp);
               if (!codecMismatchPaths.includes(dp)) {
                 codecMismatchPaths.push(dp);
+              }
+              if (!codecMismatchMap.has(libPath)) {
+                const devRel = relativeFromDevice(dp, deviceContentPath);
+                if (devRel) codecMismatchMap.set(libPath, devRel);
               }
             }
           }
@@ -324,5 +333,6 @@ export function compareLibraries(
     tracksToSkip,
     extras: extras.sort(),
     codecMismatchPaths: codecMismatchPaths.sort(),
+    codecMismatchMap,
   };
 }

@@ -40,6 +40,7 @@ export function SyncPanel() {
   const [fullIncludePlaylists, setFullIncludePlaylists] = useState(true);
   const [extraTrackPolicy, setExtraTrackPolicy] = useState("keep");
   const [ignoreSpaceCheck, setIgnoreSpaceCheck] = useState(false);
+  const [skipAlbumArtwork, setSkipAlbumArtwork] = useState(false);
 
   const [tracks, setTracks] = useState<Track[]>([]);
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
@@ -381,6 +382,7 @@ export function SyncPanel() {
       syncType,
       extraTrackPolicy,
       ignoreSpaceCheck,
+      skipAlbumArtwork,
       selections,
       ...(syncType === "full" && {
         includeMusic: fullIncludeMusic,
@@ -402,6 +404,7 @@ export function SyncPanel() {
     fullIncludePlaylists,
     extraTrackPolicy,
     ignoreSpaceCheck,
+    skipAlbumArtwork,
     selectedItems,
     setResults,
   ]);
@@ -510,15 +513,26 @@ export function SyncPanel() {
             ]}
           />
         </div>
-        <label className="flex items-center gap-2 mt-4 cursor-default">
-          <input
-            type="checkbox"
-            checked={ignoreSpaceCheck}
-            onChange={(e) => setIgnoreSpaceCheck(e.target.checked)}
-            className="accent-[#4a9eff] rounded"
-          />
-          <span className="text-sm text-[#8a8f98]">Ignore space check</span>
-        </label>
+        <div className="flex flex-wrap gap-6 mt-4">
+          <label className="flex items-center gap-2 cursor-default">
+            <input
+              type="checkbox"
+              checked={ignoreSpaceCheck}
+              onChange={(e) => setIgnoreSpaceCheck(e.target.checked)}
+              className="accent-[#4a9eff] rounded"
+            />
+            <span className="text-sm text-[#8a8f98]">Ignore space check</span>
+          </label>
+          <label className="flex items-center gap-2 cursor-default">
+            <input
+              type="checkbox"
+              checked={skipAlbumArtwork}
+              onChange={(e) => setSkipAlbumArtwork(e.target.checked)}
+              className="accent-[#4a9eff] rounded"
+            />
+            <span className="text-sm text-[#8a8f98]">Not syncing album artwork</span>
+          </label>
+        </div>
       </Card>
 
       {/* Custom sync: grid of categories */}

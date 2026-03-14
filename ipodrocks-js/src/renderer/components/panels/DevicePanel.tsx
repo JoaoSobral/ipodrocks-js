@@ -387,27 +387,75 @@ export function DevicePanel() {
                       </div>
                     )}
                     {typeof cr.musicSyncedWithLibrary === "number" && (
-                      <div className="flex justify-between text-xs">
-                        <span className="text-[#5a5f68]">Music vs Library</span>
-                        <span className="text-[#8a8f98]">
-                          {cr.musicSyncedWithLibrary} synced · {cr.musicOrphans ?? 0} orphans
-                        </span>
+                      <div className="flex flex-col gap-0.5">
+                        <div className="flex justify-between text-xs">
+                          <span className="text-[#5a5f68]">Music vs Library</span>
+                          <span className="text-[#8a8f98]">
+                            {[
+                              `${cr.musicSyncedWithLibrary} synced`,
+                              (cr.musicCodecMismatch ?? 0) > 0 &&
+                                `${cr.musicCodecMismatch} codec mismatch`,
+                              (cr.musicToSync ?? 0) > 0 && `${cr.musicToSync} to sync`,
+                              (cr.musicOrphans ?? 0) > 0 && `${cr.musicOrphans} orphans`,
+                            ]
+                              .filter(Boolean)
+                              .join(" · ")}
+                          </span>
+                        </div>
+                        {(cr.musicCodecMismatch ?? 0) > 0 && cr.profileCodecName && (
+                          <p className="text-[10px] text-[#5a5f68]">
+                            Codec mismatch files will be re-encoded to{" "}
+                            {cr.profileCodecName} on next sync.
+                          </p>
+                        )}
                       </div>
                     )}
                     {typeof cr.podcastSyncedWithLibrary === "number" && (
-                      <div className="flex justify-between text-xs">
-                        <span className="text-[#5a5f68]">Podcasts vs Library</span>
-                        <span className="text-[#8a8f98]">
-                          {cr.podcastSyncedWithLibrary} synced · {cr.podcastOrphans ?? 0} orphans
-                        </span>
+                      <div className="flex flex-col gap-0.5">
+                        <div className="flex justify-between text-xs">
+                          <span className="text-[#5a5f68]">Podcasts vs Library</span>
+                          <span className="text-[#8a8f98]">
+                            {[
+                              `${cr.podcastSyncedWithLibrary} synced`,
+                              (cr.podcastCodecMismatch ?? 0) > 0 &&
+                                `${cr.podcastCodecMismatch} codec mismatch`,
+                              (cr.podcastToSync ?? 0) > 0 && `${cr.podcastToSync} to sync`,
+                              (cr.podcastOrphans ?? 0) > 0 && `${cr.podcastOrphans} orphans`,
+                            ]
+                              .filter(Boolean)
+                              .join(" · ")}
+                          </span>
+                        </div>
+                        {(cr.podcastCodecMismatch ?? 0) > 0 && cr.profileCodecName && (
+                          <p className="text-[10px] text-[#5a5f68]">
+                            Codec mismatch files will be re-encoded to{" "}
+                            {cr.profileCodecName} on next sync.
+                          </p>
+                        )}
                       </div>
                     )}
                     {typeof cr.audiobookSyncedWithLibrary === "number" && (
-                      <div className="flex justify-between text-xs">
-                        <span className="text-[#5a5f68]">Audiobooks vs Library</span>
-                        <span className="text-[#8a8f98]">
-                          {cr.audiobookSyncedWithLibrary} synced · {cr.audiobookOrphans ?? 0} orphans
-                        </span>
+                      <div className="flex flex-col gap-0.5">
+                        <div className="flex justify-between text-xs">
+                          <span className="text-[#5a5f68]">Audiobooks vs Library</span>
+                          <span className="text-[#8a8f98]">
+                            {[
+                              `${cr.audiobookSyncedWithLibrary} synced`,
+                              (cr.audiobookCodecMismatch ?? 0) > 0 &&
+                                `${cr.audiobookCodecMismatch} codec mismatch`,
+                              (cr.audiobookToSync ?? 0) > 0 && `${cr.audiobookToSync} to sync`,
+                              (cr.audiobookOrphans ?? 0) > 0 && `${cr.audiobookOrphans} orphans`,
+                            ]
+                              .filter(Boolean)
+                              .join(" · ")}
+                          </span>
+                        </div>
+                        {(cr.audiobookCodecMismatch ?? 0) > 0 && cr.profileCodecName && (
+                          <p className="text-[10px] text-[#5a5f68]">
+                            Codec mismatch files will be re-encoded to{" "}
+                            {cr.profileCodecName} on next sync.
+                          </p>
+                        )}
                       </div>
                     )}
                     {cr.playlists != null && (

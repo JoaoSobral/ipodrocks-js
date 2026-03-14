@@ -827,11 +827,18 @@ export function registerIpcHandlers(): void {
         disk: space,
         musicSyncedWithLibrary: musicCompare.tracksToSkip.length,
         musicOrphans: musicCompare.extras.length,
+        musicCodecMismatch: musicCompare.codecMismatchPaths.length,
+        musicToSync: musicCompare.missingTracks.size,
         podcastSyncedWithLibrary: podcastCompare.tracksToSkip.length,
         podcastOrphans: podcastCompare.extras.length,
+        podcastCodecMismatch: podcastCompare.codecMismatchPaths.length,
+        podcastToSync: podcastCompare.missingTracks.size,
         audiobookSyncedWithLibrary: audiobookCompare.tracksToSkip.length,
         audiobookOrphans: audiobookCompare.extras.length,
+        audiobookCodecMismatch: audiobookCompare.codecMismatchPaths.length,
+        audiobookToSync: audiobookCompare.missingTracks.size,
         playlistOrphans: playlistOrphans.length,
+        profileCodecName: codecName,
         orphansMusicPaths: musicCompare.extras,
         orphansPodcastPaths: podcastCompare.extras,
         orphansAudiobookPaths: audiobookCompare.extras,
@@ -985,6 +992,7 @@ export function registerIpcHandlers(): void {
         extraTrackPolicy: opts.extraTrackPolicy,
         cancelSignal: activeSyncAbort.signal,
         ignoreSpaceCheck: opts.ignoreSpaceCheck,
+        skipAlbumArtwork: opts.skipAlbumArtwork,
         progressCallback: (progressEvent) => {
           if (!event.sender.isDestroyed()) {
             event.sender.send("sync:progress", progressEvent);
