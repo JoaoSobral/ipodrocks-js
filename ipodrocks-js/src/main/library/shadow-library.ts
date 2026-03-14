@@ -221,7 +221,7 @@ export class ShadowLibraryManager {
           if (fs.existsSync(t.shadow_path)) fs.unlinkSync(t.shadow_path);
         } catch { /* best effort */ }
       }
-      this._cleanEmptyDirs(lib.path);
+      cleanEmptyDirectories(lib.path);
     }
 
     this.stmtDelete.run(id);
