@@ -41,3 +41,11 @@ Required only if you use Musepack (MPC) as a codec for devices or shadow librari
 | **Windows** | Download from [musepack.net](https://www.musepack.net/), add `mpcenc.exe` to PATH |
 
 If `mpcenc` is not on your PATH, iPodRocks will prompt when you select Musepack. You can still use other codecs (MP3, AAC, Opus, etc.) without it.
+
+## Supported audio formats
+
+iPodRocks scans and catalogs these formats: MP3, FLAC, AAC, M4A, OGG, Opus, WAV, AIFF. Transcoding output supports MP3, AAC, Musepack (MPC), Opus, and OGG.
+
+## Data location
+
+The app stores its database (`ipodrock.db`) and preferences in the platform user data directory. See [Troubleshooting](/guide/troubleshooting#database-or-config-location) for paths and backup notes.
