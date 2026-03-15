@@ -6,8 +6,8 @@ hero:
   text: Sync manager for Rockbox and mountable devices
   tagline: Multiple libraries, shadow transcoding, AI playlists, harmonic mixing — all in one desktop app.
   image:
-    src: /screenshots/dashboard.png
-    alt: iPodRocks Dashboard
+    src: /logo.png
+    alt: iPodRocks
   actions:
     - theme: brand
       text: Getting Started

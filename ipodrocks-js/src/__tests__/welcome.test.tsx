@@ -17,9 +17,9 @@ describe("WelcomePanel", () => {
     expect(screen.getByText("What you can do with iPodRocks")).toBeInTheDocument();
   });
 
-  it("renders Sync to Rockbox feature", () => {
+  it("renders Sync feature", () => {
     render(<WelcomePanel />);
-    expect(screen.getByText("Sync to Rockbox")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Sync" })).toBeInTheDocument();
   });
 
   it("renders Get started section", () => {

@@ -1,0 +1,8 @@
+/* iOS-style app icon for hero logo: rounded corners + soft shadow */
+.VPHero .image img {
+  border-radius: 22%;
+  box-shadow:
+    0 2px 8px rgb(0 0 0 / 0.15),
+    0 12px 24px rgb(0 0 0 / 0.2),
+    0 0 0 1px rgb(0 0 0 / 0.04);
+}
