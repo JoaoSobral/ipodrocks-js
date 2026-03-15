@@ -2,13 +2,18 @@
  * Audio analysis using Essentia.js for key and BPM detection.
  * Decodes audio via ffmpeg, runs KeyExtractor and RhythmExtractor2013.
  *
- * A single WASM Essentia instance is reused across all tracks to
- * avoid the memory leak caused by repeatedly instantiating and
- * shutting down the WASM module. Console output from the WASM
- * module is suppressed to prevent "undefined" spam on stdout.
+ * The VectorFloat from arrayToVector is explicitly deleted after each track
+ * (Embind does not auto-free); otherwise the WASM heap grows until analysis
+ * fails after ~97 tracks. Module.print/printErr are set to suppress "undefined" spam.
  */
 
 import * as fs from "fs";
+
+// Set Emscripten Module.print/printErr before Essentia WASM loads. The WASM uses
+// these for stdout/stderr; if unset it falls back to console.log/console.warn.
+// Must run before require("essentia.js") to suppress "undefined" spam.
+const g = globalThis as typeof globalThis & { Module?: Record<string, unknown> };
+g.Module = { ...g.Module, print: () => {}, printErr: () => {} };
 import * as os from "os";
 import * as path from "path";
 import { spawn } from "child_process";
@@ -41,10 +46,13 @@ export interface EssentiaFeatures {
   camelot: string | null;
 }
 
+/** VectorFloat returned by arrayToVector; must be freed with .delete() to avoid WASM heap leak. */
+type EssentiaVector = unknown & { delete?: () => void };
+
 type EssentiaEngine = {
-  arrayToVector: (a: Float32Array) => unknown;
-  KeyExtractor: (v: unknown) => { key: string; scale: string };
-  RhythmExtractor2013: (v: unknown) => { bpm: number };
+  arrayToVector: (a: Float32Array) => EssentiaVector;
+  KeyExtractor: (v: EssentiaVector) => { key: string; scale: string };
+  RhythmExtractor2013: (v: EssentiaVector) => { bpm: number };
   shutdown: () => void;
 };
 
@@ -76,19 +84,35 @@ function getEssentia(): EssentiaPkg | null {
 }
 
 /**
- * Suppress console.log and process.stdout.write during Essentia calls
- * to avoid "undefined" spam from the WASM module.
+ * Suppress all console and process output during Essentia calls.
+ * Emscripten may use console.warn for stderr; belt-and-suspenders.
  */
 function suppressOutput<T>(fn: () => T): T {
   const origLog = console.log;
+  const origWarn = console.warn;
   const origStdoutWrite = process.stdout.write.bind(process.stdout);
-  console.log = () => {};
-  process.stdout.write = () => true;
+  const origStderrWrite = process.stderr.write.bind(process.stderr);
+  const noopWrite = (
+    _chunk: unknown,
+    enc?: unknown,
+    cb?: unknown
+  ): boolean => {
+    if (typeof enc === "function") (enc as () => void)();
+    else if (typeof cb === "function") (cb as () => void)();
+    return true;
+  };
+  const noop = () => {};
+  console.log = noop;
+  console.warn = noop;
+  process.stdout.write = noopWrite as typeof process.stdout.write;
+  process.stderr.write = noopWrite as typeof process.stderr.write;
   try {
     return fn();
   } finally {
     console.log = origLog;
+    console.warn = origWarn;
     process.stdout.write = origStdoutWrite;
+    process.stderr.write = origStderrWrite;
   }
 }
 
@@ -174,8 +198,8 @@ function essentiaKeyToNormalized(key: string, scale: string): string | null {
   return k;
 }
 
-/** Recreate the Essentia engine every N tracks to avoid WASM heap growth and process death. */
-const ESSENTIA_RESET_INTERVAL = 75;
+/** Recreate the Essentia engine every N tracks as a safety net (vector is now freed per track). */
+const ESSENTIA_RESET_INTERVAL = 500;
 
 /**
  * Analyze audio file for key and BPM using Essentia.js.
@@ -201,37 +225,41 @@ export async function analyzeAudioWithEssentia(
   try {
     const result = suppressOutput(() => {
       const vector = essentia.arrayToVector(audio);
-
-      let key: string | null = null;
-      let camelot: string | null = null;
-      let bpm: number | null = null;
-
       try {
-        const keyResult = essentia.KeyExtractor(vector);
-        if (keyResult?.key) {
-          const normalized = essentiaKeyToNormalized(
-            keyResult.key,
-            keyResult.scale ?? ""
-          );
-          if (normalized) {
-            key = normalized;
-            camelot = toCamelot(normalized);
+        let key: string | null = null;
+        let camelot: string | null = null;
+        let bpm: number | null = null;
+
+        try {
+          const keyResult = essentia.KeyExtractor(vector);
+          if (keyResult?.key) {
+            const normalized = essentiaKeyToNormalized(
+              keyResult.key,
+              keyResult.scale ?? ""
+            );
+            if (normalized) {
+              key = normalized;
+              camelot = toCamelot(normalized);
+            }
           }
+        } catch {
+          // Key extraction failed
         }
-      } catch {
-        // Key extraction failed
-      }
 
-      try {
-        const rhythmResult = essentia.RhythmExtractor2013(vector);
-        if (rhythmResult?.bpm != null && rhythmResult.bpm > 0) {
-          bpm = Math.round(rhythmResult.bpm * 10) / 10;
+        try {
+          const rhythmResult = essentia.RhythmExtractor2013(vector);
+          if (rhythmResult?.bpm != null && rhythmResult.bpm > 0) {
+            bpm = Math.round(rhythmResult.bpm * 10) / 10;
+          }
+        } catch {
+          // BPM extraction failed
         }
-      } catch {
-        // BPM extraction failed
-      }
 
-      return { key, bpm, camelot };
+        return { key, bpm, camelot };
+      } finally {
+        // Free WASM heap: Embind vectors must be deleted or the heap grows until analysis fails (~97 tracks).
+        vector.delete?.();
+      }
     });
     tracksSinceReset++;
     return result;
