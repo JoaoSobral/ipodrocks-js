@@ -25,7 +25,7 @@ Common issues and how to fix them.
 ## Harmonic analysis fails after many tracks
 
 - **Symptom:** Essentia backfill stops or crashes after ~100 tracks.
-- **Fix:** This was fixed in v1.0.3.1. Update to the latest version. The engine now frees memory correctly and resets periodically.
+- **Fix:** This was fixed in v1.0.4. Update to the latest version. The engine now frees memory correctly and resets periodically.
 
 ## Album artwork not on device
 

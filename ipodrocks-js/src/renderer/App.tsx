@@ -100,7 +100,7 @@ export function App() {
         </ul>
 
         <div className="border-t border-sidebar-border px-5 py-3">
-          <p className="text-[10px] text-muted-foreground">v1.0.3.1</p>
+          <p className="text-[10px] text-muted-foreground">v1.0.4</p>
         </div>
       </nav>
 

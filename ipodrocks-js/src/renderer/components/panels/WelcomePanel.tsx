@@ -3,7 +3,7 @@ import { useThemeStore } from "../../stores/theme-store";
 import logoSrcTransp from "@assets/ipodRocks_transp.png?url";
 import logoSrcBlack from "@assets/ipodRocks_black.png?url";
 
-const APP_VERSION = "1.0.3.1";
+const APP_VERSION = "1.0.4";
 
 const FEATURES: { icon: string; label: string; description: string }[] = [
   {
