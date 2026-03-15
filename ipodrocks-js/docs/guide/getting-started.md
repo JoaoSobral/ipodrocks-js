@@ -67,3 +67,4 @@ Progress is shown in a modal. When it finishes, your device is ready to use.
 - [Devices](/app-reference/devices) — Configure codecs, check device status
 - [Playlists](/app-reference/playlists) — Create Smart, Genius, or Savant playlists
 - [Settings](/app-reference/settings) — OpenRouter API (for Savant and Assistant), harmonic analysis
+- [Troubleshooting](/guide/troubleshooting) — Common issues and fixes

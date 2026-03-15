@@ -3,60 +3,50 @@ import { useThemeStore } from "../../stores/theme-store";
 import logoSrcTransp from "@assets/ipodRocks_transp.png?url";
 import logoSrcBlack from "@assets/ipodRocks_black.png?url";
 
-const APP_VERSION = "1.0.3";
+const APP_VERSION = "1.0.3.1";
 
-const FEATURES: { title: string; desc: string }[] = [
+const FEATURES: { icon: string; label: string; description: string }[] = [
   {
-    title: "Sync to Rockbox",
-    desc: "Copy your library to iPods and any device running Rockbox",
+    icon: "📤",
+    label: "Sync",
+    description:
+      "Rockbox, any mountable device. Full or custom sync by album, artist, genre, playlist.",
   },
   {
-    title: "Any mountable device",
-    desc: "Works with anything that mounts as a drive; you copy files to a folder",
+    icon: "📱",
+    label: "Multiple devices",
+    description:
+      "Add and switch between devices, each with its own codec and folder layout.",
   },
   {
-    title: "Multiple devices",
-    desc: "Add and switch between several devices, each with its own profile",
+    icon: "📚",
+    label: "Library & shadow libraries",
+    description:
+      "Music, podcasts, audiobooks. Pre-transcoded mirrors (e.g. FLAC→MPC) for fast sync.",
   },
   {
-    title: "Genius playlists",
-    desc: "Build playlists from device playback logs (Rediscovery, Forgotten Gems, etc.)",
+    icon: "📋",
+    label: "Playlists",
+    description:
+      "Smart (rules), Genius (playback logs), Savant (AI from mood). Create by voice via Assistant.",
   },
   {
-    title: "Smart playlists",
-    desc: "Rule-based playlists by genre, artist, album, with track limits",
+    icon: "💬",
+    label: "Music Assistant",
+    description:
+      "Floating chat that knows your library. Ask questions, create playlists by talking.",
   },
   {
-    title: "Savant playlists",
-    desc: "AI-powered playlists from mood and energy (requires OpenRouter API key)",
+    icon: "🎹",
+    label: "Harmonic mixing",
+    description:
+      "Camelot wheel, key and BPM detection. Savant uses harmonic data for smooth transitions.",
   },
   {
-    title: "Mood Chat",
-    desc: "Conversational playlist creation — describe your mood, get a tailored playlist",
-  },
-  {
-    title: "Harmonic mixing",
-    desc: "Camelot wheel, key-aware sequencing for smooth DJ-style transitions",
-  },
-  {
-    title: "Assistant",
-    desc: "Floating chat for library help and questions",
-  },
-  {
-    title: "Dashboard",
-    desc: "Library stats, device overview, and shadow library status at a glance",
-  },
-  {
-    title: "Podcasts",
-    desc: "Separate podcast folders and sync; full or custom sync per content type",
-  },
-  {
-    title: "Full or custom sync",
-    desc: "Sync everything or pick specific albums, artists, genres, playlists",
-  },
-  {
-    title: "Conversion & codecs",
-    desc: "Per-device codec configs, FFmpeg conversion with metadata preserved",
+    icon: "🔄",
+    label: "Conversion & codecs",
+    description:
+      "Per-device config: direct copy, MP3, AAC, Musepack, Opus. FFmpeg with metadata preserved.",
   },
 ];
 
@@ -87,41 +77,53 @@ export function WelcomePanel() {
             <p className="text-xs mt-2 text-muted-foreground">
               Made by Pedro · v{APP_VERSION} — Electron Edition
             </p>
+            <a
+              href="https://joaosobral.github.io/ipodrocks-js/"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-xs mt-2 inline-block text-primary hover:underline"
+            >
+              📖 Full documentation →
+            </a>
           </div>
         </div>
       </Card>
 
-      {/* Features */}
+      {/* Features — grid like genius playlist selection */}
       <Card title="Features" subtitle="What you can do with iPodRocks">
-        <ul className="space-y-4">
+        <div className="grid grid-cols-2 gap-3">
           {FEATURES.map((f, i) => (
-            <li key={i} className="flex items-start gap-3">
-              <span className="mt-0.5 w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold shrink-0 bg-primary/20 text-primary">
-                {i + 1}
-              </span>
-              <div className="min-w-0">
-                <span className="font-semibold text-sm text-foreground">
-                  {f.title}
-                </span>
-                <p className="text-sm mt-0.5 leading-relaxed text-muted-foreground">
-                  {f.desc}
-                </p>
-              </div>
-            </li>
+            <div
+              key={i}
+              className="text-left p-4 rounded-xl border border-border bg-muted/30"
+            >
+              <div className="text-2xl mb-2">{f.icon}</div>
+              <h4 className="text-sm font-semibold text-foreground">
+                {f.label}
+              </h4>
+              <p className="text-[11px] text-muted-foreground mt-1 leading-relaxed">
+                {f.description}
+              </p>
+            </div>
           ))}
-        </ul>
+        </div>
       </Card>
 
       {/* Getting started */}
       <Card title="Get started" subtitle="Use the sidebar to navigate">
         <p className="text-sm leading-relaxed text-muted-foreground">
-          Use <strong className="text-foreground">Dashboard</strong> for an overview,{" "}
-          <strong className="text-foreground">Library</strong> to add folders and scan,{" "}
-          <strong className="text-foreground">Devices</strong> to add and configure each{" "}
-          Rockbox (or mountable) device, <strong className="text-foreground">Playlists</strong> to
-          create smart, genius, or Savant playlists, and <strong className="text-foreground">Sync</strong> to{" "}
-          copy music and podcasts to the device. Open <strong className="text-foreground">Settings</strong> (gear{" "}
-          icon) to add your OpenRouter API key for Savant and Assistant features.
+          Use <strong className="text-foreground">Dashboard</strong> for an
+          overview, <strong className="text-foreground">Library</strong> to add
+          folders and scan, <strong className="text-foreground">Devices</strong>{" "}
+          to add and configure each Rockbox (or mountable) device,{" "}
+          <strong className="text-foreground">Playlists</strong> to create
+          smart, genius, or Savant playlists, and{" "}
+          <strong className="text-foreground">Sync</strong> to copy music and
+          podcasts to the device. Open <strong className="text-foreground">
+            Settings
+          </strong>{" "}
+          (gear icon) to add your OpenRouter API key for Savant and Assistant
+          features.
         </p>
       </Card>
     </div>
