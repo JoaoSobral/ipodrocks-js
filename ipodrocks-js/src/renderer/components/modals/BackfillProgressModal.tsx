@@ -167,7 +167,7 @@ export function BackfillProgressModal({
         <div className="flex items-center justify-between text-xs text-[#8a8f98]">
           <span className="truncate max-w-[50%]">
             {progress?.path
-              ? progress.path.split("/").pop()
+              ? String(progress.path).split("/").pop()
               : "Preparing…"}
           </span>
           <div className="flex gap-4 tabular-nums shrink-0">
@@ -199,7 +199,9 @@ export function BackfillProgressModal({
                 <span className="shrink-0">
                   {item.success ? "✓" : "—"}
                 </span>
-                <span className="truncate">{item.path.split("/").pop()}</span>
+                <span className="truncate">
+                  {item.path ? item.path.split("/").pop() : "—"}
+                </span>
               </div>
             ))}
           </div>

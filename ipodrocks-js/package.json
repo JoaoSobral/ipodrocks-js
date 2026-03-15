@@ -18,6 +18,9 @@
     "build": "tsc -p tsconfig.main.json && vite build",
     "preview": "npm run build && electron .",
     "test": "vitest",
+    "docs:dev": "vitepress dev docs",
+    "docs:build": "vitepress build docs",
+    "docs:preview": "vitepress preview docs",
     "copy-ffmpeg": "node scripts/copy-ffmpeg.js",
     "dist": "npm run build && npm run copy-ffmpeg && electron-builder --publish never",
     "dist:linux": "npm run build && npm run copy-ffmpeg && electron-builder --linux --publish never",
@@ -60,6 +63,7 @@
     "tailwindcss": "^4.0.0",
     "typescript": "^5.0.0",
     "vite": "^6.0.0",
+    "vitepress": "^1.6.4",
     "vitest": "^3.0.0",
     "wait-on": "^9.0.0"
   }
