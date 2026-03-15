@@ -1,4 +1,4 @@
-# iPodRocks v1.0.3.1 — Electron Edition
+# iPodRocks v1.0.4 — Electron Edition
 
 **The smart sync manager for Rockbox and any mountable device.** Built with Electron, React, and TypeScript.
 

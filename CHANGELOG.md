@@ -1,5 +1,27 @@
 # Changelog
 
+## [1.0.4] — 2026-03-15
+
+### Features
+
+#### Documentation
+
+- **VitePress docs site** — Full documentation at [joaosobral.github.io/ipodrocks-js](https://joaosobral.github.io/ipodrocks-js/). Guide (Getting Started, Installation, Troubleshooting), App Reference, and screenshots.
+- **GitHub Pages deployment** — Docs workflow builds and deploys on push to `main` when `ipodrocks-js/docs/**` changes.
+- **README link** — README and Welcome panel link to the full documentation.
+
+#### Harmonic Analysis (Essentia)
+
+- **WASM memory fix** — Essentia.js VectorFloat is now explicitly freed after each track. Fixes analysis failing after ~97 tracks due to heap growth.
+- **Reusable engine** — Single WASM instance reused across tracks with periodic reset (every 500 tracks).
+- **Output suppression** — Module.print/printErr and stdout/stderr suppressed during analysis.
+
+### Bug fixes
+
+- **Backfill progress** — BackfillProgressModal updated for the new Essentia engine lifecycle.
+
+---
+
 ## [1.0.3] — 2026-03-14
 
 ### Features
