@@ -1,5 +1,37 @@
 # Changelog
 
+## [1.0.5] — 2026-03-16
+
+### User-friendly / Dev
+
+#### MPC (Musepack) tagging
+
+- **APEv2 tag writer overhaul** — Replaced the previous minimal tag writer with a full, spec-compliant implementation. No external native or WASM dependencies (taglib-wasm removed). Pure TypeScript, zero-dependency core.
+- **Robust tag handling** — Writes APEv2 with header + items + footer. Strips existing APEv2 and ID3v1 before writing. Detects SV7 vs SV8 from file magic. Atomic writes (tmp file + rename) to avoid corruption.
+- **Cover art in MPC files** — When building a shadow library with MPC, cover art from the source album folder (`cover.jpg`, `cover.jpeg`, `cover.png`) is embedded into each MPC file as an APEv2 binary item, in addition to the external copy in the folder.
+- **Key validation** — APEv2 keys are validated (2–255 chars, printable ASCII). Typed errors (`MpcFormatError`, `ApeTagError`, `ApeKeyError`) for clearer diagnostics.
+
+#### Shadow libraries
+
+- **Album artwork in shadow libraries** — Builds and propagation now copy album artwork (`cover.jpg`, `cover.jpeg`, `cover.png`) from source library folders into the shadow library, mirroring folder structure. Artwork is copied after a full build and when new tracks are propagated to existing shadow libraries.
+- **FOREIGN KEY fix** — Deleting a shadow library no longer fails with "FOREIGN KEY constraint failed" when a device is still using it. Device references are cleared before the shadow library row is removed.
+- **Cover copy logging** — When copying album artwork into shadow libraries, the app now logs if an album directory cannot be read or if no cover file is found, so you can tell "path bug" from "no source artwork".
+- **Metadata passed to conversion** — Track metadata (title, artist, album, genre, track/disc number) is now passed into the conversion step so that MPC and other codecs that support tag write-back get proper tags in the output files.
+
+#### IPC & diagnostics
+
+- **Handler name in errors** — IPC errors are now logged with the channel name (e.g. `[ipc] shadow:create — FOREIGN KEY constraint failed`), making it easier to see which operation failed.
+
+#### Artwork
+
+- **`.jpeg` support** — Album artwork files with extension `.jpeg` are now recognized in addition to `.jpg` and `.png` for both device sync and shadow library artwork copy.
+
+#### Testing
+
+- **Tagging tests** — Unit tests for APEv2 items, block, strip, and detect; integration round-trip with `music-metadata` to verify written tags are readable.
+
+---
+
 ## [1.0.4] — 2026-03-15
 
 ### Features

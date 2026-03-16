@@ -4,11 +4,16 @@ import Database from "better-sqlite3";
 
 import { ShadowBuildProgress, ShadowLibrary, Track } from "../../shared/types";
 import {
+  ConversionMetadata,
   ConversionSettings,
   convertWithCodec,
   updateExtension,
 } from "../sync/sync-conversion";
-import { cleanEmptyDirectories } from "../sync/sync-core";
+import {
+  cleanEmptyDirectories,
+  copyArtworkToShadowLibrary,
+  SyncCancelled,
+} from "../sync/sync-core";
 
 function computeDirectorySize(root: string): number {
   try {
@@ -76,6 +81,17 @@ interface CodecConfigRow {
   bitrate_value: number | null;
   quality_value: number | null;
   bits_per_sample: number | null;
+}
+
+function trackToConversionMetadata(track: Track): ConversionMetadata {
+  return {
+    title: track.title || undefined,
+    artist: track.artist || undefined,
+    album: track.album || undefined,
+    genre: track.genre || undefined,
+    trackNumber: track.trackNumber > 0 ? track.trackNumber : undefined,
+    discNumber: track.discNumber > 0 ? track.discNumber : undefined,
+  };
 }
 
 /**
@@ -224,6 +240,9 @@ export class ShadowLibraryManager {
       cleanEmptyDirectories(lib.path);
     }
 
+    this.db.prepare(
+      "UPDATE devices SET shadow_library_id = NULL WHERE shadow_library_id = ?"
+    ).run(id);
     this.stmtDelete.run(id);
     return true;
   }
@@ -373,6 +392,65 @@ export class ShadowLibraryManager {
       }
     }
 
+    progressCallback?.({
+      shadowLibraryId: shadowLibId,
+      processed: total,
+      total,
+      currentFile: "",
+      status: "building",
+      logMessage: "Copying album artwork...",
+      logLevel: "info",
+    });
+
+    try {
+      const artworkResult = copyArtworkToShadowLibrary(
+        allTracks,
+        libraryFolderPaths,
+        lib.path,
+        (msg) =>
+          progressCallback?.({
+            shadowLibraryId: shadowLibId,
+            processed: total,
+            total,
+            currentFile: "",
+            status: "building",
+            logMessage: msg,
+            logLevel: "info",
+          }),
+        signal
+      );
+      if (
+        artworkResult.copied > 0 ||
+        artworkResult.skipped > 0 ||
+        artworkResult.errors > 0
+      ) {
+        const parts: string[] = [];
+        if (artworkResult.copied > 0) parts.push(`${artworkResult.copied} copied`);
+        if (artworkResult.skipped > 0) parts.push(`${artworkResult.skipped} skipped`);
+        if (artworkResult.errors > 0) parts.push(`${artworkResult.errors} error(s)`);
+        progressCallback?.({
+          shadowLibraryId: shadowLibId,
+          processed: total,
+          total,
+          currentFile: "",
+          status: "building",
+          logMessage: `Album artwork: ${parts.join(", ")}.`,
+          logLevel: "info",
+        });
+      }
+    } catch (err) {
+      if (err instanceof SyncCancelled) throw err;
+      progressCallback?.({
+        shadowLibraryId: shadowLibId,
+        processed: total,
+        total,
+        currentFile: "",
+        status: "building",
+        logMessage: `Artwork copy error: ${err instanceof Error ? err.message : String(err)}`,
+        logLevel: "error",
+      });
+    }
+
     const hasErrors = errors > 0;
     this.stmtSetStatus.run(hasErrors ? "error" : "ready", shadowLibId);
     progressCallback?.({
@@ -406,17 +484,24 @@ export class ShadowLibraryManager {
     );
     if (libs.length === 0 || trackPaths.length === 0) return;
 
+    const tracksToPropagate: Track[] = [];
+    for (const tp of trackPaths) {
+      const track = getTrackByPath(tp);
+      if (track) tracksToPropagate.push(track);
+    }
+    if (tracksToPropagate.length === 0) return;
+
     for (const lib of libs) {
+      if (signal?.aborted) return;
+
       const codecConfig = this.stmtGetCodecConfig.get(
         lib.codecConfigId
       ) as CodecConfigRow | undefined;
       if (!codecConfig) continue;
       const settings = this._buildConversionSettings(codecConfig);
 
-      for (const tp of trackPaths) {
+      for (const track of tracksToPropagate) {
         if (signal?.aborted) return;
-        const track = getTrackByPath(tp);
-        if (!track) continue;
 
         try {
           await this._transcodeTrack(
@@ -429,6 +514,16 @@ export class ShadowLibraryManager {
           );
         } catch { /* logged at track level */ }
       }
+
+      try {
+        copyArtworkToShadowLibrary(
+          tracksToPropagate,
+          libraryFolderPaths,
+          lib.path,
+          undefined,
+          signal
+        );
+      } catch { /* best effort; do not fail propagation */ }
     }
   }
 
@@ -532,10 +627,15 @@ export class ShadowLibraryManager {
 
     fs.mkdirSync(path.dirname(destPath), { recursive: true });
 
+    const settingsWithMeta: ConversionSettings = {
+      ...settings,
+      metadata: trackToConversionMetadata(track),
+    };
+
     const ok = await convertWithCodec(
       track.path,
       destPath,
-      settings,
+      settingsWithMeta,
       logCallback,
       signal
     );

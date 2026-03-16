@@ -549,7 +549,7 @@ describe("copyAlbumArtworkToDevice", () => {
       .toBe(false);
   });
 
-  it("does not copy .jpeg files (only .jpg and .png)", () => {
+  it("copies .jpeg files (along with .jpg and .png)", () => {
     const albumDir = path.join(tmpRoot, "Artist", "Album");
     fs.mkdirSync(albumDir, { recursive: true });
     fs.writeFileSync(path.join(albumDir, "track.mp3"), "audio");
@@ -569,9 +569,10 @@ describe("copyAlbumArtworkToDevice", () => {
       undefined
     );
 
-    expect(result.totalCandidates).toBe(0);
+    expect(result.totalCandidates).toBe(1);
+    expect(result.copied).toBe(1);
     expect(fs.existsSync(path.join(devicePath, "Artist", "Album", "cover.jpeg")))
-      .toBe(false);
+      .toBe(true);
   });
 
   it("emits total_add with artwork candidate count", () => {

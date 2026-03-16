@@ -1,6 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
 
+import { Track } from "../../shared/types";
 import { Device } from "../devices/device";
 import {
   CompareOptions,
@@ -509,7 +510,7 @@ export function removeExtraTracks(
   return { removed, bytesRemoved };
 }
 
-const ARTWORK_EXTENSIONS = [".jpg", ".png"];
+const ARTWORK_EXTENSIONS = [".jpg", ".jpeg", ".png"];
 
 export interface ArtworkSyncResult {
   copied: number;
@@ -654,6 +655,140 @@ export function copyAlbumArtworkToDevice(
         status: "error",
         contentType: "artwork",
       });
+    }
+  }
+
+  return {
+    copied,
+    skipped,
+    errors,
+    totalCandidates: candidates.length,
+  };
+}
+
+/**
+ * Compute the relative path of a source directory within its library folder.
+ * Used to mirror folder structure when copying artwork to shadow libraries.
+ */
+function computeShadowAlbumRelPath(
+  sourceDir: string,
+  libraryFolderPaths: Map<number, string>,
+  libraryFolderId: number
+): string {
+  const basePath = libraryFolderPaths.get(libraryFolderId);
+  if (!basePath) return "";
+  const baseResolved = path.resolve(basePath);
+  const sourceResolved = path.resolve(sourceDir);
+  if (
+    sourceResolved !== baseResolved &&
+    !sourceResolved.startsWith(baseResolved + path.sep)
+  ) {
+    return "";
+  }
+  const rel = path.relative(basePath, sourceDir).replace(/\\/g, "/");
+  return rel || "";
+}
+
+/**
+ * Copy album artwork (*.jpg, *.jpeg, *.png) from source library folders to a
+ * shadow library root, mirroring the folder structure. Used for all shadow
+ * libraries regardless of codec.
+ */
+export function copyArtworkToShadowLibrary(
+  allTracks: Track[],
+  libraryFolderPaths: Map<number, string>,
+  shadowRoot: string,
+  progressCallback?: (msg: string) => void,
+  signal?: AbortSignal
+): ArtworkSyncResult {
+  if (allTracks.length === 0) {
+    return { copied: 0, skipped: 0, errors: 0, totalCandidates: 0 };
+  }
+
+  const sourceDirToRel = new Map<string, string>();
+
+  for (const track of allTracks) {
+    if (signal?.aborted) throw new SyncCancelled();
+    const sourceDir = path.dirname(track.path);
+    if (sourceDirToRel.has(sourceDir)) continue;
+
+    const albumRel = computeShadowAlbumRelPath(
+      sourceDir,
+      libraryFolderPaths,
+      track.libraryFolderId
+    );
+    sourceDirToRel.set(sourceDir, albumRel);
+  }
+
+  const candidates: { srcPath: string; destPath: string }[] = [];
+
+  for (const [sourceDir, albumRel] of sourceDirToRel) {
+    if (signal?.aborted) throw new SyncCancelled();
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(sourceDir, { withFileTypes: true });
+    } catch {
+      progressCallback?.(
+        `Could not read album directory for artwork: ${sourceDir}`
+      );
+      continue;
+    }
+
+    for (const entry of entries) {
+      if (!entry.isFile()) continue;
+      const ext = path.extname(entry.name).toLowerCase();
+      if (!ARTWORK_EXTENSIONS.includes(ext)) continue;
+
+      const srcPath = path.join(sourceDir, entry.name);
+      const destPath = path.join(shadowRoot, albumRel, entry.name);
+      candidates.push({ srcPath, destPath });
+    }
+  }
+
+  if (
+    sourceDirToRel.size > 0 &&
+    candidates.length === 0 &&
+    progressCallback
+  ) {
+    progressCallback(
+      "No cover.jpg/cover.png/cover.jpeg found in any album folder."
+    );
+  }
+
+  let copied = 0;
+  let skipped = 0;
+  let errors = 0;
+
+  for (const { srcPath, destPath } of candidates) {
+    if (signal?.aborted) throw new SyncCancelled();
+
+    let srcStat: fs.Stats;
+    try {
+      srcStat = fs.statSync(srcPath);
+    } catch {
+      errors++;
+      continue;
+    }
+
+    let destStat: fs.Stats | null = null;
+    try {
+      destStat = fs.statSync(destPath);
+    } catch {
+      /* destination missing, will copy */
+    }
+
+    if (destStat?.isFile() && destStat.size === srcStat.size) {
+      skipped++;
+      continue;
+    }
+
+    try {
+      fs.mkdirSync(path.dirname(destPath), { recursive: true });
+      fs.copyFileSync(srcPath, destPath);
+      copied++;
+      progressCallback?.(`Artwork copied: ${path.basename(destPath)}`);
+    } catch {
+      errors++;
     }
   }
 
