@@ -180,14 +180,14 @@ function getDevicesCore(): DevicesCore {
 
 type Handler = (event: IpcMainInvokeEvent, ...args: any[]) => Promise<unknown>;
 
-function safe(fn: Handler): Handler {
+function safe(channel: string, fn: Handler): Handler {
   return async (event, ...args) => {
     try {
       return await fn(event, ...args);
     } catch (err) {
       const message =
         err instanceof Error ? err.message : String(err);
-      console.error(`[ipc] ${message}`);
+      console.error(`[ipc] ${channel} — ${message}`);
       return { error: message };
     }
   };
@@ -197,15 +197,15 @@ export function registerIpcHandlers(): void {
   // ---- App prefs and tool availability ----
   ipcMain.handle(
     "app:isMpcencAvailable",
-    safe(async () => ({ available: isMpcencAvailable() }))
+    safe("app:isMpcencAvailable", async () => ({ available: isMpcencAvailable() }))
   );
   ipcMain.handle(
     "app:getMpcRemindDisabled",
-    safe(async () => ({ disabled: getMpcRemindDisabled() }))
+    safe("app:getMpcRemindDisabled", async () => ({ disabled: getMpcRemindDisabled() }))
   );
   ipcMain.handle(
     "app:setMpcRemindDisabled",
-    safe(async (_event, disabled: boolean) => {
+    safe("app:setMpcRemindDisabled", async (_event, disabled: boolean) => {
       setMpcRemindDisabled(disabled);
       return undefined;
     })
@@ -214,7 +214,7 @@ export function registerIpcHandlers(): void {
   // ---- Genius Playlists (register early so they are always available) ----
   ipcMain.handle(
     "genius:analyze",
-    safe(async (_event, deviceId: number) => {
+    safe("genius:analyze", async (_event, deviceId: number) => {
       const device = getDevicesCore().getDeviceById(deviceId);
       if (!device) return { error: `Device ${deviceId} not found` };
 
@@ -231,7 +231,7 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(
     "genius:getSummaryFromDb",
-    safe(async () => {
+    safe("genius:getSummaryFromDb", async () => {
       const summary = buildAnalysisSummaryFromDb(getLibrary().getConnection());
       const artists = getArtistsFromPlaybackStats(getLibrary().getConnection());
       return { summary, artists };
@@ -240,12 +240,12 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(
     "genius:types",
-    safe(async () => getAvailableGeniusTypes(getLibrary().getConnection()))
+    safe("genius:types", async () => getAvailableGeniusTypes(getLibrary().getConnection()))
   );
 
   ipcMain.handle(
     "genius:generate",
-    safe(async (
+    safe("genius:generate", async (
       _event,
       deviceId: number | null,
       geniusType: string,
@@ -263,7 +263,7 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(
     "genius:save",
-    safe(async (
+    safe("genius:save", async (
       _event,
       name: string,
       geniusType: string,
@@ -292,7 +292,7 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(
     "dialog:pickFolder",
-    safe(async (event) => {
+    safe("dialog:pickFolder", async (event) => {
       const win = BrowserWindow.fromWebContents(event.sender);
       if (!win) return null;
       const result = await dialog.showOpenDialog(win, {
@@ -307,7 +307,7 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(
     "library:scan",
-    safe(async (event, payload: { folders: Array<{ name: string; path: string; contentType: string }> }) => {
+    safe("library:scan", async (event, payload: { folders: Array<{ name: string; path: string; contentType: string }> }) => {
       const lib = getLibrary();
       const scanner = new LibraryScanner(lib.getConnection());
       activeScanAbort = new AbortController();
@@ -365,7 +365,7 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(
     "scan:cancel",
-    safe(async () => {
+    safe("scan:cancel", async () => {
       if (activeScanAbort) {
         activeScanAbort.abort();
         activeScanAbort = null;
@@ -377,29 +377,29 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(
     "library:getTracks",
-    safe(async (_event, filter?: { contentType?: string; limit?: number; offset?: number }) => {
+    safe("library:getTracks", async (_event, filter?: { contentType?: string; limit?: number; offset?: number }) => {
       return getLibrary().getTracks(filter as any);
     })
   );
 
   ipcMain.handle(
     "library:getStats",
-    safe(async () => getLibrary().getStats())
+    safe("library:getStats", async () => getLibrary().getStats())
   );
 
   ipcMain.handle(
     "activity:getRecent",
-    safe(async () => getRecentActivity(getLibrary().getConnection()))
+    safe("activity:getRecent", async () => getRecentActivity(getLibrary().getConnection()))
   );
 
   ipcMain.handle(
     "library:getFolders",
-    safe(async () => getLibrary().getLibraryFolders())
+    safe("library:getFolders", async () => getLibrary().getLibraryFolders())
   );
 
   ipcMain.handle(
     "library:addFolder",
-    safe(async (_event, folder: { name: string; path: string; contentType: string }) => {
+    safe("library:addFolder", async (_event, folder: { name: string; path: string; contentType: string }) => {
       const validated = validateFolderPath(folder.path);
       if ("error" in validated) return { error: validated.error };
       const result = getLibrary().addLibraryFolder(
@@ -418,7 +418,7 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(
     "library:removeFolder",
-    safe(async (_event, folderId: number) => {
+    safe("library:removeFolder", async (_event, folderId: number) => {
       const ok = getLibrary().removeLibraryFolder(folderId, true);
       if (!ok) throw new Error("Folder not found or could not remove");
     })
@@ -426,19 +426,19 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(
     "library:clearContentHashes",
-    safe(async () => getLibrary().clearContentHashes())
+    safe("library:clearContentHashes", async () => getLibrary().clearContentHashes())
   );
 
   // ---- Shadow Libraries -------------------------------------------------
 
   ipcMain.handle(
     "shadow:getAll",
-    safe(async () => getLibrary().getShadowLibraries())
+    safe("shadow:getAll", async () => getLibrary().getShadowLibraries())
   );
 
   ipcMain.handle(
     "shadow:create",
-    safe(async (
+    safe("shadow:create", async (
       event,
       config: { name: string; path: string; codecConfigId: number }
     ) => {
@@ -473,14 +473,14 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(
     "shadow:delete",
-    safe(async (_event, shadowLibId: number, keepFilesOnDisk?: boolean) => {
+    safe("shadow:delete", async (_event, shadowLibId: number, keepFilesOnDisk?: boolean) => {
       return getLibrary().deleteShadowLibrary(shadowLibId, !keepFilesOnDisk);
     })
   );
 
   ipcMain.handle(
     "shadow:rebuild",
-    safe(async (event, shadowLibId: number) => {
+    safe("shadow:rebuild", async (event, shadowLibId: number) => {
       const lib = getLibrary();
       const shadowLib = lib.getShadowLibraryById(shadowLibId);
       if (!shadowLib) return { error: "Shadow library not found" };
@@ -509,7 +509,7 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(
     "shadow:cancelBuild",
-    safe(async () => {
+    safe("shadow:cancelBuild", async () => {
       if (activeShadowBuildAbort) {
         activeShadowBuildAbort.abort();
         activeShadowBuildAbort = null;
@@ -523,14 +523,14 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(
     "device:list",
-    safe(async () => {
+    safe("device:list", async () => {
       return getDevicesCore().getDevices().map((d) => d.profile);
     })
   );
 
   ipcMain.handle(
     "device:add",
-    safe(async (_event, config: AddDeviceConfig) => {
+    safe("device:add", async (_event, config: AddDeviceConfig) => {
       const device = getDevicesCore().addDevice(config);
       logActivity(
         getLibrary().getConnection(),
@@ -543,7 +543,7 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(
     "device:getModels",
-    safe(async () => {
+    safe("device:getModels", async () => {
       return getLibrary().getConnection()
         .prepare("SELECT id, name, internal_value, description FROM device_models ORDER BY id")
         .all();
@@ -552,7 +552,7 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(
     "device:getCodecConfigs",
-    safe(async () => {
+    safe("device:getCodecConfigs", async () => {
       return getLibrary().getConnection().prepare(`
         SELECT cc.id, cc.name, cc.bitrate_value, cc.quality_value,
                cc.bits_per_sample, cc.is_default, c.name as codec_name
@@ -565,21 +565,21 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(
     "device:setDefault",
-    safe(async (_event, deviceId: number | null) => {
+    safe("device:setDefault", async (_event, deviceId: number | null) => {
       return getDevicesCore().setDefaultDevice(deviceId);
     })
   );
 
   ipcMain.handle(
     "device:getDefault",
-    safe(async () => {
+    safe("device:getDefault", async () => {
       return getDevicesCore().getDefaultDeviceId();
     })
   );
 
   ipcMain.handle(
     "device:getSyncedPaths",
-    safe(async (_event, deviceId: number) => {
+    safe("device:getSyncedPaths", async (_event, deviceId: number) => {
       const rows = getLibrary().getConnection()
         .prepare("SELECT library_path FROM device_synced_tracks WHERE device_id = ?")
         .all(deviceId) as { library_path: string }[];
@@ -589,7 +589,7 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(
     "device:update",
-    safe(async (_event, deviceId: number, updates: Record<string, unknown>) => {
+    safe("device:update", async (_event, deviceId: number, updates: Record<string, unknown>) => {
       const ok = getDevicesCore().updateDevice(deviceId, updates);
       if (!ok) return { error: "Update failed" };
       const device = getDevicesCore().getDeviceById(deviceId)?.profile;
@@ -604,14 +604,14 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(
     "device:remove",
-    safe(async (_event, deviceId: number) => {
+    safe("device:remove", async (_event, deviceId: number) => {
       return getDevicesCore().deleteDevice(deviceId);
     })
   );
 
   ipcMain.handle(
     "device:check",
-    safe(async (_event, deviceId: number) => {
+    safe("device:check", async (_event, deviceId: number) => {
       const device = getDevicesCore().getDeviceById(deviceId);
       if (!device) return { error: `Device ${deviceId} not found` };
 
@@ -849,7 +849,7 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(
     "device:readPlaybackLog",
-    safe(async (_event, deviceId: number) => {
+    safe("device:readPlaybackLog", async (_event, deviceId: number) => {
       const device = getDevicesCore().getDeviceById(deviceId);
       if (!device) return { error: `Device ${deviceId} not found` };
 
@@ -882,7 +882,7 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(
     "sync:start",
-    safe(async (event, opts: SyncOptions) => {
+    safe("sync:start", async (event, opts: SyncOptions) => {
       const lib = getLibrary();
       const dc = getDevicesCore();
       const device = dc.getDeviceById(opts.deviceId);
@@ -1305,7 +1305,7 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(
     "sync:cancel",
-    safe(async () => {
+    safe("sync:cancel", async () => {
       if (activeSyncAbort) {
         activeSyncAbort.abort();
         activeSyncAbort = null;
@@ -1319,21 +1319,21 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(
     "playlist:list",
-    safe(async (_event, playlistType?: string) => {
+    safe("playlist:list", async (_event, playlistType?: string) => {
       return getPlaylistCore().getPlaylists(playlistType);
     })
   );
 
   ipcMain.handle(
     "playlist:getTracks",
-    safe(async (_event, playlistId: number) => {
+    safe("playlist:getTracks", async (_event, playlistId: number) => {
       return getPlaylistCore().getPlaylistTracks(playlistId);
     })
   );
 
   ipcMain.handle(
     "playlist:create",
-    safe(async (_event, config: {
+    safe("playlist:create", async (_event, config: {
       name: string;
       strategy: string;
       trackLimit?: number;
@@ -1358,14 +1358,14 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(
     "playlist:delete",
-    safe(async (_event, playlistId: number) => {
+    safe("playlist:delete", async (_event, playlistId: number) => {
       getPlaylistCore().deletePlaylist(playlistId);
     })
   );
 
   ipcMain.handle(
     "playlist:export",
-    safe(async (_event, playlistId: number, deviceId?: number) => {
+    safe("playlist:export", async (_event, playlistId: number, deviceId?: number) => {
       const core = getPlaylistCore();
       const defaultName = core.getPlaylistById(playlistId)?.name ?? "playlist";
       const { filePath } = await dialog.showSaveDialog({
@@ -1403,24 +1403,24 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(
     "playlist:getGenres",
-    safe(async () => getPlaylistCore().getGenres())
+    safe("playlist:getGenres", async () => getPlaylistCore().getGenres())
   );
 
   ipcMain.handle(
     "playlist:getArtists",
-    safe(async () => getPlaylistCore().getArtists())
+    safe("playlist:getArtists", async () => getPlaylistCore().getArtists())
   );
 
   ipcMain.handle(
     "playlist:getAlbums",
-    safe(async () => getPlaylistCore().getAlbums())
+    safe("playlist:getAlbums", async () => getPlaylistCore().getAlbums())
   );
 
   // ---- Savant Playlists -------------------------------------------------
 
   ipcMain.handle(
     "savant:generate",
-    safe(async (_event, intent: import("../shared/types").SavantIntent) => {
+    safe("savant:generate", async (_event, intent: import("../shared/types").SavantIntent) => {
       const config = getOpenRouterConfig();
       if (!config) return { error: "OpenRouter API key not configured. Add it in Settings." };
       const db = getLibrary().getConnection();
@@ -1445,7 +1445,7 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(
     "savant:checkKeyData",
-    safe(async () => {
+    safe("savant:checkKeyData", async () => {
       const db = getLibrary().getConnection();
       const keyed = db
         .prepare(
@@ -1475,7 +1475,7 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(
     "savant:backfillFeatures",
-    safe(async (event, opts?: { percent?: number }) => {
+    safe("savant:backfillFeatures", async (event, opts?: { percent?: number }) => {
       activeBackfillAbort = new AbortController();
       const signal = activeBackfillAbort.signal;
 
@@ -1528,7 +1528,7 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(
     "savant:backfillCancel",
-    safe(async () => {
+    safe("savant:backfillCancel", async () => {
       if (activeBackfillAbort) {
         activeBackfillAbort.abort();
         activeBackfillAbort = null;
@@ -1538,7 +1538,7 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(
     "savant:chat:start",
-    safe(async () => {
+    safe("savant:chat:start", async () => {
       const config = getOpenRouterConfig();
       if (!config?.apiKey?.trim())
         return { error: "OpenRouter API key not configured" };
@@ -1553,7 +1553,7 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(
     "savant:chat:turn",
-    safe(async (
+    safe("savant:chat:turn", async (
       _event,
       { sessionId, userMessage }: { sessionId: string; userMessage: string }
     ) => {
@@ -1576,14 +1576,14 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(
     "savant:chat:skip",
-    safe(async (_event, sessionId: string) => {
+    safe("savant:chat:skip", async (_event, sessionId: string) => {
       moodChatSessions.delete(sessionId);
     })
   );
 
   ipcMain.handle(
     "savant:playlistChat:start",
-    safe(async () => {
+    safe("savant:playlistChat:start", async () => {
       const config = getOpenRouterConfig();
       if (!config?.apiKey?.trim())
         return { error: "OpenRouter API key not configured" };
@@ -1598,7 +1598,7 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(
     "savant:playlistChat:turn",
-    safe(async (
+    safe("savant:playlistChat:turn", async (
       _event,
       { sessionId, userMessage }: { sessionId: string; userMessage: string }
     ) => {
@@ -1621,14 +1621,14 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(
     "savant:playlistChat:skip",
-    safe(async (_event, sessionId: string) => {
+    safe("savant:playlistChat:skip", async (_event, sessionId: string) => {
       savantPlaylistChatSessions.delete(sessionId);
     })
   );
 
   ipcMain.handle(
     "assistant:chat",
-    safe(async (_event, userMessage: string) => {
+    safe("assistant:chat", async (_event, userMessage: string) => {
       const config = getOpenRouterConfig();
       if (!config?.apiKey?.trim())
         return { error: "OpenRouter API key not configured" };
@@ -1711,7 +1711,7 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(
     "assistant:history:load",
-    safe(async () => {
+    safe("assistant:history:load", async () => {
       const db = getLibrary().getConnection();
       return loadAssistantHistory(db);
     })
@@ -1719,7 +1719,7 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(
     "assistant:history:clear",
-    safe(async () => {
+    safe("assistant:history:clear", async () => {
       const db = getLibrary().getConnection();
       clearAssistantHistory(db);
     })
@@ -1729,19 +1729,19 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(
     "settings:getOpenRouterConfig",
-    safe(async () => getOpenRouterConfig())
+    safe("settings:getOpenRouterConfig", async () => getOpenRouterConfig())
   );
 
   ipcMain.handle(
     "settings:setOpenRouterConfig",
-    safe(async (_event, config: import("../shared/types").OpenRouterConfig | null) => {
+    safe("settings:setOpenRouterConfig", async (_event, config: import("../shared/types").OpenRouterConfig | null) => {
       setOpenRouterConfig(config);
     })
   );
 
   ipcMain.handle(
     "settings:testOpenRouter",
-    safe(async (_event, configOverride?: { apiKey: string; model: string } | null) => {
+    safe("settings:testOpenRouter", async (_event, configOverride?: { apiKey: string; model: string } | null) => {
       const config = configOverride ?? getOpenRouterConfig();
       if (!config?.apiKey?.trim()) return { ok: false, error: "No API key" };
       const { callOpenRouter } = await import("./llm/openRouterClient");
@@ -1758,12 +1758,12 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(
     "settings:getHarmonicPrefs",
-    safe(async () => getHarmonicPrefs())
+    safe("settings:getHarmonicPrefs", async () => getHarmonicPrefs())
   );
 
   ipcMain.handle(
     "settings:setHarmonicPrefs",
-    safe(async (_event, prefs: HarmonicPrefs) => {
+    safe("settings:setHarmonicPrefs", async (_event, prefs: HarmonicPrefs) => {
       setHarmonicPrefs(prefs);
     })
   );

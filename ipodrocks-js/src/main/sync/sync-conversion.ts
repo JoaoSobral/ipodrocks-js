@@ -24,12 +24,25 @@ function getFfmpegPath(): string {
   return cachedFfmpegPath as string;
 }
 
+/** Metadata to write into converted files (e.g. MPC). */
+export interface ConversionMetadata {
+  title?: string;
+  artist?: string;
+  album?: string;
+  genre?: string;
+  trackNumber?: number;
+  discNumber?: number;
+  year?: number;
+}
+
 export interface ConversionSettings {
   codec?: string;
   bitrate?: number;
   quality?: number;
   transfer_mode?: string;
   rule_applied?: string;
+  /** Metadata to embed in the output (used for MPC and other codecs that need explicit tag write-back). */
+  metadata?: ConversionMetadata;
 }
 
 const CODEC_EXT_MAP: Record<string, string> = {
@@ -191,8 +204,16 @@ export async function convertWithCodec(
   if (codec === "mpc") {
     logCallback?.(`Converting to MPC: ${path.basename(src)}`);
     const quality = settings.quality ?? 7;
+    const metadata = settings.metadata;
     try {
-      return await convertMusepack(src, dest, quality, logCallback, signal);
+      return await convertMusepack(
+        src,
+        dest,
+        quality,
+        metadata,
+        logCallback,
+        signal
+      );
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       if (msg.includes("ENOENT") || msg.includes("spawn mpcenc")) {
@@ -250,6 +271,7 @@ async function convertMusepack(
   src: string,
   dest: string,
   quality: number,
+  metadata: ConversionMetadata | undefined,
   logCallback?: (line: string) => void,
   signal?: AbortSignal
 ): Promise<boolean> {
@@ -284,10 +306,68 @@ async function convertMusepack(
       return false;
     }
 
+    const tagged = await writeMpcMetadata(dest, src, metadata, logCallback, signal);
+    if (!tagged) {
+      logCallback?.("Warning: Could not write metadata to MPC file (audio is fine)");
+    }
+
     logCallback?.(`Converted to Musepack Q${quality}: ${path.basename(dest)}`);
     return true;
   } finally {
     try { fs.unlinkSync(tmpWav); } catch { /* ignore */ }
+  }
+}
+
+/**
+ * Write metadata into an MPC file using APEv2 tags.
+ * Uses the tagging module: strip existing tags, write new ones atomically.
+ */
+async function writeMpcMetadata(
+  mpcPath: string,
+  srcPath: string,
+  metadata: ConversionMetadata | undefined,
+  logCallback?: (line: string) => void,
+  _signal?: AbortSignal
+): Promise<boolean> {
+  if (!metadata) return true;
+
+  const tags: import("../tagging/apev2/types").ApeTags = {};
+  if (metadata.title) tags.title = String(metadata.title).replace(/\0/g, "").replace(/\r?\n/g, " ").trim();
+  if (metadata.artist) tags.artist = String(metadata.artist).replace(/\0/g, "").replace(/\r?\n/g, " ").trim();
+  if (metadata.album) tags.album = String(metadata.album).replace(/\0/g, "").replace(/\r?\n/g, " ").trim();
+  if (metadata.genre) tags.genre = String(metadata.genre).replace(/\0/g, "").replace(/\r?\n/g, " ").trim();
+  if (metadata.year != null && metadata.year > 0) tags.year = String(metadata.year);
+  if (metadata.trackNumber != null && metadata.trackNumber > 0) tags.track = String(metadata.trackNumber);
+  if (metadata.discNumber != null && metadata.discNumber > 0) tags.disc = String(metadata.discNumber);
+
+  const albumDir = path.dirname(srcPath);
+  const coverNames = ["cover.jpg", "cover.jpeg", "cover.png"];
+  for (const name of coverNames) {
+    const coverPath = path.join(albumDir, name);
+    try {
+      if (fs.existsSync(coverPath)) {
+        const data = fs.readFileSync(coverPath);
+        const ext = path.extname(name).toLowerCase();
+        tags.coverArt = {
+          data,
+          mimeType: ext === ".png" ? "image/png" : "image/jpeg",
+          filename: name,
+        };
+        break;
+      }
+    } catch {
+      /* skip if unreadable */
+    }
+  }
+
+  try {
+    const { writeTags } = await import("../tagging/writer");
+    await writeTags(mpcPath, tags);
+    return true;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logCallback?.(`APEv2 tag write failed: ${msg}`);
+    return false;
   }
 }
 
