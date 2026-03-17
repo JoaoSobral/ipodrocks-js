@@ -146,6 +146,7 @@ export function compareLibraries(
   const tracksToSkip: SkippedTrack[] = [];
   const matchedDevicePaths = new Set<string>();
   const codecMismatchPaths: string[] = [];
+  const codecMismatchSet = new Set<string>(); // F12: O(1) lookup instead of Array.includes
   const codecMismatchMap = new Map<string, string>();
 
   const profileExtNorm = profileCodecExt
@@ -277,8 +278,9 @@ export function compareLibraries(
       if (profileExtNorm) {
         const libDestExt = normalizeKey(extOf(relPath));
         const dpExt = normalizeKey(extOf(devicePath));
-        if (dpExt !== libDestExt && !codecMismatchPaths.includes(devicePath)) {
+        if (dpExt !== libDestExt && !codecMismatchSet.has(devicePath)) {
           codecMismatchPaths.push(devicePath);
+          codecMismatchSet.add(devicePath);
           const devRel = relativeFromDevice(devicePath, deviceContentPath);
           if (devRel) codecMismatchMap.set(libPath, devRel);
         }
@@ -288,8 +290,9 @@ export function compareLibraries(
             const dExt = normalizeKey(extOf(dp));
             if (dExt !== libDestExt) {
               matchedDevicePaths.add(dp);
-              if (!codecMismatchPaths.includes(dp)) {
+              if (!codecMismatchSet.has(dp)) {
                 codecMismatchPaths.push(dp);
+                codecMismatchSet.add(dp);
               }
               if (!codecMismatchMap.has(libPath)) {
                 const devRel = relativeFromDevice(dp, deviceContentPath);

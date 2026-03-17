@@ -16,6 +16,21 @@ const MAX_PLAYLIST_TRACKS = 150;
 const MAX_ASSISTANT_HISTORY = 100;
 export const MAX_PINNED_MEMORIES = 40;
 
+// ---------------------------------------------------------------------------
+// F9: Library context cache — rebuilding on every message is expensive
+// ---------------------------------------------------------------------------
+
+const LIBRARY_CONTEXT_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+let libraryContextCache: { text: string; ts: number } | null = null;
+let playlistInstructionsCache: { text: string; ts: number } | null = null;
+
+/** Invalidate the assistant context caches (call after library/playlist changes). */
+export function invalidateAssistantCache(): void {
+  libraryContextCache = null;
+  playlistInstructionsCache = null;
+}
+
 function buildLibraryContext(db: Database.Database): string {
   const stats = db
     .prepare(
@@ -615,11 +630,20 @@ export async function sendAssistantMessage(
   db: Database.Database,
   config: OpenRouterConfig
 ): Promise<string> {
-  const libraryContext = buildLibraryContext(db);
+  // F9: Cache the expensive context queries with a 5-minute TTL
+  const now = Date.now();
+  if (!libraryContextCache || now - libraryContextCache.ts > LIBRARY_CONTEXT_TTL_MS) {
+    libraryContextCache = { text: buildLibraryContext(db), ts: now };
+  }
+  if (!playlistInstructionsCache || now - playlistInstructionsCache.ts > LIBRARY_CONTEXT_TTL_MS) {
+    playlistInstructionsCache = { text: buildPlaylistInstructions(db), ts: now };
+  }
+  const libraryContext = libraryContextCache.text;
+  const playlistInstructions = playlistInstructionsCache.text;
+
   const { text: pinnedText, count: pinnedCount } =
     buildPinnedMemoriesContext(db);
   const memoryInstructions = buildMemoryInstructions(pinnedText, pinnedCount);
-  const playlistInstructions = buildPlaylistInstructions(db);
 
   const systemContent = `${ASSISTANT_SYSTEM_PROMPT}
 ${memoryInstructions}

@@ -22,6 +22,20 @@ export class AppDatabase {
     this.migrateSavant();
     this.migratePlaybackLog();
     this.migrateAssistantChat();
+    this.migrateDropRedundantIndexes();
+  }
+
+  /** F13: Drop redundant explicit indexes on columns that already have implicit UNIQUE indexes. */
+  private migrateDropRedundantIndexes(): void {
+    if (!this.db) return;
+    try {
+      this.db.exec(`
+        DROP INDEX IF EXISTS idx_file_path;
+        DROP INDEX IF EXISTS idx_app_settings_key;
+      `);
+    } catch (err) {
+      console.error("[db] migration failed (migrateDropRedundantIndexes):", err);
+    }
   }
 
   private migrateAssistantChat(): void {
@@ -215,78 +229,83 @@ export class AppDatabase {
         .get() as { value: string } | undefined;
       if (done?.value === "1") return;
 
+      // F19: PRAGMA must be outside the transaction (SQLite requirement)
       this.db.pragma("foreign_keys = OFF");
-      this.db.exec(`
-        CREATE TABLE IF NOT EXISTS library_folders_new (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          name TEXT NOT NULL,
-          path TEXT NOT NULL UNIQUE,
-          content_type TEXT NOT NULL CHECK(content_type IN ('music', 'podcast', 'audiobook')),
-          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        );
-        INSERT INTO library_folders_new SELECT id, name, path, content_type, created_at FROM library_folders;
-        DROP TABLE library_folders;
-        ALTER TABLE library_folders_new RENAME TO library_folders;
-        CREATE INDEX IF NOT EXISTS idx_library_folders_content_type ON library_folders(content_type);
-      `);
+      try {
+        // Wrap destructive table recreation in a transaction so any failure
+        // rolls back atomically — prevents partial migration leaving DB inconsistent
+        this.db.transaction(() => {
+          this.db!.exec(`
+            CREATE TABLE IF NOT EXISTS library_folders_new (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              name TEXT NOT NULL,
+              path TEXT NOT NULL UNIQUE,
+              content_type TEXT NOT NULL CHECK(content_type IN ('music', 'podcast', 'audiobook')),
+              created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            INSERT INTO library_folders_new SELECT id, name, path, content_type, created_at FROM library_folders;
+            DROP TABLE library_folders;
+            ALTER TABLE library_folders_new RENAME TO library_folders;
+            CREATE INDEX IF NOT EXISTS idx_library_folders_content_type ON library_folders(content_type);
+          `);
 
-      this.db.exec(`
-        CREATE TABLE IF NOT EXISTS tracks_new (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          path TEXT UNIQUE NOT NULL,
-          filename TEXT NOT NULL,
-          title TEXT,
-          track_number INTEGER,
-          disc_number INTEGER,
-          duration REAL,
-          bitrate INTEGER,
-          bits_per_sample INTEGER,
-          file_size INTEGER,
-          content_type TEXT NOT NULL CHECK(content_type IN ('music', 'podcast', 'audiobook')),
-          library_folder_id INTEGER,
-          artist_id INTEGER,
-          album_id INTEGER,
-          genre_id INTEGER,
-          codec_id INTEGER,
-          file_hash TEXT,
-          play_count INTEGER DEFAULT 0,
-          show_title TEXT,
-          episode_number INTEGER,
-          metadata_hash TEXT,
-          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-          FOREIGN KEY (library_folder_id) REFERENCES library_folders (id),
-          FOREIGN KEY (artist_id) REFERENCES artists (id),
-          FOREIGN KEY (album_id) REFERENCES albums (id),
-          FOREIGN KEY (genre_id) REFERENCES genres (id),
-          FOREIGN KEY (codec_id) REFERENCES codecs (id)
-        );
-        INSERT INTO tracks_new SELECT id, path, filename, title, track_number, disc_number, duration, bitrate, bits_per_sample, file_size, content_type, library_folder_id, artist_id, album_id, genre_id, codec_id, file_hash, play_count, show_title, episode_number, metadata_hash, created_at FROM tracks;
-        DROP TABLE tracks;
-        ALTER TABLE tracks_new RENAME TO tracks;
-      `);
-      this.db.exec(`
-        CREATE INDEX IF NOT EXISTS idx_tracks_content_type ON tracks(content_type);
-        CREATE INDEX IF NOT EXISTS idx_tracks_library_folder ON tracks(library_folder_id);
-        CREATE INDEX IF NOT EXISTS idx_tracks_artist ON tracks(artist_id);
-        CREATE INDEX IF NOT EXISTS idx_tracks_album ON tracks(album_id);
-        CREATE INDEX IF NOT EXISTS idx_tracks_genre ON tracks(genre_id);
-        CREATE INDEX IF NOT EXISTS idx_tracks_codec ON tracks(codec_id);
-        CREATE INDEX IF NOT EXISTS idx_tracks_file_hash ON tracks(file_hash);
-        CREATE INDEX IF NOT EXISTS idx_tracks_metadata_hash ON tracks(metadata_hash);
-      `);
-      this.db.pragma("foreign_keys = ON");
-      this.db
-        .prepare(
-          "INSERT OR REPLACE INTO app_settings (key, value, updated_at) VALUES ('migrate_audiobook_content_type_done', '1', CURRENT_TIMESTAMP)"
-        )
-        .run();
+          this.db!.exec(`
+            CREATE TABLE IF NOT EXISTS tracks_new (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              path TEXT UNIQUE NOT NULL,
+              filename TEXT NOT NULL,
+              title TEXT,
+              track_number INTEGER,
+              disc_number INTEGER,
+              duration REAL,
+              bitrate INTEGER,
+              bits_per_sample INTEGER,
+              file_size INTEGER,
+              content_type TEXT NOT NULL CHECK(content_type IN ('music', 'podcast', 'audiobook')),
+              library_folder_id INTEGER,
+              artist_id INTEGER,
+              album_id INTEGER,
+              genre_id INTEGER,
+              codec_id INTEGER,
+              file_hash TEXT,
+              play_count INTEGER DEFAULT 0,
+              show_title TEXT,
+              episode_number INTEGER,
+              metadata_hash TEXT,
+              created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+              FOREIGN KEY (library_folder_id) REFERENCES library_folders (id),
+              FOREIGN KEY (artist_id) REFERENCES artists (id),
+              FOREIGN KEY (album_id) REFERENCES albums (id),
+              FOREIGN KEY (genre_id) REFERENCES genres (id),
+              FOREIGN KEY (codec_id) REFERENCES codecs (id)
+            );
+            INSERT INTO tracks_new SELECT id, path, filename, title, track_number, disc_number, duration, bitrate, bits_per_sample, file_size, content_type, library_folder_id, artist_id, album_id, genre_id, codec_id, file_hash, play_count, show_title, episode_number, metadata_hash, created_at FROM tracks;
+            DROP TABLE tracks;
+            ALTER TABLE tracks_new RENAME TO tracks;
+          `);
+
+          this.db!.exec(`
+            CREATE INDEX IF NOT EXISTS idx_tracks_content_type ON tracks(content_type);
+            CREATE INDEX IF NOT EXISTS idx_tracks_library_folder ON tracks(library_folder_id);
+            CREATE INDEX IF NOT EXISTS idx_tracks_artist ON tracks(artist_id);
+            CREATE INDEX IF NOT EXISTS idx_tracks_album ON tracks(album_id);
+            CREATE INDEX IF NOT EXISTS idx_tracks_genre ON tracks(genre_id);
+            CREATE INDEX IF NOT EXISTS idx_tracks_codec ON tracks(codec_id);
+            CREATE INDEX IF NOT EXISTS idx_tracks_file_hash ON tracks(file_hash);
+            CREATE INDEX IF NOT EXISTS idx_tracks_metadata_hash ON tracks(metadata_hash);
+          `);
+
+          this.db!
+            .prepare(
+              "INSERT OR REPLACE INTO app_settings (key, value, updated_at) VALUES ('migrate_audiobook_content_type_done', '1', CURRENT_TIMESTAMP)"
+            )
+            .run();
+        })();
+      } finally {
+        this.db.pragma("foreign_keys = ON");
+      }
     } catch (err) {
       console.error("[db] migration failed (migrateContentTypeAudiobook):", err);
-      try {
-        this.db?.pragma("foreign_keys = ON");
-      } catch {
-        // ignore
-      }
     }
   }
 

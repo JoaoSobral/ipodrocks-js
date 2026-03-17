@@ -75,8 +75,8 @@ export class LibraryScanner {
   private getCodecStmt: Database.Statement;
   private insertCodecStmt: Database.Statement;
   private upsertTrackStmt: Database.Statement;
-  private loadHashesStmt: Database.Statement;
   private loadMtimesStmt: Database.Statement;
+  private loadTrackPathsStmt: Database.Statement;
   private getTrackIdByPathStmt: Database.Statement;
   private updateTrackFeaturesStmt: Database.Statement;
 
@@ -147,11 +147,11 @@ export class LibraryScanner {
         episode_number = excluded.episode_number
     `);
 
-    this.loadHashesStmt = db.prepare(
-      "SELECT path, file_hash FROM tracks WHERE path LIKE ? ESCAPE '\\'"
-    );
     this.loadMtimesStmt = db.prepare(
       "SELECT file_path, last_modified FROM content_hashes WHERE file_path LIKE ? ESCAPE '\\'"
+    );
+    this.loadTrackPathsStmt = db.prepare(
+      "SELECT path FROM tracks WHERE path LIKE ? ESCAPE '\\'"
     );
     this.getTrackIdByPathStmt = db.prepare(
       "SELECT id FROM tracks WHERE path = ?"
@@ -184,7 +184,6 @@ export class LibraryScanner {
     }
 
     const folderId = this.getOrCreateFolderId(folder, contentType);
-    const existingHashes = this.loadExistingHashes(folder);
     const existingMtimes = this.loadExistingMtimes(folder);
     const audioFiles = this.collectAudioFiles(folder);
     const audioFileSet = new Set(audioFiles);
@@ -245,22 +244,7 @@ export class LibraryScanner {
           continue;
         }
 
-        const [needsScan, reuseHash] = this.shouldScanFile(
-          filePath,
-          existingHashes
-        );
-        const isNew = !existingHashes.has(filePath);
-
-        if (!needsScan) {
-          filesProcessed++;
-          progressCallback?.({
-            file: path.basename(filePath),
-            processed: filesProcessed,
-            total,
-            status: "skipped",
-          });
-          continue;
-        }
+        const isNew = !existingMtimes.has(filePath);
 
         const metadataPromise = this.metadataExtractor.extractMetadata(
           filePath,
@@ -279,8 +263,7 @@ export class LibraryScanner {
 
         const fileSize = stat.size;
 
-        const fileHash =
-          reuseHash || this.hashManager.computeFileHash(filePath);
+        const fileHash = this.hashManager.computeFileHash(filePath);
         const metadataHash = this.hashManager.computeMetadataHash({
           artist: metadata.artist,
           album: metadata.album,
@@ -360,9 +343,11 @@ export class LibraryScanner {
       }
     }
 
-    const removedTrackPaths = [...existingHashes.keys()].filter(
-      (p) => !audioFileSet.has(p)
-    );
+    const existingTrackPaths = this.loadTrackPathsStmt
+      .all(escapeLike(folder) + "%") as { path: string }[];
+    const removedTrackPaths = existingTrackPaths
+      .map((r) => r.path)
+      .filter((p) => !audioFileSet.has(p));
 
     progressCallback?.({
       file: "",
@@ -416,16 +401,6 @@ export class LibraryScanner {
     return files;
   }
 
-  /** Load path → file_hash map for all existing tracks under a folder. */
-  private loadExistingHashes(folder: string): Map<string, string> {
-    const pattern = escapeLike(folder) + "%";
-    const rows = this.loadHashesStmt.all(pattern) as {
-      path: string;
-      file_hash: string;
-    }[];
-    return new Map(rows.map((r) => [r.path, r.file_hash]));
-  }
-
   /** Load path → last_modified (ms) from content_hashes for mtime-based skip. */
   private loadExistingMtimes(folder: string): Map<string, number> {
     const pattern = escapeLike(folder) + "%";
@@ -439,33 +414,6 @@ export class LibraryScanner {
       if (!Number.isNaN(ms)) map.set(r.file_path, ms);
     }
     return map;
-  }
-
-  /**
-   * Determine whether a file needs re-scanning by comparing its current
-   * content hash against the stored hash.
-   * @returns [needsScan, reuseHash] — reuseHash is the newly computed hash
-   *          when the file changed, avoiding a redundant computation later.
-   */
-  private shouldScanFile(
-    filePath: string,
-    existingHashes: Map<string, string>
-  ): [boolean, string | null] {
-    try {
-      const stored = existingHashes.get(filePath);
-      if (!stored) return [true, null];
-
-      const current = this.hashManager.computeFileHash(filePath);
-      if (!current) return [true, null];
-      if (current !== stored) return [true, current];
-      return [false, null];
-    } catch (err) {
-      console.warn(
-        `⚠️  Hash comparison failed for ${path.basename(filePath)}:`,
-        err
-      );
-      return [true, null];
-    }
   }
 
   /** Get or create the library_folders row for this path. */
@@ -628,28 +576,28 @@ export class LibraryScanner {
       byGenre.get(gid)!.push({ id: r.id, path: r.path });
     }
 
-    const genreIds = [...byGenre.keys()];
-    for (const gid of genreIds) {
-      const arr = byGenre.get(gid)!;
+    // Shuffle each genre's track array for random sampling
+    for (const arr of byGenre.values()) {
       for (let i = arr.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
         [arr[i], arr[j]] = [arr[j], arr[i]];
       }
     }
 
+    // F14: Round-robin using activeGenres array — avoids O(n) indexOf+splice on byGenre keys
+    const activeGenres = [...byGenre.entries()].filter(([, arr]) => arr.length > 0);
     const selected: Array<{ id: number; path: string }> = [];
     let gi = 0;
-    while (selected.length < targetCount && genreIds.length > 0) {
-      const gid = genreIds[gi % genreIds.length];
-      const arr = byGenre.get(gid)!;
-      if (arr.length > 0) {
-        selected.push(arr.pop()!);
-      }
+    while (selected.length < targetCount && activeGenres.length > 0) {
+      const idx = gi % activeGenres.length;
+      const [, arr] = activeGenres[idx];
+      selected.push(arr.pop()!);
       if (arr.length === 0) {
-        const idx = genreIds.indexOf(gid);
-        if (idx >= 0) genreIds.splice(idx, 1);
+        activeGenres.splice(idx, 1);
+        // Don't increment gi — the next genre has shifted into position idx
+      } else {
+        gi++;
       }
-      gi++;
     }
     return selected;
   }

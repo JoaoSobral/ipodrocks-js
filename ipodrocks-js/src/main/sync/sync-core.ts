@@ -9,11 +9,10 @@ import {
   SkippedTrack,
   compareLibraries,
 } from "./name-size-sync";
-import { updateExtension, estimateConvertedSize } from "./sync-conversion";
+import { ConversionSettings, updateExtension, estimateConvertedSize } from "./sync-conversion";
 import {
   CopyProgress,
   CopyToDeviceOptions,
-  copyFileToDevice,
   copyToDevice,
 } from "./sync-executor";
 
@@ -41,6 +40,8 @@ export interface RunSyncOptions {
   ignoreSpaceCheck?: boolean;
   /** When true, do not copy album artwork (*.jpg, *.png) to device. */
   skipAlbumArtwork?: boolean;
+  /** F7: Pre-loaded path→mtime from content_hashes to avoid per-track fs.statSync. */
+  preloadedMtimes?: Map<string, number>;
 }
 
 export interface ContentAnalysis {
@@ -154,7 +155,9 @@ export function buildLibraryDestMap(
   codecName: string,
   libraryFolderPaths?: Map<number, string>,
   cancelSignal?: AbortSignal,
-  progressCallback?: ProgressCallback
+  progressCallback?: ProgressCallback,
+  /** F7: Pre-loaded path→mtime map from content_hashes. Falls back to fs.statSync on miss. */
+  preloadedMtimes?: Map<string, number>
 ): {
   destMap: Record<string, string>;
   expectedSizes: Record<string, number>;
@@ -215,12 +218,17 @@ export function buildLibraryDestMap(
         (trackInfo.fileSize as number) ?? (trackInfo.file_size as number) ?? 0;
     }
 
-    // Always record library mtime (when available) so we can use it for
-    // equality checks even when size is ignored (e.g. lossy conversions).
-    try {
-      expectedMtimes[trackPath] = fs.statSync(trackPath).mtimeMs;
-    } catch {
-      // leave unset
+    // F7: Use pre-loaded mtime from DB cache; fall back to fs.statSync only on miss.
+    // This avoids 10k+ synchronous syscalls for large libraries.
+    const cachedMtime = preloadedMtimes?.get(trackPath);
+    if (cachedMtime != null) {
+      expectedMtimes[trackPath] = cachedMtime;
+    } else {
+      try {
+        expectedMtimes[trackPath] = fs.statSync(trackPath).mtimeMs;
+      } catch {
+        // leave unset
+      }
     }
 
     destMap[trackPath] = relPath.replace(/\\/g, "/");
@@ -286,7 +294,9 @@ export function analyzeContentType(
   codecName: string,
   libraryFolderPaths?: Map<number, string>,
   cancelSignal?: AbortSignal,
-  progressCallback?: ProgressCallback
+  progressCallback?: ProgressCallback,
+  /** F7: Pre-loaded path→mtime from content_hashes, passed through to buildLibraryDestMap. */
+  preloadedMtimes?: Map<string, number>
 ): ContentAnalysis {
   if (cancelSignal?.aborted) throw new SyncCancelled();
 
@@ -296,7 +306,8 @@ export function analyzeContentType(
     codecName,
     libraryFolderPaths,
     cancelSignal,
-    progressCallback
+    progressCallback,
+    preloadedMtimes
   );
 
   if (cancelSignal?.aborted) throw new SyncCancelled();
@@ -414,7 +425,7 @@ export async function copyMissingTracks(
   if (!existingPaths.length) return { synced: 0, missingFiles, errors: 0 };
 
   const customDestinations: Record<string, string> = {};
-  const perTrackConversion: Record<string, Record<string, unknown>> = {};
+  const perTrackConversion: Record<string, ConversionSettings> = {};
 
   const needsConversion = !["DIRECT COPY", "COPY", "NONE"].includes(codecName.toUpperCase());
   const codecLower = needsConversion ? codecName.toLowerCase() : "copy";
@@ -472,7 +483,7 @@ export async function copyMissingTracks(
   const opts: CopyToDeviceOptions = {
     convert: needsConversion,
     preserveStructure: false,
-    perTrackConversion: perTrackConversion as Record<string, any>,
+    perTrackConversion,
     customDestinations,
     progressCallback: progressAdapter,
     logCallback: (line: string) =>
@@ -631,21 +642,20 @@ export function copyAlbumArtworkToDevice(
     }
 
     try {
-      const ok = copyFileToDevice(srcPath, destPath);
-      if (ok) {
-        copied++;
-        progressCallback?.({
-          event: "log",
-          message: `Artwork copied: ${destPath}`,
-        });
-        progressCallback?.({
-          event: "copy",
-          path: destPath,
-          destination: destPath,
-          status: "copied",
-          contentType: "artwork",
-        });
-      }
+      fs.mkdirSync(path.dirname(destPath), { recursive: true });
+      fs.copyFileSync(srcPath, destPath);
+      copied++;
+      progressCallback?.({
+        event: "log",
+        message: `Artwork copied: ${path.basename(destPath)}`,
+      });
+      progressCallback?.({
+        event: "copy",
+        path: destPath,
+        destination: destPath,
+        status: "copied",
+        contentType: "artwork",
+      });
     } catch {
       errors++;
       progressCallback?.({
@@ -817,7 +827,7 @@ export async function runSync(
   missingFiles: string[];
   errors: number;
 }> {
-  const { extraTrackPolicy, progressCallback, cancelSignal, skipAlbumArtwork } =
+  const { extraTrackPolicy, progressCallback, cancelSignal, skipAlbumArtwork, preloadedMtimes } =
     options;
 
   progressCallback?.({ event: "log", message: `Comparing library with device (${contentType})...` });
@@ -830,7 +840,8 @@ export async function runSync(
     codecName,
     libraryFolderPaths,
     cancelSignal,
-    progressCallback
+    progressCallback,
+    preloadedMtimes
   );
 
   progressCallback?.({

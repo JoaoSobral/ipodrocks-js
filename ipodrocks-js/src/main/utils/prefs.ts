@@ -1,6 +1,6 @@
 import * as fs from "fs";
 import * as path from "path";
-import { app } from "electron";
+import { app, safeStorage } from "electron";
 import type { OpenRouterConfig } from "../../shared/types";
 
 const PREFS_FILENAME = "ipodrocks-prefs.json";
@@ -19,33 +19,82 @@ export interface HarmonicPrefs {
 interface Prefs {
   mpcRemindDisabled?: boolean;
   openRouterConfig?: OpenRouterConfig;
+  /** Encrypted API key (base64). Present only when safeStorage was used. */
+  _encApiKey?: string;
   harmonic?: HarmonicPrefs;
 }
+
+// ---------------------------------------------------------------------------
+// In-memory cache — avoids repeated disk reads for every getter call (F15)
+// ---------------------------------------------------------------------------
+
+let prefsCache: Prefs | null = null;
 
 function getPrefsPath(): string {
   return path.join(app.getPath("userData"), PREFS_FILENAME);
 }
 
 function readPrefs(): Prefs {
+  if (prefsCache !== null) return prefsCache;
   try {
     const p = getPrefsPath();
     if (fs.existsSync(p)) {
       const raw = fs.readFileSync(p, "utf-8");
-      return JSON.parse(raw) as Prefs;
+      const parsed = JSON.parse(raw) as Prefs;
+
+      // Decrypt API key if it was stored encrypted (F1)
+      if (parsed._encApiKey && safeStorage.isEncryptionAvailable()) {
+        try {
+          const buf = Buffer.from(parsed._encApiKey, "base64");
+          const decrypted = safeStorage.decryptString(buf);
+          if (parsed.openRouterConfig) {
+            parsed.openRouterConfig.apiKey = decrypted;
+          } else {
+            parsed.openRouterConfig = { apiKey: decrypted, model: "" };
+          }
+          delete parsed._encApiKey;
+        } catch {
+          // Decryption failed — fall through, apiKey may be missing
+        }
+      }
+
+      prefsCache = parsed;
+      return parsed;
     }
   } catch {
     // ignore
   }
-  return {};
+  prefsCache = {};
+  return prefsCache;
 }
 
 function writePrefs(prefs: Prefs): void {
   try {
     const p = getPrefsPath();
     fs.mkdirSync(path.dirname(p), { recursive: true });
+
+    // Encrypt API key before writing to disk (F1)
+    const toWrite: Prefs = { ...prefs };
+    if (toWrite.openRouterConfig?.apiKey) {
+      if (safeStorage.isEncryptionAvailable()) {
+        try {
+          const encrypted = safeStorage.encryptString(toWrite.openRouterConfig.apiKey);
+          toWrite._encApiKey = encrypted.toString("base64");
+          toWrite.openRouterConfig = { ...toWrite.openRouterConfig, apiKey: "" };
+        } catch {
+          console.warn("[prefs] safeStorage encryption failed, storing key in plaintext");
+        }
+      } else {
+        console.warn("[prefs] safeStorage unavailable, API key stored in plaintext");
+      }
+    }
+
     const tmp = p + ".tmp";
-    fs.writeFileSync(tmp, JSON.stringify(prefs, null, 2), "utf-8");
+    fs.writeFileSync(tmp, JSON.stringify(toWrite, null, 2), "utf-8");
     fs.renameSync(tmp, p);
+
+    // Update cache with the unencrypted version (F15)
+    prefsCache = prefs;
   } catch (err) {
     console.error("[prefs] write failed:", err);
   }
