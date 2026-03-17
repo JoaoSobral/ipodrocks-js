@@ -16,7 +16,8 @@ The Sync panel copies music, podcasts, audiobooks, and playlists from your libra
 - **Source** — Uses the primary library or the device's configured shadow library. If shadow, files are copied as-is (no transcoding during sync).
 - **Transcoding** — When using the primary library and the device needs a different codec, FFmpeg converts on the fly. Metadata (tags, artwork) is preserved.
 - **Extra track policy** — "Keep" leaves device-only files. "Remove" deletes them. "Prompt" asks you.
-- **Orphans** — Files on the device not in the library. Handled by the extra track policy.
+- **Orphans** — Files on the device not in the library. They are only auto-deleted during sync when **Extra Track Policy is set to "Remove"**; with "Keep" or "Prompt" they stay on the device unless you explicitly confirm removal.
+- **Codec mismatches** — When a device has files in a codec that no longer matches its profile (e.g. old Musepack files after switching the profile to Opus) and you sync with **Extra Track Policy = "Remove"**, those old-codec files are removed and replaced by the new codec during sync.
 - **Album artwork** — Copied by default (`cover.jpg`, `folder.png`, etc.). Uncheck "Skip album artwork" to disable.
 
 ## How to work with it
