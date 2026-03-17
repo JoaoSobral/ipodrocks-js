@@ -869,6 +869,21 @@ export async function runSync(
     removedCount = removed;
   }
 
+  if (analysis.codecMismatchPaths.length > 0) {
+    const { removed } = removeExtraTracks(
+      analysis.codecMismatchPaths,
+      progressCallback,
+      cancelSignal
+    );
+    removedCount += removed;
+    if (removed > 0) {
+      progressCallback?.({
+        event: "log",
+        message: `Removed ${removed} old-codec file(s) to be replaced by new format`,
+      });
+    }
+  }
+
   if (toSync > 0) {
     progressCallback?.({ event: "log", message: `Copying ${toSync} track(s) to device...` });
   }
@@ -914,17 +929,6 @@ export async function runSync(
       progressCallback?.({
         event: "log",
         message: `Album artwork: ${parts.join(", ")}.`,
-      });
-    }
-  }
-
-  if (analysis.codecMismatchPaths.length > 0 && synced > 0) {
-    const { removed } = removeExtraTracks(analysis.codecMismatchPaths, progressCallback, cancelSignal);
-    removedCount += removed;
-    if (removed > 0) {
-      progressCallback?.({
-        event: "log",
-        message: `Removed ${removed} old-codec file(s) replaced by new format`,
       });
     }
   }
