@@ -1,6 +1,6 @@
 appId: com.ipodrocks.app
 productName: iPodRocks
-icon: resources/icon.png
+# Platform icons from buildResources (resources/): icon.ico, icon.icns, icon.png
 directories:
   output: out
   buildResources: resources
@@ -13,6 +13,10 @@ extraResources:
     to: ffmpeg
   - from: resources/icon.png
     to: icon.png
+  - from: resources/icon.ico
+    to: icon.ico
+  - from: resources/icon.icns
+    to: icon.icns
 linux:
   target:
     - AppImage
