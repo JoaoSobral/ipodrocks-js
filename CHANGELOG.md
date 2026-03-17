@@ -1,5 +1,65 @@
 # Changelog
 
+## [1.1.0] — 2026-03-17
+
+### Security
+
+#### API key encryption
+
+- **Encrypted API key at rest** — The OpenRouter API key is now encrypted using Electron's `safeStorage` (OS keychain) before writing to the prefs file. Stored as a base64-encoded `_encApiKey` field; decrypted transparently on read. Falls back to plaintext with a console warning if OS encryption is unavailable.
+
+#### Path traversal hardening
+
+- **Real prefix allowlist** — The old path traversal check (`split(sep).includes("..")`) was dead code after `path.resolve()`. Replaced with a platform-aware allowlist that validates resolved paths against the user's home directory, macOS `/Volumes`, Linux `/media`/`/mnt`/`/run/media`, and Windows drive letters A–Z.
+
+#### LLM prompt-injection mitigation
+
+- **Playlist rule ID validation** — When the Music Assistant creates Smart or Genius playlists, every `targetId` returned by the LLM is now validated against the database (`SELECT 1 FROM genres/artists/albums WHERE id = ?`). Invalid or hallucinated IDs are filtered out before the playlist is created.
+
+#### Rate limiting
+
+- **Per-channel LLM rate limiter** — All IPC channels that call OpenRouter (`savant:chat:*`, `savant:playlistChat:*`, `assistant:chat`) are now gated by a sliding-window rate limiter (10 calls per 60 seconds per channel). Exceeding the limit returns an error instead of making the API call.
+
+#### IPC session hygiene
+
+- **Tighter session cap & cleanup** — Chat session cap reduced from 50 to 20. A 5-minute interval timer evicts sessions older than 30 minutes. Prevents unbounded memory growth from abandoned sessions.
+
+### Performance
+
+#### Sync engine
+
+- **Pre-loaded mtimes from DB** — The `sync:start` handler now bulk-loads all `content_hashes` mtimes into a Map before syncing. `analyzeContentType` and `buildLibraryDestMap` check the Map first, falling back to `fs.statSync` only on cache miss. Eliminates thousands of per-track stat calls for unchanged files.
+- **Async file I/O in copy workers** — `copyFileToDevice` and `runParallelCopies` converted from synchronous `fs.*Sync` to `fs.promises.*`. The 4 parallel copy workers now perform truly concurrent I/O instead of blocking the event loop.
+- **O(1) codec-mismatch dedup** — `name-size-sync.ts` now uses a `Set` alongside the mismatch array, replacing O(n) `.includes()` checks with O(1) `.has()` lookups.
+
+#### Library scanner
+
+- **Mtime-only skip detection** — Removed the secondary hash-based skip check (`shouldScanFile`) that computed a full SHA-256 just to decide whether to re-scan. The mtime check is sufficient; the content hash is now computed once after metadata extraction.
+- **Eliminated redundant DB query** — Removed the `loadExistingHashes` query (tracks table) used only by the removed `shouldScanFile`. Removed-file detection now uses a lightweight path-only query against the tracks table.
+- **Efficient genre round-robin sampling** — `sampleTracksByGenre` replaced `indexOf`+`splice` on an ID array with a small `activeGenres` array of `[genreId, tracks[]]` entries, avoiding O(n) scans on large track lists.
+
+#### Assistant context caching
+
+- **Library context cache with TTL** — Building assistant context (6+ large queries) is now cached for 5 minutes. Cache is invalidated on library scan completion and playlist create/delete.
+
+### Hardening
+
+#### Database migrations
+
+- **Atomic content-type migration** — `migrateContentTypeAudiobook` (which drops and recreates core tables) is now wrapped in a transaction. `PRAGMA foreign_keys = OFF` stays outside the transaction per SQLite spec; a `try/finally` ensures foreign keys are always re-enabled.
+- **Dropped redundant indexes** — Removed explicit indexes on `content_hashes.file_path` and `app_settings.key` — both columns are `UNIQUE NOT NULL`, so SQLite already maintains implicit unique indexes.
+
+#### Type safety
+
+- **Typed IPC filters** — `library:getTracks` filter and `library:addFolder` content type are now typed with union types instead of `as any`.
+- **Typed conversion settings** — `perTrackConversion` in `sync-core.ts` changed from `Record<string, Record<string, unknown>>` to `Record<string, ConversionSettings>`, removing an `as any` cast.
+
+#### Network resilience
+
+- **OpenRouter request timeout** — LLM fetch calls now use `AbortSignal.timeout(30_000)`. Catches `TimeoutError`/`AbortError` and throws a clear `"OpenRouter request timed out after 30s"` message instead of hanging indefinitely.
+
+---
+
 ## [1.0.5] — 2026-03-16
 
 ### User-friendly / Dev

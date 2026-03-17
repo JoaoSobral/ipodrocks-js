@@ -25,21 +25,25 @@ export interface CopyToDeviceOptions {
   cancelSignal?: AbortSignal;
 }
 
-export function copyFileToDevice(src: string, dest: string): boolean {
+export async function copyFileToDevice(src: string, dest: string): Promise<boolean> {
   const destDir = path.dirname(dest);
-  fs.mkdirSync(destDir, { recursive: true });
+  await fs.promises.mkdir(destDir, { recursive: true });
 
   try {
-    fs.copyFileSync(src, dest);
+    await fs.promises.copyFile(src, dest);
 
     try {
-      const srcStat = fs.statSync(src);
-      fs.utimesSync(dest, srcStat.atime, srcStat.mtime);
+      const srcStat = await fs.promises.stat(src);
+      await fs.promises.utimes(dest, srcStat.atime, srcStat.mtime);
     } catch (err: unknown) {
       const code = (err as NodeJS.ErrnoException).code;
-      if (code === "EPERM" && fs.existsSync(dest)) {
+      if (code === "EPERM") {
         try {
-          if (fs.statSync(dest).size === fs.statSync(src).size) return true;
+          const [destStat, srcStat] = await Promise.all([
+            fs.promises.stat(dest),
+            fs.promises.stat(src),
+          ]);
+          if (destStat.size === srcStat.size) return true;
         } catch { /* fall through */ }
       }
       throw err;
@@ -47,9 +51,13 @@ export function copyFileToDevice(src: string, dest: string): boolean {
     return true;
   } catch (err: unknown) {
     const code = (err as NodeJS.ErrnoException).code;
-    if (code === "EPERM" && fs.existsSync(dest)) {
+    if (code === "EPERM") {
       try {
-        if (fs.statSync(dest).size === fs.statSync(src).size) return true;
+        const [destStat, srcStat] = await Promise.all([
+          fs.promises.stat(dest),
+          fs.promises.stat(src),
+        ]);
+        if (destStat.size === srcStat.size) return true;
       } catch { /* fall through */ }
     }
     throw err;
@@ -85,7 +93,7 @@ export async function copyToDevice(
     cancelSignal,
   } = options;
 
-  fs.mkdirSync(deviceFolder, { recursive: true });
+  await fs.promises.mkdir(deviceFolder, { recursive: true });
 
   const copyJobs: CopyJob[] = [];
   const convertJobs: ConvertJob[] = [];
@@ -182,9 +190,9 @@ async function runParallelCopies(
 ): Promise<void> {
   const { progressCallback, logCallback, cancelSignal } = opts;
 
-  const doCopy = (job: CopyJob): CopyProgress => {
+  const doCopy = async (job: CopyJob): Promise<CopyProgress> => {
     try {
-      const ok = copyFileToDevice(job.src, job.dest);
+      const ok = await copyFileToDevice(job.src, job.dest);
       return { srcPath: job.src, destPath: job.dest, status: ok ? "copied" : "skipped" };
     } catch (err) {
       const msg = String(err);
@@ -202,7 +210,7 @@ async function runParallelCopies(
       if (cancelSignal?.aborted) return;
       const idx = nextIndex++;
       if (idx >= jobs.length) return;
-      const result = doCopy(jobs[idx]);
+      const result = await doCopy(jobs[idx]);
       if (result.status === "error") {
         logCallback?.(`Failed to copy ${path.basename(result.srcPath)}`);
       } else {

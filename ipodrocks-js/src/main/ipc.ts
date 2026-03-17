@@ -1,4 +1,5 @@
 import * as fs from "fs";
+import * as os from "os";
 import * as path from "path";
 import { BrowserWindow, dialog, ipcMain, IpcMainInvokeEvent } from "electron";
 
@@ -22,15 +23,41 @@ function buildLibraryTrackMaps(lib: Library): {
   return { music, podcast, audiobook };
 }
 
+/**
+ * Allowed root prefixes for library folder paths.
+ * Includes home dir (all platforms) plus platform-specific external drive roots.
+ */
+function getAllowedPathPrefixes(): string[] {
+  const prefixes = [os.homedir()];
+  if (process.platform === "darwin") {
+    prefixes.push("/Volumes");
+  } else if (process.platform === "linux") {
+    prefixes.push("/media", "/mnt", "/run/media");
+  } else if (process.platform === "win32") {
+    // Allow all drive letters on Windows (C:\, D:\, etc.)
+    for (let c = 65; c <= 90; c++) {
+      prefixes.push(`${String.fromCharCode(c)}:\\`);
+    }
+  }
+  return prefixes;
+}
+
 /** Validates a folder path for library operations. Returns resolved path or error. */
 function validateFolderPath(rawPath: string): { path: string } | { error: string } {
   if (!rawPath || typeof rawPath !== "string") {
     return { error: "Invalid path" };
   }
   const resolved = path.resolve(rawPath.trim());
-  if (resolved.split(path.sep).includes("..")) {
-    return { error: "Path must not contain parent traversal" };
+
+  // Verify the resolved path falls under an allowed root prefix (F2)
+  const allowed = getAllowedPathPrefixes();
+  const isAllowed = allowed.some(
+    (prefix) => resolved === prefix || resolved.startsWith(prefix + path.sep)
+  );
+  if (!isAllowed) {
+    return { error: "Path is outside allowed directories" };
   }
+
   try {
     const stat = fs.statSync(resolved);
     if (!stat.isDirectory()) {
@@ -105,9 +132,11 @@ import {
   unpinMessages,
   getPinnedCount,
   MAX_PINNED_MEMORIES,
+  invalidateAssistantCache,
 } from "./assistant/assistantChat";
 import { randomUUID } from "crypto";
 import { logActivity, getRecentActivity } from "./activity/activity-logger";
+import { checkRateLimit } from "./llm/openRouterClient";
 
 // ---------------------------------------------------------------------------
 // Singleton state
@@ -125,7 +154,7 @@ let activeBackfillAbort: AbortController | null = null;
 const geniusEventsCache = new Map<number, MatchedPlayEvent[]>();
 
 const SESSION_TTL_MS = 30 * 60 * 1000; // 30 minutes
-const SESSION_CAP = 50;
+const SESSION_CAP = 20; // F6: reduced from 50 — single-user desktop app
 
 /** Ephemeral mood chat sessions keyed by session ID. */
 const moodChatSessions = new Map<string, { state: MoodChatState; createdAt: number }>();
@@ -150,6 +179,9 @@ function cleanupChatSessions<T>(
     map.delete(oldest[0]);
   }
 }
+
+/** Periodic session cleanup timer — started once when IPC handlers are registered. */
+let sessionCleanupTimer: ReturnType<typeof setInterval> | null = null;
 
 function getLibrary(): Library {
   if (!library) {
@@ -194,6 +226,16 @@ function safe(channel: string, fn: Handler): Handler {
 }
 
 export function registerIpcHandlers(): void {
+  // F6: Periodic session cleanup — runs every 5 minutes regardless of activity
+  if (!sessionCleanupTimer) {
+    sessionCleanupTimer = setInterval(() => {
+      cleanupChatSessions(moodChatSessions);
+      cleanupChatSessions(savantPlaylistChatSessions);
+    }, 5 * 60 * 1000);
+    // Don't prevent app quit
+    sessionCleanupTimer.unref?.();
+  }
+
   // ---- App prefs and tool availability ----
   ipcMain.handle(
     "app:isMpcencAvailable",
@@ -356,6 +398,7 @@ export function registerIpcHandlers(): void {
           "library_scan",
           `Scanned ${totalProcessed} files, ${totalAdded} added`
         );
+        invalidateAssistantCache(); // F9: library changed, rebuild context on next chat
         return { filesAdded: totalAdded, filesProcessed: totalProcessed, cancelled: false, errors: allErrors };
       } finally {
         activeScanAbort = null;
@@ -377,8 +420,8 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(
     "library:getTracks",
-    safe("library:getTracks", async (_event, filter?: { contentType?: string; limit?: number; offset?: number }) => {
-      return getLibrary().getTracks(filter as any);
+    safe("library:getTracks", async (_event, filter?: { contentType?: "music" | "podcast" | "audiobook"; limit?: number; offset?: number }) => {
+      return getLibrary().getTracks(filter);
     })
   );
 
@@ -399,13 +442,13 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(
     "library:addFolder",
-    safe("library:addFolder", async (_event, folder: { name: string; path: string; contentType: string }) => {
+    safe("library:addFolder", async (_event, folder: { name: string; path: string; contentType: "music" | "podcast" | "audiobook" }) => {
       const validated = validateFolderPath(folder.path);
       if ("error" in validated) return { error: validated.error };
       const result = getLibrary().addLibraryFolder(
         folder.name,
         validated.path,
-        folder.contentType as any
+        folder.contentType
       );
       logActivity(
         getLibrary().getConnection(),
@@ -987,12 +1030,24 @@ export function registerIpcHandlers(): void {
         }
       }
 
+      // Pre-load all content_hashes mtimes once from DB so analyzeContentType
+      // can skip fs.statSync for unchanged files without per-track round-trips.
+      const mtimeRows = lib.getConnection()
+        .prepare("SELECT file_path, last_modified FROM content_hashes")
+        .all() as { file_path: string; last_modified: string }[];
+      const preloadedMtimes = new Map<string, number>();
+      for (const r of mtimeRows) {
+        const ms = new Date(r.last_modified).getTime();
+        if (!Number.isNaN(ms)) preloadedMtimes.set(r.file_path, ms);
+      }
+
       const syncOpts: RunSyncOptions = {
         syncType: opts.syncType,
         extraTrackPolicy: opts.extraTrackPolicy,
         cancelSignal: activeSyncAbort.signal,
         ignoreSpaceCheck: opts.ignoreSpaceCheck,
         skipAlbumArtwork: opts.skipAlbumArtwork,
+        preloadedMtimes,
         progressCallback: (progressEvent) => {
           if (!event.sender.isDestroyed()) {
             event.sender.send("sync:progress", progressEvent);
@@ -1352,6 +1407,7 @@ export function registerIpcHandlers(): void {
       );
       const p = core.getPlaylistById(id);
       if (!p) throw new Error("Playlist not found after create");
+      invalidateAssistantCache(); // F9
       return p;
     })
   );
@@ -1360,6 +1416,7 @@ export function registerIpcHandlers(): void {
     "playlist:delete",
     safe("playlist:delete", async (_event, playlistId: number) => {
       getPlaylistCore().deletePlaylist(playlistId);
+      invalidateAssistantCache(); // F9
     })
   );
 
@@ -1539,6 +1596,8 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     "savant:chat:start",
     safe("savant:chat:start", async () => {
+      if (!checkRateLimit("savant:chat"))
+        return { error: "Rate limit exceeded. Please wait before sending another message." };
       const config = getOpenRouterConfig();
       if (!config?.apiKey?.trim())
         return { error: "OpenRouter API key not configured" };
@@ -1557,9 +1616,12 @@ export function registerIpcHandlers(): void {
       _event,
       { sessionId, userMessage }: { sessionId: string; userMessage: string }
     ) => {
+      if (!checkRateLimit("savant:chat"))
+        return { error: "Rate limit exceeded. Please wait before sending another message." };
       const config = getOpenRouterConfig();
       if (!config?.apiKey?.trim())
         return { error: "OpenRouter API key not configured" };
+      cleanupChatSessions(moodChatSessions);
       const entry = moodChatSessions.get(sessionId);
       if (!entry) return { error: "Chat session not found" };
       const db = getLibrary().getConnection();
@@ -1584,6 +1646,8 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     "savant:playlistChat:start",
     safe("savant:playlistChat:start", async () => {
+      if (!checkRateLimit("savant:playlistChat"))
+        return { error: "Rate limit exceeded. Please wait before sending another message." };
       const config = getOpenRouterConfig();
       if (!config?.apiKey?.trim())
         return { error: "OpenRouter API key not configured" };
@@ -1602,9 +1666,12 @@ export function registerIpcHandlers(): void {
       _event,
       { sessionId, userMessage }: { sessionId: string; userMessage: string }
     ) => {
+      if (!checkRateLimit("savant:playlistChat"))
+        return { error: "Rate limit exceeded. Please wait before sending another message." };
       const config = getOpenRouterConfig();
       if (!config?.apiKey?.trim())
         return { error: "OpenRouter API key not configured" };
+      cleanupChatSessions(savantPlaylistChatSessions);
       const entry = savantPlaylistChatSessions.get(sessionId);
       if (!entry) return { error: "Chat session not found" };
       const db = getLibrary().getConnection();
@@ -1629,6 +1696,9 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     "assistant:chat",
     safe("assistant:chat", async (_event, userMessage: string) => {
+      // F4: Rate limit LLM calls
+      if (!checkRateLimit("assistant:chat"))
+        return { error: "Rate limit exceeded. Please wait before sending another message." };
       const config = getOpenRouterConfig();
       if (!config?.apiKey?.trim())
         return { error: "OpenRouter API key not configured" };
@@ -1652,38 +1722,59 @@ export function registerIpcHandlers(): void {
 
       try {
         if (smartPlaylist) {
-          const core = getPlaylistCore();
-          core.createSmartPlaylist(
-            smartPlaylist.name,
-            smartPlaylist.rules,
-            "",
-            smartPlaylist.trackLimit
-          );
-          logActivity(db, "playlist_generated", `Smart: ${smartPlaylist.name}`);
-          playlistCreated = smartPlaylist.name;
-        } else if (geniusPlaylist) {
-          const result = generateGeniusPlaylistFromDb(
-            geniusPlaylist.geniusType,
-            db,
-            geniusPlaylist.opts
-          );
-          const trackIds = result.tracks.map((t) => t.id);
-          const maxTracks = geniusPlaylist.opts.maxTracks ?? 25;
-          if (trackIds.length > 0) {
+          // F3: Validate rule IDs against DB before trusting LLM output
+          const tableForType: Record<string, string> = {
+            genre: "genres",
+            artist: "artists",
+            album: "albums",
+          };
+          const validatedRules = smartPlaylist.rules.filter((r) => {
+            if (r.targetId == null) return true; // "all" rules have no ID
+            const table = tableForType[r.ruleType];
+            if (!table) return false;
+            const exists = db.prepare(`SELECT 1 FROM ${table} WHERE id = ?`).get(r.targetId);
+            return exists != null;
+          });
+          if (validatedRules.length > 0) {
             const core = getPlaylistCore();
-            core.createGeniusPlaylist(
+            core.createSmartPlaylist(
+              smartPlaylist.name,
+              validatedRules,
+              "",
+              smartPlaylist.trackLimit
+            );
+            logActivity(db, "playlist_generated", `Smart: ${smartPlaylist.name}`);
+            playlistCreated = smartPlaylist.name;
+          }
+        } else if (geniusPlaylist) {
+          // F3: Validate geniusType against known types
+          const validTypes = getAvailableGeniusTypes(db).map((t) => t.value);
+          if (!validTypes.includes(geniusPlaylist.geniusType)) {
+            console.warn(`[assistant] Invalid geniusType from LLM: ${geniusPlaylist.geniusType}`);
+          } else {
+            const result = generateGeniusPlaylistFromDb(
               geniusPlaylist.geniusType,
-              trackIds,
-              null,
-              maxTracks,
-              geniusPlaylist.name
-            );
-            logActivity(
               db,
-              "playlist_generated",
-              `Genius: ${geniusPlaylist.name} (${trackIds.length} tracks)`
+              geniusPlaylist.opts
             );
-            playlistCreated = geniusPlaylist.name;
+            const trackIds = result.tracks.map((t) => t.id);
+            const maxTracks = geniusPlaylist.opts.maxTracks ?? 25;
+            if (trackIds.length > 0) {
+              const core = getPlaylistCore();
+              core.createGeniusPlaylist(
+                geniusPlaylist.geniusType,
+                trackIds,
+                null,
+                maxTracks,
+                geniusPlaylist.name
+              );
+              logActivity(
+                db,
+                "playlist_generated",
+                `Genius: ${geniusPlaylist.name} (${trackIds.length} tracks)`
+              );
+              playlistCreated = geniusPlaylist.name;
+            }
           }
         }
       } catch (err) {

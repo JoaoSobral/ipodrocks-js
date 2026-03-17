@@ -522,13 +522,13 @@ CREATE INDEX IF NOT EXISTS idx_codec_configs_codec ON codec_configurations(codec
 CREATE INDEX IF NOT EXISTS idx_codec_configs_default ON codec_configurations(is_default);
 
 -- content_hashes
+-- Note: file_path is UNIQUE NOT NULL — no explicit index needed (implicit unique index)
 CREATE INDEX IF NOT EXISTS idx_content_hash ON content_hashes(content_hash);
 CREATE INDEX IF NOT EXISTS idx_metadata_hash ON content_hashes(metadata_hash);
-CREATE INDEX IF NOT EXISTS idx_file_path ON content_hashes(file_path);
 CREATE INDEX IF NOT EXISTS idx_last_modified ON content_hashes(last_modified);
 
 -- app_settings
-CREATE INDEX IF NOT EXISTS idx_app_settings_key ON app_settings(key);
+-- Note: key is UNIQUE NOT NULL — no explicit index needed (implicit unique index)
 
 -- activity_log
 CREATE INDEX IF NOT EXISTS idx_activity_log_created_at ON activity_log(created_at DESC);
