@@ -5,19 +5,37 @@ import { registerIpcHandlers } from "./ipc";
 
 const devServerUrl = process.env.VITE_DEV_SERVER_URL;
 
+function iconNamesForPlatform(): string[] {
+  if (process.platform === "win32") {
+    return ["icon.ico", "icon.png"];
+  }
+  if (process.platform === "darwin") {
+    return ["icon.icns", "icon.png"];
+  }
+  return ["icon.png"];
+}
+
 function getIconPath(): string {
+  const names = iconNamesForPlatform();
   if (app.isPackaged) {
-    return path.join(process.resourcesPath, "icon.png");
+    for (const name of names) {
+      const p = path.join(process.resourcesPath, name);
+      if (fs.existsSync(p)) return p;
+    }
+    return path.join(process.resourcesPath, names[0]);
   }
-  const candidates = [
-    path.join(app.getAppPath(), "resources", "icon.png"),
-    path.join(__dirname, "../../../resources/icon.png"),
-    path.join(process.cwd(), "resources", "icon.png"),
+  const baseDirs = [
+    path.join(app.getAppPath(), "resources"),
+    path.join(__dirname, "../../../resources"),
+    path.join(process.cwd(), "resources"),
   ];
-  for (const p of candidates) {
-    if (fs.existsSync(p)) return p;
+  for (const name of names) {
+    for (const dir of baseDirs) {
+      const p = path.join(dir, name);
+      if (fs.existsSync(p)) return p;
+    }
   }
-  return candidates[0];
+  return path.join(baseDirs[0], names[0]);
 }
 
 function createWindow(): BrowserWindow {
