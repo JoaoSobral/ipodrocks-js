@@ -1,5 +1,72 @@
 # Changelog
 
+## [1.1.1] — 2026-03-18
+
+### Security
+
+#### Path validation hardening
+
+- **Symlink-aware folder validation** — Adding a library or shadow library folder now resolves symlinks before checking the allowlist, closing a bypass where a symlink could point outside allowed directories.
+- **Shadow library path check** — Creating a shadow library now validates the destination path against the same allowlist used for library folders.
+
+#### Assistant chat sanitization
+
+- **HTML sanitization in chat** — Assistant chat messages are now sanitized before rendering, preventing any embedded HTML from executing in the app.
+
+#### Device & playlist hardening
+
+- **Stricter device updates** — Only explicitly allowed fields can be updated on a device; unknown fields are silently rejected instead of passed through.
+- **Safer playlist rule validation** — Playlist rule validation now uses pre-prepared database queries, improving both performance and safety.
+- **Unpredictable temp file names** — Harmonic analysis temp files now use cryptographically random names.
+
+### User-friendly / Dev
+
+#### Case-insensitive library matching
+
+- **Artists, albums, and genres are now case-insensitive** — "R&B" and "r&b", "CASE STUDY 01" and "Case Study 01" are treated as the same entry. Existing duplicates that differ only in casing are automatically merged on first launch. No action needed.
+
+#### Automatic duplicate removal
+
+- **Duplicate tracks cleaned up automatically** — Tracks that appear more than once (same artist, album, and title) are deduplicated. Copies found in Trash or recycled folders are removed in favour of the main library version. Orphaned artists, albums, and genres left behind are cleaned up too.
+
+### Performance
+
+- **Faster library stats** — Library statistics (total size, track counts) are now computed from the database instead of walking every folder on disk, making the Library panel load noticeably faster for large libraries.
+- **Non-blocking playlist writes** — Playlist file operations during sync no longer block the app while writing to disk.
+
+### Bug fixes
+
+#### Sync
+
+- **Shadow library tracks no longer re-synced unnecessarily** — When syncing via a shadow library in direct-copy mode, tracks already on the device were sometimes misidentified as missing and re-copied. Fixed.
+- **Correct codec mismatch detection with shadow libraries** — Codec mismatch detection now correctly uses the shadow library's codec when comparing against device files, preventing false "codec mismatch" reports.
+
+#### Scanner
+
+- **Removed tracks propagated to shadow libraries reliably** — Previously, shadow library cleanup could miss removed tracks due to a timing issue. Removed tracks are now tracked by ID for reliable propagation.
+- **Scan results show removed file count** — The scan completion summary now reports how many files were removed, not just added and skipped.
+
+#### Stability
+
+- **Fixed potential file handle leak during hashing** — File handles are now always closed, even if an error occurs mid-read.
+- **Better error diagnostics** — Hash computation and storage failures now log the file path and reason instead of failing silently.
+
+### UI
+
+- **Scan modal shows "Removed" count** — The scan completion summary now has four columns: Processed, Added, Removed, and Skipped.
+- **Cleaner scan progress list** — The file-by-file list during scanning no longer flickers with transient "scanning" entries.
+- **Scan errors displayed properly** — If a scan fails, the error message is now shown in the modal instead of being swallowed.
+- **Smoother progress lists** — Progress lists in scan, sync, and backfill modals no longer glitch when older entries are trimmed.
+- **Sync log capped** — The sync conversion log is now limited to 200 entries to prevent memory buildup during long syncs.
+
+### Testing
+
+- **Deduplication tests** — New test suite covering duplicate track removal, including Trash-vs-main-library preference and scan-order independence.
+- **Scanner removal & shadow propagation tests** — Integration tests verifying that removed tracks are correctly deleted from the database and propagated to shadow libraries.
+- **Sync matching tests** — New tests for direct-copy basename matching and codec-mismatch classification during device sync.
+
+---
+
 ## [1.1.0] — 2026-03-17
 
 ### Security
