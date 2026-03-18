@@ -280,12 +280,13 @@ export class Library {
 
   /**
    * After a scan completes, propagate new/changed tracks to all shadow
-   * libraries and clean up removed ones.
+   * libraries and clean up removed ones. Uses removedTrackIds (not paths)
+   * because tracks are already deleted from the primary DB.
    */
   async propagateScanToShadows(
     addedPaths: string[],
     updatedPaths: string[],
-    removedPaths: string[],
+    removedTrackIds: number[],
     signal?: AbortSignal
   ): Promise<void> {
     const folders = this.core.getLibraryFolders();
@@ -302,8 +303,8 @@ export class Library {
       );
     }
 
-    if (removedPaths.length > 0) {
-      this.shadowManager.propagateRemovedByPath(removedPaths);
+    if (removedTrackIds.length > 0) {
+      this.shadowManager.propagateRemovedByIds(removedTrackIds);
     }
   }
 

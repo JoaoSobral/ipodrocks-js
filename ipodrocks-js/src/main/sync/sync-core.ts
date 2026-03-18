@@ -42,6 +42,8 @@ export interface RunSyncOptions {
   skipAlbumArtwork?: boolean;
   /** F7: Pre-loaded path→mtime from content_hashes to avoid per-track fs.statSync. */
   preloadedMtimes?: Map<string, number>;
+  /** Override profile codec extension for compare (e.g. shadow library codec when codecName is DIRECT COPY). */
+  profileCodecExtOverride?: string | null;
 }
 
 export interface ContentAnalysis {
@@ -296,7 +298,9 @@ export function analyzeContentType(
   cancelSignal?: AbortSignal,
   progressCallback?: ProgressCallback,
   /** F7: Pre-loaded path→mtime from content_hashes, passed through to buildLibraryDestMap. */
-  preloadedMtimes?: Map<string, number>
+  preloadedMtimes?: Map<string, number>,
+  /** Override profile codec extension for compare (e.g. shadow library codec when codecName is DIRECT COPY). */
+  profileCodecExtOverride?: string | null
 ): ContentAnalysis {
   if (cancelSignal?.aborted) throw new SyncCancelled();
 
@@ -312,7 +316,7 @@ export function analyzeContentType(
 
   if (cancelSignal?.aborted) throw new SyncCancelled();
 
-  const profileCodecExt = getProfileCodecExt(codecName);
+  const profileCodecExt = profileCodecExtOverride ?? getProfileCodecExt(codecName);
   const libCount = Object.keys(destMap).length;
 
   const compareOpts: CompareOptions = {
@@ -827,7 +831,7 @@ export async function runSync(
   missingFiles: string[];
   errors: number;
 }> {
-  const { extraTrackPolicy, progressCallback, cancelSignal, skipAlbumArtwork, preloadedMtimes } =
+  const { extraTrackPolicy, progressCallback, cancelSignal, skipAlbumArtwork, preloadedMtimes, profileCodecExtOverride } =
     options;
 
   progressCallback?.({ event: "log", message: `Comparing library with device (${contentType})...` });
@@ -841,7 +845,8 @@ export async function runSync(
     libraryFolderPaths,
     cancelSignal,
     progressCallback,
-    preloadedMtimes
+    preloadedMtimes,
+    profileCodecExtOverride
   );
 
   progressCallback?.({

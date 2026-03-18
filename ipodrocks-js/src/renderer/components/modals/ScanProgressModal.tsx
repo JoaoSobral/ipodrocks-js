@@ -69,11 +69,18 @@ export function ScanProgressModal({ open, onClose, folders }: ScanProgressModalP
 
     const unsub = onScanProgress((p) => {
       setProgress(p);
-      if (p.file) addRecent(p.file, p.status);
+      if (p.file && p.status !== "scanning") addRecent(p.file, p.status);
     });
 
     scanLibrary(folders)
-      .then((r) => setResult(r))
+      .then((r) => {
+        const res = r as ScanResult & { error?: string };
+        if (res.error && !abortedRef.current) {
+          setError(res.error);
+        } else {
+          setResult(r);
+        }
+      })
       .catch((e) => {
         if (!abortedRef.current) setError(e instanceof Error ? e.message : String(e));
       });
@@ -136,20 +143,30 @@ export function ScanProgressModal({ open, onClose, folders }: ScanProgressModalP
         </div>
 
         {/* Summary on completion */}
-        {result && (
+        {result && !("error" in result && result.error) && (
           <div className="rounded-lg border border-border bg-muted/30 p-3 text-sm">
-            <div className="grid grid-cols-3 gap-3 text-center">
+            <div className="grid grid-cols-4 gap-3 text-center">
               <div>
-                <p className="text-lg font-semibold text-foreground">{result.filesProcessed}</p>
+                <p className="text-lg font-semibold text-foreground">
+                  {result.filesProcessed ?? 0}
+                </p>
                 <p className="text-xs text-muted-foreground">Processed</p>
               </div>
               <div>
-                <p className="text-lg font-semibold text-success">{result.filesAdded}</p>
+                <p className="text-lg font-semibold text-success">
+                  {result.filesAdded ?? 0}
+                </p>
                 <p className="text-xs text-muted-foreground">Added</p>
               </div>
               <div>
+                <p className="text-lg font-semibold text-destructive">
+                  {result.filesRemoved ?? 0}
+                </p>
+                <p className="text-xs text-muted-foreground">Removed</p>
+              </div>
+              <div>
                 <p className="text-lg font-semibold text-muted-foreground">
-                  {result.filesProcessed - result.filesAdded}
+                  {(result.filesProcessed ?? 0) - (result.filesAdded ?? 0)}
                 </p>
                 <p className="text-xs text-muted-foreground">Skipped</p>
               </div>

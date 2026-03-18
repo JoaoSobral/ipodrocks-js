@@ -324,10 +324,12 @@ export interface SyncOptions {
 export interface ScanResult {
   filesAdded: number;
   filesProcessed: number;
+  filesRemoved?: number;
   cancelled: boolean;
   errors?: string[];
   addedTrackPaths?: string[];
   removedTrackPaths?: string[];
+  removedTrackIds?: number[];
   updatedTrackPaths?: string[];
 }
 
