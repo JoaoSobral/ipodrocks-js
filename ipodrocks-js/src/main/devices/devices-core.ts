@@ -81,6 +81,8 @@ const ALLOWED_UPDATE_FIELDS = new Set([
 ]);
 
 const FIELD_MAP: Record<string, string> = {
+  name: "name",
+  description: "description",
   mountPath: "mount_path",
   musicFolder: "music_folder",
   podcastFolder: "podcast_folder",
@@ -189,8 +191,8 @@ export class DevicesCore {
     const values: unknown[] = [];
 
     for (const [key, value] of Object.entries(updates)) {
-      const dbField = FIELD_MAP[key] ?? key;
-      if (!ALLOWED_UPDATE_FIELDS.has(dbField)) continue;
+      const dbField = FIELD_MAP[key];
+      if (!dbField || !ALLOWED_UPDATE_FIELDS.has(dbField)) continue;
       fields.push(`${dbField} = ?`);
       const normalized =
         dbField === "partial_sync_enabled" || dbField === "skip_playback_log"

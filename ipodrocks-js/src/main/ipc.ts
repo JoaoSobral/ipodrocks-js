@@ -1,4 +1,5 @@
 import * as fs from "fs";
+import * as fsp from "fs/promises";
 import * as os from "os";
 import * as path from "path";
 import { BrowserWindow, dialog, ipcMain, IpcMainInvokeEvent } from "electron";
@@ -49,15 +50,7 @@ function validateFolderPath(rawPath: string): { path: string } | { error: string
   }
   const resolved = path.resolve(rawPath.trim());
 
-  // Verify the resolved path falls under an allowed root prefix (F2)
-  const allowed = getAllowedPathPrefixes();
-  const isAllowed = allowed.some(
-    (prefix) => resolved === prefix || resolved.startsWith(prefix + path.sep)
-  );
-  if (!isAllowed) {
-    return { error: "Path is outside allowed directories" };
-  }
-
+  // Verify the path exists and is a directory before resolving symlinks
   try {
     const stat = fs.statSync(resolved);
     if (!stat.isDirectory()) {
@@ -66,7 +59,25 @@ function validateFolderPath(rawPath: string): { path: string } | { error: string
   } catch {
     return { error: "Path does not exist or is not accessible" };
   }
-  return { path: resolved };
+
+  // Resolve symlinks to get the real path and validate against allowed prefixes
+  let realPath: string;
+  try {
+    realPath = fs.realpathSync(resolved);
+  } catch {
+    return { error: "Path does not exist or is not accessible" };
+  }
+
+  // Verify the real (symlink-resolved) path falls under an allowed root prefix (F2)
+  const allowed = getAllowedPathPrefixes();
+  const isAllowed = allowed.some(
+    (prefix) => realPath === prefix || realPath.startsWith(prefix + path.sep)
+  );
+  if (!isAllowed) {
+    return { error: "Path is outside allowed directories" };
+  }
+
+  return { path: realPath };
 }
 
 import {
@@ -357,11 +368,12 @@ export function registerIpcHandlers(): void {
 
       let totalAdded = 0;
       let totalProcessed = 0;
+      let totalRemoved = 0;
 
       const allErrors: string[] = [];
       const allAdded: string[] = [];
       const allUpdated: string[] = [];
-      const allRemoved: string[] = [];
+      const allRemovedIds: number[] = [];
       try {
         for (const folder of payload.folders) {
           const validated = validateFolderPath(folder.path);
@@ -378,28 +390,41 @@ export function registerIpcHandlers(): void {
           );
           totalAdded += result.filesAdded;
           totalProcessed += result.filesProcessed;
+          totalRemoved += result.filesRemoved ?? 0;
           if (result.errors?.length) allErrors.push(...result.errors);
           if (result.addedTrackPaths?.length) allAdded.push(...result.addedTrackPaths);
           if (result.updatedTrackPaths?.length) allUpdated.push(...result.updatedTrackPaths);
-          if (result.removedTrackPaths?.length) allRemoved.push(...result.removedTrackPaths);
+          if (result.removedTrackIds?.length) allRemovedIds.push(...result.removedTrackIds);
           if (result.cancelled) {
-            return { filesAdded: totalAdded, filesProcessed: totalProcessed, cancelled: true, errors: allErrors };
+            return {
+              filesAdded: totalAdded,
+              filesProcessed: totalProcessed,
+              filesRemoved: totalRemoved,
+              cancelled: true,
+              errors: allErrors,
+            };
           }
         }
 
-        if (allAdded.length > 0 || allUpdated.length > 0 || allRemoved.length > 0) {
+        if (allAdded.length > 0 || allUpdated.length > 0 || allRemovedIds.length > 0) {
           lib
-            .propagateScanToShadows(allAdded, allUpdated, allRemoved)
+            .propagateScanToShadows(allAdded, allUpdated, allRemovedIds)
             .catch((err) => console.error("[ipc] Shadow propagation error:", err));
         }
 
         logActivity(
           getLibrary().getConnection(),
           "library_scan",
-          `Scanned ${totalProcessed} files, ${totalAdded} added`
+          `Scanned ${totalProcessed} files, ${totalAdded} added, ${totalRemoved} removed`
         );
         invalidateAssistantCache(); // F9: library changed, rebuild context on next chat
-        return { filesAdded: totalAdded, filesProcessed: totalProcessed, cancelled: false, errors: allErrors };
+        return {
+          filesAdded: totalAdded,
+          filesProcessed: totalProcessed,
+          filesRemoved: totalRemoved,
+          cancelled: false,
+          errors: allErrors,
+        };
       } finally {
         activeScanAbort = null;
       }
@@ -485,10 +510,13 @@ export function registerIpcHandlers(): void {
       event,
       config: { name: string; path: string; codecConfigId: number }
     ) => {
+      const validated = validateFolderPath(config.path);
+      if ("error" in validated) return { error: validated.error };
+
       const lib = getLibrary();
       const id = lib.createShadowLibrary(
         config.name,
-        config.path,
+        validated.path,
         config.codecConfigId
       );
 
@@ -688,6 +716,7 @@ export function registerIpcHandlers(): void {
       let libraryAudiobookMap = maps.audiobook;
 
       let codecName = device.profile.codecName ?? "copy";
+      let profileCodecExt: string | null = null;
       const folders = lib.getLibraryFolders();
       const libraryFolderPaths = new Map<number, string>();
       for (const f of folders) {
@@ -728,7 +757,12 @@ export function registerIpcHandlers(): void {
           for (const [folderId] of libraryFolderPaths) {
             libraryFolderPaths.set(folderId, shadowLib.path);
           }
+          profileCodecExt = getProfileCodecExt(shadowLib.codecName);
         }
+      }
+
+      if (profileCodecExt === null) {
+        profileCodecExt = getProfileCodecExt(codecName);
       }
 
       const deviceMusicRaw = device.getTracks("music");
@@ -755,8 +789,6 @@ export function registerIpcHandlers(): void {
           ...(info.mtimeMs != null && { mtime: info.mtimeMs }),
         };
       }
-
-      const profileCodecExt = getProfileCodecExt(codecName);
 
       const musicDest = buildLibraryDestMap(
         libraryMusicMap,
@@ -987,6 +1019,7 @@ export function registerIpcHandlers(): void {
       }
 
       let codecName = device.profile.codecName ?? "copy";
+      let profileCodecExtOverride: string | null = null;
       const folders = lib.getLibraryFolders();
       const libraryFolderPaths = new Map<number, string>();
       for (const f of folders) {
@@ -1027,6 +1060,7 @@ export function registerIpcHandlers(): void {
           for (const [folderId] of libraryFolderPaths) {
             libraryFolderPaths.set(folderId, shadowLib.path);
           }
+          profileCodecExtOverride = getProfileCodecExt(shadowLib.codecName);
         }
       }
 
@@ -1048,6 +1082,7 @@ export function registerIpcHandlers(): void {
         ignoreSpaceCheck: opts.ignoreSpaceCheck,
         skipAlbumArtwork: opts.skipAlbumArtwork,
         preloadedMtimes,
+        profileCodecExtOverride: profileCodecExtOverride ?? undefined,
         progressCallback: (progressEvent) => {
           if (!event.sender.isDestroyed()) {
             event.sender.send("sync:progress", progressEvent);
@@ -1219,9 +1254,7 @@ export function registerIpcHandlers(): void {
               codecName,
               libraryFolderPaths,
             };
-            if (!fs.existsSync(playlistFolder)) {
-              fs.mkdirSync(playlistFolder, { recursive: true });
-            }
+            await fsp.mkdir(playlistFolder, { recursive: true });
             const normalizeM3uForCompare = (s: string) =>
               s.replace(/# Generated: .+/g, "# Generated: <date>");
             syncOpts.progressCallback?.({
@@ -1232,14 +1265,17 @@ export function registerIpcHandlers(): void {
               const content = core.buildM3uContentForDevice(pl.id, m3uOpts);
               const safeName = pl.name.replace(/[/\\?*:"<>|]/g, "_").trim() || "Playlist";
               const outPath = path.join(playlistFolder, `${safeName}.m3u`);
-              const existingRaw = fs.existsSync(outPath)
-                ? (fs.readFileSync(outPath, "utf-8") as string)
-                : null;
+              let existingRaw: string | null = null;
+              try {
+                existingRaw = await fsp.readFile(outPath, "utf-8");
+              } catch {
+                // file doesn't exist yet
+              }
               const needsWrite =
                 existingRaw === null ||
                 normalizeM3uForCompare(existingRaw) !== normalizeM3uForCompare(content);
               if (needsWrite) {
-                fs.writeFileSync(outPath, content, "utf-8");
+                await fsp.writeFile(outPath, content, "utf-8");
                 playlistsWritten += 1;
               }
               syncOpts.progressCallback?.({
@@ -1723,17 +1759,16 @@ export function registerIpcHandlers(): void {
       try {
         if (smartPlaylist) {
           // F3: Validate rule IDs against DB before trusting LLM output
-          const tableForType: Record<string, string> = {
-            genre: "genres",
-            artist: "artists",
-            album: "albums",
+          const stmtForType: Record<string, ReturnType<typeof db.prepare>> = {
+            genre: db.prepare("SELECT 1 FROM genres WHERE id = ?"),
+            artist: db.prepare("SELECT 1 FROM artists WHERE id = ?"),
+            album: db.prepare("SELECT 1 FROM albums WHERE id = ?"),
           };
           const validatedRules = smartPlaylist.rules.filter((r) => {
             if (r.targetId == null) return true; // "all" rules have no ID
-            const table = tableForType[r.ruleType];
-            if (!table) return false;
-            const exists = db.prepare(`SELECT 1 FROM ${table} WHERE id = ?`).get(r.targetId);
-            return exists != null;
+            const stmt = stmtForType[r.ruleType];
+            if (!stmt) return false;
+            return stmt.get(r.targetId) != null;
           });
           if (validatedRules.length > 0) {
             const core = getPlaylistCore();

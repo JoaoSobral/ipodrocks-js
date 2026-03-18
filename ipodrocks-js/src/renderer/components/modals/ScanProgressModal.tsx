@@ -13,6 +13,7 @@ interface ScanFolder {
 }
 
 interface RecentFile {
+  id: number;
   file: string;
   status: ScanProgress["status"];
 }
@@ -46,6 +47,7 @@ export function ScanProgressModal({ open, onClose, folders }: ScanProgressModalP
   const [recentFiles, setRecentFiles] = useState<RecentFile[]>([]);
   const listRef = useRef<HTMLDivElement>(null);
   const abortedRef = useRef(false);
+  const fileIdRef = useRef(0);
 
   const isRunning = !result && !error;
   const pct = progress && progress.total > 0
@@ -54,7 +56,7 @@ export function ScanProgressModal({ open, onClose, folders }: ScanProgressModalP
 
   const addRecent = useCallback((file: string, status: ScanProgress["status"]) => {
     setRecentFiles((prev) => {
-      const next = [...prev, { file, status }];
+      const next = [...prev, { id: ++fileIdRef.current, file, status }];
       return next.length > 15 ? next.slice(-15) : next;
     });
   }, []);
@@ -69,11 +71,18 @@ export function ScanProgressModal({ open, onClose, folders }: ScanProgressModalP
 
     const unsub = onScanProgress((p) => {
       setProgress(p);
-      if (p.file) addRecent(p.file, p.status);
+      if (p.file && p.status !== "scanning") addRecent(p.file, p.status);
     });
 
     scanLibrary(folders)
-      .then((r) => setResult(r))
+      .then((r) => {
+        const res = r as ScanResult & { error?: string };
+        if (res.error && !abortedRef.current) {
+          setError(res.error);
+        } else {
+          setResult(r);
+        }
+      })
       .catch((e) => {
         if (!abortedRef.current) setError(e instanceof Error ? e.message : String(e));
       });
@@ -125,8 +134,8 @@ export function ScanProgressModal({ open, onClose, folders }: ScanProgressModalP
           {recentFiles.length === 0 && (
             <p className="text-muted-foreground">Waiting for files…</p>
           )}
-          {recentFiles.map((rf, i) => (
-            <div key={i} className="flex items-start gap-2 py-0.5 text-muted-foreground">
+          {recentFiles.map((rf) => (
+            <div key={rf.id} className="flex items-start gap-2 py-0.5 text-muted-foreground">
               <span className="shrink-0 w-4 flex justify-center">
                 <StatusIcon status={rf.status} />
               </span>
@@ -136,20 +145,30 @@ export function ScanProgressModal({ open, onClose, folders }: ScanProgressModalP
         </div>
 
         {/* Summary on completion */}
-        {result && (
+        {result && !("error" in result && result.error) && (
           <div className="rounded-lg border border-border bg-muted/30 p-3 text-sm">
-            <div className="grid grid-cols-3 gap-3 text-center">
+            <div className="grid grid-cols-4 gap-3 text-center">
               <div>
-                <p className="text-lg font-semibold text-foreground">{result.filesProcessed}</p>
+                <p className="text-lg font-semibold text-foreground">
+                  {result.filesProcessed ?? 0}
+                </p>
                 <p className="text-xs text-muted-foreground">Processed</p>
               </div>
               <div>
-                <p className="text-lg font-semibold text-success">{result.filesAdded}</p>
+                <p className="text-lg font-semibold text-success">
+                  {result.filesAdded ?? 0}
+                </p>
                 <p className="text-xs text-muted-foreground">Added</p>
               </div>
               <div>
+                <p className="text-lg font-semibold text-destructive">
+                  {result.filesRemoved ?? 0}
+                </p>
+                <p className="text-xs text-muted-foreground">Removed</p>
+              </div>
+              <div>
                 <p className="text-lg font-semibold text-muted-foreground">
-                  {result.filesProcessed - result.filesAdded}
+                  {(result.filesProcessed ?? 0) - (result.filesAdded ?? 0)}
                 </p>
                 <p className="text-xs text-muted-foreground">Skipped</p>
               </div>
@@ -162,8 +181,8 @@ export function ScanProgressModal({ open, onClose, folders }: ScanProgressModalP
                 <ErrorBox>
                   <p className="text-xs font-semibold mb-2">Problems ({result.errors.length})</p>
                   <ul className="max-h-32 overflow-y-auto text-xs text-foreground space-y-1 font-mono">
-                    {result.errors.map((line, i) => (
-                      <li key={i} className="truncate">{line}</li>
+                    {result.errors.map((line) => (
+                      <li key={line} className="truncate">{line}</li>
                     ))}
                   </ul>
                 </ErrorBox>

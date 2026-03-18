@@ -11,6 +11,7 @@ import { ProgressBar } from "../common/ProgressBar";
 import { ErrorBox } from "../common/ErrorBox";
 
 interface RecentItem {
+  id: number;
   path: string;
   success: boolean;
 }
@@ -43,6 +44,7 @@ export function BackfillProgressModal({
   const [processedCount, setProcessedCount] = useState(0);
 
   const listRef = useRef<HTMLDivElement>(null);
+  const itemIdRef = useRef(0);
   const elapsedInterval = useRef<ReturnType<typeof setInterval> | null>(null);
   const backfillStartedRef = useRef(false);
   const progressUnsubRef = useRef<(() => void) | null>(null);
@@ -78,7 +80,7 @@ export function BackfillProgressModal({
       lastProcessedRef.current = p.processed;
       setProcessedCount((n) => n + (p.success ? 1 : 0));
       setRecentItems((prev) => {
-        const next = [...prev, { path: p.path, success: p.success }];
+        const next = [...prev, { id: ++itemIdRef.current, path: p.path, success: p.success }];
         return next.length > 30 ? next.slice(-30) : next;
       });
     }
@@ -164,7 +166,7 @@ export function BackfillProgressModal({
       <div className="flex flex-col gap-4">
         <ProgressBar value={pct} showPercent variant={variant} />
 
-        <div className="flex items-center justify-between text-xs text-[#8a8f98]">
+        <div className="flex items-center justify-between text-xs text-muted-foreground">
           <span className="truncate max-w-[50%]">
             {progress?.path
               ? String(progress.path).split("/").pop()
@@ -191,9 +193,9 @@ export function BackfillProgressModal({
                 {total ? "Analyzing tracks…" : "Waiting for backfill…"}
               </p>
             )}
-            {recentItems.map((item, i) => (
+            {recentItems.map((item) => (
               <div
-                key={i}
+                key={item.id}
                 className="flex items-start gap-2 py-0.5 text-muted-foreground"
               >
                 <span className="shrink-0">

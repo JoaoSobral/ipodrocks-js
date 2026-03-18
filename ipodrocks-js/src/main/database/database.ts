@@ -23,6 +23,232 @@ export class AppDatabase {
     this.migratePlaybackLog();
     this.migrateAssistantChat();
     this.migrateDropRedundantIndexes();
+    this.migrateCaseInsensitiveEntities();
+    this.migrateDeduplicateTracks();
+  }
+
+  /**
+   * Merge artists/albums/genres case-insensitively (NOCASE) so tag casing
+   * changes do not create duplicate entries.
+   */
+  private migrateCaseInsensitiveEntities(): void {
+    if (!this.db) return;
+    try {
+      const done = this.db
+        .prepare(
+          "SELECT value FROM app_settings WHERE key = 'migrate_nocase_entities_done'"
+        )
+        .get() as { value: string } | undefined;
+      if (done?.value === "1") return;
+
+      this.db.pragma("foreign_keys = OFF");
+      try {
+        this.db.transaction(() => {
+          this.migrateCaseInsensitiveArtists();
+          this.migrateCaseInsensitiveGenres();
+          this.migrateCaseInsensitiveAlbums();
+          this.db!
+            .prepare(
+              "INSERT OR REPLACE INTO app_settings (key, value, updated_at) VALUES ('migrate_nocase_entities_done', '1', CURRENT_TIMESTAMP)"
+            )
+            .run();
+        })();
+      } finally {
+        this.db.pragma("foreign_keys = ON");
+      }
+    } catch (err) {
+      console.error("[db] migration failed (migrateCaseInsensitiveEntities):", err);
+    }
+  }
+
+  private migrateCaseInsensitiveArtists(): void {
+    const artists = this.db!.prepare(
+      "SELECT id, name FROM artists ORDER BY id"
+    ).all() as { id: number; name: string }[];
+    const canonicalByKey = new Map<string, number>();
+    for (const a of artists) {
+      const key = a.name.toLowerCase();
+      if (!canonicalByKey.has(key)) canonicalByKey.set(key, a.id);
+    }
+    for (const a of artists) {
+      const canonical = canonicalByKey.get(a.name.toLowerCase())!;
+      if (canonical !== a.id) {
+        this.db!.prepare("UPDATE albums SET artist_id = ? WHERE artist_id = ?").run(canonical, a.id);
+        this.db!.prepare("UPDATE tracks SET artist_id = ? WHERE artist_id = ?").run(canonical, a.id);
+        this.db!.prepare("DELETE FROM artists WHERE id = ?").run(a.id);
+      }
+    }
+    this.db!.exec(`
+      CREATE TABLE artists_new (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+      INSERT INTO artists_new SELECT id, name, created_at FROM artists;
+      DROP TABLE artists;
+      ALTER TABLE artists_new RENAME TO artists;
+    `);
+  }
+
+  private migrateCaseInsensitiveGenres(): void {
+    const genres = this.db!.prepare(
+      "SELECT id, name FROM genres ORDER BY id"
+    ).all() as { id: number; name: string }[];
+    const canonicalByKey = new Map<string, number>();
+    for (const g of genres) {
+      const key = g.name.toLowerCase();
+      if (!canonicalByKey.has(key)) canonicalByKey.set(key, g.id);
+    }
+    for (const g of genres) {
+      const canonical = canonicalByKey.get(g.name.toLowerCase())!;
+      if (canonical !== g.id) {
+        this.db!.prepare("UPDATE tracks SET genre_id = ? WHERE genre_id = ?").run(canonical, g.id);
+        this.db!.prepare("DELETE FROM genres WHERE id = ?").run(g.id);
+      }
+    }
+    this.db!.exec(`
+      CREATE TABLE genres_new (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+      INSERT INTO genres_new SELECT id, name, created_at FROM genres;
+      DROP TABLE genres;
+      ALTER TABLE genres_new RENAME TO genres;
+    `);
+  }
+
+  private migrateCaseInsensitiveAlbums(): void {
+    const albums = this.db!.prepare(
+      "SELECT id, title, artist_id FROM albums ORDER BY id"
+    ).all() as { id: number; title: string; artist_id: number }[];
+    const canonicalByKey = new Map<string, number>();
+    for (const al of albums) {
+      const key = `${al.title.toLowerCase()}\0${al.artist_id}`;
+      if (!canonicalByKey.has(key)) canonicalByKey.set(key, al.id);
+    }
+    for (const al of albums) {
+      const key = `${al.title.toLowerCase()}\0${al.artist_id}`;
+      const canonical = canonicalByKey.get(key)!;
+      if (canonical !== al.id) {
+        this.db!.prepare("UPDATE tracks SET album_id = ? WHERE album_id = ?").run(canonical, al.id);
+        this.db!.prepare("DELETE FROM albums WHERE id = ?").run(al.id);
+      }
+    }
+    this.db!.exec(`
+      CREATE TABLE albums_new (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        title TEXT NOT NULL COLLATE NOCASE,
+        artist_id INTEGER NOT NULL,
+        year INTEGER,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (artist_id) REFERENCES artists (id),
+        UNIQUE(title, artist_id)
+      );
+      INSERT INTO albums_new SELECT id, title, artist_id, year, created_at FROM albums;
+      DROP TABLE albums;
+      ALTER TABLE albums_new RENAME TO albums;
+    `);
+  }
+
+  /**
+   * Remove duplicate tracks: same (artist, album, title). These three define
+   * uniqueness. Title comparison is case-insensitive. Keeps the one with
+   * MIN(id), deletes the rest. Runs once per migration flag.
+   */
+  private migrateDeduplicateTracks(): void {
+    if (!this.db) return;
+    const done = this.db
+      .prepare("SELECT value FROM app_settings WHERE key = 'migrate_deduplicate_tracks_prefer_main_done'")
+      .get() as { value: string } | undefined;
+    if (done?.value === "1") return;
+
+    const dupes = this.db.prepare(`
+      SELECT t.id FROM tracks t
+      WHERE EXISTS (
+        SELECT 1 FROM tracks t2
+        WHERE t2.artist_id IS NOT DISTINCT FROM t.artist_id
+          AND t2.album_id IS NOT DISTINCT FROM t.album_id
+          AND (
+            (t2.title IS NULL AND t.title IS NULL)
+            OR (t2.title IS NOT NULL AND t.title IS NOT NULL AND LOWER(t2.title) = LOWER(t.title))
+          )
+          AND t2.id != t.id
+          AND (
+            (t.path LIKE '%Trash%' AND t2.path NOT LIKE '%Trash%')
+            OR (
+              (t.path LIKE '%Trash%') = (t2.path LIKE '%Trash%')
+              AND t2.id < t.id
+            )
+          )
+      )
+    `).all() as { id: number }[];
+
+    const deletePlaybackLogsStmt = this.db.prepare("DELETE FROM playback_logs WHERE matched_track_id = ?");
+    const deletePlaybackStatsStmt = this.db.prepare("DELETE FROM playback_stats WHERE track_id = ?");
+    const deleteShadowStmt = this.db.prepare("DELETE FROM shadow_tracks WHERE source_track_id = ?");
+    const getPathStmt = this.db.prepare("SELECT path FROM tracks WHERE id = ?");
+    const deleteHashStmt = this.db.prepare("DELETE FROM content_hashes WHERE file_path = ?");
+    const deleteTrackStmt = this.db.prepare("DELETE FROM tracks WHERE id = ?");
+
+    this.db.pragma("foreign_keys = OFF");
+    try {
+      this.db.transaction(() => {
+        for (const row of dupes) {
+          deletePlaybackLogsStmt.run(row.id);
+          deletePlaybackStatsStmt.run(row.id);
+          deleteShadowStmt.run(row.id);
+          const pathRow = getPathStmt.get(row.id) as { path: string } | undefined;
+          if (pathRow) {
+            deleteHashStmt.run(pathRow.path);
+          }
+          deleteTrackStmt.run(row.id);
+        }
+
+        const orphanAlbumIds = this.db!.prepare(
+          "SELECT id FROM albums WHERE id NOT IN (SELECT DISTINCT album_id FROM tracks WHERE album_id IS NOT NULL)"
+        ).all() as { id: number }[];
+        const orphanArtistIds = this.db!.prepare(
+          `SELECT id FROM artists WHERE id NOT IN (
+            SELECT artist_id FROM albums UNION SELECT artist_id FROM tracks WHERE artist_id IS NOT NULL
+          )`
+        ).all() as { id: number }[];
+        const orphanGenreIds = this.db!.prepare(
+          "SELECT id FROM genres WHERE id NOT IN (SELECT DISTINCT genre_id FROM tracks WHERE genre_id IS NOT NULL)"
+        ).all() as { id: number }[];
+
+        const albumIds = orphanAlbumIds.map((r) => r.id);
+        const artistIds = orphanArtistIds.map((r) => r.id);
+        const genreIds = orphanGenreIds.map((r) => r.id);
+        const idsToNull = [...albumIds, ...artistIds, ...genreIds];
+
+        if (idsToNull.length > 0) {
+          const placeholders = idsToNull.map(() => "?").join(",");
+          this.db!.prepare(
+            `UPDATE sync_rules SET target_id = NULL WHERE target_id IN (${placeholders})`
+          ).run(...idsToNull);
+        }
+
+        if (albumIds.length > 0) {
+          const ph = albumIds.map(() => "?").join(",");
+          this.db!.prepare(`DELETE FROM albums WHERE id IN (${ph})`).run(...albumIds);
+        }
+        if (artistIds.length > 0) {
+          const ph = artistIds.map(() => "?").join(",");
+          this.db!.prepare(`DELETE FROM artists WHERE id IN (${ph})`).run(...artistIds);
+        }
+        if (genreIds.length > 0) {
+          const ph = genreIds.map(() => "?").join(",");
+          this.db!.prepare(`DELETE FROM genres WHERE id IN (${ph})`).run(...genreIds);
+        }
+
+        this.db!.prepare(
+          "INSERT OR REPLACE INTO app_settings (key, value, updated_at) VALUES ('migrate_deduplicate_tracks_prefer_main_done', '1', CURRENT_TIMESTAMP)"
+        ).run();
+      })();
+    } finally {
+      this.db.pragma("foreign_keys = ON");
+    }
   }
 
   /** F13: Drop redundant explicit indexes on columns that already have implicit UNIQUE indexes. */

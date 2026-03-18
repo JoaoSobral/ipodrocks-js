@@ -241,31 +241,46 @@ export function compareLibraries(
 
     // Rule 3: Basename match — same filename (handles different folder
     // structure; e.g. device has Artist/Album/Track.mpc, library expects
-    // different path but same Track.mpc)
-    if (!matched && profileExtNorm) {
+    // different path but same Track.mpc). Runs even when profileCodecExt
+    // is null (direct copy) so shadow-library sync correctly matches tracks.
+    if (!matched) {
       const libBasename = path.posix.basename(relPath.replace(/\\/g, "/"));
       const basenameNorm = normalizeRelPathForMatch(libBasename);
       const basenameEntries = deviceByBasename.get(basenameNorm);
       if (basenameEntries) {
         const libDestExtNorm = normalizeKey(extOf(relPath));
+        // When profileExtNorm is null (direct copy), require exact extension
+        // match. When set, allow codec mismatch (device has old format).
+        const allowCodecMismatch = profileExtNorm !== null;
+        let best: [string, number] | null = null;
+        let bestExtMatch = false;
         for (const [dp, devSize] of basenameEntries) {
           if (matchedDevicePaths.has(dp)) continue;
           const devExtNorm = normalizeKey(extOf(dp));
           const extMatch = devExtNorm === libDestExtNorm;
           const codecMismatch = devExtNorm !== libDestExtNorm;
-          if (extMatch || codecMismatch) {
-            devicePath = dp;
-            deviceSize = devSize;
-            matched = true;
-            if (extMatch) {
-              skipNotOverwrite =
-                expectedSize > 0
-                  ? Math.abs(devSize - expectedSize) <= SIZE_TOLERANCE
-                  : true;
-            } else {
-              skipNotOverwrite = false;
+          const accept = extMatch || (allowCodecMismatch && codecMismatch);
+          if (accept) {
+            if (extMatch && (!best || !bestExtMatch)) {
+              best = [dp, devSize];
+              bestExtMatch = true;
+            } else if (!best && codecMismatch && allowCodecMismatch) {
+              best = [dp, devSize];
             }
-            break;
+          }
+        }
+        if (best) {
+          [devicePath, deviceSize] = best;
+          matched = true;
+          const devExtNorm = normalizeKey(extOf(devicePath!));
+          const extMatch = devExtNorm === libDestExtNorm;
+          if (extMatch) {
+            skipNotOverwrite =
+              expectedSize > 0
+                ? Math.abs(deviceSize - expectedSize) <= SIZE_TOLERANCE
+                : true;
+          } else {
+            skipNotOverwrite = false;
           }
         }
       }

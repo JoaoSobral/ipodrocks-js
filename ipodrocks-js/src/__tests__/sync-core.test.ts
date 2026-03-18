@@ -213,6 +213,82 @@ describe("name-size-sync", () => {
       expect(result.codecMismatchPaths).toContain(devicePath);
       expect(result.codecMismatchMap.get("/lib/track.flac")).toBe(deviceRel);
     });
+
+    it("matches by basename when profileCodecExt is null (direct copy / shadow mode)", () => {
+      const libraryDestMap = {
+        "/shadow/Archie/Full Discography/14 - If You Know.mpc": "14 - If You Know.mpc",
+      };
+      const libraryExpectedSizes = {
+        "/shadow/Archie/Full Discography/14 - If You Know.mpc": 500000,
+      };
+      const deviceContentPath = "/run/media/pedro/IPOD/Music";
+      const devicePath =
+        "/run/media/pedro/IPOD/Music/Archie/Full Discography/14 - If You Know.mpc";
+      const deviceFilesMap: Record<string, { file_size: number }> = {
+        [devicePath]: { file_size: 500000 },
+      };
+
+      const result = compareLibraries(
+        libraryDestMap,
+        libraryExpectedSizes,
+        deviceContentPath,
+        deviceFilesMap,
+        { profileCodecExt: null }
+      );
+
+      expect(result.missingTracks.size).toBe(0);
+      expect(result.tracksToSkip).toHaveLength(1);
+      expect(result.extras).toHaveLength(0);
+    });
+
+    it("does not match device file as orphan when basename matches (profileCodecExt null)", () => {
+      const libraryDestMap = {
+        "/shadow/Artist/Album/track.mpc": "track.mpc",
+      };
+      const libraryExpectedSizes = {
+        "/shadow/Artist/Album/track.mpc": 300000,
+      };
+      const deviceContentPath = "/mnt/device/Music";
+      const devicePath = "/mnt/device/Music/Artist/Album/track.mpc";
+      const deviceFilesMap: Record<string, { file_size: number }> = {
+        [devicePath]: { file_size: 300000 },
+      };
+
+      const result = compareLibraries(
+        libraryDestMap,
+        libraryExpectedSizes,
+        deviceContentPath,
+        deviceFilesMap,
+        { profileCodecExt: null }
+      );
+
+      expect(result.missingTracks.size).toBe(0);
+      expect(result.tracksToSkip).toHaveLength(1);
+      expect(result.extras).toHaveLength(0);
+    });
+
+    it("classifies device .mpc as codec mismatch when shadow expects .opus", () => {
+      const libraryDestMap = {
+        "/shadow/Artist/Album/track.opus": "Artist/Album/track.opus",
+      };
+      const libraryExpectedSizes = { "/shadow/Artist/Album/track.opus": 0 };
+      const deviceContentPath = "/mnt/device/Music";
+      const devicePath = "/mnt/device/Music/Artist/Album/track.mpc";
+      const deviceFilesMap: Record<string, { file_size: number }> = {
+        [devicePath]: { file_size: 2_000_000 },
+      };
+
+      const result = compareLibraries(
+        libraryDestMap,
+        libraryExpectedSizes,
+        deviceContentPath,
+        deviceFilesMap,
+        { profileCodecExt: ".opus" }
+      );
+
+      expect(result.missingTracks.has("/shadow/Artist/Album/track.opus")).toBe(true);
+      expect(result.codecMismatchPaths).toContain(devicePath);
+    });
   });
 });
 

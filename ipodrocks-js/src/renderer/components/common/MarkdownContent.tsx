@@ -1,4 +1,5 @@
 import ReactMarkdown from "react-markdown";
+import rehypeSanitize from "rehype-sanitize";
 
 interface MarkdownContentProps {
   content: string;
@@ -13,6 +14,7 @@ export function MarkdownContent({ content, className = "" }: MarkdownContentProp
   return (
     <div className={`markdown-chat text-sm ${className}`}>
       <ReactMarkdown
+        rehypePlugins={[rehypeSanitize]}
         components={{
           p: ({ children }) => (
             <p className="mb-2 last:mb-0 leading-relaxed">{children}</p>

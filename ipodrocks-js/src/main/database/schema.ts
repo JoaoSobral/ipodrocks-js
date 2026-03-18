@@ -19,13 +19,13 @@ CREATE TABLE IF NOT EXISTS library_folders (
 
 CREATE TABLE IF NOT EXISTS artists (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL UNIQUE COLLATE NOCASE,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS albums (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    title TEXT NOT NULL,
+    title TEXT NOT NULL COLLATE NOCASE,
     artist_id INTEGER NOT NULL,
     year INTEGER,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -35,7 +35,7 @@ CREATE TABLE IF NOT EXISTS albums (
 
 CREATE TABLE IF NOT EXISTS genres (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL UNIQUE COLLATE NOCASE,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -475,6 +475,7 @@ CREATE INDEX IF NOT EXISTS idx_tracks_genre ON tracks(genre_id);
 CREATE INDEX IF NOT EXISTS idx_tracks_codec ON tracks(codec_id);
 CREATE INDEX IF NOT EXISTS idx_tracks_file_hash ON tracks(file_hash);
 CREATE INDEX IF NOT EXISTS idx_tracks_metadata_hash ON tracks(metadata_hash);
+CREATE INDEX IF NOT EXISTS idx_tracks_dedup ON tracks(artist_id, album_id);
 
 -- albums
 CREATE INDEX IF NOT EXISTS idx_albums_artist ON albums(artist_id);

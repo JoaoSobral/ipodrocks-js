@@ -78,6 +78,7 @@ export class LibraryScanner {
   private loadMtimesStmt: Database.Statement;
   private loadTrackPathsStmt: Database.Statement;
   private getTrackIdByPathStmt: Database.Statement;
+  private getTrackByArtistAlbumTitleStmt: Database.Statement;
   private updateTrackFeaturesStmt: Database.Statement;
 
   constructor(db: Database.Database) {
@@ -156,6 +157,13 @@ export class LibraryScanner {
     this.getTrackIdByPathStmt = db.prepare(
       "SELECT id FROM tracks WHERE path = ?"
     );
+    this.getTrackByArtistAlbumTitleStmt = db.prepare(
+      `SELECT id, path FROM tracks
+       WHERE artist_id IS NOT DISTINCT FROM ?
+         AND album_id IS NOT DISTINCT FROM ?
+         AND ((title IS NULL AND ? IS NULL) OR (title IS NOT NULL AND ? IS NOT NULL AND LOWER(title) = LOWER(?)))
+       LIMIT 1`
+    );
     this.updateTrackFeaturesStmt = db.prepare(
       "UPDATE tracks SET key = ?, bpm = ?, camelot = ?, features_scanned = 1 WHERE id = ?"
     );
@@ -180,7 +188,7 @@ export class LibraryScanner {
     const scanHarmonicData = options?.scanHarmonicData !== false;
     const folder = path.resolve(folderPath.trim());
     if (!fs.existsSync(folder)) {
-      return { filesAdded: 0, filesProcessed: 0, cancelled: false };
+      return { filesAdded: 0, filesProcessed: 0, filesRemoved: 0, cancelled: false };
     }
 
     const folderId = this.getOrCreateFolderId(folder, contentType);
@@ -202,7 +210,7 @@ export class LibraryScanner {
           total,
           status: "cancelled",
         });
-        return { filesAdded, filesProcessed, cancelled: true };
+        return { filesAdded, filesProcessed, filesRemoved: 0, cancelled: true };
       }
 
       progressCallback?.({
@@ -271,7 +279,7 @@ export class LibraryScanner {
           genre: metadata.genre,
         });
 
-        this.upsertTrack({
+        const didUpsert = this.upsertTrack({
           path: filePath,
           filename: path.basename(filePath),
           title: metadata.title,
@@ -292,6 +300,16 @@ export class LibraryScanner {
           showTitle: metadata.showTitle,
           episodeNumber: metadata.episodeNumber,
         });
+        if (!didUpsert) {
+          filesProcessed++;
+          progressCallback?.({
+            file: path.basename(filePath),
+            processed: filesProcessed,
+            total,
+            status: "skipped",
+          });
+          continue;
+        }
 
         const trackRow = this.getTrackIdByPathStmt.get(filePath) as
           | { id: number }
@@ -349,6 +367,11 @@ export class LibraryScanner {
       .map((r) => r.path)
       .filter((p) => !audioFileSet.has(p));
 
+    const { filesRemoved, removedTrackIds } =
+      this.deleteRemovedTracks(removedTrackPaths);
+
+    this.deduplicateTracks();
+
     progressCallback?.({
       file: "",
       processed: filesProcessed,
@@ -359,12 +382,183 @@ export class LibraryScanner {
     return {
       filesAdded,
       filesProcessed,
+      filesRemoved,
       cancelled: false,
       errors,
       addedTrackPaths,
       removedTrackPaths,
+      removedTrackIds,
       updatedTrackPaths,
     };
+  }
+
+  /**
+   * Delete tracks by path from DB (tracks, content_hashes, playback_logs,
+   * playback_stats). Cleans up orphaned albums/artists/genres/codecs.
+   * Returns the number of tracks deleted and their IDs (for shadow propagation).
+   */
+  private deleteRemovedTracks(
+    paths: string[]
+  ): { filesRemoved: number; removedTrackIds: number[] } {
+    if (paths.length === 0) return { filesRemoved: 0, removedTrackIds: [] };
+
+    const pathToId = new Map<string, number>();
+    for (const p of paths) {
+      const row = this.getTrackIdByPathStmt.get(p) as { id: number } | undefined;
+      if (row) pathToId.set(p, row.id);
+    }
+    const ids = [...pathToId.values()];
+
+    const deleteTrackStmt = this.db.prepare("DELETE FROM tracks WHERE path = ?");
+    const deleteHashStmt = this.db.prepare(
+      "DELETE FROM content_hashes WHERE file_path = ?"
+    );
+    const deleteShadowStmt = this.db.prepare(
+      "DELETE FROM shadow_tracks WHERE source_track_id = ?"
+    );
+    const deletePlaybackLogsStmt = this.db.prepare(
+      "DELETE FROM playback_logs WHERE matched_track_id = ?"
+    );
+    const deletePlaybackStatsStmt = this.db.prepare(
+      "DELETE FROM playback_stats WHERE track_id = ?"
+    );
+
+    let deleted = 0;
+    this.db.pragma("foreign_keys = OFF");
+    try {
+      this.db.transaction(() => {
+        for (const p of paths) {
+          const trackId = pathToId.get(p);
+          if (trackId != null) {
+            deletePlaybackLogsStmt.run(trackId);
+            deletePlaybackStatsStmt.run(trackId);
+            deleteShadowStmt.run(trackId);
+          }
+          deleteHashStmt.run(p);
+          const info = deleteTrackStmt.run(p);
+          if (info.changes > 0) deleted++;
+        }
+        this.cleanupOrphanedEntities();
+      })();
+    } finally {
+      this.db.pragma("foreign_keys = ON");
+    }
+
+    return { filesRemoved: deleted, removedTrackIds: ids };
+  }
+
+  /**
+   * Remove duplicate tracks: same (artist, album, title). Prefers the path
+   * that does NOT contain "Trash" (keeps main library over Trash). Runs
+   * after each scan to clean up any duplicates.
+   */
+  private deduplicateTracks(): void {
+    const dupes = this.db.prepare(`
+      SELECT t.id FROM tracks t
+      WHERE EXISTS (
+        SELECT 1 FROM tracks t2
+        WHERE t2.artist_id IS NOT DISTINCT FROM t.artist_id
+          AND t2.album_id IS NOT DISTINCT FROM t.album_id
+          AND (
+            (t2.title IS NULL AND t.title IS NULL)
+            OR (t2.title IS NOT NULL AND t.title IS NOT NULL AND LOWER(t2.title) = LOWER(t.title))
+          )
+          AND t2.id != t.id
+          AND (
+            (t.path LIKE '%Trash%' AND t2.path NOT LIKE '%Trash%')
+            OR (
+              (t.path LIKE '%Trash%') = (t2.path LIKE '%Trash%')
+              AND t2.id < t.id
+            )
+          )
+      )
+    `).all() as { id: number }[];
+
+    if (dupes.length === 0) return;
+
+    const deletePlaybackLogsStmt = this.db.prepare("DELETE FROM playback_logs WHERE matched_track_id = ?");
+    const deletePlaybackStatsStmt = this.db.prepare("DELETE FROM playback_stats WHERE track_id = ?");
+    const deleteShadowStmt = this.db.prepare("DELETE FROM shadow_tracks WHERE source_track_id = ?");
+    const getPathStmt = this.db.prepare("SELECT path FROM tracks WHERE id = ?");
+    const deleteHashStmt = this.db.prepare("DELETE FROM content_hashes WHERE file_path = ?");
+    const deleteTrackStmt = this.db.prepare("DELETE FROM tracks WHERE id = ?");
+
+    this.db.pragma("foreign_keys = OFF");
+    try {
+      this.db.transaction(() => {
+        for (const row of dupes) {
+          deletePlaybackLogsStmt.run(row.id);
+          deletePlaybackStatsStmt.run(row.id);
+          deleteShadowStmt.run(row.id);
+          const pathRow = getPathStmt.get(row.id) as { path: string } | undefined;
+          if (pathRow) {
+            deleteHashStmt.run(pathRow.path);
+          }
+          deleteTrackStmt.run(row.id);
+        }
+        this.cleanupOrphanedEntities();
+      })();
+    } finally {
+      this.db.pragma("foreign_keys = ON");
+    }
+  }
+
+  /** Remove albums, artists, genres, codecs with no referencing tracks. */
+  private cleanupOrphanedEntities(): void {
+    const orphanAlbumIds = this.db
+      .prepare(
+        "SELECT id FROM albums WHERE id NOT IN (SELECT DISTINCT album_id FROM tracks WHERE album_id IS NOT NULL)"
+      )
+      .all() as { id: number }[];
+    const orphanArtistIds = this.db
+      .prepare(
+        `SELECT id FROM artists WHERE id NOT IN (
+          SELECT artist_id FROM albums
+          UNION
+          SELECT artist_id FROM tracks WHERE artist_id IS NOT NULL
+        )`
+      )
+      .all() as { id: number }[];
+    const orphanGenreIds = this.db
+      .prepare(
+        "SELECT id FROM genres WHERE id NOT IN (SELECT DISTINCT genre_id FROM tracks WHERE genre_id IS NOT NULL)"
+      )
+      .all() as { id: number }[];
+    const orphanCodecIds = this.db
+      .prepare(
+        "SELECT id FROM codecs WHERE id NOT IN (SELECT DISTINCT codec_id FROM tracks WHERE codec_id IS NOT NULL)"
+      )
+      .all() as { id: number }[];
+
+    const albumIds = orphanAlbumIds.map((r) => r.id);
+    const artistIds = orphanArtistIds.map((r) => r.id);
+    const genreIds = orphanGenreIds.map((r) => r.id);
+    const codecIds = orphanCodecIds.map((r) => r.id);
+    const idsToNull = [...albumIds, ...artistIds, ...genreIds];
+
+    if (idsToNull.length > 0) {
+      const placeholders = idsToNull.map(() => "?").join(",");
+      this.db.prepare(
+        `UPDATE sync_rules SET target_id = NULL WHERE target_id IN (${placeholders})`
+      ).run(...idsToNull);
+    }
+
+    if (albumIds.length > 0) {
+      const ph = albumIds.map(() => "?").join(",");
+      this.db.prepare(`DELETE FROM albums WHERE id IN (${ph})`).run(...albumIds);
+    }
+    if (artistIds.length > 0) {
+      const ph = artistIds.map(() => "?").join(",");
+      this.db.prepare(`DELETE FROM artists WHERE id IN (${ph})`).run(...artistIds);
+    }
+    if (genreIds.length > 0) {
+      const ph = genreIds.map(() => "?").join(",");
+      this.db.prepare(`DELETE FROM genres WHERE id IN (${ph})`).run(...genreIds);
+    }
+    if (codecIds.length > 0) {
+      const ph = codecIds.map(() => "?").join(",");
+      this.db.prepare(`DELETE FROM codecs WHERE id IN (${ph})`).run(...codecIds);
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -703,12 +897,28 @@ export class LibraryScanner {
     return isNaN(num) ? null : num;
   }
 
-  /** Resolve foreign keys and upsert a track row. */
-  private upsertTrack(data: TrackUpsertData): void {
+  /**
+   * Resolve foreign keys and upsert a track row.
+   * Skips if a track with same (artist, album, title) already exists at a
+   * different path (prevents duplicates from Trash or multiple folders).
+   * @returns false if skipped as duplicate, true if upserted
+   */
+  private upsertTrack(data: TrackUpsertData): boolean {
     const artistId = this.getOrCreateArtistId(data.artist);
     const albumId = this.getOrCreateAlbumId(data.album, artistId);
     const genreId = this.getOrCreateGenreId(data.genre);
     const codecId = this.getOrCreateCodecId(data.codec);
+
+    const existing = this.getTrackByArtistAlbumTitleStmt.get(
+      artistId,
+      albumId,
+      data.title ?? null,
+      data.title ?? null,
+      data.title ?? null
+    ) as { id: number; path: string } | undefined;
+    if (existing && existing.path !== data.path) {
+      return false;
+    }
 
     const trackNumber = this.parseIntField(data.trackNumber);
     const discNumber = this.parseIntField(data.discNumber);
@@ -739,5 +949,6 @@ export class LibraryScanner {
       showTitle: data.showTitle ?? null,
       episodeNumber,
     });
+    return true;
   }
 }

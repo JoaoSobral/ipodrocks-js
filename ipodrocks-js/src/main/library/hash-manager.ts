@@ -82,14 +82,18 @@ export class HashManager {
     try {
       const hash = crypto.createHash("sha256");
       const fd = fs.openSync(filePath, "r");
-      const buf = Buffer.alloc(chunkSize);
-      let bytesRead: number;
-      while ((bytesRead = fs.readSync(fd, buf, 0, chunkSize, null)) > 0) {
-        hash.update(buf.subarray(0, bytesRead));
+      try {
+        const buf = Buffer.alloc(chunkSize);
+        let bytesRead: number;
+        while ((bytesRead = fs.readSync(fd, buf, 0, chunkSize, null)) > 0) {
+          hash.update(buf.subarray(0, bytesRead));
+        }
+      } finally {
+        fs.closeSync(fd);
       }
-      fs.closeSync(fd);
       return hash.digest("hex");
-    } catch {
+    } catch (err) {
+      console.warn(`[hash-manager] computeFileHash failed for ${filePath}:`, err instanceof Error ? err.message : err);
       return "";
     }
   }
@@ -162,7 +166,8 @@ export class HashManager {
         hash.hashType
       );
       return true;
-    } catch {
+    } catch (err) {
+      console.warn(`[hash-manager] storeHash failed for ${hash.filePath}:`, err instanceof Error ? err.message : err);
       return false;
     }
   }
