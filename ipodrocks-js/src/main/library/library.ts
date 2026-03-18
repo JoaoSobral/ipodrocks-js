@@ -1,5 +1,3 @@
-import fs from "fs";
-import path from "path";
 import { LibraryFolder, ShadowBuildProgress, ShadowLibrary, Track } from "../../shared/types";
 import { AppDatabase } from "../database/database";
 import { ContentHash, HashManager } from "./hash-manager";
@@ -25,39 +23,6 @@ interface LibraryStats {
   audiobookTrackCount: number;
 }
 
-function computeDirectorySize(root: string): number {
-  try {
-    const st = fs.statSync(root);
-    if (!st.isDirectory()) return st.size;
-  } catch {
-    return 0;
-  }
-
-  let total = 0;
-  const stack: string[] = [root];
-
-  while (stack.length > 0) {
-    const dir = stack.pop() as string;
-    let entries: string[];
-    try {
-      entries = fs.readdirSync(dir);
-    } catch {
-      continue;
-    }
-    for (const entry of entries) {
-      const full = path.join(dir, entry);
-      try {
-        const s = fs.statSync(full);
-        if (s.isDirectory()) stack.push(full);
-        else total += s.size;
-      } catch {
-        // best effort: ignore inaccessible files
-      }
-    }
-  }
-
-  return total;
-}
 
 /**
  * High-level library facade.
@@ -208,30 +173,45 @@ export class Library {
 
   /**
    * Aggregate statistics across the library.
-   * totalSizeBytes is computed by summing the sizes of all configured
-   * library folders on disk, so it reflects the actual on-disk size.
+   * totalSizeBytes is computed by summing file_size from the tracks table
+   * to avoid blocking the main thread with a synchronous directory walk.
    */
   getStats(): LibraryStats {
     const conn = this.database.getConnection();
-    const count = (sql: string) =>
-      (conn.prepare(sql).get() as { c: number }).c;
 
-    const folders = conn
-      .prepare("SELECT path FROM library_folders")
-      .all() as { path: string }[];
-    let totalSizeBytes = 0;
-    for (const f of folders) {
-      totalSizeBytes += computeDirectorySize(f.path);
-    }
+    const row = conn.prepare(`
+      SELECT
+        COUNT(*) AS totalTracks,
+        SUM(CASE WHEN content_type = 'podcast' THEN 1 ELSE 0 END) AS podcastTrackCount,
+        SUM(CASE WHEN content_type = 'audiobook' THEN 1 ELSE 0 END) AS audiobookTrackCount,
+        COALESCE(SUM(file_size), 0) AS totalSizeBytes
+      FROM tracks
+    `).get() as {
+      totalTracks: number;
+      podcastTrackCount: number;
+      audiobookTrackCount: number;
+      totalSizeBytes: number;
+    };
+
+    const counts = conn.prepare(`
+      SELECT
+        (SELECT COUNT(*) FROM albums) AS totalAlbums,
+        (SELECT COUNT(*) FROM artists) AS totalArtists,
+        (SELECT COUNT(*) FROM genres) AS totalGenres
+    `).get() as {
+      totalAlbums: number;
+      totalArtists: number;
+      totalGenres: number;
+    };
 
     return {
-      totalTracks: count("SELECT COUNT(*) as c FROM tracks"),
-      totalAlbums: count("SELECT COUNT(*) as c FROM albums"),
-      totalArtists: count("SELECT COUNT(*) as c FROM artists"),
-      totalGenres: count("SELECT COUNT(*) as c FROM genres"),
-      totalSizeBytes,
-      podcastTrackCount: count("SELECT COUNT(*) as c FROM tracks WHERE content_type = 'podcast'"),
-      audiobookTrackCount: count("SELECT COUNT(*) as c FROM tracks WHERE content_type = 'audiobook'"),
+      totalTracks: row.totalTracks,
+      totalAlbums: counts.totalAlbums,
+      totalArtists: counts.totalArtists,
+      totalGenres: counts.totalGenres,
+      totalSizeBytes: row.totalSizeBytes,
+      podcastTrackCount: row.podcastTrackCount,
+      audiobookTrackCount: row.audiobookTrackCount,
     };
   }
 

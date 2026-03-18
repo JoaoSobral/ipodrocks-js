@@ -13,6 +13,7 @@ interface ScanFolder {
 }
 
 interface RecentFile {
+  id: number;
   file: string;
   status: ScanProgress["status"];
 }
@@ -46,6 +47,7 @@ export function ScanProgressModal({ open, onClose, folders }: ScanProgressModalP
   const [recentFiles, setRecentFiles] = useState<RecentFile[]>([]);
   const listRef = useRef<HTMLDivElement>(null);
   const abortedRef = useRef(false);
+  const fileIdRef = useRef(0);
 
   const isRunning = !result && !error;
   const pct = progress && progress.total > 0
@@ -54,7 +56,7 @@ export function ScanProgressModal({ open, onClose, folders }: ScanProgressModalP
 
   const addRecent = useCallback((file: string, status: ScanProgress["status"]) => {
     setRecentFiles((prev) => {
-      const next = [...prev, { file, status }];
+      const next = [...prev, { id: ++fileIdRef.current, file, status }];
       return next.length > 15 ? next.slice(-15) : next;
     });
   }, []);
@@ -132,8 +134,8 @@ export function ScanProgressModal({ open, onClose, folders }: ScanProgressModalP
           {recentFiles.length === 0 && (
             <p className="text-muted-foreground">Waiting for files…</p>
           )}
-          {recentFiles.map((rf, i) => (
-            <div key={i} className="flex items-start gap-2 py-0.5 text-muted-foreground">
+          {recentFiles.map((rf) => (
+            <div key={rf.id} className="flex items-start gap-2 py-0.5 text-muted-foreground">
               <span className="shrink-0 w-4 flex justify-center">
                 <StatusIcon status={rf.status} />
               </span>
@@ -179,8 +181,8 @@ export function ScanProgressModal({ open, onClose, folders }: ScanProgressModalP
                 <ErrorBox>
                   <p className="text-xs font-semibold mb-2">Problems ({result.errors.length})</p>
                   <ul className="max-h-32 overflow-y-auto text-xs text-foreground space-y-1 font-mono">
-                    {result.errors.map((line, i) => (
-                      <li key={i} className="truncate">{line}</li>
+                    {result.errors.map((line) => (
+                      <li key={line} className="truncate">{line}</li>
                     ))}
                   </ul>
                 </ErrorBox>

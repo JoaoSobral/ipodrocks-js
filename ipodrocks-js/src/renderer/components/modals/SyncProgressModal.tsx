@@ -7,6 +7,7 @@ import { ProgressBar } from "../common/ProgressBar";
 import { ErrorBox } from "../common/ErrorBox";
 
 interface RecentItem {
+  id: number;
   path: string;
   event: string;
   status: SyncProgress["status"];
@@ -48,7 +49,7 @@ export function SyncProgressModal({
 }: SyncProgressModalProps) {
   const [progress, setProgress] = useState<SyncProgress | null>(null);
   const [recentItems, setRecentItems] = useState<RecentItem[]>([]);
-  const [logLines, setLogLines] = useState<string[]>([]);
+  const [logLines, setLogLines] = useState<{ id: number; text: string }[]>([]);
   const [totalItems, setTotalItems] = useState(0);
   const [processedItems, setProcessedItems] = useState(0);
   const [copiedItems, setCopiedItems] = useState(0);
@@ -59,6 +60,8 @@ export function SyncProgressModal({
 
   const listRef = useRef<HTMLDivElement>(null);
   const logRef = useRef<HTMLDivElement>(null);
+  const itemIdRef = useRef(0);
+  const logIdRef = useRef(0);
   const elapsedInterval = useRef<ReturnType<typeof setInterval> | null>(null);
   const syncStartedRef = useRef(false);
   const progressUnsubRef = useRef<(() => void) | null>(null);
@@ -73,7 +76,10 @@ export function SyncProgressModal({
     setProgress(p);
 
     if (p.event === "log") {
-      setLogLines((prev) => [...prev, p.message ?? p.path ?? ""]);
+      setLogLines((prev) => {
+        const next = [...prev, { id: ++logIdRef.current, text: p.message ?? p.path ?? "" }];
+        return next.length > 200 ? next.slice(-200) : next;
+      });
       return;
     }
 
@@ -91,7 +97,7 @@ export function SyncProgressModal({
         setCopiedItems((n) => n + 1);
       }
       setRecentItems((prev) => {
-        const next = [...prev, { path: p.path, event: p.event, status: p.status }];
+        const next = [...prev, { id: ++itemIdRef.current, path: p.path, event: p.event, status: p.status }];
         return next.length > 30 ? next.slice(-30) : next;
       });
     }
@@ -220,7 +226,7 @@ export function SyncProgressModal({
       ...recentItems.map((r) => `[${r.status ?? r.event}] ${r.path}`),
       "",
       "=== Conversion log ===",
-      ...logLines,
+      ...logLines.map((l) => l.text),
     ];
     const text = lines.join("\n");
     void navigator.clipboard.writeText(text);
@@ -282,8 +288,8 @@ export function SyncProgressModal({
                     : "Waiting for sync…"}
             </p>
           )}
-          {recentItems.map((item, i) => (
-            <div key={i} className="flex items-start gap-2 py-0.5 text-[#8a8f98]">
+          {recentItems.map((item) => (
+            <div key={item.id} className="flex items-start gap-2 py-0.5 text-muted-foreground">
               <span className="shrink-0">{itemStatusIcon(item.status, item.event)}</span>
               <span className="truncate">{item.path}</span>
             </div>
@@ -298,8 +304,8 @@ export function SyncProgressModal({
               ref={logRef}
               className="h-28 overflow-y-auto rounded-lg border border-border bg-muted/30 p-3 text-xs font-mono text-muted-foreground"
             >
-              {logLines.map((line, i) => (
-                <div key={i} className="py-0.5">{line}</div>
+              {logLines.map((entry) => (
+                <div key={entry.id} className="py-0.5">{entry.text}</div>
               ))}
             </div>
           </div>

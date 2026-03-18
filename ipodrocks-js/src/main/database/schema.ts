@@ -475,6 +475,7 @@ CREATE INDEX IF NOT EXISTS idx_tracks_genre ON tracks(genre_id);
 CREATE INDEX IF NOT EXISTS idx_tracks_codec ON tracks(codec_id);
 CREATE INDEX IF NOT EXISTS idx_tracks_file_hash ON tracks(file_hash);
 CREATE INDEX IF NOT EXISTS idx_tracks_metadata_hash ON tracks(metadata_hash);
+CREATE INDEX IF NOT EXISTS idx_tracks_dedup ON tracks(artist_id, album_id);
 
 -- albums
 CREATE INDEX IF NOT EXISTS idx_albums_artist ON albums(artist_id);

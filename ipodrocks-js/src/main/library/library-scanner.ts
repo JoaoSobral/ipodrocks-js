@@ -409,12 +409,18 @@ export class LibraryScanner {
     }
     const ids = [...pathToId.values()];
 
-    const deleteStmt = this.db.prepare("DELETE FROM tracks WHERE path = ?");
+    const deleteTrackStmt = this.db.prepare("DELETE FROM tracks WHERE path = ?");
     const deleteHashStmt = this.db.prepare(
       "DELETE FROM content_hashes WHERE file_path = ?"
     );
     const deleteShadowStmt = this.db.prepare(
       "DELETE FROM shadow_tracks WHERE source_track_id = ?"
+    );
+    const deletePlaybackLogsStmt = this.db.prepare(
+      "DELETE FROM playback_logs WHERE matched_track_id = ?"
+    );
+    const deletePlaybackStatsStmt = this.db.prepare(
+      "DELETE FROM playback_stats WHERE track_id = ?"
     );
 
     let deleted = 0;
@@ -424,12 +430,12 @@ export class LibraryScanner {
         for (const p of paths) {
           const trackId = pathToId.get(p);
           if (trackId != null) {
-            this.db.prepare("DELETE FROM playback_logs WHERE matched_track_id = ?").run(trackId);
-            this.db.prepare("DELETE FROM playback_stats WHERE track_id = ?").run(trackId);
+            deletePlaybackLogsStmt.run(trackId);
+            deletePlaybackStatsStmt.run(trackId);
             deleteShadowStmt.run(trackId);
           }
           deleteHashStmt.run(p);
-          const info = deleteStmt.run(p);
+          const info = deleteTrackStmt.run(p);
           if (info.changes > 0) deleted++;
         }
         this.cleanupOrphanedEntities();
@@ -470,19 +476,28 @@ export class LibraryScanner {
 
     if (dupes.length === 0) return;
 
+    const deletePlaybackLogsStmt = this.db.prepare("DELETE FROM playback_logs WHERE matched_track_id = ?");
+    const deletePlaybackStatsStmt = this.db.prepare("DELETE FROM playback_stats WHERE track_id = ?");
+    const deleteShadowStmt = this.db.prepare("DELETE FROM shadow_tracks WHERE source_track_id = ?");
+    const getPathStmt = this.db.prepare("SELECT path FROM tracks WHERE id = ?");
+    const deleteHashStmt = this.db.prepare("DELETE FROM content_hashes WHERE file_path = ?");
+    const deleteTrackStmt = this.db.prepare("DELETE FROM tracks WHERE id = ?");
+
     this.db.pragma("foreign_keys = OFF");
     try {
-      for (const row of dupes) {
-        this.db.prepare("DELETE FROM playback_logs WHERE matched_track_id = ?").run(row.id);
-        this.db.prepare("DELETE FROM playback_stats WHERE track_id = ?").run(row.id);
-        this.db.prepare("DELETE FROM shadow_tracks WHERE source_track_id = ?").run(row.id);
-        const pathRow = this.db.prepare("SELECT path FROM tracks WHERE id = ?").get(row.id) as { path: string } | undefined;
-        if (pathRow) {
-          this.db.prepare("DELETE FROM content_hashes WHERE file_path = ?").run(pathRow.path);
+      this.db.transaction(() => {
+        for (const row of dupes) {
+          deletePlaybackLogsStmt.run(row.id);
+          deletePlaybackStatsStmt.run(row.id);
+          deleteShadowStmt.run(row.id);
+          const pathRow = getPathStmt.get(row.id) as { path: string } | undefined;
+          if (pathRow) {
+            deleteHashStmt.run(pathRow.path);
+          }
+          deleteTrackStmt.run(row.id);
         }
-        this.db.prepare("DELETE FROM tracks WHERE id = ?").run(row.id);
-      }
-      this.cleanupOrphanedEntities();
+        this.cleanupOrphanedEntities();
+      })();
     } finally {
       this.db.pragma("foreign_keys = ON");
     }
@@ -509,12 +524,18 @@ export class LibraryScanner {
         "SELECT id FROM genres WHERE id NOT IN (SELECT DISTINCT genre_id FROM tracks WHERE genre_id IS NOT NULL)"
       )
       .all() as { id: number }[];
+    const orphanCodecIds = this.db
+      .prepare(
+        "SELECT id FROM codecs WHERE id NOT IN (SELECT DISTINCT codec_id FROM tracks WHERE codec_id IS NOT NULL)"
+      )
+      .all() as { id: number }[];
 
-    const idsToNull = [
-      ...orphanAlbumIds.map((r) => r.id),
-      ...orphanArtistIds.map((r) => r.id),
-      ...orphanGenreIds.map((r) => r.id),
-    ];
+    const albumIds = orphanAlbumIds.map((r) => r.id);
+    const artistIds = orphanArtistIds.map((r) => r.id);
+    const genreIds = orphanGenreIds.map((r) => r.id);
+    const codecIds = orphanCodecIds.map((r) => r.id);
+    const idsToNull = [...albumIds, ...artistIds, ...genreIds];
+
     if (idsToNull.length > 0) {
       const placeholders = idsToNull.map(() => "?").join(",");
       this.db.prepare(
@@ -522,22 +543,22 @@ export class LibraryScanner {
       ).run(...idsToNull);
     }
 
-    this.db.prepare(
-      "DELETE FROM albums WHERE id NOT IN (SELECT DISTINCT album_id FROM tracks WHERE album_id IS NOT NULL)"
-    ).run();
-    this.db.prepare(
-      `DELETE FROM artists WHERE id NOT IN (
-        SELECT artist_id FROM albums
-        UNION
-        SELECT artist_id FROM tracks WHERE artist_id IS NOT NULL
-      )`
-    ).run();
-    this.db.prepare(
-      "DELETE FROM genres WHERE id NOT IN (SELECT DISTINCT genre_id FROM tracks WHERE genre_id IS NOT NULL)"
-    ).run();
-    this.db.prepare(
-      "DELETE FROM codecs WHERE id NOT IN (SELECT DISTINCT codec_id FROM tracks WHERE codec_id IS NOT NULL)"
-    ).run();
+    if (albumIds.length > 0) {
+      const ph = albumIds.map(() => "?").join(",");
+      this.db.prepare(`DELETE FROM albums WHERE id IN (${ph})`).run(...albumIds);
+    }
+    if (artistIds.length > 0) {
+      const ph = artistIds.map(() => "?").join(",");
+      this.db.prepare(`DELETE FROM artists WHERE id IN (${ph})`).run(...artistIds);
+    }
+    if (genreIds.length > 0) {
+      const ph = genreIds.map(() => "?").join(",");
+      this.db.prepare(`DELETE FROM genres WHERE id IN (${ph})`).run(...genreIds);
+    }
+    if (codecIds.length > 0) {
+      const ph = codecIds.map(() => "?").join(",");
+      this.db.prepare(`DELETE FROM codecs WHERE id IN (${ph})`).run(...codecIds);
+    }
   }
 
   // ---------------------------------------------------------------------------

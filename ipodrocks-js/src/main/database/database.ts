@@ -184,47 +184,68 @@ export class AppDatabase {
       )
     `).all() as { id: number }[];
 
+    const deletePlaybackLogsStmt = this.db.prepare("DELETE FROM playback_logs WHERE matched_track_id = ?");
+    const deletePlaybackStatsStmt = this.db.prepare("DELETE FROM playback_stats WHERE track_id = ?");
+    const deleteShadowStmt = this.db.prepare("DELETE FROM shadow_tracks WHERE source_track_id = ?");
+    const getPathStmt = this.db.prepare("SELECT path FROM tracks WHERE id = ?");
+    const deleteHashStmt = this.db.prepare("DELETE FROM content_hashes WHERE file_path = ?");
+    const deleteTrackStmt = this.db.prepare("DELETE FROM tracks WHERE id = ?");
+
     this.db.pragma("foreign_keys = OFF");
     try {
-      for (const row of dupes) {
-        this.db.prepare("DELETE FROM playback_logs WHERE matched_track_id = ?").run(row.id);
-        this.db.prepare("DELETE FROM playback_stats WHERE track_id = ?").run(row.id);
-        this.db.prepare("DELETE FROM shadow_tracks WHERE source_track_id = ?").run(row.id);
-        const pathRow = this.db.prepare("SELECT path FROM tracks WHERE id = ?").get(row.id) as { path: string } | undefined;
-        if (pathRow) {
-          this.db.prepare("DELETE FROM content_hashes WHERE file_path = ?").run(pathRow.path);
+      this.db.transaction(() => {
+        for (const row of dupes) {
+          deletePlaybackLogsStmt.run(row.id);
+          deletePlaybackStatsStmt.run(row.id);
+          deleteShadowStmt.run(row.id);
+          const pathRow = getPathStmt.get(row.id) as { path: string } | undefined;
+          if (pathRow) {
+            deleteHashStmt.run(pathRow.path);
+          }
+          deleteTrackStmt.run(row.id);
         }
-        this.db.prepare("DELETE FROM tracks WHERE id = ?").run(row.id);
-      }
-      const orphanAlbumIds = this.db.prepare(
-        "SELECT id FROM albums WHERE id NOT IN (SELECT DISTINCT album_id FROM tracks WHERE album_id IS NOT NULL)"
-      ).all() as { id: number }[];
-      const orphanArtistIds = this.db.prepare(
-        `SELECT id FROM artists WHERE id NOT IN (
-          SELECT artist_id FROM albums UNION SELECT artist_id FROM tracks WHERE artist_id IS NOT NULL
-        )`
-      ).all() as { id: number }[];
-      const orphanGenreIds = this.db.prepare(
-        "SELECT id FROM genres WHERE id NOT IN (SELECT DISTINCT genre_id FROM tracks WHERE genre_id IS NOT NULL)"
-      ).all() as { id: number }[];
-      const idsToNull = [
-        ...orphanAlbumIds.map((r) => r.id),
-        ...orphanArtistIds.map((r) => r.id),
-        ...orphanGenreIds.map((r) => r.id),
-      ];
-      if (idsToNull.length > 0) {
-        this.db.prepare(
-          `UPDATE sync_rules SET target_id = NULL WHERE target_id IN (${idsToNull.map(() => "?").join(",")})`
-        ).run(...idsToNull);
-      }
-      this.db.exec(`
-        DELETE FROM albums WHERE id NOT IN (SELECT DISTINCT album_id FROM tracks WHERE album_id IS NOT NULL);
-        DELETE FROM artists WHERE id NOT IN (SELECT artist_id FROM albums UNION SELECT artist_id FROM tracks WHERE artist_id IS NOT NULL);
-        DELETE FROM genres WHERE id NOT IN (SELECT DISTINCT genre_id FROM tracks WHERE genre_id IS NOT NULL);
-      `);
-      this.db.prepare(
-        "INSERT OR REPLACE INTO app_settings (key, value, updated_at) VALUES ('migrate_deduplicate_tracks_prefer_main_done', '1', CURRENT_TIMESTAMP)"
-      ).run();
+
+        const orphanAlbumIds = this.db!.prepare(
+          "SELECT id FROM albums WHERE id NOT IN (SELECT DISTINCT album_id FROM tracks WHERE album_id IS NOT NULL)"
+        ).all() as { id: number }[];
+        const orphanArtistIds = this.db!.prepare(
+          `SELECT id FROM artists WHERE id NOT IN (
+            SELECT artist_id FROM albums UNION SELECT artist_id FROM tracks WHERE artist_id IS NOT NULL
+          )`
+        ).all() as { id: number }[];
+        const orphanGenreIds = this.db!.prepare(
+          "SELECT id FROM genres WHERE id NOT IN (SELECT DISTINCT genre_id FROM tracks WHERE genre_id IS NOT NULL)"
+        ).all() as { id: number }[];
+
+        const albumIds = orphanAlbumIds.map((r) => r.id);
+        const artistIds = orphanArtistIds.map((r) => r.id);
+        const genreIds = orphanGenreIds.map((r) => r.id);
+        const idsToNull = [...albumIds, ...artistIds, ...genreIds];
+
+        if (idsToNull.length > 0) {
+          const placeholders = idsToNull.map(() => "?").join(",");
+          this.db!.prepare(
+            `UPDATE sync_rules SET target_id = NULL WHERE target_id IN (${placeholders})`
+          ).run(...idsToNull);
+        }
+
+        if (albumIds.length > 0) {
+          const ph = albumIds.map(() => "?").join(",");
+          this.db!.prepare(`DELETE FROM albums WHERE id IN (${ph})`).run(...albumIds);
+        }
+        if (artistIds.length > 0) {
+          const ph = artistIds.map(() => "?").join(",");
+          this.db!.prepare(`DELETE FROM artists WHERE id IN (${ph})`).run(...artistIds);
+        }
+        if (genreIds.length > 0) {
+          const ph = genreIds.map(() => "?").join(",");
+          this.db!.prepare(`DELETE FROM genres WHERE id IN (${ph})`).run(...genreIds);
+        }
+
+        this.db!.prepare(
+          "INSERT OR REPLACE INTO app_settings (key, value, updated_at) VALUES ('migrate_deduplicate_tracks_prefer_main_done', '1', CURRENT_TIMESTAMP)"
+        ).run();
+      })();
     } finally {
       this.db.pragma("foreign_keys = ON");
     }

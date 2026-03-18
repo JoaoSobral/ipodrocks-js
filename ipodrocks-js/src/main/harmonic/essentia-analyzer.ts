@@ -7,6 +7,7 @@
  * fails after ~97 tracks. Module.print/printErr are set to suppress "undefined" spam.
  */
 
+import * as crypto from "crypto";
 import * as fs from "fs";
 
 // Set Emscripten Module.print/printErr before Essentia WASM loads. The WASM uses
@@ -136,7 +137,7 @@ function decodeAudioToFloat32(filePath: string): Promise<Float32Array | null> {
   const tmpDir = os.tmpdir();
   const tmpWav = path.join(
     tmpDir,
-    `ipodrocks-essentia-${Date.now()}-${Math.random().toString(36).slice(2)}.wav`
+    `ipodrocks-essentia-${crypto.randomUUID()}.wav`
   );
   const ffmpegPath = getFfmpegPath();
   return new Promise((resolve) => {

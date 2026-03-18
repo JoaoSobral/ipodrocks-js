@@ -1,4 +1,5 @@
 import * as fs from "fs";
+import * as fsp from "fs/promises";
 import * as os from "os";
 import * as path from "path";
 import { BrowserWindow, dialog, ipcMain, IpcMainInvokeEvent } from "electron";
@@ -49,15 +50,7 @@ function validateFolderPath(rawPath: string): { path: string } | { error: string
   }
   const resolved = path.resolve(rawPath.trim());
 
-  // Verify the resolved path falls under an allowed root prefix (F2)
-  const allowed = getAllowedPathPrefixes();
-  const isAllowed = allowed.some(
-    (prefix) => resolved === prefix || resolved.startsWith(prefix + path.sep)
-  );
-  if (!isAllowed) {
-    return { error: "Path is outside allowed directories" };
-  }
-
+  // Verify the path exists and is a directory before resolving symlinks
   try {
     const stat = fs.statSync(resolved);
     if (!stat.isDirectory()) {
@@ -66,7 +59,25 @@ function validateFolderPath(rawPath: string): { path: string } | { error: string
   } catch {
     return { error: "Path does not exist or is not accessible" };
   }
-  return { path: resolved };
+
+  // Resolve symlinks to get the real path and validate against allowed prefixes
+  let realPath: string;
+  try {
+    realPath = fs.realpathSync(resolved);
+  } catch {
+    return { error: "Path does not exist or is not accessible" };
+  }
+
+  // Verify the real (symlink-resolved) path falls under an allowed root prefix (F2)
+  const allowed = getAllowedPathPrefixes();
+  const isAllowed = allowed.some(
+    (prefix) => realPath === prefix || realPath.startsWith(prefix + path.sep)
+  );
+  if (!isAllowed) {
+    return { error: "Path is outside allowed directories" };
+  }
+
+  return { path: realPath };
 }
 
 import {
@@ -499,10 +510,13 @@ export function registerIpcHandlers(): void {
       event,
       config: { name: string; path: string; codecConfigId: number }
     ) => {
+      const validated = validateFolderPath(config.path);
+      if ("error" in validated) return { error: validated.error };
+
       const lib = getLibrary();
       const id = lib.createShadowLibrary(
         config.name,
-        config.path,
+        validated.path,
         config.codecConfigId
       );
 
@@ -1240,9 +1254,7 @@ export function registerIpcHandlers(): void {
               codecName,
               libraryFolderPaths,
             };
-            if (!fs.existsSync(playlistFolder)) {
-              fs.mkdirSync(playlistFolder, { recursive: true });
-            }
+            await fsp.mkdir(playlistFolder, { recursive: true });
             const normalizeM3uForCompare = (s: string) =>
               s.replace(/# Generated: .+/g, "# Generated: <date>");
             syncOpts.progressCallback?.({
@@ -1253,14 +1265,17 @@ export function registerIpcHandlers(): void {
               const content = core.buildM3uContentForDevice(pl.id, m3uOpts);
               const safeName = pl.name.replace(/[/\\?*:"<>|]/g, "_").trim() || "Playlist";
               const outPath = path.join(playlistFolder, `${safeName}.m3u`);
-              const existingRaw = fs.existsSync(outPath)
-                ? (fs.readFileSync(outPath, "utf-8") as string)
-                : null;
+              let existingRaw: string | null = null;
+              try {
+                existingRaw = await fsp.readFile(outPath, "utf-8");
+              } catch {
+                // file doesn't exist yet
+              }
               const needsWrite =
                 existingRaw === null ||
                 normalizeM3uForCompare(existingRaw) !== normalizeM3uForCompare(content);
               if (needsWrite) {
-                fs.writeFileSync(outPath, content, "utf-8");
+                await fsp.writeFile(outPath, content, "utf-8");
                 playlistsWritten += 1;
               }
               syncOpts.progressCallback?.({
@@ -1744,17 +1759,16 @@ export function registerIpcHandlers(): void {
       try {
         if (smartPlaylist) {
           // F3: Validate rule IDs against DB before trusting LLM output
-          const tableForType: Record<string, string> = {
-            genre: "genres",
-            artist: "artists",
-            album: "albums",
+          const stmtForType: Record<string, ReturnType<typeof db.prepare>> = {
+            genre: db.prepare("SELECT 1 FROM genres WHERE id = ?"),
+            artist: db.prepare("SELECT 1 FROM artists WHERE id = ?"),
+            album: db.prepare("SELECT 1 FROM albums WHERE id = ?"),
           };
           const validatedRules = smartPlaylist.rules.filter((r) => {
             if (r.targetId == null) return true; // "all" rules have no ID
-            const table = tableForType[r.ruleType];
-            if (!table) return false;
-            const exists = db.prepare(`SELECT 1 FROM ${table} WHERE id = ?`).get(r.targetId);
-            return exists != null;
+            const stmt = stmtForType[r.ruleType];
+            if (!stmt) return false;
+            return stmt.get(r.targetId) != null;
           });
           if (validatedRules.length > 0) {
             const core = getPlaylistCore();
