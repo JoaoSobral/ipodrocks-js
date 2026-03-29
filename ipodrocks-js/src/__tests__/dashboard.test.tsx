@@ -9,7 +9,13 @@ vi.mock("../renderer/ipc/api", () => ({
     totalAlbums: 0,
     totalArtists: 0,
     totalSizeBytes: 0,
+    totalGenres: 0,
+    podcastTrackCount: 0,
+    audiobookTrackCount: 0,
   }),
+  getLibraryFolders: vi.fn().mockResolvedValue([
+    { id: 1, name: "Test", path: "/music", contentType: "music" },
+  ]),
   getDevices: vi.fn().mockResolvedValue([]),
   getRecentActivity: vi.fn().mockResolvedValue([]),
 }));
