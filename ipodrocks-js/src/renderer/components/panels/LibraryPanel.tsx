@@ -367,9 +367,9 @@ export function LibraryPanel() {
     sortField === field ? (sortDir === "asc" ? " ↑" : " ↓") : "";
 
   return (
-    <div className="panel-content flex flex-col gap-5 h-full min-h-0 overflow-y-auto">
+    <div className="panel-content flex flex-col gap-3 h-full min-h-0 overflow-y-auto">
       {/* Top bar */}
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-2">
         <Button variant="primary" size="sm" onClick={() => setShowAddFolder(true)}>
           + Add Folder
         </Button>
@@ -395,7 +395,7 @@ export function LibraryPanel() {
 
       {/* Harmonic data — slim inline alert */}
       {harmonicKeyData && harmonicKeyData.totalCount > 0 && (
-        <div className="flex items-center gap-3 px-3 py-2 rounded-lg border border-border bg-muted/30 text-xs">
+        <div className="flex items-center gap-2 px-2 py-1.5 rounded-md border border-border bg-muted/30 text-[11px]">
           <span className="text-primary shrink-0">♫</span>
           <span className="text-muted-foreground flex-1 min-w-0 truncate">
             <span className="font-medium text-foreground">
@@ -425,11 +425,11 @@ export function LibraryPanel() {
       )}
 
       {/* Folders + Shadow Libraries — compact side-by-side grid */}
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-2 gap-2">
         {/* Library Folders */}
-        <Card className="!p-3">
-          <div className="flex items-center justify-between mb-2">
-            <h3 className="text-xs font-semibold text-card-foreground">
+        <Card className="!p-2.5">
+          <div className="flex items-center justify-between mb-1.5">
+            <h3 className="text-[11px] font-semibold text-card-foreground">
               Library Folders
             </h3>
           </div>
@@ -468,9 +468,9 @@ export function LibraryPanel() {
         </Card>
 
         {/* Shadow Libraries */}
-        <Card className="!p-3">
-          <div className="flex items-center justify-between mb-2">
-            <h3 className="text-xs font-semibold text-card-foreground">
+        <Card className="!p-2.5">
+          <div className="flex items-center justify-between mb-1.5">
+            <h3 className="text-[11px] font-semibold text-card-foreground">
               Shadow Libraries
             </h3>
             <Button
@@ -564,12 +564,12 @@ export function LibraryPanel() {
         />
       ) : (
         <div className="flex-1 flex flex-col min-h-0 min-w-0">
-          <div className="flex gap-1 p-1 rounded-lg bg-muted/30 w-fit shrink-0">
+          <div className="flex gap-1 p-0.5 rounded-md bg-muted/30 w-fit shrink-0">
             {(["tracks", "playlists"] as const).map((view) => (
               <button
                 key={view}
                 type="button"
-                className={`px-4 py-1.5 rounded-md text-xs font-medium transition-colors capitalize ${
+                className={`px-3 py-1 rounded text-[11px] font-medium transition-colors capitalize ${
                   libraryView === view
                     ? "bg-primary/15 text-primary"
                     : "text-muted-foreground hover:text-muted-foreground"
@@ -587,11 +587,11 @@ export function LibraryPanel() {
             placeholder="Search by title, artist, or album…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="mb-3"
+            className="mb-2"
           />
 
           {/* Filters */}
-          <div className="flex flex-wrap items-center gap-3 mb-3 text-sm">
+          <div className="flex flex-wrap items-center gap-2 mb-2 text-xs">
             <div className="flex items-center gap-2">
               <Label className="mb-0 shrink-0">Device:</Label>
               <Select
@@ -605,7 +605,7 @@ export function LibraryPanel() {
                 value={selectedDeviceId != null ? String(selectedDeviceId) : ""}
                 onChange={(v) => setSelectedDeviceId(v ? Number(v) : null)}
                 placeholder="None"
-                className="w-40"
+                className="w-32"
               />
             </div>
             <div className="flex items-center gap-2">
@@ -619,7 +619,7 @@ export function LibraryPanel() {
                 ]}
                 value={typeFilter}
                 onChange={(v) => setTypeFilter(v)}
-                className="w-28"
+                className="w-24"
               />
             </div>
             <div className="flex items-center gap-2">
@@ -633,14 +633,14 @@ export function LibraryPanel() {
                 value={syncFilter}
                 onChange={(v) => setSyncFilter(v)}
                 placeholder="All"
-                className="w-28"
+                className="w-24"
                 disabled={selectedDeviceId == null}
               />
             </div>
           </div>
 
           {/* Table with horizontal scroll — contained so list and scrollbar stay inside card */}
-          <div className="flex-1 min-h-[100px] overflow-auto border border-border rounded-lg bg-card mt-2.5">
+          <div className="flex-1 min-h-[100px] overflow-auto border border-border rounded-lg bg-card mt-1.5">
             <div className="min-w-[900px]">
               {/* Header */}
               <TableHeader sticky className="theme-box">
@@ -670,7 +670,7 @@ export function LibraryPanel() {
                 <List
                   height={400}
                   itemCount={filtered.length}
-                  itemSize={40}
+                  itemSize={32}
                   width="100%"
                   className="scrollbar-thin"
                 >
@@ -679,7 +679,7 @@ export function LibraryPanel() {
                     return (
                       <div
                         style={style}
-                        className="flex items-center gap-2 px-3 py-2 text-sm hover:bg-muted/30 border-b border-border transition-colors"
+                        className="flex items-center gap-2 px-2 py-1.5 text-xs hover:bg-muted/30 border-b border-border transition-colors"
                       >
                         <span className="flex-[3] min-w-[120px] truncate text-foreground">{t.title}</span>
                         <span className="flex-[2] min-w-[100px] truncate text-muted-foreground">{t.artist}</span>
