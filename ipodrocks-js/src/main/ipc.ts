@@ -3,6 +3,7 @@ import * as fsp from "fs/promises";
 import * as os from "os";
 import * as path from "path";
 import { BrowserWindow, dialog, ipcMain, IpcMainInvokeEvent } from "electron";
+import { pathMatchesAllowedPrefix } from "./path-allowlist";
 
 /** Builds path→track maps for music, podcast, audiobook from a single getTracks call. */
 function buildLibraryTrackMaps(lib: Library): {
@@ -70,8 +71,8 @@ function validateFolderPath(rawPath: string): { path: string } | { error: string
 
   // Verify the real (symlink-resolved) path falls under an allowed root prefix (F2)
   const allowed = getAllowedPathPrefixes();
-  const isAllowed = allowed.some(
-    (prefix) => realPath === prefix || realPath.startsWith(prefix + path.sep)
+  const isAllowed = allowed.some((prefix) =>
+    pathMatchesAllowedPrefix(realPath, prefix, process.platform)
   );
   if (!isAllowed) {
     return { error: "Path is outside allowed directories" };
@@ -223,6 +224,19 @@ function getDevicesCore(): DevicesCore {
 
 type Handler = (event: IpcMainInvokeEvent, ...args: any[]) => Promise<unknown>;
 
+/**
+ * Removes absolute file-system paths from an error message before it is sent
+ * to the renderer, preventing internal path disclosure (e.g. EACCES messages).
+ * The original message is still logged in full on the main process.
+ */
+function sanitizeErrorMessage(message: string): string {
+  return message
+    // Unix absolute paths
+    .replace(/(?:\/[^\s:,'"()\[\]]+)+/g, "[path]")
+    // Windows absolute paths (C:\... or C:/...)
+    .replace(/(?:[A-Za-z]:[/\\][^\s:,'"()\[\]]+)+/g, "[path]");
+}
+
 function safe(channel: string, fn: Handler): Handler {
   return async (event, ...args) => {
     try {
@@ -231,7 +245,7 @@ function safe(channel: string, fn: Handler): Handler {
       const message =
         err instanceof Error ? err.message : String(err);
       console.error(`[ipc] ${channel} — ${message}`);
-      return { error: message };
+      return { error: sanitizeErrorMessage(message) };
     }
   };
 }
@@ -1855,20 +1869,41 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(
     "settings:getOpenRouterConfig",
-    safe("settings:getOpenRouterConfig", async () => getOpenRouterConfig())
+    safe("settings:getOpenRouterConfig", async () => {
+      const cfg = getOpenRouterConfig();
+      if (!cfg) return null;
+      // Return a masked key so the full secret never reaches the renderer.
+      // The renderer uses the mask char (•) as a sentinel meaning "unchanged".
+      const { apiKey, ...rest } = cfg;
+      const masked =
+        apiKey && apiKey.length >= 8
+          ? "••••••••" + apiKey.slice(-4)
+          : "••••••••";
+      return { ...rest, apiKey: masked };
+    })
   );
 
   ipcMain.handle(
     "settings:setOpenRouterConfig",
     safe("settings:setOpenRouterConfig", async (_event, config: import("../shared/types").OpenRouterConfig | null) => {
-      setOpenRouterConfig(config);
+      if (config && config.apiKey?.includes("•")) {
+        // Renderer sent back the masked value — preserve the stored key; only
+        // update other fields (e.g. model).
+        const existing = getOpenRouterConfig();
+        setOpenRouterConfig({ apiKey: existing?.apiKey ?? "", model: config.model });
+      } else {
+        setOpenRouterConfig(config);
+      }
     })
   );
 
   ipcMain.handle(
     "settings:testOpenRouter",
     safe("settings:testOpenRouter", async (_event, configOverride?: { apiKey: string; model: string } | null) => {
-      const config = configOverride ?? getOpenRouterConfig();
+      // If the renderer passed a masked key, ignore it and use the stored key.
+      const override =
+        configOverride?.apiKey?.includes("•") ? null : configOverride;
+      const config = override ?? getOpenRouterConfig();
       if (!config?.apiKey?.trim()) return { ok: false, error: "No API key" };
       const { callOpenRouter } = await import("./llm/openRouterClient");
       await callOpenRouter(

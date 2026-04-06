@@ -295,7 +295,7 @@ export function PlaylistPanel() {
   }
 
   async function handleCreate() {
-    if (!newName) return;
+    if (!newName.trim()) return;
     const rules = buildRules();
     if (rules.length === 0) return;
     await createPlaylist({
@@ -1583,7 +1583,7 @@ export function PlaylistPanel() {
                 <Button
                   variant="primary"
                   onClick={goToStep2}
-                  disabled={!newName || optionsLoading}
+                  disabled={!newName.trim() || optionsLoading}
                 >
                   {optionsLoading ? "Loading\u2026" : "Next"}
                 </Button>

@@ -110,7 +110,12 @@ export async function copyToDevice(
     let dest: string;
     if (customDestinations && srcPath in customDestinations) {
       const custom = customDestinations[srcPath];
-      dest = path.isAbsolute(custom) ? custom : path.join(deviceFolder, custom);
+      // Always resolve relative to deviceFolder; absolute paths are not allowed
+      // as they can escape the device mount point.
+      const candidate = path.isAbsolute(custom)
+        ? path.join(deviceFolder, path.basename(custom))
+        : path.join(deviceFolder, custom);
+      dest = containUnderFolder(candidate, deviceFolder, srcPath);
     } else if (preserveStructure) {
       dest = getDestinationPath(srcPath, deviceFolder);
     } else {
@@ -227,6 +232,23 @@ async function runParallelCopies(
   await Promise.all(workers);
 }
 
+/**
+ * Ensures `dest` is under `folder`. If it escapes (via `..` segments or an
+ * absolute custom path), falls back to placing the source basename directly
+ * inside `folder`. This prevents path-traversal writes to arbitrary locations.
+ */
+function containUnderFolder(dest: string, folder: string, srcPath: string): string {
+  const resolvedDest = path.resolve(dest);
+  const resolvedFolder = path.resolve(folder);
+  if (
+    resolvedDest === resolvedFolder ||
+    resolvedDest.startsWith(resolvedFolder + path.sep)
+  ) {
+    return resolvedDest;
+  }
+  return path.join(resolvedFolder, path.basename(srcPath));
+}
+
 function getDestinationPath(src: string, deviceFolder: string): string {
   const parts = src.replace(/\\/g, "/").split("/");
   const musicIndicators = ["Music", "music", "MUSIC", "Audio", "audio", "AUDIO"];
@@ -237,7 +259,8 @@ function getDestinationPath(src: string, deviceFolder: string): string {
     if (relativeParts.length > 0) {
       const filename = relativeParts[relativeParts.length - 1];
       const folders = relativeParts.slice(0, -1);
-      return path.join(deviceFolder, ...folders, filename);
+      const candidate = path.join(deviceFolder, ...folders, filename);
+      return containUnderFolder(candidate, deviceFolder, src);
     }
   }
   return path.join(deviceFolder, path.basename(src));

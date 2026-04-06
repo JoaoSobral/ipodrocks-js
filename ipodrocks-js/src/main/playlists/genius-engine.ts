@@ -130,10 +130,10 @@ export function buildAnalysisSummary(
 ): AnalysisSummary {
   const timestamps = allEvents.map((e) => e.timestamp).filter(Boolean);
   const first = timestamps.length
-    ? new Date(Math.min(...timestamps) * 1000).toISOString()
+    ? new Date(timestamps.reduce((a, b) => (b < a ? b : a), Infinity) * 1000).toISOString()
     : new Date().toISOString();
   const last = timestamps.length
-    ? new Date(Math.max(...timestamps) * 1000).toISOString()
+    ? new Date(timestamps.reduce((a, b) => (b > a ? b : a), -Infinity) * 1000).toISOString()
     : new Date().toISOString();
 
   const artistCounts = new Map<string, number>();
@@ -823,7 +823,8 @@ function generateRecentlyDiscovered(
     )
     .sort(
       (a, b) =>
-        Math.max(...b.timestamps) - Math.max(...a.timestamps)
+        b.timestamps.reduce((x, y) => (y > x ? y : x), -Infinity) -
+        a.timestamps.reduce((x, y) => (y > x ? y : x), -Infinity)
     )
     .slice(0, limit)
     .map(aggToTrack);
@@ -849,7 +850,7 @@ function generateOldies(
   const cutoffSec = nowSec - 36 * 30 * 24 * 3600;
   const agg = aggregateByTrack(events);
   const filtered = [...agg.values()].filter((a) => {
-    const firstTs = Math.min(...a.timestamps);
+    const firstTs = a.timestamps.reduce((x, y) => (y < x ? y : x), Infinity);
     return firstTs < cutoffSec;
   });
   const tracks = filtered
@@ -877,7 +878,7 @@ function generateNostalgia(
   const endSec = nowSec - 12 * 30 * 24 * 3600;
   const agg = aggregateByTrack(events);
   const filtered = [...agg.values()].filter((a) => {
-    const firstTs = Math.min(...a.timestamps);
+    const firstTs = a.timestamps.reduce((x, y) => (y < x ? y : x), Infinity);
     return firstTs >= endSec && firstTs < startSec;
   });
   const tracks = filtered
@@ -903,7 +904,7 @@ function generateRecentFavorites(
   const cutoffSec = nowSec - 6 * 30 * 24 * 3600;
   const agg = aggregateByTrack(events);
   const filtered = [...agg.values()].filter((a) => {
-    const lastTs = Math.max(...a.timestamps);
+    const lastTs = a.timestamps.reduce((x, y) => (y > x ? y : x), -Infinity);
     const avgComp = avgCompletion(a.completionRatios);
     return lastTs >= cutoffSec && avgComp >= 0.85;
   });

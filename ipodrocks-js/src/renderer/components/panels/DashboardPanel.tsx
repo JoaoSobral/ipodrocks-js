@@ -70,34 +70,49 @@ function formatActivityTime(iso: string): string {
 
 export function DashboardPanel() {
   const stats = useLibraryStore((s) => s.stats);
+  const folders = useLibraryStore((s) => s.folders);
   const fetchStats = useLibraryStore((s) => s.fetchStats);
-  const libLoading = useLibraryStore((s) => s.loading);
+  const fetchFolders = useLibraryStore((s) => s.fetchFolders);
+  const libError = useLibraryStore((s) => s.error);
   const devices = useDeviceStore((s) => s.devices);
   const fetchDevices = useDeviceStore((s) => s.fetchDevices);
   const devLoading = useDeviceStore((s) => s.loading);
   const [shadowLibs, setShadowLibs] = useState<ShadowLibrary[]>([]);
   const [activity, setActivity] = useState<ActivityEntry[]>([]);
+  const [libraryReady, setLibraryReady] = useState(false);
 
   const deviceList = Array.isArray(devices) ? devices : [];
   const shadowList = Array.isArray(shadowLibs) ? shadowLibs : [];
 
   useEffect(() => {
-    fetchStats();
+    let cancelled = false;
+    void Promise.all([fetchStats(), fetchFolders()]).finally(() => {
+      if (!cancelled) setLibraryReady(true);
+    });
     fetchDevices();
     getShadowLibraries().then(setShadowLibs).catch(console.error);
     getRecentActivity().then(setActivity).catch(console.error);
-  }, [fetchStats, fetchDevices]);
+    return () => {
+      cancelled = true;
+    };
+  }, [fetchStats, fetchFolders, fetchDevices]);
 
   return (
     <div className="panel-content grid grid-cols-2 gap-5">
       {/* Library Stats */}
       <Card title="Library" subtitle="Collection overview">
-        {libLoading || !stats ? (
+        {!libraryReady ? (
           <div className="space-y-3">
             {Array.from({ length: 4 }, (_, i) => (
               <Skeleton key={i} className="w-32" />
             ))}
           </div>
+        ) : folders.length === 0 ? (
+          <p className="text-xs text-muted-foreground">No library configured</p>
+        ) : !stats ? (
+          <p className="text-xs text-destructive">
+            {libError ?? "Unable to load library stats."}
+          </p>
         ) : (
           <div className="grid grid-cols-2 gap-4">
             {[

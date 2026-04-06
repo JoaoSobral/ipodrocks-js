@@ -18,6 +18,13 @@ export interface SyncCompleteResult {
   skipped: number;
   errors: number;
   status: "success" | "error" | "warning";
+  skippedBreakdown: {
+    music: number;
+    podcast: number;
+    audiobook: number;
+    artwork: number;
+    playlist: number;
+  };
 }
 
 interface SyncProgressModalProps {
@@ -41,6 +48,21 @@ function itemStatusIcon(status: string | undefined, event: string): string {
   return statusIcon[String(status)] ?? statusIcon[event] ?? "⏭️";
 }
 
+/** Filename for display (Windows and POSIX paths). */
+function pathBasename(p: string): string {
+  const trimmed = p.replace(/[/\\]+$/, "");
+  const parts = trimmed.split(/[/\\]/);
+  return parts[parts.length - 1] ?? p;
+}
+
+const EMPTY_SKIP_BREAKDOWN = {
+  music: 0,
+  podcast: 0,
+  audiobook: 0,
+  artwork: 0,
+  playlist: 0,
+} as const;
+
 export function SyncProgressModal({
   open,
   onClose,
@@ -53,6 +75,7 @@ export function SyncProgressModal({
   const [totalItems, setTotalItems] = useState(0);
   const [processedItems, setProcessedItems] = useState(0);
   const [copiedItems, setCopiedItems] = useState(0);
+  const [skippedByType, setSkippedByType] = useState({ ...EMPTY_SKIP_BREAKDOWN });
   const [finished, setFinished] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [cancelled, setCancelled] = useState(false);
@@ -67,6 +90,10 @@ export function SyncProgressModal({
   const progressUnsubRef = useRef<(() => void) | null>(null);
   const hasReceivedTotalRef = useRef(false);
   const onCompleteRef = useRef(onComplete);
+  /** Mirrors progress counters for use in startSync().then — React state in that closure would be stale. */
+  const processedItemsRef = useRef(0);
+  const copiedItemsRef = useRef(0);
+  const skippedByTypeRef = useRef({ ...EMPTY_SKIP_BREAKDOWN });
   onCompleteRef.current = onComplete;
 
   const isRunning = !finished && !error;
@@ -91,10 +118,26 @@ export function SyncProgressModal({
     }
 
     if (p.event === "copy") {
-      setProcessedItems((n) => n + 1);
+      setProcessedItems((n) => {
+        const next = n + 1;
+        processedItemsRef.current = next;
+        return next;
+      });
       const status = String(p.status);
+      const contentType = (p.contentType as string) || "unknown";
       if (status === "copied" || status === "converted") {
-        setCopiedItems((n) => n + 1);
+        setCopiedItems((n) => {
+          const next = n + 1;
+          copiedItemsRef.current = next;
+          return next;
+        });
+      } else if (status === "skipped") {
+        setSkippedByType((prev) => {
+          const key = contentType as keyof typeof prev;
+          const next = key in prev ? { ...prev, [key]: prev[key] + 1 } : prev;
+          skippedByTypeRef.current = next;
+          return next;
+        });
       }
       setRecentItems((prev) => {
         const next = [...prev, { id: ++itemIdRef.current, path: p.path, event: p.event, status: p.status }];
@@ -134,6 +177,11 @@ export function SyncProgressModal({
     setTotalItems(0);
     setProcessedItems(0);
     setCopiedItems(0);
+    const zeroSkip = { ...EMPTY_SKIP_BREAKDOWN };
+    setSkippedByType(zeroSkip);
+    skippedByTypeRef.current = { ...zeroSkip };
+    processedItemsRef.current = 0;
+    copiedItemsRef.current = 0;
     setFinished(false);
     setError(null);
     setCancelled(false);
@@ -160,11 +208,13 @@ export function SyncProgressModal({
         }
         const synced = result?.synced ?? 0;
         const errors = result?.errors ?? 0;
+        const totalSkipped = processedItemsRef.current - copiedItemsRef.current;
         onCompleteRef.current?.({
           synced,
-          skipped: 0,
+          skipped: totalSkipped,
           errors: isCancelled ? 0 : errors || (errMsg ? 1 : 0),
           status: isCancelled ? "warning" : errors > 0 ? (synced > 0 ? "warning" : "error") : "success",
+          skippedBreakdown: { ...skippedByTypeRef.current },
         });
       })
       .catch((e) => {
@@ -181,6 +231,7 @@ export function SyncProgressModal({
           skipped: 0,
           errors: isCancelled ? 0 : 1,
           status: "error",
+          skippedBreakdown: { ...skippedByTypeRef.current },
         });
       })
       .finally(() => {
@@ -251,7 +302,7 @@ export function SyncProgressModal({
             {progress?.event === "log" && progress?.message
               ? progress.message
               : progress?.path
-                ? progress.path.split("/").pop()
+                ? pathBasename(progress.path)
                 : "Preparing…"}
           </span>
           <div className="flex gap-4 tabular-nums shrink-0">
@@ -331,6 +382,17 @@ export function SyncProgressModal({
                 <p className="text-xs text-muted-foreground">Skipped</p>
               </div>
             </div>
+            {(skippedByType.music > 0 || skippedByType.podcast > 0 || skippedByType.audiobook > 0 || skippedByType.artwork > 0 || skippedByType.playlist > 0) && (
+              <div className="mt-2 text-xs text-muted-foreground text-center">
+                Skipped: {[
+                  skippedByType.music > 0 && `${skippedByType.music} songs`,
+                  skippedByType.podcast > 0 && `${skippedByType.podcast} podcasts`,
+                  skippedByType.audiobook > 0 && `${skippedByType.audiobook} audiobooks`,
+                  skippedByType.artwork > 0 && `${skippedByType.artwork} artwork`,
+                  skippedByType.playlist > 0 && `${skippedByType.playlist} playlists`,
+                ].filter(Boolean).join(", ")}
+              </div>
+            )}
             {cancelled && (
               <p className="mt-2 text-center text-xs text-warning">Sync was cancelled</p>
             )}
