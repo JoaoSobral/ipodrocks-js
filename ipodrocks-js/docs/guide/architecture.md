@@ -75,10 +75,11 @@ content_hashes  (mtime + SHA-256)
 activity_log
 ```
 
-## Excalidraw diagram
+## Architecture diagram
 
-An interactive diagram of the full architecture is included with the docs. Open it in [Excalidraw](https://excalidraw.com) to zoom, pan, and edit.
+```excalidraw
+@file:../public/architecture.excalidraw
+```
+<!-- diagram id="ipodrocks-arch" caption="iPodRocks v1.1.2 — Application Architecture" -->
 
-[Download architecture.excalidraw](/ipodrocks-js/architecture.excalidraw)
-
-> **Tip:** drag the `.excalidraw` file straight onto the [excalidraw.com](https://excalidraw.com) canvas to open it — no account needed.
+> **Edit / explore interactively:** drag [architecture.excalidraw](/architecture.excalidraw) onto the [excalidraw.com](https://excalidraw.com) canvas — no account needed.

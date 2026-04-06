@@ -5,6 +5,8 @@ on:
     types: [published]
   workflow_dispatch:
 
+# softprops/action-gh-release@v2 still targets Node 20 (Node 24 PR open, not yet released).
+# Remove this env block once softprops ships a Node 24 release.
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
@@ -37,10 +39,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 25.7.0
           cache: npm
@@ -56,7 +58,7 @@ jobs:
         run: npm run ${{ matrix.dist-script }}
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ipodrocks-${{ matrix.target }}-${{ github.ref_name }}
           path: ipodrocks-js/out/

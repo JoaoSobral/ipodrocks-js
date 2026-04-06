@@ -66,6 +66,7 @@
     "typescript": "^5.0.0",
     "vite": "^6.0.0",
     "vitepress": "^1.6.4",
+    "vitepress-plugin-diagrams": "^1.2.2",
     "vitest": "^3.0.0",
     "wait-on": "^9.0.0"
   }

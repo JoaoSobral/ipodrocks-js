@@ -33,5 +33,6 @@ iPodRocks is a **sync manager** for Rockbox devices and any mountable player. It
 ## Next steps
 
 - [Getting Started](/guide/getting-started) — Install, add a library folder and device, run your first sync
+- [Architecture](/guide/architecture) — How the Electron main/renderer processes, IPC, and modules fit together
 - [App Reference](/app-reference/welcome) — Tab-by-tab documentation of every feature
 - [Troubleshooting](/guide/troubleshooting) — Common issues and fixes
