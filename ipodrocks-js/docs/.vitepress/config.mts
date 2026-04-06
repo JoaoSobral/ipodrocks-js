@@ -1,4 +1,5 @@
 import { defineConfig } from "vitepress";
+import { configureDiagramsPlugin } from "vitepress-plugin-diagrams";
 
 export default defineConfig({
   title: "iPodRocks",
@@ -6,11 +7,22 @@ export default defineConfig({
     "Sync manager for Rockbox and mountable devices — documentation",
   base: "/ipodrocks-js/",
   lastUpdated: true,
+  ignoreDeadLinks: [/\.excalidraw$/],
+
+  markdown: {
+    config: (md) => {
+      configureDiagramsPlugin(md, {
+        diagramsDir: "docs/public/diagrams",
+        publicPath: "/diagrams",
+      });
+    },
+  },
 
   themeConfig: {
     nav: [
       { text: "Overview", link: "/" },
       { text: "Guide", link: "/guide/getting-started" },
+      { text: "Architecture", link: "/guide/architecture" },
       { text: "App Reference", link: "/app-reference/welcome" },
     ],
 
