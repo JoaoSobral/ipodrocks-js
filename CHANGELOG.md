@@ -1,5 +1,57 @@
 # Changelog
 
+## [1.1.2] — 2026-04-06
+
+### Security
+
+#### Sync path-traversal hardening
+
+- **`customDestinations` containment** — Custom sync destinations that resolve to absolute paths (or escape the device mount point via `..` segments) are now rejected and silently re-routed to the device folder, preventing any file written outside the target device.
+- **`getDestinationPath` containment** — The `preserveStructure` destination path is verified to remain under the device folder after resolution; `..`-based escapes fall back to a safe basename copy.
+
+#### IPC error sanitization
+
+- **Error messages no longer leak host paths** — The `safe()` IPC wrapper now strips Unix and Windows absolute paths (e.g. `EACCES: permission denied, open '/Users/pedro/…'`) from error messages before they reach the renderer. Full errors are still logged on the main process.
+
+#### API key never exposed to renderer
+
+- **OpenRouter key masked at the IPC boundary** — `settings:getOpenRouterConfig` now returns a masked key (`••••••••XXXX`) instead of the plaintext secret. `settings:setOpenRouterConfig` detects the mask sentinel and preserves the stored key instead of overwriting it. `settings:testOpenRouter` uses the stored key directly when the renderer passes a masked value.
+
+### Bug fixes
+
+#### Windows
+
+- **Library folders on non–C: drives** — Paths on `D:\`, `E:\`, etc. were incorrectly rejected as outside the allowed directory list. Drive-root matching now uses case-insensitive single-backslash comparisons, consistent with standard Windows paths.
+
+#### Sync
+
+- **Sync completion summary** — `onComplete` now receives accurate `skipped`, `copiedItems`, and per-type `skippedBreakdown` values. The previous closure captured stale React state (always zero) from the effect's initial render.
+- **ScanProgressModal restart bug** — A parent re-render that passed a new `folders` array reference (from `.map()`) would re-trigger the scan's `useEffect` and restart an in-progress library scan. Folders are now captured in a ref at scan start and excluded from the dependency array.
+
+#### Dashboard / Library
+
+- **Dashboard "No library configured"** — The Library card now shows "No library configured" when no library folders are set up, instead of displaying a spinning skeleton or zeros.
+- **Library store errors cleared on success** — `fetchStats` and `fetchFolders` now clear a stale `error` on a successful load, so the dashboard doesn't display an old failure banner after recovering.
+
+### Performance
+
+- **Stack overflow eliminated in playlist generation** — Six `Math.min(...array)` / `Math.max(...array)` spread calls in `genius-engine.ts` are replaced with `reduce` loops. For users with tens of thousands of playback events per track, the previous code would overflow the call stack.
+
+### UI
+
+- **Sync progress — per-content-type skipped breakdown** — The sync completion card now shows a per-type skipped count (songs, podcasts, audiobooks, artwork, playlists).
+- **Library panel layout** — Tighter spacing pushes the track list higher on screen. Cards, filters, tabs, and list rows use reduced padding for a more compact layout.
+
+### Code quality
+
+- **Form validation rejects whitespace-only inputs** — Add Folder, Save Device, and Create Playlist handlers now call `.trim()` before the truthy check, so a name or path that is only spaces is correctly rejected.
+- **Path allowlist extracted to testable module** — `pathMatchesAllowedPrefix` moved to `src/main/path-allowlist.ts` with 9 unit tests covering Windows drives (case-insensitive), homedir sub-paths, and POSIX prefixes.
+- **Sync test profile DRY** — Three identical 25-field device profile literals in `sync-core.test.ts` replaced with a shared `createDirectCopyDeviceProfile()` helper.
+
+### Dependencies
+
+- **Electron 39.8.5** — Patched from 39.8.4.
+
 ## [1.1.1] — 2026-03-18
 
 ### Security

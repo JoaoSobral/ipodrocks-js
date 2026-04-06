@@ -61,12 +61,15 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
     setTestStatus("testing");
     setTestError(null);
     try {
-      const configToTest = apiKey.trim()
+      // If apiKey contains the mask char it is the server-returned placeholder;
+      // pass null so the main process uses the stored key directly.
+      const isNewKey = apiKey.trim() && !apiKey.includes("•");
+      const configToTest = isNewKey
         ? {
             apiKey: apiKey.trim(),
             model: model.trim() || "anthropic/claude-sonnet-4.6",
           }
-        : undefined;
+        : null;
       const result = await testOpenRouterConnection(configToTest);
       if (result.ok) {
         setTestStatus("ok");

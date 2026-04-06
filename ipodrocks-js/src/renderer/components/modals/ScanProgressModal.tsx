@@ -48,6 +48,10 @@ export function ScanProgressModal({ open, onClose, folders }: ScanProgressModalP
   const listRef = useRef<HTMLDivElement>(null);
   const abortedRef = useRef(false);
   const fileIdRef = useRef(0);
+  // Capture folders at the moment the modal opens; prevents a new array reference
+  // from the parent (e.g. folders.map() called on every render) from re-triggering
+  // the effect and restarting an in-progress scan.
+  const foldersRef = useRef<ScanFolder[]>(folders);
 
   const isRunning = !result && !error;
   const pct = progress && progress.total > 0
@@ -63,6 +67,8 @@ export function ScanProgressModal({ open, onClose, folders }: ScanProgressModalP
 
   useEffect(() => {
     if (!open) return;
+    // Snapshot folders now so subsequent parent re-renders don't restart the scan.
+    foldersRef.current = folders;
     abortedRef.current = false;
     setProgress(null);
     setResult(null);
@@ -74,7 +80,7 @@ export function ScanProgressModal({ open, onClose, folders }: ScanProgressModalP
       if (p.file && p.status !== "scanning") addRecent(p.file, p.status);
     });
 
-    scanLibrary(folders)
+    scanLibrary(foldersRef.current)
       .then((r) => {
         const res = r as ScanResult & { error?: string };
         if (res.error && !abortedRef.current) {
@@ -90,7 +96,10 @@ export function ScanProgressModal({ open, onClose, folders }: ScanProgressModalP
     return () => {
       unsub();
     };
-  }, [open, folders, addRecent]);
+  // `folders` is intentionally omitted: we capture it in foldersRef when open
+  // transitions to true, so changes to the prop reference don't restart the scan.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, addRecent]);
 
   useEffect(() => {
     if (listRef.current) {

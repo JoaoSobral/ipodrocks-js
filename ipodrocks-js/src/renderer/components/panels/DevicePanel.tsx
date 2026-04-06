@@ -184,7 +184,7 @@ export function DevicePanel() {
   }, [codecConfigs]);
 
   async function handleSaveDevice() {
-    if (!name || !mountPath || modelId == null) return;
+    if (!name.trim() || !mountPath.trim() || modelId == null) return;
 
     let resolvedCodecConfigId = defaultCodecConfigId;
     let resolvedSourceType: "primary" | "shadow" = sourceLibraryType;
@@ -702,7 +702,7 @@ export function DevicePanel() {
             <Button
               variant="primary"
               onClick={handleSaveDevice}
-              disabled={!name || !mountPath || modelId == null}
+              disabled={!name.trim() || !mountPath.trim() || modelId == null}
             >
               {editingDeviceId !== null ? "Update Device" : "Add Device"}
             </Button>

@@ -35,7 +35,7 @@ export const useLibraryStore = create<LibraryState>((set) => ({
   fetchFolders: async () => {
     try {
       const folders = await getLibraryFolders();
-      set({ folders });
+      set({ folders, error: null });
     } catch (e) {
       set({ error: (e as Error).message });
     }
@@ -44,7 +44,7 @@ export const useLibraryStore = create<LibraryState>((set) => ({
   fetchStats: async () => {
     try {
       const stats = await getLibraryStats();
-      set({ stats });
+      set({ stats, error: null });
     } catch (e) {
       set({ error: (e as Error).message });
     }

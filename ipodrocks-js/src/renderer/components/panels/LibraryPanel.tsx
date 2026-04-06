@@ -230,7 +230,7 @@ export function LibraryPanel() {
   }
 
   async function handleAddFolder() {
-    if (!folderName || !folderPath) return;
+    if (!folderName.trim() || !folderPath.trim()) return;
     const name = folderName.trim();
     const pathVal = folderPath.trim();
     const type = contentType;
@@ -792,7 +792,7 @@ export function LibraryPanel() {
             <Button
               variant="primary"
               onClick={handleAddFolder}
-              disabled={!folderName || !folderPath}
+              disabled={!folderName.trim() || !folderPath.trim()}
             >
               Add Folder
             </Button>

@@ -971,6 +971,38 @@ describe("runSync artwork behavior", () => {
   });
 });
 
+function createDirectCopyDeviceProfile(mountPath: string) {
+  return {
+    name: "Test",
+    mountPath,
+    musicFolder: "Music",
+    podcastFolder: "Podcasts",
+    audiobookFolder: "Audiobooks",
+    playlistFolder: "Playlists",
+    modelId: null,
+    defaultCodecConfigId: null,
+    description: null,
+    lastSyncDate: null,
+    totalSyncedItems: 0,
+    lastSyncCount: 0,
+    defaultTransferModeId: 1,
+    overrideBitrate: null,
+    overrideQuality: null,
+    overrideBits: null,
+    partialSyncEnabled: false,
+    sourceLibraryType: "primary" as const,
+    shadowLibraryId: null,
+    transferModeName: null,
+    codecConfigName: "DIRECT COPY",
+    codecConfigBitrate: null,
+    codecConfigQuality: null,
+    codecConfigBits: null,
+    codecName: "DIRECT COPY",
+    modelName: null,
+    modelInternalValue: null,
+  };
+}
+
 describe("SyncProgress contentType tracking", () => {
   it("emits progress events with contentType for music when tracks need syncing", async () => {
     const events: Array<{ event: string; contentType?: string }> = [];
@@ -990,36 +1022,9 @@ describe("SyncProgress contentType tracking", () => {
     };
     const deviceFilesMap: Record<string, { file_size: number }> = {};
 
-    const profile = {
-      name: "Test",
-      mountPath: path.dirname(devicePath),
-      musicFolder: "Music",
-      podcastFolder: "Podcasts",
-      audiobookFolder: "Audiobooks",
-      playlistFolder: "Playlists",
-      modelId: null,
-      defaultCodecConfigId: null,
-      description: null,
-      lastSyncDate: null,
-      totalSyncedItems: 0,
-      lastSyncCount: 0,
-      defaultTransferModeId: 1,
-      overrideBitrate: null,
-      overrideQuality: null,
-      overrideBits: null,
-      partialSyncEnabled: false,
-      sourceLibraryType: "primary" as const,
-      shadowLibraryId: null,
-      transferModeName: null,
-      codecConfigName: "DIRECT COPY",
-      codecConfigBitrate: null,
-      codecConfigQuality: null,
-      codecConfigBits: null,
-      codecName: "DIRECT COPY",
-      modelName: null,
-      modelInternalValue: null,
-    };
-    const device = new Device(profile as never);
+    const device = new Device(
+      createDirectCopyDeviceProfile(path.dirname(devicePath)) as never
+    );
 
     await runSync(
       device,
@@ -1068,36 +1073,9 @@ describe("SyncProgress contentType tracking", () => {
       [deviceTrackPath]: { file_size: 5 },
     };
 
-    const profile = {
-      name: "Test",
-      mountPath: path.dirname(devicePath),
-      musicFolder: "Music",
-      podcastFolder: "Podcasts",
-      audiobookFolder: "Audiobooks",
-      playlistFolder: "Playlists",
-      modelId: null,
-      defaultCodecConfigId: null,
-      description: null,
-      lastSyncDate: null,
-      totalSyncedItems: 0,
-      lastSyncCount: 0,
-      defaultTransferModeId: 1,
-      overrideBitrate: null,
-      overrideQuality: null,
-      overrideBits: null,
-      partialSyncEnabled: false,
-      sourceLibraryType: "primary" as const,
-      shadowLibraryId: null,
-      transferModeName: null,
-      codecConfigName: "DIRECT COPY",
-      codecConfigBitrate: null,
-      codecConfigQuality: null,
-      codecConfigBits: null,
-      codecName: "DIRECT COPY",
-      modelName: null,
-      modelInternalValue: null,
-    };
-    const device = new Device(profile as never);
+    const device = new Device(
+      createDirectCopyDeviceProfile(path.dirname(devicePath)) as never
+    );
 
     await runSync(
       device,
@@ -1136,36 +1114,9 @@ describe("SyncProgress contentType tracking", () => {
     };
     const deviceFilesMap: Record<string, { file_size: number }> = {};
 
-    const profile = {
-      name: "Test",
-      mountPath: path.dirname(devicePath),
-      musicFolder: "Music",
-      podcastFolder: "Podcasts",
-      audiobookFolder: "Audiobooks",
-      playlistFolder: "Playlists",
-      modelId: null,
-      defaultCodecConfigId: null,
-      description: null,
-      lastSyncDate: null,
-      totalSyncedItems: 0,
-      lastSyncCount: 0,
-      defaultTransferModeId: 1,
-      overrideBitrate: null,
-      overrideQuality: null,
-      overrideBits: null,
-      partialSyncEnabled: false,
-      sourceLibraryType: "primary" as const,
-      shadowLibraryId: null,
-      transferModeName: null,
-      codecConfigName: "DIRECT COPY",
-      codecConfigBitrate: null,
-      codecConfigQuality: null,
-      codecConfigBits: null,
-      codecName: "DIRECT COPY",
-      modelName: null,
-      modelInternalValue: null,
-    };
-    const device = new Device(profile as never);
+    const device = new Device(
+      createDirectCopyDeviceProfile(path.dirname(devicePath)) as never
+    );
 
     await runSync(
       device,
