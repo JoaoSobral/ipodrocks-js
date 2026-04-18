@@ -76,6 +76,7 @@ export class LibraryScanner {
   private insertCodecStmt: Database.Statement;
   private upsertTrackStmt: Database.Statement;
   private loadMtimesStmt: Database.Statement;
+  private loadZeroDurationStmt: Database.Statement;
   private loadTrackPathsStmt: Database.Statement;
   private getTrackIdByPathStmt: Database.Statement;
   private getTrackByArtistAlbumTitleStmt: Database.Statement;
@@ -151,6 +152,9 @@ export class LibraryScanner {
     this.loadMtimesStmt = db.prepare(
       "SELECT file_path, last_modified FROM content_hashes WHERE file_path LIKE ? ESCAPE '\\'"
     );
+    this.loadZeroDurationStmt = db.prepare(
+      "SELECT path FROM tracks WHERE path LIKE ? ESCAPE '\\' AND (duration IS NULL OR duration = 0)"
+    );
     this.loadTrackPathsStmt = db.prepare(
       "SELECT path FROM tracks WHERE path LIKE ? ESCAPE '\\'"
     );
@@ -193,6 +197,7 @@ export class LibraryScanner {
 
     const folderId = this.getOrCreateFolderId(folder, contentType);
     const existingMtimes = this.loadExistingMtimes(folder);
+    const zeroDurationPaths = this.loadZeroDurationPaths(folder);
     const audioFiles = this.collectAudioFiles(folder);
     const audioFileSet = new Set(audioFiles);
     const total = audioFiles.length;
@@ -240,7 +245,8 @@ export class LibraryScanner {
         const storedMtimeMs = existingMtimes.get(filePath);
         if (
           storedMtimeMs != null &&
-          Math.abs(storedMtimeMs - mtimeMs) < 1000
+          Math.abs(storedMtimeMs - mtimeMs) < 1000 &&
+          !zeroDurationPaths.has(filePath)
         ) {
           filesProcessed++;
           progressCallback?.({
@@ -593,6 +599,13 @@ export class LibraryScanner {
     };
     walk(dir);
     return files;
+  }
+
+  /** Load paths of tracks with duration=0 so they are always re-scanned. */
+  private loadZeroDurationPaths(folder: string): Set<string> {
+    const pattern = escapeLike(folder) + "%";
+    const rows = this.loadZeroDurationStmt.all(pattern) as { path: string }[];
+    return new Set(rows.map((r) => r.path));
   }
 
   /** Load path → last_modified (ms) from content_hashes for mtime-based skip. */

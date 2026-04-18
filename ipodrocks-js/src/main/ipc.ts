@@ -2,7 +2,7 @@ import * as fs from "fs";
 import * as fsp from "fs/promises";
 import * as os from "os";
 import * as path from "path";
-import { BrowserWindow, dialog, ipcMain, IpcMainInvokeEvent } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, IpcMainInvokeEvent } from "electron";
 import { pathMatchesAllowedPrefix } from "./path-allowlist";
 
 /** Builds path→track maps for music, podcast, audiobook from a single getTracks call. */
@@ -276,6 +276,10 @@ export function registerIpcHandlers(): void {
       setMpcRemindDisabled(disabled);
       return undefined;
     })
+  );
+  ipcMain.handle(
+    "app:getVersion",
+    safe("app:getVersion", async () => ({ version: app.getVersion() }))
   );
 
   // ---- Genius Playlists (register early so they are always available) ----

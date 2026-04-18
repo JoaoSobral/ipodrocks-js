@@ -3,8 +3,6 @@ import { useThemeStore } from "../../stores/theme-store";
 import logoSrcTransp from "@assets/ipodRocks_transp.png?url";
 import logoSrcBlack from "@assets/ipodRocks_black.png?url";
 
-const APP_VERSION = "1.0.4";
-
 const FEATURES: { icon: string; label: string; description: string }[] = [
   {
     icon: "📤",
@@ -75,7 +73,7 @@ export function WelcomePanel() {
               files to a folder.
             </p>
             <p className="text-xs mt-2 text-muted-foreground">
-              Made by Pedro · v{APP_VERSION} — Electron Edition
+              Made by Pedro Gonçalves
             </p>
             <a
               href="https://joaosobral.github.io/ipodrocks-js/"

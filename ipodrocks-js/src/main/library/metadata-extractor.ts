@@ -6,8 +6,10 @@
  */
 
 import path from "path";
+import { spawnSync } from "child_process";
 import { parseFile } from "music-metadata";
 import { normalizeKey, toCamelot } from "../harmonic/camelotWheel";
+import { getEncoderEnv } from "../utils/encoder-env";
 
 /** Tag metadata extracted from an audio file. */
 export interface TrackMetadata {
@@ -117,6 +119,8 @@ export class MetadataExtractor {
     } catch (err) {
       console.warn(`⚠️  Error reading metadata from ${filePath}:`, err);
       const stem = path.basename(filePath, path.extname(filePath));
+      const fallback = this.extractMetadataViaFfprobe(filePath, stem, contentType);
+      if (fallback) return fallback;
       return {
         title: stem,
         artist: "Unknown Artist",
@@ -193,15 +197,33 @@ export class MetadataExtractor {
         codec
       );
 
+      const duration = fmt.duration ?? 0;
+      const bitrate = fmt.bitrate ?? 0;
+
+      if (!duration || !bitrate) {
+        const fallback = this.extractAudioInfoViaFfprobe(filePath);
+        if (fallback && (fallback.duration || fallback.bitrate)) {
+          return {
+            duration: duration || fallback.duration,
+            bitrate: bitrate || fallback.bitrate,
+            bitsPerSample: bitsPerSample ?? fallback.bitsPerSample,
+            codec: codec !== "Unknown" ? codec : fallback.codec,
+            sampleRate: fmt.sampleRate ?? fallback.sampleRate,
+          };
+        }
+      }
+
       return {
-        duration: fmt.duration ?? 0,
-        bitrate: fmt.bitrate ?? 0,
+        duration,
+        bitrate,
         bitsPerSample,
         codec,
         sampleRate: fmt.sampleRate ?? 0,
       };
     } catch (err) {
       console.warn(`⚠️  Error reading audio info from ${filePath}:`, err);
+      const fallback = this.extractAudioInfoViaFfprobe(filePath);
+      if (fallback) return fallback;
       return {
         duration: 0,
         bitrate: 0,
@@ -209,6 +231,76 @@ export class MetadataExtractor {
         codec: "Unknown",
         sampleRate: 0,
       };
+    }
+  }
+
+  private extractAudioInfoViaFfprobe(filePath: string): AudioInfo | null {
+    try {
+      const result = spawnSync(
+        "ffprobe",
+        ["-v", "quiet", "-print_format", "json", "-show_format", "-show_streams", filePath],
+        { encoding: "utf8", timeout: 5000, env: getEncoderEnv() }
+      );
+      if (result.error) {
+        console.warn(`⚠️  ffprobe spawn error for ${filePath}:`, result.error);
+        return null;
+      }
+      if (result.status !== 0 || !result.stdout) {
+        console.warn(`⚠️  ffprobe failed (status=${result.status}) for ${filePath}`, result.stderr?.slice(0, 200));
+        return null;
+      }
+      const probe = JSON.parse(result.stdout) as {
+        format?: { duration?: string; bit_rate?: string };
+        streams?: Array<{ codec_name?: string; sample_rate?: string; duration?: string; bit_rate?: string }>;
+      };
+      const fmt = probe.format ?? {};
+      const stream = probe.streams?.[0] ?? {};
+      const ext = path.extname(filePath).toLowerCase();
+      const codec = this.normalizeCodec(stream.codec_name ?? "", ext);
+      const durationStr = fmt.duration ?? stream.duration;
+      const bitrateStr = fmt.bit_rate ?? stream.bit_rate;
+      const info: AudioInfo = {
+        duration: durationStr ? parseFloat(durationStr) : 0,
+        bitrate: bitrateStr ? parseInt(bitrateStr, 10) : 0,
+        bitsPerSample: this.extractBitDepth(null, codec),
+        codec,
+        sampleRate: stream.sample_rate ? parseInt(stream.sample_rate, 10) : 0,
+      };
+      return info;
+    } catch (err) {
+      console.warn(`⚠️  ffprobe parse error for ${filePath}:`, err);
+      return null;
+    }
+  }
+
+  private extractMetadataViaFfprobe(
+    filePath: string,
+    stem: string,
+    contentType: string
+  ): TrackMetadata | null {
+    try {
+      const result = spawnSync(
+        "ffprobe",
+        ["-v", "quiet", "-print_format", "json", "-show_format", filePath],
+        { encoding: "utf8", timeout: 5000, env: getEncoderEnv() }
+      );
+      if (result.status !== 0 || !result.stdout) return null;
+      const probe = JSON.parse(result.stdout) as {
+        format?: { tags?: Record<string, string> };
+      };
+      const tags = probe.format?.tags ?? {};
+      const title = tags.title || tags.TITLE || stem;
+      const artist = tags.artist || tags.ARTIST || "Unknown Artist";
+      const album = tags.album || tags.ALBUM || "Unknown Album";
+      const genre = tags.genre || tags.GENRE || "Unknown Genre";
+      const trackNumber = tags.track || tags.TRACK || "";
+      const discNumber = tags.disc || tags.DISC || "";
+      if (contentType === "podcast" || contentType === "audiobook") {
+        return { title, artist, album, genre, trackNumber, discNumber, showTitle: album, episodeNumber: trackNumber };
+      }
+      return { title, artist, album, genre, trackNumber, discNumber };
+    } catch {
+      return null;
     }
   }
 
