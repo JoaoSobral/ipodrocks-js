@@ -14,6 +14,8 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
+const isWindows = process.platform === "win32";
+
 const okResult = { status: 0, error: undefined, stdout: "", stderr: "", pid: 1, output: [], signal: null };
 const noentResult = { status: null, error: new Error("ENOENT"), stdout: "", stderr: "", pid: 0, output: [], signal: null };
 const nonZeroResult = { status: 1, error: undefined, stdout: "", stderr: "", pid: 1, output: [], signal: null };
@@ -39,7 +41,9 @@ describe("isMpcencAvailable", () => {
     expect(spawnSyncMock).toHaveBeenCalledTimes(2);
   });
 
-  it("spawns with PATH that includes /opt/homebrew/bin", async () => {
+  // getEncoderEnv() only prepends macOS/Linux paths; on Windows PATH is passed through as-is.
+  // mpcenc.ts also freezes env in SPAWN_OPTS at first import, so this only asserts non-Windows behavior.
+  it.skipIf(isWindows)("spawns with PATH that includes /opt/homebrew/bin", async () => {
     vi.stubEnv("PATH", "/usr/bin");
     spawnSyncMock.mockReturnValue(okResult);
     const { isMpcencAvailable } = await import("../main/utils/mpcenc");

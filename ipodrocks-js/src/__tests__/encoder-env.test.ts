@@ -8,27 +8,29 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+const isWindows = process.platform === "win32";
+
 describe("getEncoderEnv", () => {
-  it("includes /opt/homebrew/bin in PATH on non-Windows", () => {
+  it.skipIf(isWindows)("includes /opt/homebrew/bin in PATH on non-Windows", () => {
     vi.stubEnv("PATH", "/usr/bin:/bin");
     vi.stubEnv("HOME", "/Users/test");
     const result = getEncoderEnv();
     expect(result.PATH).toContain("/opt/homebrew/bin");
   });
 
-  it("includes /usr/local/bin in PATH on non-Windows", () => {
+  it.skipIf(isWindows)("includes /usr/local/bin in PATH on non-Windows", () => {
     vi.stubEnv("PATH", "/usr/bin:/bin");
     const result = getEncoderEnv();
     expect(result.PATH).toContain("/usr/local/bin");
   });
 
-  it("preserves the original PATH at the end", () => {
+  it.skipIf(isWindows)("preserves the original PATH at the end", () => {
     vi.stubEnv("PATH", "/custom/user/bin");
     const result = getEncoderEnv();
     expect(result.PATH).toMatch(/\/custom\/user\/bin$/);
   });
 
-  it("includes $HOME/.local/bin when HOME is set", () => {
+  it.skipIf(isWindows)("includes $HOME/.local/bin when HOME is set", () => {
     vi.stubEnv("PATH", "");
     vi.stubEnv("HOME", "/Users/alice");
     const result = getEncoderEnv();
