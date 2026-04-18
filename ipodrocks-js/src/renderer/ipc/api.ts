@@ -164,6 +164,10 @@ export async function setMpcRemindDisabled(
   >;
 }
 
+export async function getAppVersion(): Promise<{ version: string }> {
+  return window.api.invoke("app:getVersion") as Promise<{ version: string }>;
+}
+
 // ---------------------------------------------------------------------------
 // Shadow Libraries
 // ---------------------------------------------------------------------------

@@ -2,6 +2,7 @@ import { ChildProcess, spawn } from "child_process";
 import * as fs from "fs";
 import * as path from "path";
 import { app } from "electron";
+import { getEncoderEnv } from "../utils/encoder-env";
 
 let cachedFfmpegPath: string | null = null;
 
@@ -124,19 +125,6 @@ function buildProfileCommand(
   return cmd;
 }
 
-function getMpcencEnv(): NodeJS.ProcessEnv | undefined {
-  const basePath = process.env.PATH || "";
-  const delim = process.platform === "win32" ? ";" : ":";
-  const home = process.env.HOME || process.env.USERPROFILE || "";
-  const extras =
-    process.platform === "win32"
-      ? []
-      : ["/usr/local/bin", "/usr/bin", "/bin", home ? `${home}/.local/bin` : ""];
-  return {
-    ...process.env,
-    PATH: [...extras, basePath].filter(Boolean).join(delim),
-  };
-}
 
 function runLoggedSubprocess(
   cmd: string[],
@@ -299,8 +287,7 @@ async function convertMusepack(
       "--quality", `${quality}.0`,
       tmpWav, dest,
     ];
-    const mpcEnv = getMpcencEnv();
-    const mpcCode = await runLoggedSubprocess(mpcencCmd, logCallback, signal, mpcEnv);
+    const mpcCode = await runLoggedSubprocess(mpcencCmd, logCallback, signal, getEncoderEnv());
     if (mpcCode !== 0) {
       logCallback?.(`mpcenc error: exit ${mpcCode}`);
       return false;

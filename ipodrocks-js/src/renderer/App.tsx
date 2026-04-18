@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { getAppVersion } from "./ipc/api";
 import { WelcomePanel } from "./components/panels/WelcomePanel";
 import { DashboardPanel } from "./components/panels/DashboardPanel";
 import { LibraryPanel } from "./components/panels/LibraryPanel";
@@ -49,6 +50,7 @@ const SHOW_THEME_TOGGLE: Panel[] = [
 export function App() {
   const [active, setActive] = useState<Panel>("welcome");
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [appVersion, setAppVersion] = useState("");
   const { theme } = useThemeStore();
   const setOpenSettings = useUIStore((s) => s.setOpenSettings);
 
@@ -56,6 +58,10 @@ export function App() {
     setOpenSettings(() => setSettingsOpen(true));
     return () => setOpenSettings(null);
   }, [setOpenSettings]);
+
+  useEffect(() => {
+    getAppVersion().then(({ version }) => setAppVersion(version));
+  }, []);
   const current = navItems.find((n) => n.id === active)!;
   const showThemeToggle = SHOW_THEME_TOGGLE.includes(active);
 
@@ -100,7 +106,7 @@ export function App() {
         </ul>
 
         <div className="border-t border-sidebar-border px-5 py-3">
-          <p className="text-[10px] text-muted-foreground">v1.0.4</p>
+          <p className="text-[10px] text-muted-foreground">{appVersion ? `v${appVersion}` : ""}</p>
         </div>
       </nav>
 

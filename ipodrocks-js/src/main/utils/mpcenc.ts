@@ -1,10 +1,11 @@
 import { spawnSync } from "child_process";
+import { getEncoderEnv } from "./encoder-env";
 
 const SPAWN_OPTS = {
   encoding: "utf8" as const,
   timeout: 3000,
   windowsHide: true,
-  env: process.env,
+  env: getEncoderEnv(),
 };
 
 /**
