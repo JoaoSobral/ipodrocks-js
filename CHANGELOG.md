@@ -1,5 +1,38 @@
 # Changelog
 
+## [1.1.3] — 2026-04-18
+
+### Features
+
+#### Encoder PATH resolution
+
+- **`getEncoderEnv()` utility** — Extracted a shared helper (`src/main/utils/encoder-env.ts`) that augments `process.env` with common encoder binary locations (`/opt/homebrew/bin`, `/opt/homebrew/sbin`, `/usr/local/bin`, `/usr/local/sbin`, `~/.local/bin`, etc.). Electron launched from the macOS GUI does not inherit the user's shell PATH, so `mpcenc`, `ffmpeg`, and `ffprobe` were silently missing for Homebrew installs. All encoder invocations now use this helper.
+
+#### ffprobe metadata fallback
+
+- **Duration / bitrate fallback via ffprobe** — When `music-metadata` returns a zero duration or zero bitrate, the scanner now retries using `ffprobe`. This fixes tracks (e.g. certain ALAC, OPUS, or MPC files) that were stored in the library with `duration = 0` and therefore showed as 0:00 in the UI.
+- **Full metadata fallback via ffprobe** — If `music-metadata` throws entirely (e.g. unsupported container), `ffprobe` tag extraction is attempted before falling back to filename-based defaults. Title, artist, album, genre, track number, and disc number are read from format tags.
+
+#### Zero-duration re-scan
+
+- **Tracks with `duration = 0` are always re-scanned** — The library scanner now loads a set of zero-duration track paths at scan start and forces a full re-read for those files even when the mtime has not changed. Previously these tracks were skipped by the mtime cache and never corrected.
+
+#### Dynamic app version
+
+- **Version read from Electron at runtime** — The sidebar version label and Welcome panel no longer hardcode a version string. A new `app:getVersion` IPC handler returns `app.getVersion()` from the main process; the renderer fetches it once on mount. The version will always match `package.json` without requiring manual updates to UI files.
+
+### UI
+
+#### Select dropdown overflow fix
+
+- **Portal-rendered dropdowns** — The custom `Select` component now renders its dropdown via `createPortal` into `document.body` with computed `top`/`left` coordinates, avoiding clipping by `overflow: hidden` ancestors. The dropdown also checks available space below and flips upward when there is not enough room.
+
+### Dependencies
+
+- **follow-redirects 1.16.0** — Patched from 1.15.11.
+
+---
+
 ## [1.1.2] — 2026-04-06
 
 ### Security
