@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.1.3.1] — 2026-04-19
+
+### Documentation
+
+- **Shadow library vs. sync-time transcoding** — Clarified the trade-off between pre-built shadow libraries (transcode once, fast syncs, extra disk space) and on-the-fly transcoding per sync. Both produce the correct codec on the device.
+- **Shadow library scope** — Explicitly documented that a shadow library is a file-only mirror; play counts, ratings, and listening history are not stored in or propagated through it. Play counts flow the opposite direction via Rockbox's `playback.log`.
+- **Orphan Policy** — Named and explained the "Orphan Policy" setting (Keep / Remove / Prompt) across `sync.md` and `devices.md`, consistent with the UI label.
+
+---
+
 ## [1.1.3] — 2026-04-18
 
 ### Features
