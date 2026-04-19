@@ -31,11 +31,16 @@ export function Select({
   const [dropdownStyle, setDropdownStyle] = useState<React.CSSProperties>({});
   const containerRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!open) return;
     const onOutside = (e: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+      const target = e.target as Node;
+      if (
+        containerRef.current && !containerRef.current.contains(target) &&
+        dropdownRef.current && !dropdownRef.current.contains(target)
+      ) {
         setOpen(false);
       }
     };
@@ -63,6 +68,7 @@ export function Select({
 
   const dropdown = open && createPortal(
     <div
+      ref={dropdownRef}
       className="fixed z-[9999] rounded-lg border border-border bg-popover shadow-xl max-h-56 overflow-auto"
       style={dropdownStyle}
       role="listbox"

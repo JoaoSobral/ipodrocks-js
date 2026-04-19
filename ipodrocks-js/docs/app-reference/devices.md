@@ -14,8 +14,8 @@ The Devices panel lets you add, edit, and check Rockbox and mountable players.
 
 - **Mount path** — The root path where the device is mounted (e.g. `/media/ipod`). iPodRocks expects `Music`, `Podcasts`, `Audiobooks`, and `Playlists` subfolders (configurable).
 - **Codec config** — Direct copy (no conversion) or transcode to MP3, AAC, Musepack, Opus, OGG. If you use a shadow library, set the device source to "Shadow" and pick the shadow — no transcoding during sync.
-- **Check Device** — Scans the device filesystem and compares with the library. "Codec mismatch" means files use a different codec than the device profile (e.g. MP3 on device, OPUS profile); when you sync with **Extra Track Policy set to "Remove"**, old-codec files are deleted and replaced by the new codec.
-- **Orphans** — Files on the device that are not in the library. You can remove them during sync **only when Extra Track Policy is set to "Remove"**; with "Keep" or "Prompt", orphans are not auto-deleted.
+- **Check Device** — Scans the device filesystem and compares with the library. "Codec mismatch" means files use a different codec than the device profile (e.g. MP3 on device, OPUS profile); when you sync with **Orphan Policy set to "Remove"**, old-codec files are deleted and replaced by the new codec.
+- **Orphans** — Files on the device that are not in the library. You can remove them during sync **only when Orphan Policy is set to "Remove"** (the setting lives in the Sync panel); with "Keep" or "Prompt", orphans are not auto-deleted.
 
 ## How to work with it
 
