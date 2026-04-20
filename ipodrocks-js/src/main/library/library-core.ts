@@ -31,6 +31,10 @@ interface TrackRow {
   genre: string;
   codec: string;
   metadata_hash: string;
+  rating: number | null;
+  rating_source_device_id: number | null;
+  rating_updated_at: string | null;
+  rating_version: number;
 }
 
 interface LibraryFolderRow {
@@ -68,7 +72,9 @@ const BASE_TRACKS_QUERY = `
          COALESCE(al.title, 'Unknown Album') as album,
          COALESCE(g.name, 'Unknown Genre') as genre,
          COALESCE(c.name, 'Unknown Codec') as codec,
-         t.metadata_hash
+         t.metadata_hash,
+         t.rating, t.rating_source_device_id, t.rating_updated_at,
+         COALESCE(t.rating_version, 0) as rating_version
   FROM tracks t
   LEFT JOIN artists a ON t.artist_id = a.id
   LEFT JOIN albums al ON t.album_id = al.id
@@ -522,6 +528,10 @@ export class LibraryCore {
       trackNumber: row.track_number,
       discNumber: row.disc_number,
       playCount: row.play_count,
+      rating: row.rating ?? null,
+      ratingSourceDeviceId: row.rating_source_device_id ?? null,
+      ratingUpdatedAt: row.rating_updated_at ?? null,
+      ratingVersion: row.rating_version ?? 0,
     };
   }
 }

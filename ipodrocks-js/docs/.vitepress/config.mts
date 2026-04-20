@@ -5,7 +5,7 @@ export default defineConfig({
   title: "iPodRocks",
   description:
     "Sync manager for Rockbox and mountable devices — documentation",
-  base: "/ipodrocks-js/",
+  base: "/",
   lastUpdated: true,
   ignoreDeadLinks: [/\.excalidraw$/],
 
@@ -80,6 +80,7 @@ export default defineConfig({
                 },
               ],
             },
+            { text: "Ratings", link: "/app-reference/ratings" },
             { text: "Music Assistant", link: "/app-reference/assistant" },
           ],
         },

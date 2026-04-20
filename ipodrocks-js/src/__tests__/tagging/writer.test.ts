@@ -14,7 +14,7 @@ describe("tagging/writer integration", () => {
   it("writes tags and they are readable by music-metadata", async () => {
     const audio = Buffer.concat([
       MPC_SV7_MAGIC,
-      Buffer.alloc(100, 0),
+      Buffer.alloc(200, 0),
     ]);
     const tmp = path.join(
       os.tmpdir(),
