@@ -25,6 +25,7 @@ export class AppDatabase {
     this.migrateDropRedundantIndexes();
     this.migrateCaseInsensitiveEntities();
     this.migrateDeduplicateTracks();
+    this.migrateRatings();
   }
 
   /**
@@ -158,6 +159,7 @@ export class AppDatabase {
    */
   private migrateDeduplicateTracks(): void {
     if (!this.db) return;
+    try {
     const done = this.db
       .prepare("SELECT value FROM app_settings WHERE key = 'migrate_deduplicate_tracks_prefer_main_done'")
       .get() as { value: string } | undefined;
@@ -248,6 +250,9 @@ export class AppDatabase {
       })();
     } finally {
       this.db.pragma("foreign_keys = ON");
+    }
+    } catch (err) {
+      console.error("[db] migration failed (migrateDeduplicateTracks):", err);
     }
   }
 
@@ -532,6 +537,92 @@ export class AppDatabase {
       }
     } catch (err) {
       console.error("[db] migration failed (migrateContentTypeAudiobook):", err);
+    }
+  }
+
+  private migrateRatings(): void {
+    if (!this.db) return;
+    try {
+      const trackCols = this.db
+        .prepare("PRAGMA table_info(tracks)")
+        .all() as { name: string }[];
+      const trackColNames = new Set(trackCols.map((r) => r.name));
+
+      if (!trackColNames.has("rating")) {
+        this.db.prepare("ALTER TABLE tracks ADD COLUMN rating INTEGER").run();
+      }
+      if (!trackColNames.has("rating_source_device_id")) {
+        this.db.prepare("ALTER TABLE tracks ADD COLUMN rating_source_device_id INTEGER").run();
+      }
+      if (!trackColNames.has("rating_updated_at")) {
+        this.db.prepare("ALTER TABLE tracks ADD COLUMN rating_updated_at TIMESTAMP").run();
+      }
+      if (!trackColNames.has("rating_version")) {
+        this.db.prepare("ALTER TABLE tracks ADD COLUMN rating_version INTEGER NOT NULL DEFAULT 0").run();
+      }
+
+      const tables = this.db
+        .prepare("SELECT name FROM sqlite_master WHERE type='table'")
+        .all() as { name: string }[];
+      const tableNames = new Set(tables.map((t) => t.name));
+
+      if (!tableNames.has("device_track_ratings")) {
+        this.db.exec(`
+          CREATE TABLE device_track_ratings (
+            device_id           INTEGER NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+            track_id            INTEGER NOT NULL REFERENCES tracks(id)  ON DELETE CASCADE,
+            last_seen_rating    INTEGER,
+            last_pushed_rating  INTEGER,
+            last_seen_at        TIMESTAMP,
+            last_pushed_at      TIMESTAMP,
+            PRIMARY KEY (device_id, track_id)
+          );
+          CREATE INDEX idx_dtr_track ON device_track_ratings(track_id);
+        `);
+      }
+
+      if (!tableNames.has("rating_conflicts")) {
+        this.db.exec(`
+          CREATE TABLE rating_conflicts (
+            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+            track_id         INTEGER NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
+            device_id        INTEGER NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+            reported_rating  INTEGER NOT NULL,
+            baseline_rating  INTEGER,
+            canonical_rating INTEGER,
+            reported_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            resolved_at      TIMESTAMP,
+            resolution       TEXT
+          );
+          CREATE INDEX idx_rc_track ON rating_conflicts(track_id);
+        `);
+      }
+
+      if (!tableNames.has("rating_events")) {
+        this.db.exec(`
+          CREATE TABLE rating_events (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            track_id   INTEGER NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
+            device_id  INTEGER,
+            old_rating INTEGER,
+            new_rating INTEGER,
+            source     TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+          );
+          CREATE INDEX idx_re_track ON rating_events(track_id, created_at DESC);
+        `);
+      }
+
+      // Ensure rating index exists even if tracks table was already present
+      const indexes = this.db
+        .prepare("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='tracks'")
+        .all() as { name: string }[];
+      const indexNames = new Set(indexes.map((i) => i.name));
+      if (!indexNames.has("idx_tracks_rating")) {
+        this.db.prepare("CREATE INDEX IF NOT EXISTS idx_tracks_rating ON tracks(rating)").run();
+      }
+    } catch (err) {
+      console.error("[db] migration failed (migrateRatings):", err);
     }
   }
 

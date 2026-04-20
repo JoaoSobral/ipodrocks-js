@@ -15,6 +15,7 @@ const ALLOWED_CHANNEL_PREFIXES = [
   "assistant:",
   "settings:",
   "harmonic:",
+  "ratings:",
 ];
 
 function isAllowedChannel(channel: string): boolean {

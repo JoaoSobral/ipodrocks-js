@@ -149,6 +149,18 @@ import {
 import { randomUUID } from "crypto";
 import { logActivity, getRecentActivity } from "./activity/activity-logger";
 import { checkRateLimit } from "./llm/openRouterClient";
+import {
+  ingestDeviceRatings,
+  computeRatingPropagations,
+  markRatingsPropagated,
+} from "./sync/rating-merge";
+import {
+  readRockboxRatings,
+  writeRockboxRatingsChangelog,
+  resolveDevicePathToTrackId,
+  hasRockboxChangelog,
+  buildDeviceRelativePath,
+} from "./rockbox/tagcache";
 
 // ---------------------------------------------------------------------------
 // Singleton state
@@ -1167,6 +1179,43 @@ export function registerIpcHandlers(): void {
         }
       }
 
+      // Phase 1: INGEST — read device ratings and merge into canonical DB
+      try {
+        if (hasRockboxChangelog(device.mountPath)) {
+          syncOpts.progressCallback?.({ event: "log", message: "Reading device ratings..." });
+          const deviceRatingsByPath = readRockboxRatings(device.mountPath);
+          const db = lib.getConnection();
+
+          // Resolve device-relative paths to track IDs
+          const deviceRatingsByTrackId = new Map<number, number>();
+          for (const [devPath, rating] of deviceRatingsByPath) {
+            const trackId = resolveDevicePathToTrackId(db, opts.deviceId, devPath, device.mountPath);
+            if (trackId !== null) {
+              deviceRatingsByTrackId.set(trackId, rating);
+            }
+          }
+
+          const ingestResult = ingestDeviceRatings(db, opts.deviceId, deviceRatingsByTrackId);
+
+          if (ingestResult.massZeroFraction > 0.25 && deviceRatingsByPath.size > 10) {
+            syncOpts.progressCallback?.({
+              event: "log",
+              message: `Warning: ${Math.round(ingestResult.massZeroFraction * 100)}% of device ratings are 0 — possible Rockbox DB rebuild. Ratings from device skipped pending review.`,
+            });
+          } else {
+            const total = ingestResult.adopted + ingestResult.converged + ingestResult.conflicts;
+            if (total > 0) {
+              syncOpts.progressCallback?.({
+                event: "log",
+                message: `Ratings: ${ingestResult.adopted} adopted, ${ingestResult.converged} converged, ${ingestResult.conflicts} conflict(s) queued.`,
+              });
+            }
+          }
+        }
+      } catch (err) {
+        console.error("[ipc] Rating ingest failed (non-fatal):", err);
+      }
+
       if (willRunMusic) {
         const deviceMusicRaw = device.getTracks("music", { cancelSignal: activeSyncAbort.signal });
         const deviceMusicMap: Record<string, { file_size: number; mtime?: number }> = {};
@@ -1378,6 +1427,50 @@ export function registerIpcHandlers(): void {
       }
 
       result.synced += playlistsWritten;
+
+      // Phase 3: PROPAGATE — push canonical ratings back to the device
+      try {
+        const db = lib.getConnection();
+        const propagations = computeRatingPropagations(db, opts.deviceId);
+
+        if (propagations.size > 0) {
+          // Build device-relative paths for the changelog
+          const deviceMusicFolder = device.profile.musicFolder ?? "Music";
+
+          // For each track to propagate, we need its device filename
+          const trackIds = [...propagations.keys()];
+          const placeholders = trackIds.map(() => "?").join(",");
+          const trackRows = db
+            .prepare(
+              `SELECT t.id, t.filename FROM tracks t WHERE t.id IN (${placeholders})`
+            )
+            .all(...trackIds) as { id: number; filename: string }[];
+
+          const entries: import("./rockbox/tagcache").RockboxRatingEntry[] = [];
+          const propagatedIds: number[] = [];
+
+          for (const row of trackRows) {
+            const rating = propagations.get(row.id);
+            if (rating === undefined) continue;
+            entries.push({
+              filePath: buildDeviceRelativePath(deviceMusicFolder, row.filename),
+              rating,
+            });
+            propagatedIds.push(row.id);
+          }
+
+          writeRockboxRatingsChangelog(device.mountPath, entries);
+          markRatingsPropagated(db, opts.deviceId, propagatedIds);
+
+          syncOpts.progressCallback?.({
+            event: "log",
+            message: `Pushed ${entries.length} rating(s) to device. Run "Database → Initialize Now" on the device to apply.`,
+          });
+        }
+      } catch (err) {
+        console.error("[ipc] Rating propagation failed (non-fatal):", err);
+      }
+
       activeSyncAbort = null;
 
       if (result.synced >= 0) {
@@ -1931,5 +2024,117 @@ export function registerIpcHandlers(): void {
     safe("settings:setHarmonicPrefs", async (_event, prefs: HarmonicPrefs) => {
       setHarmonicPrefs(prefs);
     })
+  );
+
+  // ---- Ratings -----------------------------------------------------------
+
+  ipcMain.handle(
+    "ratings:setTrackRating",
+    safe("ratings:setTrackRating", async (_event, trackId: number, rating: number | null) => {
+      const db = getLibrary().getConnection();
+      const track = db
+        .prepare("SELECT id, rating FROM tracks WHERE id = ?")
+        .get(trackId) as { id: number; rating: number | null } | undefined;
+      if (!track) throw new Error(`Track ${trackId} not found`);
+
+      const validRating =
+        rating === null ? null : Math.max(0, Math.min(10, Math.round(rating)));
+
+      db.prepare(`
+        UPDATE tracks SET
+          rating = ?,
+          rating_source_device_id = NULL,
+          rating_updated_at = CURRENT_TIMESTAMP,
+          rating_version = rating_version + 1
+        WHERE id = ?
+      `).run(validRating, trackId);
+
+      db.prepare(`
+        INSERT INTO rating_events (track_id, device_id, old_rating, new_rating, source)
+        VALUES (?, NULL, ?, ?, 'library_ui')
+      `).run(trackId, track.rating, validRating);
+
+      return { ok: true };
+    })
+  );
+
+  ipcMain.handle(
+    "ratings:getConflicts",
+    safe("ratings:getConflicts", async () => {
+      const db = getLibrary().getConnection();
+      const rows = db
+        .prepare(`
+          SELECT rc.id, rc.track_id, rc.device_id, rc.reported_rating,
+                 rc.baseline_rating, rc.canonical_rating, rc.reported_at,
+                 rc.resolved_at, rc.resolution,
+                 t.title, t.path,
+                 COALESCE(a.name, 'Unknown Artist') as artist,
+                 d.name as device_name
+          FROM rating_conflicts rc
+          JOIN tracks t ON t.id = rc.track_id
+          LEFT JOIN artists a ON a.id = t.artist_id
+          JOIN devices d ON d.id = rc.device_id
+          WHERE rc.resolved_at IS NULL
+          ORDER BY rc.reported_at DESC
+        `)
+        .all();
+      return rows;
+    })
+  );
+
+  ipcMain.handle(
+    "ratings:resolveConflict",
+    safe(
+      "ratings:resolveConflict",
+      async (
+        _event,
+        conflictId: number,
+        resolution: "device_wins" | "canonical_wins" | "manual",
+        manualRating?: number
+      ) => {
+        const db = getLibrary().getConnection();
+        const conflict = db
+          .prepare("SELECT * FROM rating_conflicts WHERE id = ?")
+          .get(conflictId) as {
+            id: number;
+            track_id: number;
+            device_id: number;
+            reported_rating: number;
+            canonical_rating: number | null;
+          } | undefined;
+        if (!conflict) throw new Error(`Conflict ${conflictId} not found`);
+
+        const newRating =
+          resolution === "device_wins"
+            ? conflict.reported_rating
+            : resolution === "canonical_wins"
+              ? conflict.canonical_rating
+              : (manualRating ?? conflict.canonical_rating);
+
+        db.transaction(() => {
+          if (newRating !== conflict.canonical_rating) {
+            db.prepare(`
+              UPDATE tracks SET
+                rating = ?,
+                rating_updated_at = CURRENT_TIMESTAMP,
+                rating_version = rating_version + 1
+              WHERE id = ?
+            `).run(newRating, conflict.track_id);
+
+            db.prepare(`
+              INSERT INTO rating_events (track_id, device_id, old_rating, new_rating, source)
+              VALUES (?, ?, ?, ?, 'conflict_resolved')
+            `).run(conflict.track_id, conflict.device_id, conflict.canonical_rating, newRating);
+          }
+
+          db.prepare(`
+            UPDATE rating_conflicts SET resolved_at = CURRENT_TIMESTAMP, resolution = ?
+            WHERE id = ?
+          `).run(resolution, conflictId);
+        })();
+
+        return { ok: true, newRating };
+      }
+    )
   );
 }

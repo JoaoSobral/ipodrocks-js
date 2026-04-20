@@ -18,6 +18,57 @@ export interface Track {
   trackNumber: number;
   discNumber: number;
   playCount: number;
+  /** Canonical rating 0–10 (Rockbox scale). NULL = never observed. 0 = explicitly unrated. */
+  rating: number | null;
+  /** ID of the device that last changed this rating, or null if set from the library UI. */
+  ratingSourceDeviceId: number | null;
+  /** ISO timestamp of the last canonical rating change. */
+  ratingUpdatedAt: string | null;
+  /** Monotonically-incrementing Lamport counter — used as a tiebreaker in 3-way merge. */
+  ratingVersion: number;
+}
+
+export type DeviceRatingChange = {
+  trackId: number;
+  baseline: number | null;
+  current: number;
+  kind: 'first_observation' | 'device_edit';
+};
+
+export type MergeOutcome =
+  | { action: 'noop'; value: number | null }
+  | { action: 'adopt_device'; value: number }
+  | { action: 'propagate_lib'; value: number }
+  | { action: 'converged'; value: number }
+  | { action: 'conflict'; canonical: number | null; deviceProposed: number };
+
+export interface RatingConflict {
+  id: number;
+  trackId: number;
+  deviceId: number;
+  reportedRating: number;
+  baselineRating: number | null;
+  canonicalRating: number | null;
+  reportedAt: string;
+  resolvedAt: string | null;
+  resolution: 'device_wins' | 'canonical_wins' | 'manual' | 'dismissed' | null;
+}
+
+/** Row returned by the ratings:getConflicts IPC handler — snake_case from SQLite + display JOIN fields. */
+export interface RatingConflictRow {
+  id: number;
+  track_id: number;
+  device_id: number;
+  reported_rating: number;
+  baseline_rating: number | null;
+  canonical_rating: number | null;
+  reported_at: string;
+  resolved_at: string | null;
+  resolution: 'device_wins' | 'canonical_wins' | 'manual' | 'dismissed' | null;
+  title: string;
+  path: string;
+  artist: string;
+  device_name: string;
 }
 
 export interface Device {

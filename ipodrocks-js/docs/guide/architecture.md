@@ -4,19 +4,8 @@ iPodRocks is an [Electron](https://www.electronjs.org/) desktop app. This page e
 
 ## Overview
 
-```
-┌─────────────────────────── Electron shell ────────────────────────────┐
-│                                                                        │
-│  ┌──────────────────────────┐   Preload   ┌──────────────────────────┐│
-│  │   Main Process (Node.js) │◄──────────►│  Renderer (React / Vite) ││
-│  └──────────────────────────┘ contextBridge└──────────────────────────┘│
-│                │                                       │               │
-│           library.db                               User (UI)           │
-│        Music Library (disk)                                            │
-│        Device Mount (USB)                                              │
-└────────────────────────────────────────────────────────────────────────┘
-                                        │
-                               OpenRouter API (LLM)
+```excalidraw
+@file:../public/architecture.excalidraw
 ```
 
 ## Main Process
@@ -32,6 +21,8 @@ Runs in Node.js. Has full filesystem and OS access.
 | **HashManager** | SHA-256 content hashing for change detection. |
 | **SyncCore / SyncExecutor** | Compares library against device; copies, transcodes, or removes files. |
 | **SyncConversion** | Transcodes audio via FFmpeg or `mpcenc`. |
+| **RatingMerge** | 3-way merge algorithm that reconciles ratings between the device and the library. Detects device changes, resolves conflicts, and computes what to propagate back. |
+| **TagcacheIO** | Reads and writes the Rockbox `database_changelog.txt` on the device mount. Handles Phase 1 (ingest) and Phase 3 (propagate) of the ratings sync cycle. |
 | **AppDatabase** | Single `better-sqlite3` instance. All reads/writes go through here. |
 | **DevicesCore** | Stores and retrieves device profiles. |
 | **PlaylistCore** | Smart and Genius playlist creation. |
@@ -51,6 +42,8 @@ Runs in a Chromium sandbox. Cannot access the filesystem directly.
 | **IPC API Layer** (`renderer/ipc/api.ts`) | Thin wrappers around `window.api.invoke()`. One function per IPC channel. |
 | **Zustand Stores** | `useLibraryStore`, `useDeviceStore`, `useSyncStore`, `useUIStore`, `useThemeStore`. All server state lives here. |
 | **React Panels** | One panel per tab: Dashboard, Library, Devices, Sync, Playlists, Settings. |
+| **RatingStars** | 5-star rating input with half-star support. Displays device-source and conflict badges. |
+| **RatingConflictsModal** | Lists unresolved rating conflicts and lets the user resolve them (keep library, use device, or set manually). |
 | **ScanProgressModal** | Shows file-by-file scan progress; captures `folders` in a ref to prevent restart on re-render. |
 | **SyncProgressModal** | Shows copy progress; uses `useRef` counters to avoid stale-closure bugs in the `onComplete` callback. |
 | **FloatChat** | Floating Music Assistant chat backed by `AssistantChat` on the main process. |
@@ -73,12 +66,9 @@ devices
 app_settings
 content_hashes  (mtime + SHA-256)
 activity_log
+
+-- Ratings
+device_track_ratings   (per-device baseline manifest; last_seen / last_pushed)
+rating_conflicts       (unresolved divergences awaiting user resolution)
+rating_events          (full audit log of every rating change)
 ```
-
-## Excalidraw diagram
-
-An interactive diagram of the full architecture is included with the docs. Open it in [Excalidraw](https://excalidraw.com) to zoom, pan, and edit.
-
-[Download architecture.excalidraw](/ipodrocks-js/architecture.excalidraw)
-
-> **Tip:** drag the `.excalidraw` file straight onto the [excalidraw.com](https://excalidraw.com) canvas to open it — no account needed.

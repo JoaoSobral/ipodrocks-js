@@ -72,12 +72,52 @@ CREATE TABLE IF NOT EXISTS tracks (
     bpm REAL,
     camelot TEXT,
     features_scanned INTEGER DEFAULT 0,
+    rating INTEGER CHECK(rating IS NULL OR (rating >= 0 AND rating <= 10)),
+    rating_source_device_id INTEGER REFERENCES devices(id),
+    rating_updated_at TIMESTAMP,
+    rating_version INTEGER NOT NULL DEFAULT 0,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (library_folder_id) REFERENCES library_folders (id),
     FOREIGN KEY (artist_id) REFERENCES artists (id),
     FOREIGN KEY (album_id) REFERENCES albums (id),
     FOREIGN KEY (genre_id) REFERENCES genres (id),
     FOREIGN KEY (codec_id) REFERENCES codecs (id)
+);
+
+-- ============================================================
+-- Ratings
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS device_track_ratings (
+    device_id           INTEGER NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+    track_id            INTEGER NOT NULL REFERENCES tracks(id)  ON DELETE CASCADE,
+    last_seen_rating    INTEGER CHECK(last_seen_rating IS NULL OR (last_seen_rating >= 0 AND last_seen_rating <= 10)),
+    last_pushed_rating  INTEGER CHECK(last_pushed_rating IS NULL OR (last_pushed_rating >= 0 AND last_pushed_rating <= 10)),
+    last_seen_at        TIMESTAMP,
+    last_pushed_at      TIMESTAMP,
+    PRIMARY KEY (device_id, track_id)
+);
+
+CREATE TABLE IF NOT EXISTS rating_conflicts (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    track_id         INTEGER NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
+    device_id        INTEGER NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+    reported_rating  INTEGER NOT NULL,
+    baseline_rating  INTEGER,
+    canonical_rating INTEGER,
+    reported_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    resolved_at      TIMESTAMP,
+    resolution       TEXT CHECK(resolution IN ('device_wins','canonical_wins','manual','dismissed'))
+);
+
+CREATE TABLE IF NOT EXISTS rating_events (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    track_id   INTEGER NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
+    device_id  INTEGER REFERENCES devices(id),
+    old_rating INTEGER,
+    new_rating INTEGER,
+    source     TEXT NOT NULL CHECK(source IN ('library_ui','device_ingest','merge','propagate','conflict_resolved','migration')),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 -- ============================================================
@@ -542,4 +582,13 @@ CREATE INDEX IF NOT EXISTS idx_shadow_libraries_codec ON shadow_libraries(codec_
 CREATE INDEX IF NOT EXISTS idx_shadow_tracks_library ON shadow_tracks(shadow_library_id);
 CREATE INDEX IF NOT EXISTS idx_shadow_tracks_source ON shadow_tracks(source_track_id);
 CREATE INDEX IF NOT EXISTS idx_shadow_tracks_status ON shadow_tracks(status);
+
+-- device_track_ratings
+CREATE INDEX IF NOT EXISTS idx_dtr_track ON device_track_ratings(track_id);
+
+-- rating_conflicts
+CREATE INDEX IF NOT EXISTS idx_rc_track ON rating_conflicts(track_id);
+
+-- rating_events
+CREATE INDEX IF NOT EXISTS idx_re_track ON rating_events(track_id, created_at DESC);
 `;

@@ -23,11 +23,15 @@ import type {
   OpenRouterConfig,
   SavantKeyData,
   GenerateSavantResult,
+  RatingConflict,
+  RatingConflictRow,
 } from "@shared/types";
 
 export type {
   Track,
   LibraryFolder,
+  RatingConflict,
+  RatingConflictRow,
   DeviceProfile,
   AddDeviceConfig,
   ScanResult,
@@ -596,6 +600,34 @@ export async function getHarmonicPrefs(): Promise<HarmonicPrefs> {
 
 export async function setHarmonicPrefs(prefs: HarmonicPrefs): Promise<void> {
   return window.api.invoke("settings:setHarmonicPrefs", prefs) as Promise<void>;
+}
+
+// ---------------------------------------------------------------------------
+// Ratings
+// ---------------------------------------------------------------------------
+
+export async function setTrackRating(
+  trackId: number,
+  rating: number | null
+): Promise<{ ok: boolean }> {
+  return window.api.invoke("ratings:setTrackRating", trackId, rating) as Promise<{ ok: boolean }>;
+}
+
+export async function getRatingConflicts(): Promise<RatingConflictRow[]> {
+  return window.api.invoke("ratings:getConflicts") as Promise<RatingConflictRow[]>;
+}
+
+export async function resolveRatingConflict(
+  conflictId: number,
+  resolution: "device_wins" | "canonical_wins" | "manual",
+  manualRating?: number
+): Promise<{ ok: boolean; newRating: number | null }> {
+  return window.api.invoke(
+    "ratings:resolveConflict",
+    conflictId,
+    resolution,
+    manualRating
+  ) as Promise<{ ok: boolean; newRating: number | null }>;
 }
 
 // ---------------------------------------------------------------------------

@@ -1,5 +1,6 @@
 import { useEffect, useState, useMemo, useRef, useCallback } from "react";
 import { FixedSizeList as List } from "react-window";
+import { RatingStars } from "../RatingStars";
 import { formatDuration, formatSize, formatBitrate, formatShadowCodecLabel, formatShadowCodecAndBitrate, formatShadowSize } from "../../utils/format";
 import { getTranscodableCodecConfigs } from "../../utils/codec";
 import { Card } from "../common/Card";
@@ -27,6 +28,7 @@ import {
   getDeviceSyncedPaths,
   getPlaylists,
   getCodecConfigs,
+  getRatingConflicts,
   getShadowLibraries,
   createShadowLibrary,
   deleteShadowLibrary,
@@ -37,8 +39,10 @@ import {
   getMpcRemindDisabled,
   setMpcRemindDisabled,
   checkSavantKeyData,
+  setTrackRating,
 } from "../../ipc/api";
 import { MpcUnavailableModal } from "../modals/MpcUnavailableModal";
+import { RatingConflictsModal } from "../RatingConflictsModal";
 import type { CodecConfig } from "../../ipc/api";
 import type { DeviceProfile, Playlist, ShadowLibrary, ShadowBuildProgress } from "@shared/types";
 
@@ -51,7 +55,8 @@ type SortField =
   | "codec"
   | "bitrate"
   | "bitsPerSample"
-  | "contentType";
+  | "contentType"
+  | "rating";
 type SortDir = "asc" | "desc";
 
 const columns: { field: SortField; label: string; width: string; minW?: string }[] = [
@@ -59,6 +64,7 @@ const columns: { field: SortField; label: string; width: string; minW?: string }
   { field: "artist", label: "Artist", width: "flex-[2]", minW: "100px" },
   { field: "album", label: "Album", width: "flex-[2]", minW: "100px" },
   { field: "genre", label: "Genre", width: "w-24", minW: "80px" },
+  { field: "rating", label: "Rating", width: "w-24", minW: "90px" },
   { field: "duration", label: "Duration", width: "w-16", minW: "56px" },
   { field: "codec", label: "Codec", width: "w-14", minW: "48px" },
   { field: "bitrate", label: "Bitrate", width: "w-20", minW: "64px" },
@@ -123,6 +129,10 @@ export function LibraryPanel() {
     bpmOnlyCount: number;
   } | null>(null);
   const openSettings = useUIStore((s) => s.openSettings);
+  const [conflictCount, setConflictCount] = useState(0);
+  const [conflictsModalOpen, setConflictsModalOpen] = useState(false);
+  const trackListContainerRef = useRef<HTMLDivElement>(null);
+  const [trackListHeight, setTrackListHeight] = useState(400);
 
   const addShadowLog = useCallback(
     (message: string, level: ShadowBuildProgress["logLevel"]) => {
@@ -170,6 +180,20 @@ export function LibraryPanel() {
   }, []);
 
   useEffect(() => {
+    getRatingConflicts().then((rows) => setConflictCount(rows.length)).catch(console.error);
+  }, []);
+
+  useEffect(() => {
+    const el = trackListContainerRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver(([entry]) => {
+      setTrackListHeight(entry.contentRect.height);
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
     if (selectedDeviceId == null) {
       setSyncedPaths(new Set());
       return;
@@ -212,10 +236,15 @@ export function LibraryPanel() {
     return [...base].sort((a, b) => {
       const av = a[sortField];
       const bv = b[sortField];
-      const cmp =
-        typeof av === "string"
-          ? (av as string).localeCompare(bv as string)
-          : (av as number) - (bv as number);
+      let cmp: number;
+      if (typeof av === "string" || typeof bv === "string") {
+        cmp = String(av ?? "").localeCompare(String(bv ?? ""));
+      } else {
+        // Null ratings sort last when ascending
+        const an = av === null || av === undefined ? -1 : (av as number);
+        const bn = bv === null || bv === undefined ? -1 : (bv as number);
+        cmp = an - bn;
+      }
       return sortDir === "asc" ? cmp : -cmp;
     });
   }, [tracks, search, sortField, sortDir, typeFilter, syncFilter, selectedDeviceId, syncedPaths]);
@@ -421,6 +450,22 @@ export function LibraryPanel() {
               Settings
             </Button>
           )}
+        </div>
+      )}
+
+      {/* Rating conflicts banner */}
+      {conflictCount > 0 && (
+        <div className="flex items-center gap-2 px-2 py-1.5 rounded-md border border-warning/30 bg-warning/10 text-[11px]">
+          <span className="text-warning shrink-0">⚠</span>
+          <span className="text-warning flex-1 min-w-0">
+            <span className="font-medium">{conflictCount}</span>
+            {" rating conflict"}
+            {conflictCount !== 1 ? "s" : ""}
+            {" need resolution"}
+          </span>
+          <Button variant="ghost" size="sm" onClick={() => setConflictsModalOpen(true)}>
+            Resolve →
+          </Button>
         </div>
       )}
 
@@ -640,7 +685,8 @@ export function LibraryPanel() {
           </div>
 
           {/* Table with horizontal scroll — contained so list and scrollbar stay inside card */}
-          <div className="flex-1 min-h-[100px] overflow-auto border border-border rounded-lg bg-card mt-1.5">
+          <div className="flex-1 min-h-[100px] relative border border-border rounded-lg bg-card mt-1.5 overflow-hidden">
+            <div ref={trackListContainerRef} className="absolute inset-0 overflow-auto">
             <div className="min-w-[900px]">
               {/* Header */}
               <TableHeader sticky className="theme-box">
@@ -668,7 +714,7 @@ export function LibraryPanel() {
                 <p className="text-center text-xs text-muted-foreground py-8">No tracks found</p>
               ) : (
                 <List
-                  height={400}
+                  height={Math.max(trackListHeight - 33, 100)}
                   itemCount={filtered.length}
                   itemSize={32}
                   width="100%"
@@ -685,6 +731,15 @@ export function LibraryPanel() {
                         <span className="flex-[2] min-w-[100px] truncate text-muted-foreground">{t.artist}</span>
                         <span className="flex-[2] min-w-[100px] truncate text-muted-foreground">{t.album}</span>
                         <span className="w-24 min-w-[80px] truncate text-muted-foreground">{t.genre}</span>
+                        <span className="w-24 min-w-[90px] shrink-0">
+                          <RatingStars
+                            rating={t.rating}
+                            fromDevice={t.ratingSourceDeviceId !== null}
+                            onChange={(newRating) => {
+                              setTrackRating(t.id, newRating).then(() => fetchTracks()).catch(console.error);
+                            }}
+                          />
+                        </span>
                         <span className="w-16 min-w-[56px] text-muted-foreground tabular-nums">
                           {formatDuration(t.duration)}
                         </span>
@@ -709,6 +764,7 @@ export function LibraryPanel() {
                   }}
                 </List>
               )}
+            </div>
             </div>
           </div>
         </Card>
@@ -1031,6 +1087,14 @@ export function LibraryPanel() {
           </div>
         </div>
       </Modal>
+
+      <RatingConflictsModal
+        open={conflictsModalOpen}
+        onClose={() => {
+          setConflictsModalOpen(false);
+          getRatingConflicts().then((rows) => setConflictCount(rows.length)).catch(console.error);
+        }}
+      />
     </div>
   );
 }
