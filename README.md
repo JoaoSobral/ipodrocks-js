@@ -2,7 +2,7 @@
 
 **The smart sync manager for Rockbox and any mountable device.** Built with Electron, React, and TypeScript.
 
-📖 **[Full documentation →](https://joaosobral.github.io/ipodrocks-js/)**
+📖 **[Full documentation →](https://ipodrocks.dev)**
 
 <p align="center">
 <img src="https://github.com/JoaoSobral/ipodrocks-js/blob/main/ipodrocks-js/assets/ipodRocks_transp.png?raw=true" width="20%">

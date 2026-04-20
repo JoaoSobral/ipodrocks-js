@@ -685,8 +685,8 @@ export function LibraryPanel() {
           </div>
 
           {/* Table with horizontal scroll — contained so list and scrollbar stay inside card */}
-          <div className="flex-1 min-h-[100px] relative border border-border rounded-lg bg-card mt-1.5 overflow-hidden">
-            <div ref={trackListContainerRef} className="absolute inset-0 overflow-auto">
+          <div ref={trackListContainerRef} className="flex-1 min-h-[100px] relative border border-border rounded-lg bg-card mt-1.5 overflow-hidden">
+            <div className="absolute inset-0 overflow-auto">
             <div className="min-w-[900px]">
               {/* Header */}
               <TableHeader sticky className="theme-box">
@@ -736,7 +736,7 @@ export function LibraryPanel() {
                             rating={t.rating}
                             fromDevice={t.ratingSourceDeviceId !== null}
                             onChange={(newRating) => {
-                              setTrackRating(t.id, newRating).then(() => fetchTracks()).catch(console.error);
+                              setTrackRating(t.id, newRating).then(() => fetchTracks(undefined, { silent: true })).catch(console.error);
                             }}
                           />
                         </span>

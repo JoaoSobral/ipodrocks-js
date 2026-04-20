@@ -90,10 +90,10 @@ export function PlaylistPanel() {
   const [tracks, setTracks] = useState<PlaylistTrack[]>([]);
   const [tracksLoading, setTracksLoading] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
-  /** When true, user chose Smart from Create; when 'genius', chose Genius. */
-  const [createKind, setCreateKind] = useState<"smart" | "genius" | null>(
-    null
-  );
+  /** Which playlist kind the user picked from the Create chooser. */
+  const [createKind, setCreateKind] = useState<
+    "smart" | "genius" | "savant" | null
+  >(null);
 
   // -- smart create state -------------------------------------------------
   const [newName, setNewName] = useState("");
@@ -183,12 +183,12 @@ export function PlaylistPanel() {
   }, [fetchAll, fetchDevices]);
 
   useEffect(() => {
-    setSavantTabActive(activeTab === "savant");
+    setSavantTabActive(createKind === "savant");
     return () => setSavantTabActive(false);
-  }, [activeTab, setSavantTabActive]);
+  }, [createKind, setSavantTabActive]);
 
   useEffect(() => {
-    if (activeTab !== "savant") return;
+    if (createKind !== "savant") return;
     let cancelled = false;
     (async () => {
       const [config, keyData] = await Promise.all([
@@ -203,7 +203,7 @@ export function PlaylistPanel() {
     return () => {
       cancelled = true;
     };
-  }, [activeTab]);
+  }, [createKind]);
 
   const playlistList = Array.isArray(playlists) ? playlists : [];
   const filtered =
@@ -547,6 +547,11 @@ export function PlaylistPanel() {
     setSavantResultTracks(null);
   }
 
+  async function handleSavantViewPlaylist(id: number) {
+    closeCreateModal();
+    await handleSelect(id);
+  }
+
   const [backfillOpts, setBackfillOpts] = useState<{ percent?: number } | undefined>();
 
   async function handleSavantBackfill() {
@@ -575,6 +580,14 @@ export function PlaylistPanel() {
       setGeniusSummary(null);
       setGeniusPreview(null);
       setGeniusSelectedType(null);
+    }
+    if (createKind === "savant") {
+      setSavantMode("quick");
+      setSavantQuickPrompt("");
+      setSavantIntentFromChat(null);
+      setSavantResult(null);
+      setSavantResultTracks(null);
+      setSavantError(null);
     }
   }
 
@@ -1191,7 +1204,7 @@ export function PlaylistPanel() {
             )}
           </Card>
           <div className="flex gap-2">
-            <Button size="sm" onClick={() => handleSelect(savantResult.playlistId)}>
+            <Button size="sm" onClick={() => handleSavantViewPlaylist(savantResult.playlistId)}>
               View Playlist
             </Button>
             <Button variant="secondary" size="sm" onClick={handleSavantRegenerate}>
@@ -1388,23 +1401,27 @@ export function PlaylistPanel() {
         ))}
       </div>
 
-      {/* Savant tab: show flow instead of list */}
-      {activeTab === "savant" ? (
-        renderSavantFlow()
-      ) : loading ? (
+      {loading ? (
         <div className="flex items-center justify-center py-16">
           <Spinner size="md" />
         </div>
       ) : filtered.length === 0 ? (
         <EmptyState
-          icon="≡"
-          title="No playlists"
-          description="Create a smart or genius playlist to get started"
+          icon={activeTab === "savant" ? "🎯" : "≡"}
+          title={activeTab === "savant" ? "No Savant playlists" : "No playlists"}
+          description={
+            activeTab === "savant"
+              ? "Create an AI-curated Savant playlist to get started"
+              : "Create a smart, genius, or savant playlist to get started"
+          }
           action={
             <Button
               variant="primary"
               size="sm"
-              onClick={() => setShowCreate(true)}
+              onClick={() => {
+                if (activeTab === "savant") setCreateKind("savant");
+                setShowCreate(true);
+              }}
             >
               + Create Playlist
             </Button>
@@ -1416,7 +1433,11 @@ export function PlaylistPanel() {
             <Card key={p.id}>
               <div className="flex items-start gap-3 mb-3">
                 <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center text-lg text-primary">
-                  {p.typeName === "genius" ? "✨" : "≡"}
+                  {p.typeName === "genius"
+                    ? "✨"
+                    : p.typeName === "savant"
+                      ? "🎯"
+                      : "≡"}
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
@@ -1455,12 +1476,18 @@ export function PlaylistPanel() {
         </div>
       )}
 
-      {/* Create Playlist Modal: choice → Smart flow or Genius flow */}
+      {/* Create Playlist Modal: choice → Smart / Genius / Savant flow */}
       <Modal
         open={showCreate}
         onClose={closeCreateModal}
-        wide={createKind === "genius"}
-        width={createKind === "genius" ? "max-w-4xl" : undefined}
+        wide={createKind === "genius" || createKind === "savant"}
+        width={
+          createKind === "savant"
+            ? "max-w-5xl"
+            : createKind === "genius"
+              ? "max-w-4xl"
+              : undefined
+        }
         title={
           createKind === null
             ? "Create Playlist"
@@ -1468,7 +1495,9 @@ export function PlaylistPanel() {
               ? createStep === 1
                 ? "Create Smart Playlist"
                 : "Choose filters"
-              : "Create Genius Playlist"
+              : createKind === "genius"
+                ? "Create Genius Playlist"
+                : "Create Savant Playlist"
         }
       >
         <div className="space-y-4">
@@ -1512,6 +1541,19 @@ export function PlaylistPanel() {
                     Analyze device playback and generate smart playlists.
                   </p>
                 </button>
+                <button
+                  type="button"
+                  onClick={() => setCreateKind("savant")}
+                  className="flex-1 p-4 rounded-xl border border-border bg-muted/30 hover:bg-primary/10 hover:border-primary/30 transition-all text-left cursor-pointer"
+                >
+                  <div className="text-2xl mb-2">🎯</div>
+                  <h4 className="text-sm font-semibold text-foreground">
+                    Savant Playlist
+                  </h4>
+                  <p className="text-[11px] text-muted-foreground mt-1">
+                    AI-curated playlist tuned to your mood and key data.
+                  </p>
+                </button>
               </div>
               <div className="flex justify-end pt-2">
                 <Button onClick={closeCreateModal}>Cancel</Button>
@@ -1528,6 +1570,8 @@ export function PlaylistPanel() {
                 </div>
               )}
             </>
+          ) : createKind === "savant" ? (
+            renderSavantFlow()
           ) : createStep === 1 ? (
             <>
               <Input

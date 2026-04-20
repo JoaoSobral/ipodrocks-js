@@ -20,24 +20,14 @@ interface TrackRow {
  */
 export class SmartPlaylistGenerator {
   private db: Database.Database;
+  private readonly generators: Record<
+    string,
+    (opts: Record<string, unknown>) => PlaylistGenerationResult
+  >;
 
   constructor(db: Database.Database) {
     this.db = db;
-  }
-
-  /**
-   * Generate a smart playlist of the specified type.
-   * @param playlistType - One of the available smart playlist types.
-   * @param options - Additional parameters for playlist generation.
-   */
-  generate(
-    playlistType: string,
-    options: Record<string, unknown> = {}
-  ): PlaylistGenerationResult {
-    const generators: Record<
-      string,
-      (opts: Record<string, unknown>) => PlaylistGenerationResult
-    > = {
+    this.generators = {
       by_genre: (o) => this._generateByGenre(o),
       by_artist: (o) => this._generateByArtist(o),
       by_album: (o) => this._generateByAlbum(o),
@@ -50,27 +40,19 @@ export class SmartPlaylistGenerator {
       compilation_albums: (o) => this._generateCompilationAlbums(o),
       auto: (o) => this._generateAuto(o),
     };
+  }
 
-    const gen = generators[playlistType];
+  generate(
+    playlistType: string,
+    options: Record<string, unknown> = {}
+  ): PlaylistGenerationResult {
+    const gen = this.generators[playlistType];
     if (!gen) throw new Error(`Unknown smart playlist type: ${playlistType}`);
     return gen(options);
   }
 
-  /** Get list of available smart playlist types. */
   getAvailableTypes(): string[] {
-    return [
-      "by_genre",
-      "by_artist",
-      "by_album",
-      "by_decade",
-      "recently_added",
-      "never_played",
-      "random_mix",
-      "long_tracks",
-      "short_tracks",
-      "compilation_albums",
-      "auto",
-    ];
+    return Object.keys(this.generators);
   }
 
   // -- strategies ---------------------------------------------------------

@@ -4,9 +4,7 @@ iPodRocks is an [Electron](https://www.electronjs.org/) desktop app. This page e
 
 ## Overview
 
-```excalidraw
-@file:../public/architecture.excalidraw
-```
+<img src="/diagrams/excalidraw-ipodrocks-arch-a2f77d266de6bc8709c14078b82c275a.svg" alt="iPodRocks architecture overview" style="width:100%;border-radius:8px;" />
 
 ## Main Process
 
@@ -58,17 +56,22 @@ The **Preload script** uses Electron's `contextBridge` to expose a strict allowl
 
 ## Database schema (high-level)
 
-```
-tracks          artists         albums          genres
-playlists       playlist_tracks
-shadow_libraries  shadow_tracks   shadow_files
-devices
-app_settings
-content_hashes  (mtime + SHA-256)
-activity_log
+**Core library**
 
--- Ratings
-device_track_ratings   (per-device baseline manifest; last_seen / last_pushed)
-rating_conflicts       (unresolved divergences awaiting user resolution)
-rating_events          (full audit log of every rating change)
-```
+`tracks` · `artists` · `albums` · `genres` · `playlists` · `playlist_tracks`
+
+**Shadow libraries**
+
+`shadow_libraries` · `shadow_tracks` · `shadow_files`
+
+**System**
+
+`devices` · `app_settings` · `content_hashes` (mtime + SHA-256) · `activity_log`
+
+**Ratings**
+
+| Table | Description |
+|---|---|
+| `device_track_ratings` | Per-device baseline manifest; `last_seen` / `last_pushed` |
+| `rating_conflicts` | Unresolved divergences awaiting user resolution |
+| `rating_events` | Full audit log of every rating change |
