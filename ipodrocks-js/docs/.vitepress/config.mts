@@ -9,6 +9,12 @@ export default defineConfig({
   lastUpdated: true,
   ignoreDeadLinks: [/\.excalidraw$/],
 
+  vite: {
+    build: {
+      target: "esnext",
+    },
+  },
+
   markdown: {
     config: (md) => {
       configureDiagramsPlugin(md, {
