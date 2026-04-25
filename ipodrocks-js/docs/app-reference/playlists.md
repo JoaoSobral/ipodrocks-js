@@ -4,12 +4,14 @@ The Playlists panel has four tabs: **All**, **Smart**, **Genius**, and **Savant*
 
 ## What each tab does
 
-| Tab | Purpose |
-|-----|---------|
-| **All** | View, create, delete, and export all playlists. See tracks in any playlist. |
-| **Smart** | Create rule-based playlists (genre, artist, album) with a track limit. |
-| **Genius** | Create playlists from Rockbox playback history (Rediscovery, Forgotten Gems, Most Played, etc.). |
-| **Savant** | AI-generated playlists from mood. Requires OpenRouter API key. Uses harmonic data when available. |
+| Tab | Purpose | Syncs as |
+|-----|---------|----------|
+| **All** | View, create, delete, and export all playlists. See tracks in any playlist. | — |
+| **Smart** | Create rule-based playlists (genre, artist, album) with a track limit. | `.m3u` or tagnavi¹ |
+| **Genius** | Create playlists from Rockbox playback history (Rediscovery, Forgotten Gems, Most Played, etc.). | `.m3u` |
+| **Savant** | AI-generated playlists from mood. Requires OpenRouter API key. Uses harmonic data when available. | `.m3u` |
+
+¹ Smart playlists write as live tagnavi queries when **Rockbox smart playlists (tagnavi)** is enabled on the device profile. Genius and Savant are always `.m3u` because they are static track selections — see [why](./playlists-smart.md#why-only-smart-playlists-become-tagnavi).
 
 ## When to use which
 

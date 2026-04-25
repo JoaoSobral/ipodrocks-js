@@ -218,8 +218,22 @@ export class DevicesCore {
   deleteDevice(id: number): boolean {
     const device = this.getDeviceById(id);
     if (!device) throw new Error(`Device with ID ${id} not found`);
-    const info = this.stmtDelete.run(id);
-    return info.changes > 0;
+    const result = this.db.transaction(() => {
+      this.db.prepare(
+        "DELETE FROM sync_rules WHERE sync_config_id IN (SELECT id FROM sync_configurations WHERE device_id = ?)"
+      ).run(id);
+      this.db.prepare("DELETE FROM sync_configurations WHERE device_id = ?").run(id);
+      this.db.prepare("DELETE FROM device_synced_tracks WHERE device_id = ?").run(id);
+      this.db.prepare("UPDATE genius_playlist_configs SET device_id = NULL WHERE device_id = ?").run(id);
+      this.db.prepare("UPDATE tracks SET rating_source_device_id = NULL WHERE rating_source_device_id = ?").run(id);
+      this.db.prepare("UPDATE rating_events SET device_id = NULL WHERE device_id = ?").run(id);
+      this.db.prepare("UPDATE playback_logs SET device_db_id = NULL WHERE device_db_id = ?").run(id);
+      this.db.prepare(
+        "DELETE FROM app_settings WHERE key = 'default_device_id' AND value = ?"
+      ).run(String(id));
+      return this.stmtDelete.run(id);
+    })();
+    return result.changes > 0;
   }
 
   getDefaultDeviceId(): number | null {

@@ -1064,20 +1064,38 @@ export function registerIpcHandlers(): void {
         const podcastSet = new Set(sel.podcasts ?? []);
         const audiobookSet = new Set(sel.audiobooks ?? []);
 
-        const matchMusic = (t: Record<string, unknown>) => {
+        // Collect track paths from selected playlists
+        const playlistTrackPaths = new Set<string>();
+        if (sel.playlists?.length) {
+          const playlistCore = getPlaylistCore();
+          const selectedPlaylistNames = new Set(sel.playlists);
+          const allPlaylists = playlistCore.getPlaylists();
+          for (const pl of allPlaylists) {
+            if (selectedPlaylistNames.has(pl.name)) {
+              for (const track of playlistCore.getPlaylistTracks(pl.id)) {
+                playlistTrackPaths.add(track.path);
+              }
+            }
+          }
+        }
+
+        const matchMusic = (t: Record<string, unknown>, p: string) => {
+          if (playlistTrackPaths.has(p)) return true;
           const album = (String(t.album ?? "Unknown Album")).trim();
           const artist = (String(t.artist ?? "Unknown Artist")).trim();
           const genre = (String(t.genre ?? "Unknown Genre")).trim();
           const albumLabel = `${album} — ${artist}`;
           return albumSet.has(albumLabel) || artistSet.has(artist) || genreSet.has(genre);
         };
-        const matchPodcast = (t: Record<string, unknown>) => {
+        const matchPodcast = (t: Record<string, unknown>, p: string) => {
+          if (playlistTrackPaths.has(p)) return true;
           const title = (String(t.title ?? t.filename ?? "Untitled")).trim();
           const artist = (String(t.artist ?? "")).trim();
           const label = artist ? `${title} — ${artist}` : title;
           return podcastSet.has(label) || podcastSet.has(title);
         };
-        const matchAudiobook = (t: Record<string, unknown>) => {
+        const matchAudiobook = (t: Record<string, unknown>, p: string) => {
+          if (playlistTrackPaths.has(p)) return true;
           const title = (String(t.title ?? t.filename ?? "Untitled")).trim();
           const artist = (String(t.artist ?? "")).trim();
           const label = artist ? `${title} — ${artist}` : title;
@@ -1085,13 +1103,13 @@ export function registerIpcHandlers(): void {
         };
 
         for (const [p, t] of Object.entries(musicMap)) {
-          if (matchMusic(t)) musicLibraryTracks[p] = t;
+          if (matchMusic(t, p)) musicLibraryTracks[p] = t;
         }
         for (const [p, t] of Object.entries(podcastMap)) {
-          if (matchPodcast(t)) podcastLibraryTracks[p] = t;
+          if (matchPodcast(t, p)) podcastLibraryTracks[p] = t;
         }
         for (const [p, t] of Object.entries(audiobookMap)) {
-          if (matchAudiobook(t)) audiobookLibraryTracks[p] = t;
+          if (matchAudiobook(t, p)) audiobookLibraryTracks[p] = t;
         }
       } else {
         const includeMusic = opts.syncType === "full" ? opts.includeMusic === true : true;

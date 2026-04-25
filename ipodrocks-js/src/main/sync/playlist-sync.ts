@@ -44,12 +44,8 @@ export async function writePlaylistsToDevice(
     if (pl.typeName === "smart" && useTagnavi) {
       const rules = core.getSmartRules(pl.id);
       if (rules.length > 0) smartForTagnavi.push({ playlist: pl, rules });
-      progressCallback?.({
-        event: "copy",
-        path: `<tagnavi> ${pl.name}`,
-        status: "copied",
-        contentType: "playlist",
-      });
+      // Progress for tagnavi playlists is deferred until after we know
+      // whether the config file actually needs to be rewritten.
       continue;
     }
 
@@ -78,7 +74,13 @@ export async function writePlaylistsToDevice(
   }
 
   const rockboxDir = path.join(mountPath, ".rockbox");
-  const configPath = path.join(rockboxDir, "tagnavi_custom.config");
+  const configPath = path.join(rockboxDir, "tagnavi_user.config");
+  const legacyCustomPath = path.join(rockboxDir, "tagnavi_custom.config");
+
+  // Migration: tagnavi_custom.config was used by older iPodRocks versions but
+  // the firmware's %include of it fails silently on some builds. We now own
+  // tagnavi_user.config (which fully overrides tagnavi.config) instead.
+  await fsp.rm(legacyCustomPath, { force: true });
 
   if (useTagnavi) {
     if (smartForTagnavi.length === 0) {
@@ -97,6 +99,16 @@ export async function writePlaylistsToDevice(
         await fsp.mkdir(rockboxDir, { recursive: true });
         await fsp.writeFile(configPath, content, "utf-8");
         tagnaviCount = smartForTagnavi.length;
+      }
+      // Now that we know whether anything changed, emit one progress event per tagnavi playlist.
+      const tagnaviStatus = needsWrite ? "copied" : "skipped";
+      for (const entry of smartForTagnavi) {
+        progressCallback?.({
+          event: "copy",
+          path: `<tagnavi> ${entry.playlist.name}`,
+          status: tagnaviStatus,
+          contentType: "playlist",
+        });
       }
     }
   } else {

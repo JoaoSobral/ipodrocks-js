@@ -40,6 +40,8 @@ function insertCustomPlaylist(db: import("better-sqlite3").Database, name: strin
 
 const M3U_OPTS = { musicFolder: "Music", codecName: "DIRECT COPY" };
 const tagnaviPath = (mountPath: string) =>
+  path.join(mountPath, ".rockbox", "tagnavi_user.config");
+const legacyCustomPath = (mountPath: string) =>
   path.join(mountPath, ".rockbox", "tagnavi_custom.config");
 
 describe("writePlaylistsToDevice (rockbox tagnavi integration)", () => {
@@ -193,6 +195,31 @@ describe("writePlaylistsToDevice (rockbox tagnavi integration)", () => {
     expect(fs.statSync(tagnaviPath(mountPath)).mtimeMs).toBe(mtime1);
   });
 
+  it.skipIf(!canRunDbTests)("re-sync reports tagnavi playlists as skipped when config unchanged", async () => {
+    core.createSmartPlaylist("Rock Hits", [{ ruleType: "genre", targetId: null, targetLabel: "Rock" }]);
+    const playlists = core.getPlaylists();
+
+    // First sync — writes the config
+    await writePlaylistsToDevice({
+      playlistFolder, mountPath, playlistsToWrite: playlists,
+      core, m3uOpts: M3U_OPTS, useTagnavi: true,
+    });
+
+    // Second sync — config unchanged, should report "skipped"
+    const events: Array<{ status: string; path: string }> = [];
+    await writePlaylistsToDevice({
+      playlistFolder, mountPath, playlistsToWrite: playlists,
+      core, m3uOpts: M3U_OPTS, useTagnavi: true,
+      progressCallback: (e) => {
+        if (e.event === "copy") events.push({ status: String(e.status ?? ""), path: String(e.path) });
+      },
+    });
+
+    const tagnaviEvent = events.find((e) => e.path.startsWith("<tagnavi>"));
+    expect(tagnaviEvent).toBeDefined();
+    expect(tagnaviEvent?.status).toBe("skipped");
+  });
+
   it.skipIf(!canRunDbTests)("playlist with special chars produces valid tagnavi entry", async () => {
     core.createSmartPlaylist('Best "Rock" /// hits!', [{ ruleType: "genre", targetId: null, targetLabel: "Rock" }]);
     const playlists = core.getPlaylists();
@@ -211,7 +238,28 @@ describe("writePlaylistsToDevice (rockbox tagnavi integration)", () => {
     expect(config).toContain("'Rock'");
     const entryLine = config.split("\n").find((l) => l.includes("-> title"));
     expect(entryLine).toBeDefined();
-    expect(entryLine).toMatch(/^".*" -> title \? .+ = "fmt_ipr_title"$/);
+    expect(entryLine).toMatch(/^".*" -> title = "fmt_ipr_title" \? .+$/);
+  });
+
+  it.skipIf(!canRunDbTests)("legacy tagnavi_custom.config is removed during sync", async () => {
+    core.createSmartPlaylist("Rock Hits", [{ ruleType: "genre", targetId: null, targetLabel: "Rock" }]);
+    const playlists = core.getPlaylists();
+
+    // Simulate device with leftover file from older iPodRocks versions.
+    await fsp.mkdir(path.join(mountPath, ".rockbox"), { recursive: true });
+    await fsp.writeFile(legacyCustomPath(mountPath), "stale content from old version", "utf-8");
+
+    await writePlaylistsToDevice({
+      playlistFolder,
+      mountPath,
+      playlistsToWrite: playlists,
+      core,
+      m3uOpts: M3U_OPTS,
+      useTagnavi: true,
+    });
+
+    expect(fs.existsSync(legacyCustomPath(mountPath))).toBe(false);
+    expect(fs.existsSync(tagnaviPath(mountPath))).toBe(true);
   });
 
   it.skipIf(!canRunDbTests)("returns correct playlistsWritten and tagnaviCount", async () => {
