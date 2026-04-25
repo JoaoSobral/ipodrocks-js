@@ -20,6 +20,7 @@ export interface CandidateTrack {
   playCount: number;
   avgCompletion: number;
   lastPlayed: string | null;
+  rating: number | null;
 }
 
 export interface SavantContext {
@@ -140,7 +141,7 @@ async function assembleSavantContext(
 
   const baseQuery = `
     SELECT t.id, t.title, a.name as artist, al.title as album, g.name as genre,
-           t.bpm, t.camelot,
+           t.bpm, t.camelot, t.rating,
            COALESCE(ps.total_plays, 0) as play_count,
            COALESCE(ps.avg_completion_rate, 0) as avg_completion,
            ps.last_played_at
@@ -160,6 +161,7 @@ async function assembleSavantContext(
     genre: string | null;
     bpm: number | null;
     camelot: string | null;
+    rating: number | null;
     play_count: number;
     avg_completion: number;
     last_played_at: string | null;
@@ -174,6 +176,7 @@ async function assembleSavantContext(
     genre: r.genre ?? null,
     bpm: r.bpm,
     camelot: r.camelot,
+    rating: r.rating ?? null,
     playCount: r.play_count,
     avgCompletion: r.avg_completion,
     lastPlayed: r.last_played_at,
@@ -294,6 +297,7 @@ ${JSON.stringify(
     camelot: t.camelot,
     plays: t.playCount,
     completion: t.avgCompletion,
+    rating: t.rating,
   })),
   null,
   2
@@ -301,6 +305,7 @@ ${JSON.stringify(
 
 Select ${ctx.intent.targetCount} tracks that best fit the mood and intent.
 Prioritize tracks with higher completion rates when mood is relaxed/focused.
+Give extra weight to tracks with a rating (0–10 Rockbox scale; 8+ means 4+ stars) — these are tracks the user explicitly marked as favorites.
 For energetic moods, consider BPM if available.
 When tracks have camelot key data, favor clusters of harmonically compatible
 tracks (adjacent Camelot numbers or same number A/B swap) for smooth mixing.

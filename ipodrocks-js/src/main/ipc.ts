@@ -81,6 +81,38 @@ function validateFolderPath(rawPath: string): { path: string } | { error: string
   return { path: realPath };
 }
 
+/**
+ * Check whether a device mount path is actually online (volume is mounted).
+ *
+ * A device is considered online only when its mount path is a real mount
+ * point — i.e., a separate filesystem. We verify this by comparing the `dev`
+ * (filesystem device id) of the mount path against its parent directory:
+ * a real mounted volume always has a different `dev` than its parent, while
+ * a regular folder on the main filesystem (or an orphan directory left behind
+ * after ejection) shares the parent's `dev`.
+ *
+ * `fs.existsSync` alone is not reliable because:
+ *   - macOS/Linux can leave an empty orphan directory after ejection
+ *   - a local folder "test device" always exists but is not a connected device
+ *
+ * On Windows (no POSIX dev ids in a meaningful way), we fall back to checking
+ * that the path exists and is a directory; Windows drive letters are naturally
+ * isolated so this is sufficient there.
+ */
+function isDeviceMountPathOnline(mountPath: string): boolean {
+  if (!mountPath) return false;
+  try {
+    const resolved = path.resolve(mountPath);
+    const pathStat = fs.statSync(resolved);
+    if (!pathStat.isDirectory()) return false;
+    if (process.platform === "win32") return true;
+    const parentStat = fs.statSync(path.dirname(resolved));
+    return pathStat.dev !== parentStat.dev;
+  } catch {
+    return false;
+  }
+}
+
 import {
   AddDeviceConfig,
   GeniusGenerateOptions,
@@ -112,6 +144,7 @@ import {
   removeExtraTracks,
 } from "./sync/sync-core";
 import { compareLibraries } from "./sync/name-size-sync";
+import { writePlaylistsToDevice } from "./sync/playlist-sync";
 import { isMpcencAvailable } from "./utils/mpcenc";
 import {
   getMpcRemindDisabled,
@@ -300,6 +333,10 @@ export function registerIpcHandlers(): void {
     safe("genius:analyze", async (_event, deviceId: number) => {
       const device = getDevicesCore().getDeviceById(deviceId);
       if (!device) return { error: `Device ${deviceId} not found` };
+
+      if (!isDeviceMountPathOnline(device.mountPath)) {
+        return { offline: true, error: "Device not connected" };
+      }
 
       const allEvents = parseRockboxPlaybackLog(device.mountPath);
       const db = getLibrary().getConnection();
@@ -711,10 +748,23 @@ export function registerIpcHandlers(): void {
   );
 
   ipcMain.handle(
+    "device:ping",
+    safe("device:ping", async (_event, deviceId: number) => {
+      const device = getDevicesCore().getDeviceById(deviceId);
+      if (!device) return { online: false };
+      return { online: isDeviceMountPathOnline(device.mountPath) };
+    })
+  );
+
+  ipcMain.handle(
     "device:check",
     safe("device:check", async (_event, deviceId: number) => {
       const device = getDevicesCore().getDeviceById(deviceId);
       if (!device) return { error: `Device ${deviceId} not found` };
+
+      if (!isDeviceMountPathOnline(device.mountPath)) {
+        return { offline: true, deviceId, name: device.name };
+      }
 
       const lib = getLibrary();
       if (!device.profile.skipPlaybackLog) {
@@ -957,6 +1007,10 @@ export function registerIpcHandlers(): void {
     safe("device:readPlaybackLog", async (_event, deviceId: number) => {
       const device = getDevicesCore().getDeviceById(deviceId);
       if (!device) return { error: `Device ${deviceId} not found` };
+
+      if (!isDeviceMountPathOnline(device.mountPath)) {
+        return { offline: true, error: "Device not connected", ingested: 0, skipped: 0 };
+      }
 
       const lib = getLibrary();
       const ingest = readAndIngestPlaybackLog(
@@ -1304,6 +1358,7 @@ export function registerIpcHandlers(): void {
           ? (opts.selections?.playlists?.length ?? 0) > 0
           : opts.includePlaylists !== false);
 
+      const useTagnavi = device.profile.rockboxSmartPlaylists === true;
       let playlistsWritten = 0;
       if (shouldWritePlaylists) {
         const playlistFolder = device.getContentPath("playlist");
@@ -1321,48 +1376,20 @@ export function registerIpcHandlers(): void {
               codecName,
               libraryFolderPaths,
             };
-            await fsp.mkdir(playlistFolder, { recursive: true });
-            const normalizeM3uForCompare = (s: string) =>
-              s.replace(/# Generated: .+/g, "# Generated: <date>");
             syncOpts.progressCallback?.({
               event: "total_add",
               path: String(playlistsToWrite.length),
             });
-            for (const pl of playlistsToWrite) {
-              const content = core.buildM3uContentForDevice(pl.id, m3uOpts);
-              const safeName = pl.name.replace(/[/\\?*:"<>|]/g, "_").trim() || "Playlist";
-              const outPath = path.join(playlistFolder, `${safeName}.m3u`);
-              let existingRaw: string | null = null;
-              try {
-                existingRaw = await fsp.readFile(outPath, "utf-8");
-              } catch {
-                // file doesn't exist yet
-              }
-              const needsWrite =
-                existingRaw === null ||
-                normalizeM3uForCompare(existingRaw) !== normalizeM3uForCompare(content);
-              if (needsWrite) {
-                await fsp.writeFile(outPath, content, "utf-8");
-                playlistsWritten += 1;
-              }
-              syncOpts.progressCallback?.({
-                event: "copy",
-                path: outPath,
-                status: needsWrite ? "copied" : "skipped",
-                contentType: "playlist",
-              });
-            }
-            if (playlistsWritten > 0) {
-              syncOpts.progressCallback?.({
-                event: "log",
-                message: `Written ${playlistsWritten} playlist(s) to device.`,
-              });
-            } else if (playlistsToWrite.length > 0) {
-              syncOpts.progressCallback?.({
-                event: "log",
-                message: "Playlist(s) already up to date.",
-              });
-            }
+            const writeResult = await writePlaylistsToDevice({
+              playlistFolder,
+              mountPath: device.profile.mountPath,
+              playlistsToWrite,
+              core,
+              m3uOpts,
+              useTagnavi,
+              progressCallback: syncOpts.progressCallback,
+            });
+            playlistsWritten = writeResult.playlistsWritten;
           } catch (err) {
             console.error("[ipc] Sync playlists to device failed:", err);
           }
@@ -1377,9 +1404,11 @@ export function registerIpcHandlers(): void {
           const core = getPlaylistCore();
           const libraryPlaylists = core.getPlaylists();
           const expectedStems = new Set(
-            libraryPlaylists.map((pl) =>
-              (pl.name.replace(/[/\\?*:"<>|]/g, "_").trim() || "Playlist").toLowerCase()
-            )
+            libraryPlaylists
+              .filter((pl) => !(useTagnavi && pl.typeName === "smart"))
+              .map((pl) =>
+                (pl.name.replace(/[/\\?*:"<>|]/g, "_").trim() || "Playlist").toLowerCase()
+              )
           );
           const orphanPaths: string[] = [];
           const walkPlaylists = (dir: string): void => {

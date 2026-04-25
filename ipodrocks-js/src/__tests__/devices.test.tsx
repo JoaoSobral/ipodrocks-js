@@ -18,6 +18,7 @@ vi.mock("../renderer/ipc/api", () => ({
   isMpcencAvailable: vi.fn().mockResolvedValue(false),
   getMpcRemindDisabled: vi.fn().mockResolvedValue(false),
   setMpcRemindDisabled: vi.fn().mockResolvedValue(undefined),
+  pingDevice: vi.fn().mockResolvedValue({ online: false }),
 }));
 
 describe("DevicePanel", () => {

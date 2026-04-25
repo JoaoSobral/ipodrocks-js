@@ -19,7 +19,7 @@ describe("WelcomePanel", () => {
 
   it("renders Sync feature", () => {
     render(<WelcomePanel />);
-    expect(screen.getByRole("heading", { name: "Sync" })).toBeInTheDocument();
+    expect(screen.getByText("Full or custom sync by album, artist, genre, or playlist.")).toBeInTheDocument();
   });
 
   it("renders Get started section", () => {

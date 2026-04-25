@@ -74,6 +74,7 @@ export interface TrackFilter {
 export interface CheckResult {
   deviceId: number;
   name: string;
+  offline?: boolean;
   music: { fileCount: number; totalGb: number };
   podcasts: { fileCount: number; totalGb: number };
   audiobooks?: { fileCount: number; totalGb: number };
@@ -282,11 +283,16 @@ export async function checkDevice(deviceId: number): Promise<CheckResult> {
   return window.api.invoke("device:check", deviceId) as Promise<CheckResult>;
 }
 
+export async function pingDevice(deviceId: number): Promise<{ online: boolean }> {
+  return window.api.invoke("device:ping", deviceId) as Promise<{ online: boolean }>;
+}
+
 export interface ReadPlaybackLogResult {
   ingested: number;
   skipped: number;
   summary: AnalysisSummary;
   error?: string;
+  offline?: boolean;
 }
 
 export async function readDevicePlaybackLog(

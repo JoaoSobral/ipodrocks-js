@@ -378,6 +378,13 @@ export class AppDatabase {
           )
           .run();
       }
+      if (!names.has("rockbox_smart_playlists")) {
+        this.db
+          .prepare(
+            "ALTER TABLE devices ADD COLUMN rockbox_smart_playlists INTEGER NOT NULL DEFAULT 0"
+          )
+          .run();
+      }
     } catch (err) {
       console.error("[db] migration failed (devices):", err);
     }

@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from "react";
 
 import { Card } from "../common/Card";
 import { Button } from "../common/Button";
+import { InfoTooltip } from "../common/InfoTooltip";
 import { Input } from "../common/Input";
 import { Select } from "../common/Select";
 import { Modal } from "../common/Modal";
@@ -345,6 +346,11 @@ export function PlaylistPanel() {
     setGeniusError(null);
     try {
       const res = await readDevicePlaybackLog(geniusDeviceId);
+      if (res.offline) {
+        setGeniusError("Device not connected. Reconnect the device and try again.");
+        setGeniusStep("idle");
+        return;
+      }
       if (res.error) {
         setGeniusError(res.error);
         setGeniusStep("idle");
@@ -875,7 +881,10 @@ export function PlaylistPanel() {
 
               <div>
                 <Label>
-                  Max Tracks: {geniusMaxTracks}
+                  <span className="inline-flex items-center gap-1">
+                    Max Tracks: {geniusMaxTracks}
+                    <InfoTooltip text="Maximum number of tracks to include in the generated playlist." />
+                  </span>
                 </Label>
                 <input
                   type="range"
@@ -897,7 +906,10 @@ export function PlaylistPanel() {
               {showMinPlays && (
                 <div>
                   <Label>
-                    Min Plays: {geniusMinPlays}
+                    <span className="inline-flex items-center gap-1">
+                      Min Plays: {geniusMinPlays}
+                      <InfoTooltip text="Only include tracks that have been played at least this many times on your device." />
+                    </span>
                   </Label>
                   <input
                     type="range"
@@ -1582,6 +1594,7 @@ export function PlaylistPanel() {
               />
               <Select
                 label="Strategy"
+                tooltip="How tracks are selected: By Genre pulls all tracks from chosen genres; By Artist from chosen artists; By Album from specific albums."
                 value={strategy}
                 onChange={(v) => setStrategy(v)}
                 options={[

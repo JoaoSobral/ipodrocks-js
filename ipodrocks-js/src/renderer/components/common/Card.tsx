@@ -3,8 +3,8 @@ import type { ReactNode } from "react";
 interface CardProps {
   children: ReactNode;
   className?: string;
-  title?: string;
-  subtitle?: string;
+  title?: ReactNode;
+  subtitle?: ReactNode;
   action?: ReactNode;
 }
 

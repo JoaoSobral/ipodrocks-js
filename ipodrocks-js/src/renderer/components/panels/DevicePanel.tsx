@@ -3,6 +3,7 @@ import { useEffect, useState, useMemo, useRef, useCallback } from "react";
 import { Card } from "../common/Card";
 import { Button } from "../common/Button";
 import { Input } from "../common/Input";
+import { InfoTooltip } from "../common/InfoTooltip";
 import { Label } from "../common/Label";
 import { Modal } from "../common/Modal";
 import { ProgressBar } from "../common/ProgressBar";
@@ -15,6 +16,7 @@ import {
   updateDevice,
   removeDevice,
   checkDevice,
+  pingDevice,
   pickFolder,
   getDeviceModels,
   getCodecConfigs,
@@ -67,6 +69,7 @@ export function DevicePanel() {
   const [editingDeviceId, setEditingDeviceId] = useState<number | null>(null);
   const [checkResults, setCheckResults] = useState<Record<number, CheckResult>>({});
   const [checking, setChecking] = useState<Set<number>>(new Set());
+  const [onlineStatus, setOnlineStatus] = useState<Record<number, boolean | null>>({});
 
   // Form state
   const [name, setName] = useState("");
@@ -76,6 +79,7 @@ export function DevicePanel() {
   const [description, setDescription] = useState("");
   const [isDefault, setIsDefault] = useState(false);
   const [playbackLogEnabled, setPlaybackLogEnabled] = useState(true);
+  const [rockboxSmartPlaylists, setRockboxSmartPlaylists] = useState(false);
   const [musicFolder, setMusicFolder] = useState("Music");
   const [podcastFolder, setPodcastFolder] = useState("Podcasts");
   const [audiobookFolder, setAudiobookFolder] = useState("Audiobooks");
@@ -105,6 +109,17 @@ export function DevicePanel() {
   }, [fetchDevices]);
 
   useEffect(() => {
+    const list = Array.isArray(devices) ? devices : [];
+    if (list.length === 0) return;
+    for (const d of list) {
+      if (d?.id == null) continue;
+      pingDevice(d.id)
+        .then((r) => setOnlineStatus((prev) => ({ ...prev, [d.id]: r.online })))
+        .catch(() => setOnlineStatus((prev) => ({ ...prev, [d.id]: false })));
+    }
+  }, [devices]);
+
+  useEffect(() => {
     if (mpcModalShownRef.current) return;
     const configs = Array.isArray(codecConfigs) ? codecConfigs : [];
     const hasMpc = configs.some((c) => (c?.codec_name ?? "").toUpperCase() === "MPC");
@@ -122,6 +137,7 @@ export function DevicePanel() {
     setDescription("");
     setIsDefault(false);
     setPlaybackLogEnabled(true); // true = read playback.log (default)
+    setRockboxSmartPlaylists(false);
     setMusicFolder("Music");
     setPodcastFolder("Podcasts");
     setAudiobookFolder("Audiobooks");
@@ -164,6 +180,7 @@ export function DevicePanel() {
     }
 
     setPlaybackLogEnabled(!(device.skipPlaybackLog ?? false));
+    setRockboxSmartPlaylists(device.rockboxSmartPlaylists ?? false);
 
     setShowDeviceModal(true);
   },
@@ -214,6 +231,7 @@ export function DevicePanel() {
       sourceLibraryType: resolvedSourceType,
       shadowLibraryId: resolvedShadowId,
       skipPlaybackLog: !playbackLogEnabled,
+      rockboxSmartPlaylists,
     };
 
     if (editingDeviceId !== null) {
@@ -246,6 +264,7 @@ export function DevicePanel() {
     try {
       const result = await checkDevice(id);
       setCheckResults((prev) => ({ ...prev, [id]: result }));
+      setOnlineStatus((prev) => ({ ...prev, [id]: !result.offline }));
     } finally {
       setChecking((prev) => {
         const next = new Set(prev);
@@ -307,11 +326,20 @@ export function DevicePanel() {
           {deviceList.map((d, idx) => {
             const cr = checkResults[d?.id];
             const isDefaultDev = defaultDeviceId === d?.id;
+            const status = d?.id != null ? onlineStatus[d.id] : null;
             return (
               <Card key={d?.id ?? `device-${idx}`}>
                 <div className="flex items-start gap-3 mb-4">
-                  <div className="w-10 h-10 rounded-xl bg-success/10 flex items-center justify-center text-lg text-success">
+                  <div className="relative w-10 h-10 rounded-xl bg-success/10 flex items-center justify-center text-lg text-success flex-shrink-0">
                     ⊞
+                    {status !== null && status !== undefined && (
+                      <span
+                        className={`absolute top-0 left-0 w-2.5 h-2.5 rounded-full border-2 border-card ${
+                          status ? "bg-green-500" : "bg-red-500"
+                        }`}
+                        title={status ? "Device connected" : "Device not connected"}
+                      />
+                    )}
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
@@ -364,7 +392,16 @@ export function DevicePanel() {
                   </div>
                 </div>
 
-                {cr && (
+                {cr?.offline && (
+                  <div className="mb-4 p-3 rounded-lg bg-destructive/10 border border-destructive/30">
+                    <p className="text-xs text-destructive font-medium">Device not connected</p>
+                    <p className="text-[10px] text-muted-foreground mt-0.5">
+                      Mount path is unavailable. Reconnect the device and try again.
+                    </p>
+                  </div>
+                )}
+
+                {cr && !cr.offline && (
                   <div className="mb-4 p-3 rounded-lg bg-muted/30 space-y-2">
                     {cr.disk != null && (
                       <>
@@ -546,7 +583,12 @@ export function DevicePanel() {
 
           {/* Mount Path */}
           <div>
-            <Label>Mount Path</Label>
+            <Label>
+              <span className="inline-flex items-center gap-1">
+                Mount Path
+                <InfoTooltip text="The root directory of the device (e.g. /Volumes/IPOD or /mnt/ipod), not a subfolder inside it. iPodRocks writes directly into the device's Music, Podcasts, and Playlists folders from this root." />
+              </span>
+            </Label>
             <div className="flex gap-2">
               <input
                 className="flex-1 rounded-lg bg-input border border-border px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/25 transition-colors"
@@ -591,6 +633,7 @@ export function DevicePanel() {
             <div>
               <Select
                 label="Source Library"
+                tooltip="Which library files are copied from. Use a Shadow Library to sync pre-converted files and skip real-time transcoding."
                 options={[
                   { value: "primary", label: "Primary Library" },
                   ...(Array.isArray(shadowLibs) ? shadowLibs : [])
@@ -676,7 +719,10 @@ export function DevicePanel() {
                 checked={isDefault}
                 onChange={(e) => setIsDefault(e.target.checked)}
               />
-              <span className="text-sm text-foreground">Set as Default Device</span>
+              <span className="text-sm text-foreground flex items-center gap-1">
+                Set as Default Device
+                <InfoTooltip text="This device will be pre-selected in the Sync panel." />
+              </span>
             </label>
             <label className="flex items-center gap-2.5 cursor-pointer">
               <input
@@ -685,7 +731,22 @@ export function DevicePanel() {
                 checked={!playbackLogEnabled}
                 onChange={(e) => setPlaybackLogEnabled(!e.target.checked)}
               />
-              <span className="text-sm text-foreground">Do not read playback.log data</span>
+              <span className="text-sm text-foreground flex items-center gap-1">
+                Do not read playback.log data
+                <InfoTooltip text="Rockbox records your play history in a file called playback.log. Disable this if you don't want iPodRocks to import that history for Genius playlists." />
+              </span>
+            </label>
+            <label className="flex items-center gap-2.5 cursor-pointer">
+              <input
+                type="checkbox"
+                className={checkboxClass}
+                checked={rockboxSmartPlaylists}
+                onChange={(e) => setRockboxSmartPlaylists(e.target.checked)}
+              />
+              <span className="text-sm text-foreground flex items-center gap-1">
+                Rockbox smart playlists (tagnavi)
+                <InfoTooltip text="When enabled, smart playlists are written to .rockbox/tagnavi_custom.config as live, auto-updating tagtree views instead of frozen .m3u snapshots. Requires Rockbox firmware on the device. Other playlist kinds still write .m3u." />
+              </span>
             </label>
           </div>
 

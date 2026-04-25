@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Card } from "../common/Card";
+import { InfoTooltip } from "../common/InfoTooltip";
 import { ListRow } from "../common/ListRow";
 import { useLibraryStore } from "../../stores/library-store";
 import { useDeviceStore } from "../../stores/device-store";
@@ -98,7 +99,7 @@ export function DashboardPanel() {
   }, [fetchStats, fetchFolders, fetchDevices]);
 
   return (
-    <div className="panel-content grid grid-cols-2 gap-5">
+    <div className="panel-content grid grid-cols-2 gap-5 h-full grid-rows-[auto_auto_1fr]">
       {/* Library Stats */}
       <Card title="Library" subtitle="Collection overview">
         {!libraryReady ? (
@@ -203,7 +204,11 @@ export function DashboardPanel() {
       </Card>
 
       {/* Shadow Libraries */}
-      <Card title="Shadow Libraries" subtitle="Pre-transcoded library mirrors" className="col-span-2">
+      <Card
+        title={<span className="inline-flex items-center gap-1.5">Shadow Libraries <InfoTooltip text="A pre-transcoded copy of your library at a target codec and bitrate. Devices can sync directly from a shadow library instead of converting files in real time." /></span>}
+        subtitle="Pre-transcoded library mirrors"
+        className="col-span-2"
+      >
         {shadowList.length === 0 ? (
           <p className="text-xs text-muted-foreground">
             No shadow libraries. Create one from the Library panel.
@@ -238,15 +243,15 @@ export function DashboardPanel() {
       </Card>
 
       {/* Recent Activity */}
-      <Card title="Recent Activity" subtitle="Last 100 operations" className="col-span-2">
+      <Card title="Recent Activity" subtitle="Last 100 operations" className="col-span-2 flex flex-col min-h-0">
         {activity.length === 0 ? (
           <div className="flex items-center justify-center py-8">
             <p className="text-xs text-muted-foreground">No recent activity</p>
           </div>
         ) : (
-          <div className="max-h-64 overflow-y-auto space-y-1.5">
+          <div className="flex-1 min-h-0 overflow-y-auto space-y-1.5">
             {activity.map((entry) => (
-              <ListRow key={entry.id} className="justify-between py-2 px-2.5">
+              <ListRow key={entry.id} className="justify-between py-1.5 px-2.5 text-xs">
                 <div className="flex items-center gap-2 min-w-0">
                   <span className="text-primary shrink-0">
                     {OPERATION_LABELS[entry.operation] ?? entry.operation}
@@ -257,7 +262,7 @@ export function DashboardPanel() {
                     </span>
                   )}
                 </div>
-                <span className="text-[10px] text-muted-foreground shrink-0">
+                <span className="text-muted-foreground shrink-0">
                   {formatActivityTime(entry.created_at)}
                 </span>
               </ListRow>
