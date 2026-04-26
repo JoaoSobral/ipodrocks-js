@@ -375,7 +375,7 @@ export function registerIpcHandlers(): void {
       const device = getDevicesCore().getDeviceById(deviceId);
       if (!device) return { error: `Device ${deviceId} not found` };
 
-      if (!isDeviceMountPathOnline(device.mountPath)) {
+      if (!device.profile.devMode && !isDeviceMountPathOnline(device.mountPath)) {
         return { offline: true, error: "Device not connected" };
       }
 
@@ -793,7 +793,7 @@ export function registerIpcHandlers(): void {
     safe("device:ping", async (_event, deviceId: number) => {
       const device = getDevicesCore().getDeviceById(deviceId);
       if (!device) return { online: false };
-      return { online: isDeviceMountPathOnline(device.mountPath) };
+      return { online: device.profile.devMode || isDeviceMountPathOnline(device.mountPath) };
     })
   );
 
@@ -803,7 +803,7 @@ export function registerIpcHandlers(): void {
       const device = getDevicesCore().getDeviceById(deviceId);
       if (!device) return { error: `Device ${deviceId} not found` };
 
-      if (!isDeviceMountPathOnline(device.mountPath)) {
+      if (!device.profile.devMode && !isDeviceMountPathOnline(device.mountPath)) {
         return { offline: true, deviceId, name: device.name };
       }
 
@@ -1049,7 +1049,7 @@ export function registerIpcHandlers(): void {
       const device = getDevicesCore().getDeviceById(deviceId);
       if (!device) return { error: `Device ${deviceId} not found` };
 
-      if (!isDeviceMountPathOnline(device.mountPath)) {
+      if (!device.profile.devMode && !isDeviceMountPathOnline(device.mountPath)) {
         return { offline: true, error: "Device not connected", ingested: 0, skipped: 0 };
       }
 

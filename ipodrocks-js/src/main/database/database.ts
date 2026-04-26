@@ -385,6 +385,13 @@ export class AppDatabase {
           )
           .run();
       }
+      if (!names.has("dev_mode")) {
+        this.db
+          .prepare(
+            "ALTER TABLE devices ADD COLUMN dev_mode INTEGER NOT NULL DEFAULT 0"
+          )
+          .run();
+      }
     } catch (err) {
       console.error("[db] migration failed (devices):", err);
     }

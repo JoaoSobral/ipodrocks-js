@@ -127,20 +127,14 @@ export function WelcomePanel() {
 
       {/* Getting started */}
       <Card title="Get started" subtitle="Use the sidebar to navigate">
-        <p className="text-sm leading-relaxed text-muted-foreground">
-          Use <strong className="text-foreground">Dashboard</strong> for an
-          overview, <strong className="text-foreground">Library</strong> to add
-          folders and scan, <strong className="text-foreground">Devices</strong>{" "}
-          to add and configure each Rockbox (or mountable) device,{" "}
-          <strong className="text-foreground">Playlists</strong> to create
-          smart, genius, or Savant playlists, and{" "}
-          <strong className="text-foreground">Sync</strong> to copy music and
-          podcasts to the device. Open <strong className="text-foreground">
-            Settings
-          </strong>{" "}
-          (gear icon) to add your OpenRouter API key for Savant and Assistant
-          features.
-        </p>
+        <ul className="text-sm text-muted-foreground space-y-1.5 list-none">
+          <li><strong className="text-foreground">Dashboard</strong> — overview of your library and devices</li>
+          <li><strong className="text-foreground">Library</strong> — add folders and scan your music</li>
+          <li><strong className="text-foreground">Playlists</strong> — create smart, Genius, or Savant playlists</li>
+          <li><strong className="text-foreground">Devices</strong> — add and configure each Rockbox or mountable device</li>
+          <li><strong className="text-foreground">Sync</strong> — copy music and podcasts to the device</li>
+          <li><strong className="text-foreground">Settings</strong> (gear icon) — add your OpenRouter API key for Savant and Assistant</li>
+        </ul>
       </Card>
 
       {/* Features — compact 2-column list */}
