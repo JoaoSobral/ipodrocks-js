@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:;" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <title>iPodRocks</title>
+  <script type="module" crossorigin src="/assets/index-DTtA21rY.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/index-Ai5y0u1R.css">
+</head>
+<body class="bg-background text-foreground font-sans antialiased">
+  <script>
+    try {
+      if (localStorage.getItem("ipodrocks-theme") === "light") {
+        document.documentElement.classList.remove("dark");
+      } else {
+        document.documentElement.classList.add("dark");
+      }
+    } catch (_) {
+      document.documentElement.classList.add("dark");
+    }
+  </script>
+  <div id="root"></div>
+</body>
+</html>
