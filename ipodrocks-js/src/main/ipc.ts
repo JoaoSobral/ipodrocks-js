@@ -2,7 +2,7 @@ import * as fs from "fs";
 import * as fsp from "fs/promises";
 import * as os from "os";
 import * as path from "path";
-import { app, BrowserWindow, dialog, ipcMain, IpcMainInvokeEvent } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, shell, IpcMainInvokeEvent } from "electron";
 import { pathMatchesAllowedPrefix } from "./path-allowlist";
 
 /** Builds path→track maps for music, podcast, audiobook from a single getTracks call. */
@@ -153,8 +153,15 @@ import {
   setOpenRouterConfig,
   getHarmonicPrefs,
   setHarmonicPrefs,
+  getUpdateSnoozeUntil,
+  setUpdateSnoozeUntil,
   type HarmonicPrefs,
 } from "./utils/prefs";
+import {
+  fetchLatestRelease,
+  compareVersions,
+  shouldAutoCheck,
+} from "./utils/update-checker";
 import { generateSavantPlaylist } from "./savant/savantEngine";
 import {
   startMoodChat,
@@ -325,6 +332,40 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     "app:getVersion",
     safe("app:getVersion", async () => ({ version: app.getVersion() }))
+  );
+  ipcMain.handle(
+    "app:checkForUpdates",
+    safe("app:checkForUpdates", async (_event, opts?: { auto?: boolean }) => {
+      const current = app.getVersion();
+      if (opts?.auto) {
+        const snoozeUntil = getUpdateSnoozeUntil();
+        if (!shouldAutoCheck(Date.now(), snoozeUntil ?? undefined)) {
+          return { current, latest: current, updateAvailable: false, snoozed: true };
+        }
+      }
+      try {
+        const release = await fetchLatestRelease();
+        const latest = release.tagName.replace(/^v/, "");
+        const updateAvailable = compareVersions(current, latest) === -1;
+        return { current, latest, updateAvailable, htmlUrl: release.htmlUrl };
+      } catch {
+        return { current, latest: current, updateAvailable: false, error: "network" };
+      }
+    })
+  );
+  ipcMain.handle(
+    "app:setUpdateSnooze",
+    safe("app:setUpdateSnooze", async (_event, snoozeUntil: number | null) => {
+      setUpdateSnoozeUntil(snoozeUntil);
+      return undefined;
+    })
+  );
+  ipcMain.handle(
+    "app:openExternal",
+    safe("app:openExternal", async (_event, url: string) => {
+      await shell.openExternal(url);
+      return undefined;
+    })
   );
 
   // ---- Genius Playlists (register early so they are always available) ----
@@ -1577,6 +1618,13 @@ export function registerIpcHandlers(): void {
     "playlist:getTracks",
     safe("playlist:getTracks", async (_event, playlistId: number) => {
       return getPlaylistCore().getPlaylistTracks(playlistId);
+    })
+  );
+
+  ipcMain.handle(
+    "playlist:previewSmartTracks",
+    safe("playlist:previewSmartTracks", async (_event, payload: { rules: SmartPlaylistRule[]; trackLimit?: number }) => {
+      return getPlaylistCore().previewSmartTracks(payload.rules, payload.trackLimit);
     })
   );
 

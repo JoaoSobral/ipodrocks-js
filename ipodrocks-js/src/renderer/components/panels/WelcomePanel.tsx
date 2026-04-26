@@ -1,5 +1,9 @@
+import { useState, useEffect } from "react";
 import { Card } from "../common/Card";
+import { Button } from "../common/Button";
+import { UpdateAvailableModal } from "../modals/UpdateAvailableModal";
 import { useThemeStore } from "../../stores/theme-store";
+import { checkForUpdates, type CheckForUpdatesResult } from "../../ipc/api";
 import logoSrcTransp from "@assets/ipodRocks_transp.png?url";
 import logoSrcBlack from "@assets/ipodRocks_black.png?url";
 
@@ -14,13 +18,81 @@ const FEATURES: { icon: string; label: string; description: string }[] = [
   { icon: "⭐", label: "Star ratings", description: "5-star (half-star), synced from Rockbox with 3-way merge." },
 ];
 
+type UpdateState =
+  | { status: "idle" }
+  | { status: "checking" }
+  | { status: "upToDate" }
+  | { status: "error" }
+  | { status: "available"; result: CheckForUpdatesResult };
+
 export function WelcomePanel() {
   const { theme } = useThemeStore();
   const logoSrc = theme === "light" ? logoSrcTransp : logoSrcBlack;
+  const [updateState, setUpdateState] = useState<UpdateState>({ status: "idle" });
+
+  const runCheck = async (auto: boolean) => {
+    setUpdateState({ status: "checking" });
+    const result = await checkForUpdates({ auto });
+    if (result.updateAvailable && result.htmlUrl) {
+      setUpdateState({ status: "available", result });
+    } else if (result.snoozed) {
+      setUpdateState({ status: "idle" });
+    } else if (result.error) {
+      setUpdateState(auto ? { status: "idle" } : { status: "error" });
+    } else {
+      setUpdateState({ status: "upToDate" });
+    }
+  };
+
+  useEffect(() => { runCheck(true); }, []);
+
+  const handleCheckForUpdates = () => runCheck(false);
+
+  const handleModalClose = () => setUpdateState({ status: "idle" });
+
   return (
     <div className="panel-content max-w-2xl mx-auto space-y-5">
+      {updateState.status === "available" && (
+        <UpdateAvailableModal
+          open
+          onClose={handleModalClose}
+          current={updateState.result.current}
+          latest={updateState.result.latest}
+          htmlUrl={updateState.result.htmlUrl!}
+        />
+      )}
       {/* Hero card: logo + about */}
-      <Card className="overflow-hidden border-border bg-muted/30">
+      <Card className="overflow-hidden border-border bg-muted/30 relative">
+        <div className="absolute top-2 right-2">
+          <Button
+            variant="primary"
+            size="sm"
+            onClick={handleCheckForUpdates}
+            disabled={updateState.status === "checking"}
+            title="Check for updates"
+            style={{ backgroundColor: "#1a73e8", color: "#fff" }}
+          >
+            {updateState.status === "checking" && (
+              <svg
+                className="animate-spin h-3.5 w-3.5"
+                xmlns="http://www.w3.org/2000/svg"
+                fill="none"
+                viewBox="0 0 24 24"
+                aria-hidden
+              >
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
+              </svg>
+            )}
+            {updateState.status === "checking"
+              ? "Checking…"
+              : updateState.status === "upToDate"
+              ? "✓ Up to date"
+              : updateState.status === "error"
+              ? "Could not check"
+              : "Check for updates"}
+          </Button>
+        </div>
         <div className="flex flex-col sm:flex-row items-center gap-6 p-2">
           <div className="shrink-0 rounded-lg p-1 bg-muted/30">
             <img

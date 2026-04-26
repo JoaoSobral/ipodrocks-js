@@ -173,6 +173,32 @@ export async function getAppVersion(): Promise<{ version: string }> {
   return window.api.invoke("app:getVersion") as Promise<{ version: string }>;
 }
 
+export interface CheckForUpdatesResult {
+  current: string;
+  latest: string;
+  updateAvailable: boolean;
+  htmlUrl?: string;
+  snoozed?: boolean;
+  error?: string;
+}
+
+export async function checkForUpdates(
+  opts?: { auto?: boolean }
+): Promise<CheckForUpdatesResult> {
+  return window.api.invoke(
+    "app:checkForUpdates",
+    opts
+  ) as Promise<CheckForUpdatesResult>;
+}
+
+export async function setUpdateSnooze(snoozeUntil: number | null): Promise<void> {
+  return window.api.invoke("app:setUpdateSnooze", snoozeUntil) as Promise<void>;
+}
+
+export async function openExternal(url: string): Promise<void> {
+  return window.api.invoke("app:openExternal", url) as Promise<void>;
+}
+
 // ---------------------------------------------------------------------------
 // Shadow Libraries
 // ---------------------------------------------------------------------------
@@ -368,6 +394,19 @@ export async function exportPlaylist(id: number, deviceId?: number): Promise<str
 
 export async function getGenres(): Promise<GenreInfo[]> {
   return window.api.invoke("playlist:getGenres") as Promise<GenreInfo[]>;
+}
+
+export async function previewSmartTracks(
+  rules: SmartPlaylistRule[],
+  trackLimit?: number
+): Promise<{ count: number; totalCount: number; affectedArtistIds: number[]; affectedGenreIds: number[]; affectedAlbumIds: number[] }> {
+  return window.api.invoke("playlist:previewSmartTracks", { rules, trackLimit }) as Promise<{
+    count: number;
+    totalCount: number;
+    affectedArtistIds: number[];
+    affectedGenreIds: number[];
+    affectedAlbumIds: number[];
+  }>;
 }
 
 export async function getArtists(): Promise<ArtistInfo[]> {

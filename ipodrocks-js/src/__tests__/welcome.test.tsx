@@ -4,6 +4,9 @@ import { WelcomePanel } from "../renderer/components/panels/WelcomePanel";
 
 vi.mock("@assets/ipodRocks_transp.png?url", () => ({ default: "/mock-transp.png" }));
 vi.mock("@assets/ipodRocks_black.png?url", () => ({ default: "/mock-black.png" }));
+vi.mock("../renderer/ipc/api", () => ({
+  checkForUpdates: vi.fn().mockResolvedValue({ updateAvailable: false, current: "1.3.0", latest: "1.3.0" }),
+}));
 
 describe("WelcomePanel", () => {
   it("renders the app title", () => {

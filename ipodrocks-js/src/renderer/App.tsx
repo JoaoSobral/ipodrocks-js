@@ -62,6 +62,7 @@ export function App() {
   useEffect(() => {
     getAppVersion().then(({ version }) => setAppVersion(version));
   }, []);
+
   const current = navItems.find((n) => n.id === active)!;
   const showThemeToggle = SHOW_THEME_TOGGLE.includes(active);
 

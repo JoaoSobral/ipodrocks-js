@@ -26,6 +26,7 @@ import {
   getGenres,
   getArtists,
   getAlbums,
+  previewSmartTracks,
   analyzeDevicePlayback,
   readDevicePlaybackLog,
   getGeniusSummaryFromDb,
@@ -98,23 +99,24 @@ export function PlaylistPanel() {
 
   // -- smart create state -------------------------------------------------
   const [newName, setNewName] = useState("");
-  const [strategy, setStrategy] = useState("by_genre");
   const [trackLimit, setTrackLimit] = useState(50);
   const [trackLimitAll, setTrackLimitAll] = useState(false);
-  const [createStep, setCreateStep] = useState<1 | 2>(1);
   const [genres, setGenres] = useState<GenreInfo[]>([]);
   const [artists, setArtists] = useState<ArtistInfo[]>([]);
   const [albums, setAlbums] = useState<AlbumInfo[]>([]);
-  const [selectedGenreIds, setSelectedGenreIds] = useState<Set<number>>(
-    new Set()
-  );
-  const [selectedArtistIds, setSelectedArtistIds] = useState<Set<number>>(
-    new Set()
-  );
-  const [selectedAlbumIds, setSelectedAlbumIds] = useState<Set<number>>(
-    new Set()
-  );
+  const [selectedGenreIds, setSelectedGenreIds] = useState<Set<number>>(new Set());
+  const [selectedArtistIds, setSelectedArtistIds] = useState<Set<number>>(new Set());
+  const [selectedAlbumIds, setSelectedAlbumIds] = useState<Set<number>>(new Set());
   const [optionsLoading, setOptionsLoading] = useState(false);
+  const [previewCount, setPreviewCount] = useState<number | null>(null);
+  const [totalPreviewCount, setTotalPreviewCount] = useState<number | null>(null);
+  const [showCutConfirm, setShowCutConfirm] = useState(false);
+  const [affectedArtistIds, setAffectedArtistIds] = useState<Set<number>>(new Set());
+  const [affectedGenreIds, setAffectedGenreIds] = useState<Set<number>>(new Set());
+  const [affectedAlbumIds, setAffectedAlbumIds] = useState<Set<number>>(new Set());
+  const [genreSearch, setGenreSearch] = useState("");
+  const [artistSearch, setArtistSearch] = useState("");
+  const [albumSearch, setAlbumSearch] = useState("");
 
   // -- genius flow state --------------------------------------------------
   const [geniusStep, setGeniusStep] = useState<GeniusStep>("idle");
@@ -236,27 +238,50 @@ export function PlaylistPanel() {
   }
 
   // -- smart create -------------------------------------------------------
-  async function goToStep2() {
+  // Load all three lists when the smart modal opens.
+  useEffect(() => {
+    if (createKind !== "smart") return;
+    let cancelled = false;
     setOptionsLoading(true);
-    try {
-      if (strategy === "by_genre") {
-        setGenres(await getGenres());
-        setSelectedArtistIds(new Set());
-        setSelectedAlbumIds(new Set());
-      } else if (strategy === "by_artist") {
-        setArtists(await getArtists());
-        setSelectedGenreIds(new Set());
-        setSelectedAlbumIds(new Set());
-      } else {
-        setAlbums(await getAlbums());
-        setSelectedGenreIds(new Set());
-        setSelectedArtistIds(new Set());
-      }
-      setCreateStep(2);
-    } finally {
-      setOptionsLoading(false);
+    Promise.all([getGenres(), getArtists(), getAlbums()])
+      .then(([g, a, al]) => {
+        if (!cancelled) { setGenres(g); setArtists(a); setAlbums(al); }
+      })
+      .finally(() => { if (!cancelled) setOptionsLoading(false); });
+    return () => { cancelled = true; };
+  }, [createKind]);
+
+  // Debounced live track-count preview + affected highlighting.
+  useEffect(() => {
+    if (createKind !== "smart") return;
+    const rules: SmartPlaylistRule[] = [
+      ...[...selectedGenreIds].map((id) => ({ ruleType: "genre" as const, targetId: id, targetLabel: (Array.isArray(genres) ? genres : []).find((g) => g.id === id)?.name ?? "" })),
+      ...[...selectedArtistIds].map((id) => ({ ruleType: "artist" as const, targetId: id, targetLabel: (Array.isArray(artists) ? artists : []).find((a) => a.id === id)?.name ?? "" })),
+      ...[...selectedAlbumIds].map((id) => { const al = (Array.isArray(albums) ? albums : []).find((a) => a.id === id); return { ruleType: "album" as const, targetId: id, targetLabel: al ? `${al.title} — ${al.artist}` : "" }; }),
+    ];
+    setShowCutConfirm(false);
+    if (rules.length === 0) {
+      setPreviewCount(null);
+      setTotalPreviewCount(null);
+      setAffectedArtistIds(new Set());
+      setAffectedGenreIds(new Set());
+      setAffectedAlbumIds(new Set());
+      return;
     }
-  }
+    const timer = setTimeout(async () => {
+      try {
+        const res = await previewSmartTracks(rules, trackLimitAll ? undefined : trackLimit);
+        setPreviewCount(res.count);
+        setTotalPreviewCount(res.totalCount);
+        setAffectedArtistIds(new Set(res.affectedArtistIds));
+        setAffectedGenreIds(new Set(res.affectedGenreIds));
+        setAffectedAlbumIds(new Set(res.affectedAlbumIds));
+      } catch {
+        // ignore preview errors
+      }
+    }, 200);
+    return () => clearTimeout(timer);
+  }, [selectedGenreIds, selectedArtistIds, selectedAlbumIds, trackLimit, trackLimitAll, createKind, genres, artists, albums]);
 
   function toggleSet<T>(setter: React.Dispatch<React.SetStateAction<Set<T>>>, val: T) {
     setter((prev) => {
@@ -268,40 +293,26 @@ export function PlaylistPanel() {
   }
 
   function buildRules(): SmartPlaylistRule[] {
-    if (strategy === "by_genre") {
-      return (Array.isArray(genres) ? genres : [])
-        .filter((g) => g != null && selectedGenreIds.has(g.id))
-        .map((g) => ({
-          ruleType: "genre",
-          targetId: g.id,
-          targetLabel: g.name ?? "",
-        }));
-    }
-    if (strategy === "by_artist") {
-      return (Array.isArray(artists) ? artists : [])
-        .filter((a) => a != null && selectedArtistIds.has(a.id))
-        .map((a) => ({
-          ruleType: "artist",
-          targetId: a.id,
-          targetLabel: a.name ?? "",
-        }));
-    }
-    return (Array.isArray(albums) ? albums : [])
-      .filter((a) => a != null && selectedAlbumIds.has(a.id))
-      .map((a) => ({
-        ruleType: "album",
-        targetId: a.id,
-        targetLabel: `${a?.title ?? ""} — ${a?.artist ?? ""}`,
-      }));
+    return [
+      ...[...selectedGenreIds].map((id) => ({ ruleType: "genre" as const, targetId: id, targetLabel: (Array.isArray(genres) ? genres : []).find((g) => g.id === id)?.name ?? "" })),
+      ...[...selectedArtistIds].map((id) => ({ ruleType: "artist" as const, targetId: id, targetLabel: (Array.isArray(artists) ? artists : []).find((a) => a.id === id)?.name ?? "" })),
+      ...[...selectedAlbumIds].map((id) => { const al = (Array.isArray(albums) ? albums : []).find((a) => a.id === id); return { ruleType: "album" as const, targetId: id, targetLabel: al ? `${al.title} — ${al.artist}` : "" }; }),
+    ];
   }
 
   async function handleCreate() {
     if (!newName.trim()) return;
     const rules = buildRules();
     if (rules.length === 0) return;
+    const isCapped = !trackLimitAll && totalPreviewCount !== null && totalPreviewCount > trackLimit;
+    if (isCapped && !showCutConfirm) {
+      setShowCutConfirm(true);
+      return;
+    }
+    setShowCutConfirm(false);
     await createPlaylist({
       name: newName,
-      strategy,
+      strategy: "multi",
       trackLimit: trackLimitAll ? undefined : trackLimit,
       rules,
     });
@@ -309,10 +320,17 @@ export function PlaylistPanel() {
     setNewName("");
     setTrackLimit(50);
     setTrackLimitAll(false);
-    setCreateStep(1);
     setSelectedGenreIds(new Set());
     setSelectedArtistIds(new Set());
     setSelectedAlbumIds(new Set());
+    setPreviewCount(null);
+    setTotalPreviewCount(null);
+    setAffectedArtistIds(new Set());
+    setAffectedGenreIds(new Set());
+    setAffectedAlbumIds(new Set());
+    setGenreSearch("");
+    setArtistSearch("");
+    setAlbumSearch("");
     fetchAll();
   }
 
@@ -578,9 +596,22 @@ export function PlaylistPanel() {
 
   function closeCreateModal() {
     setShowCreate(false);
-    setCreateStep(1);
     setCreateKind(null);
     setGeniusError(null);
+    if (createKind === "smart") {
+      setSelectedGenreIds(new Set());
+      setSelectedArtistIds(new Set());
+      setSelectedAlbumIds(new Set());
+      setPreviewCount(null);
+      setTotalPreviewCount(null);
+      setShowCutConfirm(false);
+      setAffectedArtistIds(new Set());
+      setAffectedGenreIds(new Set());
+      setAffectedAlbumIds(new Set());
+      setGenreSearch("");
+      setArtistSearch("");
+      setAlbumSearch("");
+    }
     if (createKind === "genius") {
       setGeniusStep("idle");
       setGeniusSummary(null);
@@ -1492,21 +1523,21 @@ export function PlaylistPanel() {
       <Modal
         open={showCreate}
         onClose={closeCreateModal}
-        wide={createKind === "genius" || createKind === "savant"}
+        wide={createKind === "genius" || createKind === "savant" || createKind === "smart"}
         width={
           createKind === "savant"
             ? "max-w-5xl"
             : createKind === "genius"
               ? "max-w-4xl"
-              : undefined
+              : createKind === "smart"
+                ? "max-w-3xl"
+                : undefined
         }
         title={
           createKind === null
             ? "Create Playlist"
             : createKind === "smart"
-              ? createStep === 1
-                ? "Create Smart Playlist"
-                : "Choose filters"
+              ? "Create Smart Playlist"
               : createKind === "genius"
                 ? "Create Genius Playlist"
                 : "Create Savant Playlist"
@@ -1523,7 +1554,6 @@ export function PlaylistPanel() {
                   type="button"
                   onClick={() => {
                     setCreateKind("smart");
-                    setCreateStep(1);
                   }}
                   className="flex-1 p-4 rounded-xl border border-border bg-muted/30 hover:bg-primary/10 hover:border-primary/30 transition-all text-left cursor-pointer"
                 >
@@ -1532,7 +1562,7 @@ export function PlaylistPanel() {
                     Smart Playlist
                   </h4>
                   <p className="text-[11px] text-muted-foreground mt-1">
-                    Build a playlist by genre, artist, or album.
+                    Build a playlist by combining genres, artists, and albums.
                   </p>
                 </button>
                 <button
@@ -1584,7 +1614,8 @@ export function PlaylistPanel() {
             </>
           ) : createKind === "savant" ? (
             renderSavantFlow()
-          ) : createStep === 1 ? (
+          ) : (
+            /* Single-step 3-column smart playlist builder */
             <>
               <Input
                 label="Name"
@@ -1592,41 +1623,24 @@ export function PlaylistPanel() {
                 onChange={(e) => setNewName(e.target.value)}
                 placeholder="My Playlist"
               />
-              <Select
-                label="Strategy"
-                tooltip="How tracks are selected: By Genre pulls all tracks from chosen genres; By Artist from chosen artists; By Album from specific albums."
-                value={strategy}
-                onChange={(v) => setStrategy(v)}
-                options={[
-                  { value: "by_genre", label: "By Genre" },
-                  { value: "by_artist", label: "By Artist" },
-                  { value: "by_album", label: "By Album" },
-                ]}
-              />
               <div>
                 <label className="flex items-center gap-2 mb-1.5 cursor-pointer text-xs font-medium text-muted-foreground">
                   <input
                     type="checkbox"
                     checked={trackLimitAll}
-                    onChange={(e) =>
-                      setTrackLimitAll(e.target.checked)
-                    }
+                    onChange={(e) => setTrackLimitAll(e.target.checked)}
                     className="accent-primary"
                   />
-                  All
+                  All tracks
                 </label>
-                <Label>
-                  Track Limit: {trackLimitAll ? "All" : trackLimit}
-                </Label>
+                <Label>Track Limit: {trackLimitAll ? "All" : trackLimit}</Label>
                 <input
                   type="range"
                   min={10}
                   max={300}
                   step={10}
                   value={trackLimit}
-                  onChange={(e) =>
-                    setTrackLimit(Number(e.target.value))
-                  }
+                  onChange={(e) => setTrackLimit(Number(e.target.value))}
                   disabled={trackLimitAll}
                   className={`w-full accent-primary ${trackLimitAll ? "opacity-50 cursor-not-allowed" : ""}`}
                 />
@@ -1635,112 +1649,208 @@ export function PlaylistPanel() {
                   <span>300</span>
                 </div>
               </div>
-              <div className="flex justify-end gap-2 pt-2">
-                <Button onClick={closeCreateModal}>Cancel</Button>
-                <Button
-                  variant="primary"
-                  onClick={goToStep2}
-                  disabled={!newName.trim() || optionsLoading}
-                >
-                  {optionsLoading ? "Loading\u2026" : "Next"}
-                </Button>
-              </div>
-            </>
-          ) : (
-            <>
-              <p className="text-xs text-muted-foreground">
-                {strategy === "by_genre" &&
-                  "Select one or more genres."}
-                {strategy === "by_artist" &&
-                  "Select one or more artists."}
-                {strategy === "by_album" &&
-                  "Select one or more albums."}
-              </p>
-              <div className="max-h-56 overflow-y-auto rounded-lg border border-border bg-muted/30 p-2 space-y-1">
-                {strategy === "by_genre" &&
-                  (Array.isArray(genres) ? genres : []).map((g) => (
-                    <label
-                      key={g.id}
-                      className="flex items-center gap-2 py-1.5 px-2 rounded hover:bg-muted/50 cursor-pointer text-sm"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={selectedGenreIds.has(g.id)}
-                        onChange={() =>
-                          toggleSet(setSelectedGenreIds, g.id)
-                        }
-                        className="accent-primary"
-                      />
-                      <span className="text-foreground truncate">
-                        {g.name}
-                      </span>
-                      <span className="text-[10px] text-muted-foreground shrink-0">
-                        {g.trackCount} tracks
-                      </span>
-                    </label>
-                  ))}
-                {strategy === "by_artist" &&
-                  (Array.isArray(artists) ? artists : []).map((a) => (
-                    <label
-                      key={a.id}
-                      className="flex items-center gap-2 py-1.5 px-2 rounded hover:bg-muted/50 cursor-pointer text-sm"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={selectedArtistIds.has(a.id)}
-                        onChange={() =>
-                          toggleSet(setSelectedArtistIds, a.id)
-                        }
-                        className="accent-primary"
-                      />
-                      <span className="text-foreground truncate">
-                        {a.name}
-                      </span>
-                      <span className="text-[10px] text-muted-foreground shrink-0">
-                        {a.trackCount} tracks
-                      </span>
-                    </label>
-                  ))}
-                {strategy === "by_album" &&
-                  (Array.isArray(albums) ? albums : []).map((a) => (
-                    <label
-                      key={a.id}
-                      className="flex items-center gap-2 py-1.5 px-2 rounded hover:bg-muted/50 cursor-pointer text-sm"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={selectedAlbumIds.has(a.id)}
-                        onChange={() =>
-                          toggleSet(setSelectedAlbumIds, a.id)
-                        }
-                        className="accent-primary"
-                      />
-                      <span className="text-foreground truncate">
-                        {a.title} &mdash; {a.artist}
-                      </span>
-                      <span className="text-[10px] text-muted-foreground shrink-0">
-                        {a.trackCount} tracks
-                      </span>
-                    </label>
-                  ))}
-              </div>
-              <div className="flex justify-end gap-2 pt-2">
-                <Button onClick={() => setCreateStep(1)}>Back</Button>
-                <Button
-                  variant="primary"
-                  onClick={handleCreate}
-                  disabled={
-                    (strategy === "by_genre" &&
-                      selectedGenreIds.size === 0) ||
-                    (strategy === "by_artist" &&
-                      selectedArtistIds.size === 0) ||
-                    (strategy === "by_album" &&
-                      selectedAlbumIds.size === 0)
-                  }
-                >
-                  Create Playlist
-                </Button>
-              </div>
+
+              {optionsLoading ? (
+                <div className="flex justify-center py-6"><Spinner /></div>
+              ) : (
+                <div className="grid grid-cols-3 gap-3">
+                  {/* Genres column */}
+                  <div className="theme-box rounded-lg border border-border bg-card p-3 flex flex-col max-h-[300px]">
+                    <div className="flex items-center justify-between mb-2 shrink-0">
+                      <p className="text-xs font-medium text-muted-foreground">Genres</p>
+                      <div className="flex gap-1">
+                        <button
+                          type="button"
+                          className="text-[10px] text-muted-foreground hover:text-foreground"
+                          onClick={() => setSelectedGenreIds(new Set((Array.isArray(genres) ? genres : []).map((g) => g.id)))}
+                        >All</button>
+                        <span className="text-[10px] text-muted-foreground">\u00b7</span>
+                        <button
+                          type="button"
+                          className="text-[10px] text-muted-foreground hover:text-foreground"
+                          onClick={() => setSelectedGenreIds(new Set())}
+                        >Clear</button>
+                        {selectedGenreIds.size > 0 && (
+                          <span className="text-[10px] bg-primary/20 text-primary rounded px-1">{selectedGenreIds.size}</span>
+                        )}
+                      </div>
+                    </div>
+                    <input
+                      type="text"
+                      placeholder="Search\u2026"
+                      value={genreSearch}
+                      onChange={(e) => setGenreSearch(e.target.value)}
+                      className="mb-2 shrink-0 w-full rounded border border-border bg-muted/30 px-2 py-1 text-xs outline-none focus:border-primary"
+                    />
+                    <div className="min-h-0 flex-1 overflow-y-auto space-y-0.5">
+                      {(Array.isArray(genres) ? genres : [])
+                        .filter((g) => !genreSearch || g.name.toLowerCase().includes(genreSearch.toLowerCase()))
+                        .map((g) => {
+                          const isSelected = selectedGenreIds.has(g.id);
+                          const isAffected = !isSelected && affectedGenreIds.has(g.id);
+                          return (
+                            <label
+                              key={g.id}
+                              className={`flex items-center gap-2 py-1 px-2 rounded cursor-pointer text-xs truncate ${isSelected ? "bg-success/20 text-success" : isAffected ? "bg-warning/20 text-warning" : "hover:bg-muted/50"}`}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={isSelected}
+                                onChange={() => toggleSet(setSelectedGenreIds, g.id)}
+                                className="accent-primary shrink-0"
+                              />
+                              <span className="truncate min-w-0">{g.name}</span>
+                              <span className="text-[10px] shrink-0 opacity-60">{g.trackCount}</span>
+                            </label>
+                          );
+                        })}
+                    </div>
+                  </div>
+
+                  {/* Artists column */}
+                  <div className="theme-box rounded-lg border border-border bg-card p-3 flex flex-col max-h-[300px]">
+                    <div className="flex items-center justify-between mb-2 shrink-0">
+                      <p className="text-xs font-medium text-muted-foreground">Artists</p>
+                      <div className="flex gap-1">
+                        <button
+                          type="button"
+                          className="text-[10px] text-muted-foreground hover:text-foreground"
+                          onClick={() => setSelectedArtistIds(new Set((Array.isArray(artists) ? artists : []).map((a) => a.id)))}
+                        >All</button>
+                        <span className="text-[10px] text-muted-foreground">\u00b7</span>
+                        <button
+                          type="button"
+                          className="text-[10px] text-muted-foreground hover:text-foreground"
+                          onClick={() => setSelectedArtistIds(new Set())}
+                        >Clear</button>
+                        {selectedArtistIds.size > 0 && (
+                          <span className="text-[10px] bg-primary/20 text-primary rounded px-1">{selectedArtistIds.size}</span>
+                        )}
+                      </div>
+                    </div>
+                    <input
+                      type="text"
+                      placeholder="Search\u2026"
+                      value={artistSearch}
+                      onChange={(e) => setArtistSearch(e.target.value)}
+                      className="mb-2 shrink-0 w-full rounded border border-border bg-muted/30 px-2 py-1 text-xs outline-none focus:border-primary"
+                    />
+                    <div className="min-h-0 flex-1 overflow-y-auto space-y-0.5">
+                      {(Array.isArray(artists) ? artists : [])
+                        .filter((a) => !artistSearch || a.name.toLowerCase().includes(artistSearch.toLowerCase()))
+                        .map((a) => {
+                          const isSelected = selectedArtistIds.has(a.id);
+                          const isAffected = !isSelected && affectedArtistIds.has(a.id);
+                          return (
+                            <label
+                              key={a.id}
+                              className={`flex items-center gap-2 py-1 px-2 rounded cursor-pointer text-xs truncate ${isSelected ? "bg-success/20 text-success" : isAffected ? "bg-warning/20 text-warning" : "hover:bg-muted/50"}`}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={isSelected}
+                                onChange={() => toggleSet(setSelectedArtistIds, a.id)}
+                                className="accent-primary shrink-0"
+                              />
+                              <span className="truncate min-w-0">{a.name}</span>
+                              <span className="text-[10px] shrink-0 opacity-60">{a.trackCount}</span>
+                            </label>
+                          );
+                        })}
+                    </div>
+                  </div>
+
+                  {/* Albums column */}
+                  <div className="theme-box rounded-lg border border-border bg-card p-3 flex flex-col max-h-[300px]">
+                    <div className="flex items-center justify-between mb-2 shrink-0">
+                      <p className="text-xs font-medium text-muted-foreground">Albums</p>
+                      <div className="flex gap-1">
+                        <button
+                          type="button"
+                          className="text-[10px] text-muted-foreground hover:text-foreground"
+                          onClick={() => setSelectedAlbumIds(new Set((Array.isArray(albums) ? albums : []).map((a) => a.id)))}
+                        >All</button>
+                        <span className="text-[10px] text-muted-foreground">\u00b7</span>
+                        <button
+                          type="button"
+                          className="text-[10px] text-muted-foreground hover:text-foreground"
+                          onClick={() => setSelectedAlbumIds(new Set())}
+                        >Clear</button>
+                        {selectedAlbumIds.size > 0 && (
+                          <span className="text-[10px] bg-primary/20 text-primary rounded px-1">{selectedAlbumIds.size}</span>
+                        )}
+                      </div>
+                    </div>
+                    <input
+                      type="text"
+                      placeholder="Search\u2026"
+                      value={albumSearch}
+                      onChange={(e) => setAlbumSearch(e.target.value)}
+                      className="mb-2 shrink-0 w-full rounded border border-border bg-muted/30 px-2 py-1 text-xs outline-none focus:border-primary"
+                    />
+                    <div className="min-h-0 flex-1 overflow-y-auto space-y-0.5">
+                      {(Array.isArray(albums) ? albums : [])
+                        .filter((a) => !albumSearch || `${a.title} ${a.artist}`.toLowerCase().includes(albumSearch.toLowerCase()))
+                        .map((a) => {
+                          const isSelected = selectedAlbumIds.has(a.id);
+                          const isAffected = !isSelected && affectedAlbumIds.has(a.id);
+                          return (
+                            <label
+                              key={a.id}
+                              className={`flex items-center gap-2 py-1 px-2 rounded cursor-pointer text-xs truncate ${isSelected ? "bg-success/20 text-success" : isAffected ? "bg-warning/20 text-warning" : "hover:bg-muted/50"}`}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={isSelected}
+                                onChange={() => toggleSet(setSelectedAlbumIds, a.id)}
+                                className="accent-primary shrink-0"
+                              />
+                              <span className="truncate min-w-0">{a.title} &mdash; {a.artist}</span>
+                              <span className="text-[10px] shrink-0 opacity-60">{a.trackCount}</span>
+                            </label>
+                          );
+                        })}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {(() => {
+                const isCapped = !trackLimitAll && totalPreviewCount !== null && previewCount !== null && totalPreviewCount > trackLimit;
+                return (
+                  <>
+                    <div className="flex items-center justify-between pt-1">
+                      <p className={`text-xs ${isCapped ? "text-amber-500 dark:text-amber-400 font-medium" : "text-muted-foreground"}`}>
+                        {previewCount === null
+                          ? "Select genres, artists, or albums to build your playlist."
+                          : previewCount === 0
+                            ? "No tracks match the current selection."
+                            : isCapped
+                              ? `${previewCount} of ${totalPreviewCount} tracks — ${totalPreviewCount - previewCount} excluded by the ${trackLimit}-track limit`
+                              : `Will include ~${previewCount} track${previewCount === 1 ? "" : "s"}`}
+                      </p>
+                      <div className="flex gap-2">
+                        <Button onClick={closeCreateModal}>Cancel</Button>
+                        <Button
+                          variant="primary"
+                          onClick={handleCreate}
+                          disabled={
+                            !newName.trim() ||
+                            (selectedGenreIds.size === 0 && selectedArtistIds.size === 0 && selectedAlbumIds.size === 0)
+                          }
+                        >
+                          {showCutConfirm ? "Confirm" : "Create"}
+                        </Button>
+                      </div>
+                    </div>
+                    {showCutConfirm && (
+                      <div className="rounded-lg border border-amber-500/50 bg-amber-500/10 px-3 py-2 text-xs text-amber-600 dark:text-amber-400">
+                        Only <strong>{previewCount}</strong> of <strong>{totalPreviewCount}</strong> matching tracks will be included — <strong>{totalPreviewCount! - previewCount!}</strong> will be excluded by the {trackLimit}-track limit. Click <strong>Confirm</strong> to create anyway, or adjust the limit above.
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
             </>
           )}
         </div>

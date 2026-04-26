@@ -1,5 +1,28 @@
 # Changelog
 
+## [1.4.0] — 2026-04-26
+
+### Features
+
+#### Multi-select smart playlist creation
+
+- **Single-step, 3-column modal** — "Create Smart Playlist" now presents Genres, Artists, and Albums side-by-side in one step instead of requiring the user to pick a strategy first and then pick within it. Any combination can be mixed freely.
+- **Cross-type AND, within-type OR** — Selecting two genres matches tracks in *either* genre; adding an artist then restricts to tracks that also belong to that artist. The backend already implemented this logic; the UI now exposes the full power of it.
+- **Live track-count preview** — As the user ticks and unticks items, the modal debounces (200 ms) a `playlist:previewSmartTracks` IPC call and shows "Will include ~N tracks". An empty intersection is immediately obvious before clicking Create.
+- **Green / yellow highlighting** — Checked rows are highlighted green (`bg-success/20 text-success`). Rows that would appear in the result set due to *other* selections (forward derivation) go yellow (`bg-warning/20 text-warning`), matching the SyncPanel custom-sync visual language.
+- **Per-column search and Select All / Clear** — Each column has a live search input and ghost "All · Clear" buttons with a selected-count badge, making large libraries navigable.
+- **`playlist:previewSmartTracks` IPC handler** — New handler (backed by `PlaylistCore.previewSmartTracks`) runs rule resolution without saving and returns `{ count, affectedArtistIds, affectedGenreIds, affectedAlbumIds }`.
+
+### Code quality
+
+- **Removed dead `SmartPlaylistGenerator` import** — `playlist-core.ts` imported `SmartPlaylistGenerator` but never used it; import removed.
+
+### Testing
+
+- **`playlist-core.test.ts`** — New test suite (10 cases) covering `previewSmartTracks` semantics: single genre, multi-genre OR, multi-artist OR, multi-album OR, genre+artist AND, all three combined, empty intersection → 0, `trackLimit` honored, non-music tracks excluded, affected ID sets populated correctly.
+
+---
+
 ## [1.3.0] — 2026-04-26
 
 ### Features

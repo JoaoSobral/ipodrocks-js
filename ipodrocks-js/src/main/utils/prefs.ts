@@ -22,6 +22,8 @@ interface Prefs {
   /** Encrypted API key (base64). Present only when safeStorage was used. */
   _encApiKey?: string;
   harmonic?: HarmonicPrefs;
+  /** Unix ms timestamp — auto update check is suppressed until this time. */
+  updateSnoozeUntil?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -119,6 +121,20 @@ export function getOpenRouterConfig(): OpenRouterConfig | null {
 export function setOpenRouterConfig(config: OpenRouterConfig | null): void {
   const prefs = readPrefs();
   prefs.openRouterConfig = config ?? undefined;
+  writePrefs(prefs);
+}
+
+export function getUpdateSnoozeUntil(): number | null {
+  return readPrefs().updateSnoozeUntil ?? null;
+}
+
+export function setUpdateSnoozeUntil(ts: number | null): void {
+  const prefs = readPrefs();
+  if (ts === null) {
+    delete prefs.updateSnoozeUntil;
+  } else {
+    prefs.updateSnoozeUntil = ts;
+  }
   writePrefs(prefs);
 }
 
