@@ -71,6 +71,7 @@ export function SyncProgressModal({
 }: SyncProgressModalProps) {
   const [progress, setProgress] = useState<SyncProgress | null>(null);
   const [recentItems, setRecentItems] = useState<RecentItem[]>([]);
+  const [statusMessages, setStatusMessages] = useState<{ id: number; text: string }[]>([]);
   const [logLines, setLogLines] = useState<{ id: number; text: string }[]>([]);
   const [totalItems, setTotalItems] = useState(0);
   const [processedItems, setProcessedItems] = useState(0);
@@ -85,6 +86,7 @@ export function SyncProgressModal({
   const logRef = useRef<HTMLDivElement>(null);
   const itemIdRef = useRef(0);
   const logIdRef = useRef(0);
+  const statusIdRef = useRef(0);
   const elapsedInterval = useRef<ReturnType<typeof setInterval> | null>(null);
   const syncStartedRef = useRef(false);
   const progressUnsubRef = useRef<(() => void) | null>(null);
@@ -103,6 +105,14 @@ export function SyncProgressModal({
     setProgress(p);
 
     if (p.event === "log") {
+      setStatusMessages((prev) => {
+        const next = [...prev, { id: ++statusIdRef.current, text: p.message ?? p.path ?? "" }];
+        return next.length > 200 ? next.slice(-200) : next;
+      });
+      return;
+    }
+
+    if (p.event === "convert_log") {
       setLogLines((prev) => {
         const next = [...prev, { id: ++logIdRef.current, text: p.message ?? p.path ?? "" }];
         return next.length > 200 ? next.slice(-200) : next;
@@ -173,6 +183,7 @@ export function SyncProgressModal({
 
     setProgress(null);
     setRecentItems([]);
+    setStatusMessages([]);
     setLogLines([]);
     setTotalItems(0);
     setProcessedItems(0);
@@ -272,6 +283,7 @@ export function SyncProgressModal({
     const lines: string[] = [
       "=== Sync progress ===",
       `${processedItems} / ${totalItems || "?"} items, ${copiedItems} copied`,
+      ...statusMessages.map((s) => s.text),
       "",
       "=== Recent files ===",
       ...recentItems.map((r) => `[${r.status ?? r.event}] ${r.path}`),

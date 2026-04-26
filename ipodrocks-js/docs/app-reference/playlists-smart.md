@@ -19,10 +19,18 @@ If your device runs Rockbox firmware, you can configure it to receive smart play
 - During sync, smart playlists are written to `<device>/.rockbox/tagnavi_user.config` as tagnavi query entries that are evaluated live against the device's tag database.
 - Smart-playlist `.m3u` files are no longer written to the device's Playlists folder; any leftover ones from prior syncs are cleaned up under the configured Orphan Policy.
 - Other playlist kinds (Custom, Genius, Savant) still write `.m3u` — see below for why.
-- Inside Rockbox, the entries appear under **Database → Custom menu → iPodRocks Smart**.
-- For the entries to resolve, the device's tagcache must be initialized (**Database → Initialize Now** in Rockbox, once after first enabling).
+- Inside Rockbox, the entries appear at the bottom of the main **Database** menu (one entry per smart playlist, named after the playlist).
 
-Only `artist`, `album`, and `genre` rules translate cleanly. Multiple values for the same rule type are OR'd; different rule types are AND'd, mirroring the desktop behaviour.
+Only `artist`, `album`, and `genre` rules translate cleanly. Multiple values for the same rule type are OR'd (Rockbox `@` operator with pipe-separated values); different rule types are also OR'd, mirroring the desktop's smart-playlist track query.
+
+### After syncing: reboot + database init
+
+Two device-side conditions must be met before the entries actually show tracks:
+
+- **Tag database must be built.** The device's tagcache (the `database_*.tcd` files in `.rockbox/`) is what tagnavi queries against. The first time you enable this feature, run **Database → Initialize Now** in Rockbox. Subsequent updates happen automatically if `tagcache_autoupdate: on` is set, but the *first* build always needs a manual init. Rockbox shows progress while it scans; when the build completes, a `database_unchanged.tcd` marker file appears in `.rockbox/`.
+- **Reboot to reload the config.** Rockbox caches `tagnavi_user.config` in memory and only re-reads it on boot. After a sync that changes smart playlists, reboot the iPod (hold **Menu+Select** for ~5 seconds) so Rockbox picks up the new entries. Without a reboot, the menu still shows the previous version of the file regardless of what was just synced.
+
+If a smart-playlist entry appears in the menu but is empty when opened, the most likely causes are: (a) the database hasn't finished its initial build, or (b) no tracks on the device match the rules.
 
 ### Why only Smart playlists become tagnavi
 

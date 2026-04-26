@@ -30,6 +30,7 @@ import {
 import { MpcUnavailableModal } from "../modals/MpcUnavailableModal";
 import { formatCodecLabel } from "../../utils/format";
 import { getTranscodableCodecConfigs } from "../../utils/codec";
+import { getDeviceIconSrc } from "../../utils/device-icon";
 import type { CheckResult, DeviceModel, CodecConfig } from "../../ipc/api";
 import type { DeviceProfile, ShadowLibrary } from "@shared/types";
 
@@ -330,11 +331,17 @@ export function DevicePanel() {
             return (
               <Card key={d?.id ?? `device-${idx}`}>
                 <div className="flex items-start gap-3 mb-4">
-                  <div className="relative w-10 h-10 rounded-xl bg-success/10 flex items-center justify-center text-lg text-success flex-shrink-0">
-                    ⊞
+                  <div className="relative w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0">
+                    {d ? (
+                      <img
+                        src={getDeviceIconSrc(d, deviceList)}
+                        alt={d.modelName ?? "Device"}
+                        className="w-full h-full object-contain rounded-xl"
+                      />
+                    ) : null}
                     {status !== null && status !== undefined && (
                       <span
-                        className={`absolute top-0 left-0 w-2.5 h-2.5 rounded-full border-2 border-card ${
+                        className={`absolute -top-1 -left-1 w-4 h-4 rounded-full border-2 border-card ${
                           status ? "bg-green-500" : "bg-red-500"
                         }`}
                         title={status ? "Device connected" : "Device not connected"}

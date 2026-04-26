@@ -493,7 +493,7 @@ export async function copyMissingTracks(
     customDestinations,
     progressCallback: progressAdapter,
     logCallback: (line: string) =>
-      progressCallback?.({ event: "log", message: line }),
+      progressCallback?.({ event: "convert_log", message: line }),
     cancelSignal,
   };
 

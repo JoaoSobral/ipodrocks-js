@@ -5,6 +5,7 @@ import { ListRow } from "../common/ListRow";
 import { useLibraryStore } from "../../stores/library-store";
 import { useDeviceStore } from "../../stores/device-store";
 import { getShadowLibraries, getRecentActivity } from "../../ipc/api";
+import { getDeviceIconSrc } from "../../utils/device-icon";
 import type { ShadowLibrary } from "@shared/types";
 import type { ActivityEntry } from "../../ipc/api";
 
@@ -178,8 +179,14 @@ export function DashboardPanel() {
           <div className="space-y-3">
             {deviceList.map((d, i) => (
               <ListRow key={d?.id ?? `device-${i}`}>
-                <div className="w-8 h-8 rounded-lg bg-success/10 flex items-center justify-center text-sm text-success shrink-0">
-                  ⊞
+                <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 overflow-hidden">
+                  {d ? (
+                    <img
+                      src={getDeviceIconSrc(d, deviceList)}
+                      alt={d.modelName ?? "Device"}
+                      className="w-full h-full object-contain"
+                    />
+                  ) : null}
                 </div>
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium text-foreground truncate">

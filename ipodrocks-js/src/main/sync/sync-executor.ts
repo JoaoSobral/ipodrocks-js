@@ -218,8 +218,6 @@ async function runParallelCopies(
       const result = await doCopy(jobs[idx]);
       if (result.status === "error") {
         logCallback?.(`Failed to copy ${path.basename(result.srcPath)}`);
-      } else {
-        logCallback?.(`Copied: ${path.basename(result.srcPath)}`);
       }
       progressCallback?.(result);
     }

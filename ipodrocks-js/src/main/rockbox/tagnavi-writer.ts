@@ -28,7 +28,7 @@ const TEMPLATE_DEFAULT_FORMATS = `# Basic format declarations
 %format "fmt_score"       "(%3d) %s-%s" autoscore title canonicalartist
 %format "fmt_rating"       "(%2d) %s-%s" rating title canonicalartist %sort = "inverse"`;
 
-const TEMPLATE_DEFAULT_MENUS = `%byfirstletter "custom_albumartist" "Album Artists by First Letter" "albumartist"
+const TEMPLATE_MENUS_PRE_PLAYLISTS = `%byfirstletter "custom_albumartist" "Album Artists by First Letter" "albumartist"
 %byfirstletter "custom_artist" "Artists by First Letter" "canonicalartist"
 %byfirstletter "custom_album" "Albums by First Letter" "album"
 %byfirstletter "custom_track" "Tracks by First Letter" "title"
@@ -88,10 +88,9 @@ const TEMPLATE_DEFAULT_MENUS = `%byfirstletter "custom_albumartist" "Album Artis
 "User Rating" -> rating -> title = "fmt_title"
 "Recently Added" -> album ? entryage < "4" & commitid > "0" -> title = "fmt_title"
 "Playback History" ==> "runtime"
-"Same as currently played track" ==> "same"
-"Custom menu"  ==> "custom"
+"Same as currently played track" ==> "same"`;
 
-%root_menu "main"`;
+const TEMPLATE_MENUS_POST_PLAYLISTS = `%root_menu "main"`;
 
 export function sanitizeQuotedString(input: string): string {
   let s = input
@@ -126,13 +125,22 @@ export function buildEntryLine(input: TagnaviPlaylistInput): string | null {
     if (labels.length === 1) {
       return `${tag} = "${labels[0]}"`;
     }
-    return `${tag} @ ${labels.map((l) => `"${l}"`).join(" ")}`;
+    // Rockbox @ ("one of") expects values pipe-separated inside a single
+    // quoted string — see str_oneof() in apps/tagcache.c. Space-separated
+    // quoted strings parse only the first value. Literal '|' in a label
+    // would split the value, so replace it with '/'.
+    const safeLabels = labels.map((l) => l.replace(/\|/g, "/"));
+    return `${tag} @ "${safeLabels.join("|")}"`;
   });
 
   if (clauses.length === 0) return null;
 
   const rawName = sanitizeQuotedString(playlist.name) || "Untitled";
-  return `"${rawName}" -> title = "fmt_ipr_title" ? ${clauses.join(" & ")}`;
+  // OR across rule types to match _queryTracksForRules in playlist-core.ts.
+  // AND-ing types here can produce logically impossible filters when an
+  // artist's albums don't intersect with the artist list (e.g. a smart
+  // playlist with rules [artist=A, album=B-of-different-artist]).
+  return `"${rawName}" -> title = "fmt_ipr_title" ? ${clauses.join(" | ")}`;
 }
 
 export function buildTagnaviConfig(
@@ -154,13 +162,12 @@ export function buildTagnaviConfig(
     ``,
     TEMPLATE_DEFAULT_FORMATS,
     ``,
-    `# iPodRocks Smart playlists (inlined - %include is unreliable on some Rockbox builds)`,
     `%format "fmt_ipr_title" "%s" title`,
     ``,
-    `%menu_start "custom" "iPodRocks Smart"`,
+    TEMPLATE_MENUS_PRE_PLAYLISTS,
     ...entries,
     ``,
-    TEMPLATE_DEFAULT_MENUS,
+    TEMPLATE_MENUS_POST_PLAYLISTS,
     ``,
   ].join("\n");
 }

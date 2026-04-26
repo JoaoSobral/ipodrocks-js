@@ -40,14 +40,19 @@ iPodRocks is NOT a library manager. I strongly advise you to use beets and beets
 - **Add as many devices as you want** — iPods, Rockbox players, any FAT32/exFAT-mounted drive
 - Per-device codec configs (direct copy, MP3, AAC, Musepack, Opus, OGG)
 - Device check: compare what’s on disk vs library, spot orphans
+- **Per-device icons** — iPod Classic, Nano, and Mini get their own artwork; other devices each get a distinct generic Rockbox icon so cards are easy to tell apart at a glance
+- **Live connection indicator** — A prominent green/red dot on each device card shows whether the mount path is currently reachable
 
-### Genius Playlists
-- **Analyze your Rockbox playback logs** — Rediscovery, Forgotten Gems, Most Played, and more
-- Uses real listening data from your device
+### Smart & Genius Playlists
+- **Multi-select Smart playlist builder** — Pick any combination of genres, artists, and albums in a single 3-column modal. Cross-type AND, within-type OR. Live "~N tracks" preview updates as you tick.
+- **Star-rated playlists** — Both Smart and Genius support a `top_rated` strategy that surfaces tracks rated 4★+ (Rockbox 0–10 ≥ 8). Smart variant works even before any device log is ingested.
+- **Genius from playback logs** — Rediscovery, Forgotten Gems, Most Played, Favorites, Deep Dive, and more. Star ratings from your library now flow into every Genius algorithm.
+- **Rockbox-native smart playlists (tagnavi)** — Per-device opt-in: Smart playlists are written as live, auto-updating Rockbox tagtree entries in `.rockbox/tagnavi_custom.config` instead of frozen `.m3u` snapshots. Other playlist kinds still write `.m3u`.
 
 ### Savant Playlists — AI-Powered
 - **Mood Chat** — Describe your vibe in plain English; get a tailored playlist
 - **AI-generated playlists** — Powered by OpenRouter (Claude, etc.)
+- **Rating-aware curation** — Candidate tracks sent to the LLM include their star rating; Savant is instructed to give extra weight to highly-rated tracks
 - Harmonic sequencing — Camelot wheel, key-aware ordering for smooth transitions
 
 ### Harmonic Mixing
@@ -150,9 +155,10 @@ If `mpcenc` is not on your PATH, iPodRocks will prompt when you select Musepack.
 
 ### Playlists
 
-- **Smart** — Rule-based (genre, artist, album) with track limits
-- **Genius** — From Rockbox playback logs; analyze device first
-- **Savant** — AI-generated from mood (requires OpenRouter API key in Settings)
+- **Smart** — Rule-based (genre, artist, album) with track limits, multi-select 3-column builder, and a `top_rated` strategy for 4★+ tracks
+- **Genius** — From Rockbox playback logs; analyze device first. Includes a `top_rated` Genius type that works without any play history
+- **Savant** — AI-generated from mood (requires OpenRouter API key in Settings); rating-aware curation
+- **Tagnavi mode** — Enable "Rockbox smart playlists (tagnavi)" on a device to sync Smart playlists as live, auto-updating Rockbox tagtree entries instead of static `.m3u` files
 - **Via Assistant** — Ask the floating chat to create a Smart or Genius playlist for you in plain English. The assistant knows your genres, artists, albums, and listening history and builds the playlist instantly
 
 ### Sync
