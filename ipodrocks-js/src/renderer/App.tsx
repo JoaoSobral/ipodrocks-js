@@ -21,11 +21,11 @@ interface NavItem {
 }
 
 const navItems: NavItem[] = [
-  { id: "welcome", label: "Welcome", icon: "◆" },
+  { id: "welcome", label: "Welcome", icon: "⌂" },
   { id: "dashboard", label: "Dashboard", icon: "◈" },
   { id: "library", label: "Library", icon: "♫" },
-  { id: "devices", label: "Devices", icon: "⊞" },
   { id: "playlists", label: "Playlists", icon: "≡" },
+  { id: "devices", label: "Devices", icon: "⊞" },
   { id: "sync", label: "Sync", icon: "⟳" },
 ];
 

@@ -101,3 +101,33 @@ describe("isDeviceMountPathOnline", () => {
     });
   });
 });
+
+// Mirrors the devMode bypass logic at the ipc.ts call sites:
+// `device.profile.devMode || isDeviceMountPathOnline(device.mountPath)`
+describe("devMode bypass", () => {
+  function effectivelyOnline(
+    devMode: boolean,
+    mountPath: string,
+    platform: Platform,
+    statSync: (p: string) => StatResult
+  ): boolean {
+    return devMode || isDeviceMountPathOnline(mountPath, platform, statSync);
+  }
+
+  it("treats a local folder as online when devMode is true", () => {
+    // same dev as parent → would normally be offline
+    const statSync = (_p: string) => dir(1);
+    expect(effectivelyOnline(true, "/Users/pedro/test-device", "darwin", statSync)).toBe(true);
+  });
+
+  it("still returns false for a local folder when devMode is false", () => {
+    const statSync = (_p: string) => dir(1);
+    expect(effectivelyOnline(false, "/Users/pedro/test-device", "darwin", statSync)).toBe(false);
+  });
+
+  it("returns true for a real mount even when devMode is false", () => {
+    const statSync = (p: string) =>
+      p === path.resolve("/Volumes/IPOD") ? dir(999) : dir(1);
+    expect(effectivelyOnline(false, "/Volumes/IPOD", "darwin", statSync)).toBe(true);
+  });
+});

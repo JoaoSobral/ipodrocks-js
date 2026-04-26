@@ -105,6 +105,7 @@ export interface DeviceProfile extends Device {
   modelInternalValue: string | null;
   skipPlaybackLog?: boolean;
   rockboxSmartPlaylists?: boolean;
+  devMode?: boolean;
 }
 
 export type ContentType = "music" | "podcast" | "audiobook" | "playlist";
@@ -150,6 +151,7 @@ export interface AddDeviceConfig {
   shadowLibraryId?: number | null;
   skipPlaybackLog?: boolean;
   rockboxSmartPlaylists?: boolean;
+  devMode?: boolean;
 }
 
 export interface DeviceValidation {

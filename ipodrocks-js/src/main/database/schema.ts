@@ -207,6 +207,7 @@ CREATE TABLE IF NOT EXISTS devices (
     total_synced_items INTEGER DEFAULT 0,
     last_sync_count INTEGER DEFAULT 0,
     rockbox_smart_playlists BOOLEAN NOT NULL DEFAULT 0,
+    dev_mode BOOLEAN NOT NULL DEFAULT 0,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (default_transfer_mode_id) REFERENCES device_transfer_modes (id),
     FOREIGN KEY (default_codec_config_id) REFERENCES codec_configurations (id),

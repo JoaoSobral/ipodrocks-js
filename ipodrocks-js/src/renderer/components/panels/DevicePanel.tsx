@@ -86,6 +86,7 @@ export function DevicePanel() {
   const [isDefault, setIsDefault] = useState(false);
   const [playbackLogEnabled, setPlaybackLogEnabled] = useState(true);
   const [rockboxSmartPlaylists, setRockboxSmartPlaylists] = useState(false);
+  const [devMode, setDevMode] = useState(false);
   const [musicFolder, setMusicFolder] = useState("Music");
   const [podcastFolder, setPodcastFolder] = useState("Podcasts");
   const [audiobookFolder, setAudiobookFolder] = useState("Audiobooks");
@@ -144,6 +145,7 @@ export function DevicePanel() {
     setIsDefault(false);
     setPlaybackLogEnabled(true); // true = read playback.log (default)
     setRockboxSmartPlaylists(false);
+    setDevMode(false);
     setMusicFolder("Music");
     setPodcastFolder("Podcasts");
     setAudiobookFolder("Audiobooks");
@@ -187,6 +189,7 @@ export function DevicePanel() {
 
     setPlaybackLogEnabled(!(device.skipPlaybackLog ?? false));
     setRockboxSmartPlaylists(device.rockboxSmartPlaylists ?? false);
+    setDevMode(device.devMode ?? false);
 
     setShowDeviceModal(true);
   },
@@ -238,6 +241,7 @@ export function DevicePanel() {
       shadowLibraryId: resolvedShadowId,
       skipPlaybackLog: !playbackLogEnabled,
       rockboxSmartPlaylists,
+      devMode,
     };
 
     if (editingDeviceId !== null) {
@@ -747,6 +751,18 @@ export function DevicePanel() {
               <span className="text-sm text-foreground flex items-center gap-1">
                 Rockbox smart playlists (tagnavi)
                 <InfoTooltip text="When enabled, smart playlists are written to .rockbox/tagnavi_custom.config as live, auto-updating tagtree views instead of frozen .m3u snapshots. Requires Rockbox firmware on the device. Other playlist kinds still write .m3u." />
+              </span>
+            </label>
+            <label className="flex items-center gap-2.5 cursor-pointer opacity-60">
+              <input
+                type="checkbox"
+                className={checkboxClass}
+                checked={devMode}
+                onChange={(e) => setDevMode(e.target.checked)}
+              />
+              <span className="text-sm text-muted-foreground flex items-center gap-1">
+                Dev mode
+                <InfoTooltip text="⚠️ Dev purposes only. Bypasses the mount-point check so a plain local folder is treated as an online device. Do not use in production." />
               </span>
             </label>
           </div>
