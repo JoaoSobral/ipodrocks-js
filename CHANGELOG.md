@@ -1,6 +1,6 @@
 # Changelog
 
-## [1.4.0] — 2026-04-26
+## [1.2.0] — 2026-04
 
 ### Features
 
@@ -17,16 +17,6 @@
 
 - **Removed dead `SmartPlaylistGenerator` import** — `playlist-core.ts` imported `SmartPlaylistGenerator` but never used it; import removed.
 
-### Testing
-
-- **`playlist-core.test.ts`** — New test suite (10 cases) covering `previewSmartTracks` semantics: single genre, multi-genre OR, multi-artist OR, multi-album OR, genre+artist AND, all three combined, empty intersection → 0, `trackLimit` honored, non-music tracks excluded, affected ID sets populated correctly.
-
----
-
-## [1.3.0] — 2026-04-26
-
-### Features
-
 #### Rockbox-native smart playlists (tagnavi)
 
 - **Per-device opt-in flag** — A new "Rockbox smart playlists (tagnavi)" toggle on the device profile (Devices → Edit) switches smart-playlist sync from static `.m3u` snapshots to live, auto-updating Rockbox tagtree entries.
@@ -34,17 +24,6 @@
 - **Sanitisation** — Quotes, control characters, and whitespace in playlist names and rule labels are sanitised before quoting; UTF-8 is passed through unchanged.
 - **Sync integration** — When the flag is on, smart playlists no longer produce `.m3u` files; orphan cleanup detects any stale `.m3u` left over from prior syncs and removes them under the existing Orphan Policy. When the flag is off (or the smart-playlist set is empty), any pre-existing `tagnavi_custom.config` is removed so the device does not show stale entries.
 - **Schema migration** — `devices.rockbox_smart_playlists` column added with `DEFAULT 0`; existing devices keep the previous behaviour automatically.
-
-### Testing
-
-- **Tagnavi writer tests** — Cover single/multiple rules per type, multi-type AND/OR composition, sanitisation of quotes/newlines/control chars, empty-rule and unknown-rule-type handling, header structure, deterministic output.
-- **Sync integration tests** — Cover flag off (M3U), flag on (tagnavi only, no M3U for smart), flag toggled off→on (M3U cleanup), flag on with no smart playlists (file deletion), write-if-changed, sanitisation.
-
----
-
-## [1.2.0] — 2026-04-25
-
-### Features
 
 #### Star ratings in playlist generation
 
@@ -59,6 +38,9 @@
 - **Genius `top_rated` tests** — Covers: works with empty play history, excludes tracks below 4 stars, excludes unrated tracks, correct descending-rating order, `maxTracks` limit.
 - **Rating propagation tests** — Verifies that `matchEventsToLibrary` attaches the correct rating (or `null`) from the library row to matched events.
 - **Smart playlist `top_rated` tests** — Covers: type registered, 4-star filter, rating populated on returned tracks, empty result when no rated tracks, `limit` option.
+- **Tagnavi writer tests** — Cover single/multiple rules per type, multi-type AND/OR composition, sanitisation of quotes/newlines/control chars, empty-rule and unknown-rule-type handling, header structure, deterministic output.
+- **Sync integration tests** — Cover flag off (M3U), flag on (tagnavi only, no M3U for smart), flag toggled off→on (M3U cleanup), flag on with no smart playlists (file deletion), write-if-changed, sanitisation.
+- **`playlist-core.test.ts`** — New test suite (10 cases) covering `previewSmartTracks` semantics: single genre, multi-genre OR, multi-artist OR, multi-album OR, genre+artist AND, all three combined, empty intersection → 0, `trackLimit` honored, non-music tracks excluded, affected ID sets populated correctly.
 
 ---
 
