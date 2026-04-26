@@ -1,7 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
 
-import { Track } from "../../shared/types";
+import { Track, SyncProgressEventName } from "../../shared/types";
 import { Device } from "../devices/device";
 import {
   CompareOptions,
@@ -16,18 +16,20 @@ import {
   copyToDevice,
 } from "./sync-executor";
 
+const PASSTHROUGH_CODECS = ["DIRECT COPY", "COPY", "NONE"] as const;
+
 export class SyncCancelled extends Error {
   constructor() {
     super("Sync cancelled by user.");
   }
 }
 
-export interface SyncProgressEvent {
-  event: string;
+export interface SyncProgressPayload {
+  event: SyncProgressEventName;
   [key: string]: unknown;
 }
 
-export type ProgressCallback = (event: SyncProgressEvent) => void;
+export type ProgressCallback = (event: SyncProgressPayload) => void;
 
 export interface RunSyncOptions {
   syncType?: string;
@@ -169,7 +171,7 @@ export function buildLibraryDestMap(
   const expectedSizes: Record<string, number> = {};
   const expectedMtimes: Record<string, number> = {};
 
-  const needsConversion = !["DIRECT COPY", "COPY", "NONE"].includes(
+  const needsConversion = !(PASSTHROUGH_CODECS as readonly string[]).includes(
     codecName.toUpperCase()
   );
   const codecLower = needsConversion ? codecName.toLowerCase() : "copy";
@@ -283,7 +285,7 @@ function classifyDeviceCodecFromSamples(
 
 export function getProfileCodecExt(codecName: string): string | null {
   const upper = codecName.toUpperCase();
-  if (["DIRECT COPY", "COPY", "NONE"].includes(upper)) return null;
+  if ((PASSTHROUGH_CODECS as readonly string[]).includes(upper)) return null;
   const ext = path.extname(updateExtension("x", codecName.toLowerCase()));
   return ext || null;
 }
@@ -431,7 +433,7 @@ export async function copyMissingTracks(
   const customDestinations: Record<string, string> = {};
   const perTrackConversion: Record<string, ConversionSettings> = {};
 
-  const needsConversion = !["DIRECT COPY", "COPY", "NONE"].includes(codecName.toUpperCase());
+  const needsConversion = !(PASSTHROUGH_CODECS as readonly string[]).includes(codecName.toUpperCase());
   const codecLower = needsConversion ? codecName.toLowerCase() : "copy";
   const isMpc = codecLower === "mpc";
   const bitrate = deviceProfile?.codecConfigBitrate ?? 256;
@@ -491,7 +493,7 @@ export async function copyMissingTracks(
     customDestinations,
     progressCallback: progressAdapter,
     logCallback: (line: string) =>
-      progressCallback?.({ event: "log", message: line }),
+      progressCallback?.({ event: "convert_log", message: line }),
     cancelSignal,
   };
 

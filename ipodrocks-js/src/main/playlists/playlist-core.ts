@@ -10,7 +10,6 @@ import {
   AlbumInfo,
   GenreInfo,
 } from "../../shared/types";
-import { SmartPlaylistGenerator } from "./smart-playlists";
 import { computeDeviceRelativePath } from "../sync/sync-core";
 import { updateExtension } from "../sync/sync-conversion";
 
@@ -705,6 +704,29 @@ export class PlaylistCore {
     }
   }
 
+  previewSmartTracks(
+    rules: SmartPlaylistRule[],
+    trackLimit?: number
+  ): { count: number; totalCount: number; affectedArtistIds: number[]; affectedGenreIds: number[]; affectedAlbumIds: number[] } {
+    let ids = this._queryTracksForRules(rules);
+    const totalCount = ids.length;
+    if (trackLimit != null && trackLimit > 0) ids = ids.slice(0, trackLimit);
+    if (ids.length === 0) {
+      return { count: 0, totalCount, affectedArtistIds: [], affectedGenreIds: [], affectedAlbumIds: [] };
+    }
+    const ph = ids.map(() => "?").join(",");
+    const rows = this.db
+      .prepare(`SELECT DISTINCT artist_id, album_id, genre_id FROM tracks WHERE id IN (${ph})`)
+      .all(...ids) as { artist_id: number; album_id: number; genre_id: number }[];
+    return {
+      count: ids.length,
+      totalCount,
+      affectedArtistIds: [...new Set(rows.map((r) => r.artist_id).filter(Boolean))],
+      affectedGenreIds: [...new Set(rows.map((r) => r.genre_id).filter(Boolean))],
+      affectedAlbumIds: [...new Set(rows.map((r) => r.album_id).filter(Boolean))],
+    };
+  }
+
   private _queryTracksForRules(rules: SmartPlaylistRule[]): number[] {
     if (!rules.length) return [];
 
@@ -733,7 +755,7 @@ export class PlaylistCore {
 
     if (!conditions.length) return [];
 
-    const where = conditions.join(" AND ");
+    const where = conditions.join(" OR ");
     const rows = this.db
       .prepare(
         `SELECT t.id FROM tracks t

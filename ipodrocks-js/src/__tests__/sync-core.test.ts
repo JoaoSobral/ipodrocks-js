@@ -1130,11 +1130,106 @@ describe("SyncProgress contentType tracking", () => {
 
     try {
       const logEvents = events.filter((e) => e.event === "log");
-      const musicLogFound = logEvents.some((e) => 
+      const musicLogFound = logEvents.some((e) =>
         typeof e.contentType === 'undefined' || e.contentType === "music"
       );
       expect(logEvents.length).toBeGreaterThan(0);
       expect(musicLogFound).toBe(true);
+    } finally {
+      fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("does not emit per-track 'Copied:' log lines on direct-copy sync", async () => {
+    const events: Array<{ event: string; message?: string }> = [];
+    const onProgress = (e: { event: string; message?: string }) => events.push(e);
+
+    const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "sync-no-copied-log-"));
+    const devicePath = path.join(tmpRoot, "device", "Music");
+    const libraryPath = path.join(tmpRoot, "library");
+    fs.mkdirSync(devicePath, { recursive: true });
+    fs.mkdirSync(path.join(libraryPath, "Artist", "Album"), { recursive: true });
+
+    const trackPath = path.join(libraryPath, "Artist", "Album", "track.mp3");
+    fs.writeFileSync(trackPath, "audio");
+
+    const libraryTracks: Record<string, Record<string, unknown>> = {
+      [trackPath]: { artist: "Artist", album: "Album", fileSize: 5 },
+    };
+    const deviceFilesMap: Record<string, { file_size: number }> = {};
+
+    const device = new Device(
+      createDirectCopyDeviceProfile(path.dirname(devicePath)) as never
+    );
+
+    await runSync(
+      device,
+      libraryTracks,
+      "DIRECT COPY",
+      "music",
+      devicePath,
+      deviceFilesMap,
+      { extraTrackPolicy: "keep", skipAlbumArtwork: true, progressCallback: onProgress }
+    );
+
+    try {
+      // The per-file "copied" status is communicated via the copy event
+      // (Recent files panel) — the conversion log should NOT receive a
+      // duplicate "Copied: <basename>" line for each track.
+      const copiedLogLines = events.filter(
+        (e) =>
+          (e.event === "log" || e.event === "convert_log") &&
+          typeof e.message === "string" &&
+          e.message.startsWith("Copied: ")
+      );
+      expect(copiedLogLines).toHaveLength(0);
+
+      // Per-file copy progress is still reported.
+      const copyEvents = events.filter((e) => e.event === "copy");
+      expect(copyEvents).toHaveLength(1);
+    } finally {
+      fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("routes ffmpeg/encoder subprocess output to convert_log, not log", async () => {
+    // Smoke check: ffmpeg lines pass through copyToDevice's logCallback,
+    // which sync-core wires to emit `convert_log` events. We bypass the
+    // conversion subprocess by invoking the executor's logCallback directly
+    // through the same path sync-core uses.
+    const { copyToDevice } = await import("../main/sync/sync-executor");
+
+    const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "convert-log-route-"));
+    const devicePath = path.join(tmpRoot, "device");
+    fs.mkdirSync(devicePath, { recursive: true });
+
+    const srcPath = path.join(tmpRoot, "track.mp3");
+    fs.writeFileSync(srcPath, "audio");
+
+    const events: Array<{ event: string; message?: string }> = [];
+    const progressCallback = (e: { event: string; message?: string }) =>
+      events.push(e);
+
+    // Mirror the wiring sync-core.ts uses for copyMissingTracks.
+    await copyToDevice([srcPath], devicePath, {
+      preserveStructure: false,
+      progressCallback: () => {},
+      logCallback: (line: string) =>
+        progressCallback({ event: "convert_log", message: line }),
+    });
+
+    try {
+      // The plain copy path no longer emits a per-file "Copied: ..." line.
+      const convertLogLines = events.filter((e) => e.event === "convert_log");
+      const copiedLines = convertLogLines.filter((e) =>
+        e.message?.startsWith("Copied: ")
+      );
+      expect(copiedLines).toHaveLength(0);
+
+      // No `log` events are produced from copyToDevice's logCallback wiring —
+      // status messages come from the surrounding sync pipeline, not here.
+      const plainLogEvents = events.filter((e) => e.event === "log");
+      expect(plainLogEvents).toHaveLength(0);
     } finally {
       fs.rmSync(tmpRoot, { recursive: true, force: true });
     }

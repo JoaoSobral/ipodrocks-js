@@ -1,5 +1,58 @@
 # Changelog
 
+## [1.2.0] — 2026-04
+
+### Features
+
+#### Multi-select smart playlist creation
+
+- **Single-step, 3-column modal** — "Create Smart Playlist" now presents Genres, Artists, and Albums side-by-side in one step instead of requiring the user to pick a strategy first and then pick within it. Any combination can be mixed freely.
+- **Cross-type AND, within-type OR** — Selecting two genres matches tracks in *either* genre; adding an artist then restricts to tracks that also belong to that artist. The backend already implemented this logic; the UI now exposes the full power of it.
+- **Live track-count preview** — As the user ticks and unticks items, the modal debounces (200 ms) a `playlist:previewSmartTracks` IPC call and shows "Will include ~N tracks". An empty intersection is immediately obvious before clicking Create.
+- **Green / yellow highlighting** — Checked rows are highlighted green (`bg-success/20 text-success`). Rows that would appear in the result set due to *other* selections (forward derivation) go yellow (`bg-warning/20 text-warning`), matching the SyncPanel custom-sync visual language.
+- **Per-column search and Select All / Clear** — Each column has a live search input and ghost "All · Clear" buttons with a selected-count badge, making large libraries navigable.
+- **`playlist:previewSmartTracks` IPC handler** — New handler (backed by `PlaylistCore.previewSmartTracks`) runs rule resolution without saving and returns `{ count, affectedArtistIds, affectedGenreIds, affectedAlbumIds }`.
+
+### UI
+
+#### Device icons
+
+- **Per-device icons replace the generic green square** — Devices in the Devices panel and Dashboard now render a real icon for iPod Classic, iPod Nano (any generation), and iPod Mini. All other devices (Rockbox-native ports, iriver, iAudio, FiiO, AGPTek, etc.) get one of six generic `rockbox_gen` icons.
+- **Distinct-then-cycling assignment** — The first six generic devices each receive a different `rockbox_gen` icon in a fixed shuffled order so two devices never look identical until all six have been used; the seventh onward cycles. The assignment is stable across reloads and remains unchanged when a new device is added.
+- **Larger connection-status dot** — The green/red availability indicator on each device card grew from 10 px to 16 px and now sits on the corner of the icon instead of overlapping it, making at-a-glance status much easier to read.
+
+### Code quality
+
+- **Removed dead `SmartPlaylistGenerator` import** — `playlist-core.ts` imported `SmartPlaylistGenerator` but never used it; import removed.
+
+#### Rockbox-native smart playlists (tagnavi)
+
+- **Per-device opt-in flag** — A new "Rockbox smart playlists (tagnavi)" toggle on the device profile (Devices → Edit) switches smart-playlist sync from static `.m3u` snapshots to live, auto-updating Rockbox tagtree entries.
+- **`.rockbox/tagnavi_user.config` writer** — Smart playlists translate to a single config file that overrides the firmware default `tagnavi.config`; entries are inlined directly into the main Database menu. Multiple values within a rule type use the `@` "one of" operator with pipe-separated values inside a single quoted string (`tag @ "v1|v2"`, per Rockbox `str_oneof()`); different rule types are joined with `|` (OR) to match the desktop's smart-playlist track query semantics.
+- **Sanitisation** — Quotes, control characters, and whitespace in playlist names and rule labels are sanitised before quoting; UTF-8 is passed through unchanged.
+- **Sync integration** — When the flag is on, smart playlists no longer produce `.m3u` files; orphan cleanup detects any stale `.m3u` left over from prior syncs and removes them under the existing Orphan Policy. When the flag is off (or the smart-playlist set is empty), any pre-existing `tagnavi_custom.config` is removed so the device does not show stale entries.
+- **Schema migration** — `devices.rockbox_smart_playlists` column added with `DEFAULT 0`; existing devices keep the previous behaviour automatically.
+
+#### Star ratings in playlist generation
+
+- **`top_rated` Genius playlist** — New Genius type that selects tracks rated 4+ stars (Rockbox 0–10 scale ≥ 8) directly from the library database. No play history is required — works even before any device log has been ingested. Tracks are ordered by rating descending, then by play count.
+- **`top_rated` Smart playlist** — Same 4-star threshold available as a Smart playlist strategy. Tracks are ordered by rating descending with a random tiebreak, and the result set respects the track limit option.
+- **Rating flows through the Genius pipeline** — `matchEventsToLibrary` now attaches the `rating` field from the library to every matched play event. The rating propagates through `TrackAggregation` and `aggToTrack` so all Genius algorithms (Most Played, Favorites, Deep Dive, etc.) expose it on `PlaylistTrack`. Library query helpers (`getLibraryTracksByArtist`, `getLibraryTracksByAlbum`) also return rating.
+- **Rating in Savant AI context** — Candidate tracks sent to the LLM now include the track's rating (0–10). The system prompt instructs Savant to give extra weight to rated tracks when curating mood playlists.
+- **`PlaylistTrack.rating` field** — The shared `PlaylistTrack` type gains an optional `rating?: number | null` field, making rating available to the renderer for any playlist type.
+
+### Testing
+
+- **Genius `top_rated` tests** — Covers: works with empty play history, excludes tracks below 4 stars, excludes unrated tracks, correct descending-rating order, `maxTracks` limit.
+- **Rating propagation tests** — Verifies that `matchEventsToLibrary` attaches the correct rating (or `null`) from the library row to matched events.
+- **Smart playlist `top_rated` tests** — Covers: type registered, 4-star filter, rating populated on returned tracks, empty result when no rated tracks, `limit` option.
+- **Tagnavi writer tests** — Cover single/multiple rules per type, multi-type AND/OR composition, sanitisation of quotes/newlines/control chars, empty-rule and unknown-rule-type handling, header structure, deterministic output.
+- **Sync integration tests** — Cover flag off (M3U), flag on (tagnavi only, no M3U for smart), flag toggled off→on (M3U cleanup), flag on with no smart playlists (file deletion), write-if-changed, sanitisation.
+- **`playlist-core.test.ts`** — New test suite (10 cases) covering `previewSmartTracks` semantics: single genre, multi-genre OR, multi-artist OR, multi-album OR, genre+artist AND, all three combined, empty intersection → 0, `trackLimit` honored, non-music tracks excluded, affected ID sets populated correctly.
+- **`device-icon.test.ts`** — New test suite (11 cases) covering icon resolution: classic/nano/mini specific matches by `modelInternalValue` or `modelName`, distinct rockbox_gen assignment for the first six generic devices, cycling on the seventh, position stability when a new device is added, ordering by id regardless of input order, and null-fallback to a generic icon.
+
+---
+
 ## [1.1.3.1] — 2026-04-19
 
 ### Documentation

@@ -2,7 +2,7 @@ import * as fs from "fs";
 import * as fsp from "fs/promises";
 import * as os from "os";
 import * as path from "path";
-import { app, BrowserWindow, dialog, ipcMain, IpcMainInvokeEvent } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, shell, IpcMainInvokeEvent } from "electron";
 import { pathMatchesAllowedPrefix } from "./path-allowlist";
 
 /** Builds path→track maps for music, podcast, audiobook from a single getTracks call. */
@@ -81,6 +81,38 @@ function validateFolderPath(rawPath: string): { path: string } | { error: string
   return { path: realPath };
 }
 
+/**
+ * Check whether a device mount path is actually online (volume is mounted).
+ *
+ * A device is considered online only when its mount path is a real mount
+ * point — i.e., a separate filesystem. We verify this by comparing the `dev`
+ * (filesystem device id) of the mount path against its parent directory:
+ * a real mounted volume always has a different `dev` than its parent, while
+ * a regular folder on the main filesystem (or an orphan directory left behind
+ * after ejection) shares the parent's `dev`.
+ *
+ * `fs.existsSync` alone is not reliable because:
+ *   - macOS/Linux can leave an empty orphan directory after ejection
+ *   - a local folder "test device" always exists but is not a connected device
+ *
+ * On Windows (no POSIX dev ids in a meaningful way), we fall back to checking
+ * that the path exists and is a directory; Windows drive letters are naturally
+ * isolated so this is sufficient there.
+ */
+function isDeviceMountPathOnline(mountPath: string): boolean {
+  if (!mountPath) return false;
+  try {
+    const resolved = path.resolve(mountPath);
+    const pathStat = fs.statSync(resolved);
+    if (!pathStat.isDirectory()) return false;
+    if (process.platform === "win32") return true;
+    const parentStat = fs.statSync(path.dirname(resolved));
+    return pathStat.dev !== parentStat.dev;
+  } catch {
+    return false;
+  }
+}
+
 import {
   AddDeviceConfig,
   GeniusGenerateOptions,
@@ -112,6 +144,7 @@ import {
   removeExtraTracks,
 } from "./sync/sync-core";
 import { compareLibraries } from "./sync/name-size-sync";
+import { writePlaylistsToDevice } from "./sync/playlist-sync";
 import { isMpcencAvailable } from "./utils/mpcenc";
 import {
   getMpcRemindDisabled,
@@ -120,8 +153,15 @@ import {
   setOpenRouterConfig,
   getHarmonicPrefs,
   setHarmonicPrefs,
+  getUpdateSnoozeUntil,
+  setUpdateSnoozeUntil,
   type HarmonicPrefs,
 } from "./utils/prefs";
+import {
+  fetchLatestRelease,
+  compareVersions,
+  shouldAutoCheck,
+} from "./utils/update-checker";
 import { generateSavantPlaylist } from "./savant/savantEngine";
 import {
   startMoodChat,
@@ -293,6 +333,40 @@ export function registerIpcHandlers(): void {
     "app:getVersion",
     safe("app:getVersion", async () => ({ version: app.getVersion() }))
   );
+  ipcMain.handle(
+    "app:checkForUpdates",
+    safe("app:checkForUpdates", async (_event, opts?: { auto?: boolean }) => {
+      const current = app.getVersion();
+      if (opts?.auto) {
+        const snoozeUntil = getUpdateSnoozeUntil();
+        if (!shouldAutoCheck(Date.now(), snoozeUntil ?? undefined)) {
+          return { current, latest: current, updateAvailable: false, snoozed: true };
+        }
+      }
+      try {
+        const release = await fetchLatestRelease();
+        const latest = release.tagName.replace(/^v/, "");
+        const updateAvailable = compareVersions(current, latest) === -1;
+        return { current, latest, updateAvailable, htmlUrl: release.htmlUrl };
+      } catch {
+        return { current, latest: current, updateAvailable: false, error: "network" };
+      }
+    })
+  );
+  ipcMain.handle(
+    "app:setUpdateSnooze",
+    safe("app:setUpdateSnooze", async (_event, snoozeUntil: number | null) => {
+      setUpdateSnoozeUntil(snoozeUntil);
+      return undefined;
+    })
+  );
+  ipcMain.handle(
+    "app:openExternal",
+    safe("app:openExternal", async (_event, url: string) => {
+      await shell.openExternal(url);
+      return undefined;
+    })
+  );
 
   // ---- Genius Playlists (register early so they are always available) ----
   ipcMain.handle(
@@ -300,6 +374,10 @@ export function registerIpcHandlers(): void {
     safe("genius:analyze", async (_event, deviceId: number) => {
       const device = getDevicesCore().getDeviceById(deviceId);
       if (!device) return { error: `Device ${deviceId} not found` };
+
+      if (!isDeviceMountPathOnline(device.mountPath)) {
+        return { offline: true, error: "Device not connected" };
+      }
 
       const allEvents = parseRockboxPlaybackLog(device.mountPath);
       const db = getLibrary().getConnection();
@@ -711,10 +789,23 @@ export function registerIpcHandlers(): void {
   );
 
   ipcMain.handle(
+    "device:ping",
+    safe("device:ping", async (_event, deviceId: number) => {
+      const device = getDevicesCore().getDeviceById(deviceId);
+      if (!device) return { online: false };
+      return { online: isDeviceMountPathOnline(device.mountPath) };
+    })
+  );
+
+  ipcMain.handle(
     "device:check",
     safe("device:check", async (_event, deviceId: number) => {
       const device = getDevicesCore().getDeviceById(deviceId);
       if (!device) return { error: `Device ${deviceId} not found` };
+
+      if (!isDeviceMountPathOnline(device.mountPath)) {
+        return { offline: true, deviceId, name: device.name };
+      }
 
       const lib = getLibrary();
       if (!device.profile.skipPlaybackLog) {
@@ -958,6 +1049,10 @@ export function registerIpcHandlers(): void {
       const device = getDevicesCore().getDeviceById(deviceId);
       if (!device) return { error: `Device ${deviceId} not found` };
 
+      if (!isDeviceMountPathOnline(device.mountPath)) {
+        return { offline: true, error: "Device not connected", ingested: 0, skipped: 0 };
+      }
+
       const lib = getLibrary();
       const ingest = readAndIngestPlaybackLog(
         deviceId,
@@ -1010,20 +1105,38 @@ export function registerIpcHandlers(): void {
         const podcastSet = new Set(sel.podcasts ?? []);
         const audiobookSet = new Set(sel.audiobooks ?? []);
 
-        const matchMusic = (t: Record<string, unknown>) => {
+        // Collect track paths from selected playlists
+        const playlistTrackPaths = new Set<string>();
+        if (sel.playlists?.length) {
+          const playlistCore = getPlaylistCore();
+          const selectedPlaylistNames = new Set(sel.playlists);
+          const allPlaylists = playlistCore.getPlaylists();
+          for (const pl of allPlaylists) {
+            if (selectedPlaylistNames.has(pl.name)) {
+              for (const track of playlistCore.getPlaylistTracks(pl.id)) {
+                playlistTrackPaths.add(track.path);
+              }
+            }
+          }
+        }
+
+        const matchMusic = (t: Record<string, unknown>, p: string) => {
+          if (playlistTrackPaths.has(p)) return true;
           const album = (String(t.album ?? "Unknown Album")).trim();
           const artist = (String(t.artist ?? "Unknown Artist")).trim();
           const genre = (String(t.genre ?? "Unknown Genre")).trim();
           const albumLabel = `${album} — ${artist}`;
           return albumSet.has(albumLabel) || artistSet.has(artist) || genreSet.has(genre);
         };
-        const matchPodcast = (t: Record<string, unknown>) => {
+        const matchPodcast = (t: Record<string, unknown>, p: string) => {
+          if (playlistTrackPaths.has(p)) return true;
           const title = (String(t.title ?? t.filename ?? "Untitled")).trim();
           const artist = (String(t.artist ?? "")).trim();
           const label = artist ? `${title} — ${artist}` : title;
           return podcastSet.has(label) || podcastSet.has(title);
         };
-        const matchAudiobook = (t: Record<string, unknown>) => {
+        const matchAudiobook = (t: Record<string, unknown>, p: string) => {
+          if (playlistTrackPaths.has(p)) return true;
           const title = (String(t.title ?? t.filename ?? "Untitled")).trim();
           const artist = (String(t.artist ?? "")).trim();
           const label = artist ? `${title} — ${artist}` : title;
@@ -1031,13 +1144,13 @@ export function registerIpcHandlers(): void {
         };
 
         for (const [p, t] of Object.entries(musicMap)) {
-          if (matchMusic(t)) musicLibraryTracks[p] = t;
+          if (matchMusic(t, p)) musicLibraryTracks[p] = t;
         }
         for (const [p, t] of Object.entries(podcastMap)) {
-          if (matchPodcast(t)) podcastLibraryTracks[p] = t;
+          if (matchPodcast(t, p)) podcastLibraryTracks[p] = t;
         }
         for (const [p, t] of Object.entries(audiobookMap)) {
-          if (matchAudiobook(t)) audiobookLibraryTracks[p] = t;
+          if (matchAudiobook(t, p)) audiobookLibraryTracks[p] = t;
         }
       } else {
         const includeMusic = opts.syncType === "full" ? opts.includeMusic === true : true;
@@ -1304,6 +1417,7 @@ export function registerIpcHandlers(): void {
           ? (opts.selections?.playlists?.length ?? 0) > 0
           : opts.includePlaylists !== false);
 
+      const useTagnavi = device.profile.rockboxSmartPlaylists === true;
       let playlistsWritten = 0;
       if (shouldWritePlaylists) {
         const playlistFolder = device.getContentPath("playlist");
@@ -1321,48 +1435,20 @@ export function registerIpcHandlers(): void {
               codecName,
               libraryFolderPaths,
             };
-            await fsp.mkdir(playlistFolder, { recursive: true });
-            const normalizeM3uForCompare = (s: string) =>
-              s.replace(/# Generated: .+/g, "# Generated: <date>");
             syncOpts.progressCallback?.({
               event: "total_add",
               path: String(playlistsToWrite.length),
             });
-            for (const pl of playlistsToWrite) {
-              const content = core.buildM3uContentForDevice(pl.id, m3uOpts);
-              const safeName = pl.name.replace(/[/\\?*:"<>|]/g, "_").trim() || "Playlist";
-              const outPath = path.join(playlistFolder, `${safeName}.m3u`);
-              let existingRaw: string | null = null;
-              try {
-                existingRaw = await fsp.readFile(outPath, "utf-8");
-              } catch {
-                // file doesn't exist yet
-              }
-              const needsWrite =
-                existingRaw === null ||
-                normalizeM3uForCompare(existingRaw) !== normalizeM3uForCompare(content);
-              if (needsWrite) {
-                await fsp.writeFile(outPath, content, "utf-8");
-                playlistsWritten += 1;
-              }
-              syncOpts.progressCallback?.({
-                event: "copy",
-                path: outPath,
-                status: needsWrite ? "copied" : "skipped",
-                contentType: "playlist",
-              });
-            }
-            if (playlistsWritten > 0) {
-              syncOpts.progressCallback?.({
-                event: "log",
-                message: `Written ${playlistsWritten} playlist(s) to device.`,
-              });
-            } else if (playlistsToWrite.length > 0) {
-              syncOpts.progressCallback?.({
-                event: "log",
-                message: "Playlist(s) already up to date.",
-              });
-            }
+            const writeResult = await writePlaylistsToDevice({
+              playlistFolder,
+              mountPath: device.profile.mountPath,
+              playlistsToWrite,
+              core,
+              m3uOpts,
+              useTagnavi,
+              progressCallback: syncOpts.progressCallback,
+            });
+            playlistsWritten = writeResult.playlistsWritten;
           } catch (err) {
             console.error("[ipc] Sync playlists to device failed:", err);
           }
@@ -1377,9 +1463,11 @@ export function registerIpcHandlers(): void {
           const core = getPlaylistCore();
           const libraryPlaylists = core.getPlaylists();
           const expectedStems = new Set(
-            libraryPlaylists.map((pl) =>
-              (pl.name.replace(/[/\\?*:"<>|]/g, "_").trim() || "Playlist").toLowerCase()
-            )
+            libraryPlaylists
+              .filter((pl) => !(useTagnavi && pl.typeName === "smart"))
+              .map((pl) =>
+                (pl.name.replace(/[/\\?*:"<>|]/g, "_").trim() || "Playlist").toLowerCase()
+              )
           );
           const orphanPaths: string[] = [];
           const walkPlaylists = (dir: string): void => {
@@ -1530,6 +1618,13 @@ export function registerIpcHandlers(): void {
     "playlist:getTracks",
     safe("playlist:getTracks", async (_event, playlistId: number) => {
       return getPlaylistCore().getPlaylistTracks(playlistId);
+    })
+  );
+
+  ipcMain.handle(
+    "playlist:previewSmartTracks",
+    safe("playlist:previewSmartTracks", async (_event, payload: { rules: SmartPlaylistRule[]; trackLimit?: number }) => {
+      return getPlaylistCore().previewSmartTracks(payload.rules, payload.trackLimit);
     })
   );
 

@@ -1,6 +1,7 @@
 import { useRef, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { Label } from "./Label";
+import { InfoTooltip } from "./InfoTooltip";
 
 interface SelectOption {
   value: string;
@@ -9,6 +10,7 @@ interface SelectOption {
 
 interface SelectProps {
   label?: string;
+  tooltip?: string;
   options: SelectOption[];
   value?: string;
   onChange?: (value: string) => void;
@@ -19,6 +21,7 @@ interface SelectProps {
 
 export function Select({
   label,
+  tooltip,
   options: optionsProp,
   value = "",
   onChange,
@@ -98,7 +101,14 @@ export function Select({
 
   return (
     <div ref={containerRef} className={`relative ${className}`}>
-      {label && <Label>{label}</Label>}
+      {label && (
+        <Label>
+          <span className="inline-flex items-center gap-1">
+            {label}
+            {tooltip && <InfoTooltip text={tooltip} />}
+          </span>
+        </Label>
+      )}
       <button
         ref={buttonRef}
         type="button"

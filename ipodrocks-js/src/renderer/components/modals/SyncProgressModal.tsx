@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from "react";
+import type { Dispatch, MutableRefObject, SetStateAction } from "react";
 import type { SyncOptions, SyncProgress } from "@shared/types";
 import { startSync, cancelSync, onSyncProgress } from "@renderer/ipc/api";
 import { Modal } from "../common/Modal";
@@ -55,6 +56,22 @@ function pathBasename(p: string): string {
   return parts[parts.length - 1] ?? p;
 }
 
+type LogEntry = { id: number; text: string };
+
+function appendCappedLog(
+  setter: Dispatch<SetStateAction<LogEntry[]>>,
+  idRef: MutableRefObject<number>,
+  text: string,
+  cap: number,
+) {
+  setter((prev) => {
+    const next = [...prev, { id: ++idRef.current, text }];
+    return next.length > cap ? next.slice(-cap) : next;
+  });
+}
+
+const LOG_BUFFER_CAP = 200;
+
 const EMPTY_SKIP_BREAKDOWN = {
   music: 0,
   podcast: 0,
@@ -71,7 +88,8 @@ export function SyncProgressModal({
 }: SyncProgressModalProps) {
   const [progress, setProgress] = useState<SyncProgress | null>(null);
   const [recentItems, setRecentItems] = useState<RecentItem[]>([]);
-  const [logLines, setLogLines] = useState<{ id: number; text: string }[]>([]);
+  const [statusMessages, setStatusMessages] = useState<LogEntry[]>([]);
+  const [logLines, setLogLines] = useState<LogEntry[]>([]);
   const [totalItems, setTotalItems] = useState(0);
   const [processedItems, setProcessedItems] = useState(0);
   const [copiedItems, setCopiedItems] = useState(0);
@@ -85,6 +103,7 @@ export function SyncProgressModal({
   const logRef = useRef<HTMLDivElement>(null);
   const itemIdRef = useRef(0);
   const logIdRef = useRef(0);
+  const statusIdRef = useRef(0);
   const elapsedInterval = useRef<ReturnType<typeof setInterval> | null>(null);
   const syncStartedRef = useRef(false);
   const progressUnsubRef = useRef<(() => void) | null>(null);
@@ -103,10 +122,12 @@ export function SyncProgressModal({
     setProgress(p);
 
     if (p.event === "log") {
-      setLogLines((prev) => {
-        const next = [...prev, { id: ++logIdRef.current, text: p.message ?? p.path ?? "" }];
-        return next.length > 200 ? next.slice(-200) : next;
-      });
+      appendCappedLog(setStatusMessages, statusIdRef, p.message ?? p.path ?? "", LOG_BUFFER_CAP);
+      return;
+    }
+
+    if (p.event === "convert_log") {
+      appendCappedLog(setLogLines, logIdRef, p.message ?? p.path ?? "", LOG_BUFFER_CAP);
       return;
     }
 
@@ -173,6 +194,7 @@ export function SyncProgressModal({
 
     setProgress(null);
     setRecentItems([]);
+    setStatusMessages([]);
     setLogLines([]);
     setTotalItems(0);
     setProcessedItems(0);
@@ -272,6 +294,7 @@ export function SyncProgressModal({
     const lines: string[] = [
       "=== Sync progress ===",
       `${processedItems} / ${totalItems || "?"} items, ${copiedItems} copied`,
+      ...statusMessages.map((s) => s.text),
       "",
       "=== Recent files ===",
       ...recentItems.map((r) => `[${r.status ?? r.event}] ${r.path}`),

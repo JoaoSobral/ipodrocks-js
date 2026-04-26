@@ -25,6 +25,7 @@ The Sync panel copies music, podcasts, audiobooks, and playlists from your libra
   - **Prompt** — Ask you each time orphans are found.
 - **Codec mismatches** — When a device has files in a codec that no longer matches its profile (e.g. old Musepack files after switching the profile to Opus) and you sync with **Orphan Policy = "Remove"**, those old-codec files are removed and replaced by the new codec during sync.
 - **Album artwork** — Copied by default (`cover.jpg`, `folder.png`, etc.). Uncheck "Skip album artwork" to disable.
+- **Rockbox tagnavi (per-device option)** — If the device profile has "Rockbox smart playlists (tagnavi)" enabled, smart playlists are written to `<device>/.rockbox/tagnavi_custom.config` instead of `Playlists/<name>.m3u`. See [Devices](./devices.md) and [Smart Playlists](./playlists-smart.md).
 
 ## How to work with it
 

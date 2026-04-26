@@ -3,6 +3,7 @@ import { getTracks, getLibraryStats, getLibraryFolders } from "../ipc/api";
 import type { Track, LibraryFolder, LibraryStats, TrackFilter } from "../ipc/api";
 
 export type { Track, LibraryFolder, LibraryStats };
+export type FetchTracksOptions = { silent?: boolean };
 
 interface LibraryState {
   tracks: Track[];
@@ -10,7 +11,7 @@ interface LibraryState {
   stats: LibraryStats | null;
   loading: boolean;
   error: string | null;
-  fetchTracks: (filter?: TrackFilter) => Promise<void>;
+  fetchTracks: (filter?: TrackFilter, options?: FetchTracksOptions) => Promise<void>;
   fetchFolders: () => Promise<void>;
   fetchStats: () => Promise<void>;
 }
@@ -22,13 +23,14 @@ export const useLibraryStore = create<LibraryState>((set) => ({
   loading: false,
   error: null,
 
-  fetchTracks: async (filter) => {
-    set({ loading: true, error: null });
+  fetchTracks: async (filter, options) => {
+    const silent = options?.silent ?? false;
+    if (!silent) set({ loading: true, error: null });
     try {
       const tracks = await getTracks(filter);
-      set({ tracks, loading: false });
+      set(silent ? { tracks, error: null } : { tracks, error: null, loading: false });
     } catch (e) {
-      set({ error: (e as Error).message, loading: false });
+      set(silent ? { error: (e as Error).message } : { error: (e as Error).message, loading: false });
     }
   },
 

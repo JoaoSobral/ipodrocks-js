@@ -5,6 +5,7 @@ import { formatDuration, formatSize, formatBitrate, formatShadowCodecLabel, form
 import { getTranscodableCodecConfigs } from "../../utils/codec";
 import { Card } from "../common/Card";
 import { Button } from "../common/Button";
+import { InfoTooltip } from "../common/InfoTooltip";
 import { Input } from "../common/Input";
 import { Select } from "../common/Select";
 import { Modal } from "../common/Modal";
@@ -515,8 +516,9 @@ export function LibraryPanel() {
         {/* Shadow Libraries */}
         <Card className="!p-2.5">
           <div className="flex items-center justify-between mb-1.5">
-            <h3 className="text-[11px] font-semibold text-card-foreground">
+            <h3 className="text-[11px] font-semibold text-card-foreground flex items-center gap-1">
               Shadow Libraries
+              <InfoTooltip text="A pre-transcoded copy of your library at a target codec and bitrate. Devices can sync directly from a shadow library instead of converting files in real time." />
             </h3>
             <Button
               variant="ghost"
@@ -685,8 +687,8 @@ export function LibraryPanel() {
           </div>
 
           {/* Table with horizontal scroll — contained so list and scrollbar stay inside card */}
-          <div className="flex-1 min-h-[100px] relative border border-border rounded-lg bg-card mt-1.5 overflow-hidden">
-            <div ref={trackListContainerRef} className="absolute inset-0 overflow-auto">
+          <div ref={trackListContainerRef} className="flex-1 min-h-[100px] relative border border-border rounded-lg bg-card mt-1.5 overflow-hidden">
+            <div className="absolute inset-0 overflow-auto">
             <div className="min-w-[900px]">
               {/* Header */}
               <TableHeader sticky className="theme-box">
@@ -736,7 +738,7 @@ export function LibraryPanel() {
                             rating={t.rating}
                             fromDevice={t.ratingSourceDeviceId !== null}
                             onChange={(newRating) => {
-                              setTrackRating(t.id, newRating).then(() => fetchTracks()).catch(console.error);
+                              setTrackRating(t.id, newRating).then(() => fetchTracks(undefined, { silent: true })).catch(console.error);
                             }}
                           />
                         </span>
@@ -832,6 +834,7 @@ export function LibraryPanel() {
           </div>
           <Select
             label="Content Type"
+            tooltip="Determines how tracks in this folder are tagged. Music, Podcast, and Audiobook types are synced to separate folders on your device."
             value={contentType}
             onChange={(v) => setContentType(v)}
             options={[
@@ -899,6 +902,7 @@ export function LibraryPanel() {
           </div>
           <Select
             label="Codec Configuration"
+            tooltip="All tracks in the shadow library will be converted to this codec and bitrate, creating a pre-encoded mirror of your primary library."
             options={[
               { value: "", label: "Select a codec…" },
               ...transcodableCodecConfigs.map((cc) => ({

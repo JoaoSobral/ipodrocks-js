@@ -1,0 +1,217 @@
+/**
+ * @vitest-environment node
+ */
+import { describe, it, expect } from "vitest";
+import {
+  sanitizeQuotedString,
+  buildEntryLine,
+  buildTagnaviConfig,
+  TagnaviPlaylistInput,
+} from "../main/rockbox/tagnavi-writer";
+import { Playlist, SmartPlaylistRule } from "../shared/types";
+
+function makePlaylist(name: string): Playlist {
+  return { id: 1, name, description: "", typeName: "smart", trackCount: 0, createdAt: "", updatedAt: "" };
+}
+
+function makeRule(ruleType: string, targetLabel: string, id = 1): SmartPlaylistRule {
+  return { id, ruleType, targetId: null, targetLabel };
+}
+
+function makeInput(name: string, rules: SmartPlaylistRule[], id = 1): TagnaviPlaylistInput {
+  return { playlist: { ...makePlaylist(name), id }, rules };
+}
+
+describe("sanitizeQuotedString", () => {
+  it("replaces double quotes with single quotes", () => {
+    expect(sanitizeQuotedString('Best "of" Rock')).toBe("Best 'of' Rock");
+  });
+
+  it("collapses newlines to space", () => {
+    expect(sanitizeQuotedString("foo\nbar\r\nbaz")).toBe("foo bar baz");
+  });
+
+  it("replaces tabs with space", () => {
+    expect(sanitizeQuotedString("foo\tbar")).toBe("foo bar");
+  });
+
+  it("replaces control chars with space (collapsed)", () => {
+    expect(sanitizeQuotedString("foo\x01\x1Fbar")).toBe("foo bar");
+  });
+
+  it("collapses multiple spaces", () => {
+    expect(sanitizeQuotedString("  foo   bar  ")).toBe("foo bar");
+  });
+
+  it("passes through unicode unchanged", () => {
+    expect(sanitizeQuotedString("日本のロック")).toBe("日本のロック");
+  });
+
+  it("returns empty string for blank input", () => {
+    expect(sanitizeQuotedString("   ")).toBe("");
+  });
+});
+
+describe("buildEntryLine", () => {
+  it("single rule → tag = label", () => {
+    const input = makeInput("Beatles", [makeRule("artist", "Beatles")]);
+    expect(buildEntryLine(input)).toBe('"Beatles" -> title = "fmt_ipr_title" ? artist = "Beatles"');
+  });
+
+  it("multiple rules same type → tag @ \"L1|L2\" (Rockbox str_oneof syntax)", () => {
+    const input = makeInput("Rock Mix", [
+      makeRule("genre", "Rock", 1),
+      makeRule("genre", "Jazz", 2),
+    ]);
+    expect(buildEntryLine(input)).toBe('"Rock Mix" -> title = "fmt_ipr_title" ? genre @ "Rock|Jazz"');
+  });
+
+  it("escapes literal '|' in @-list labels (would otherwise split the value)", () => {
+    const input = makeInput("Pipes", [
+      makeRule("artist", "AC|DC", 1),
+      makeRule("artist", "Beatles", 2),
+    ]);
+    expect(buildEntryLine(input)).toBe('"Pipes" -> title = "fmt_ipr_title" ? artist @ "AC/DC|Beatles"');
+  });
+
+  it("multiple rule types joined with | (OR, matching desktop semantics)", () => {
+    const input = makeInput("My Mix", [
+      makeRule("genre", "Rock", 1),
+      makeRule("artist", "Beatles", 2),
+    ]);
+    const line = buildEntryLine(input);
+    expect(line).toContain('genre = "Rock"');
+    expect(line).toContain('artist = "Beatles"');
+    expect(line).toContain(" | ");
+    expect(line).not.toContain(" & ");
+    expect(line).toMatch(/^"My Mix" -> title = "fmt_ipr_title" \? .+$/);
+  });
+
+  it("mix of 1 artist + 2 genres uses | across types, @ within type", () => {
+    const input = makeInput("Mix", [
+      makeRule("artist", "Beatles", 1),
+      makeRule("genre", "Rock", 2),
+      makeRule("genre", "Jazz", 3),
+    ]);
+    const line = buildEntryLine(input);
+    expect(line).toContain('artist = "Beatles"');
+    expect(line).toContain('genre @ "Rock|Jazz"');
+    expect(line).toContain(" | ");
+    expect(line).not.toContain(" & ");
+  });
+
+  it("empty rules → null", () => {
+    const input = makeInput("Empty", []);
+    expect(buildEntryLine(input)).toBeNull();
+  });
+
+  it("unsupported rule type alone → null", () => {
+    const input = makeInput("Bad", [makeRule("bpm", "120")]);
+    expect(buildEntryLine(input)).toBeNull();
+  });
+
+  it("unsupported rule type mixed with valid ones → only valid types emitted", () => {
+    const input = makeInput("Mix", [
+      makeRule("bpm", "120", 1),
+      makeRule("genre", "Rock", 2),
+    ]);
+    const line = buildEntryLine(input);
+    expect(line).not.toBeNull();
+    expect(line).toContain('genre = "Rock"');
+    expect(line).not.toContain("bpm");
+  });
+
+  it("all labels empty → null", () => {
+    const input = makeInput("Empty Labels", [makeRule("genre", "")]);
+    expect(buildEntryLine(input)).toBeNull();
+  });
+
+  it("sanitizes playlist name with double quotes", () => {
+    const input = makeInput('Best "Rock" Hits', [makeRule("genre", "Rock")]);
+    const line = buildEntryLine(input);
+    expect(line).toMatch(/^"Best 'Rock' Hits" ->/);
+  });
+
+  it("falls back to Untitled for blank playlist name after sanitize", () => {
+    const input = makeInput("   ", [makeRule("genre", "Rock")]);
+    const line = buildEntryLine(input);
+    expect(line).toMatch(/^"Untitled" ->/);
+  });
+
+  it("preserves unicode in playlist name", () => {
+    const input = makeInput("日本のロック", [makeRule("genre", "Rock")]);
+    const line = buildEntryLine(input);
+    expect(line).toMatch(/^"日本のロック" ->/);
+  });
+});
+
+describe("buildTagnaviConfig", () => {
+  const fixedNow = () => new Date("2026-04-26T12:00:00.000Z");
+
+  it("includes required header lines", () => {
+    const config = buildTagnaviConfig([], { now: fixedNow });
+    expect(config).toContain("#! rockbox/tagbrowser/2.0");
+    expect(config).toContain("# Generated by iPodRocks - do not edit manually");
+    expect(config).toContain('%format "fmt_ipr_title" "%s" title');
+    expect(config).not.toContain("iPodRocks Smart");
+    expect(config).not.toContain('%menu_start "custom"');
+    expect(config).not.toContain('==> "custom"');
+  });
+
+  it("includes firmware default formats and menus (overrides tagnavi.config)", () => {
+    const config = buildTagnaviConfig([], { now: fixedNow });
+    expect(config).toContain('%menu_start "main" "Database"');
+    expect(config).toContain('%menu_start "search" "Search by..."');
+    expect(config).toContain('%menu_start "runtime" "Playback History"');
+    expect(config).toContain('%root_menu "main"');
+  });
+
+  it("inlines playlist entries directly inside the main Database menu", () => {
+    const inputs = [makeInput("ddd", [makeRule("genre", "Rock")])];
+    const config = buildTagnaviConfig(inputs, { now: fixedNow });
+    const mainIdx = config.indexOf('%menu_start "main" "Database"');
+    const rootIdx = config.indexOf('%root_menu "main"');
+    expect(mainIdx).toBeGreaterThan(-1);
+    expect(rootIdx).toBeGreaterThan(mainIdx);
+    const mainBlock = config.slice(mainIdx, rootIdx);
+    expect(mainBlock).toContain('"ddd" -> title = "fmt_ipr_title"');
+  });
+
+  it("includes generated timestamp", () => {
+    const config = buildTagnaviConfig([], { now: fixedNow });
+    expect(config).toContain("# Generated: 2026-04-26T12:00:00.000Z");
+  });
+
+  it("is deterministic with fixed now", () => {
+    const inputs = [makeInput("Rock", [makeRule("genre", "Rock")])];
+    expect(buildTagnaviConfig(inputs, { now: fixedNow })).toBe(
+      buildTagnaviConfig(inputs, { now: fixedNow })
+    );
+  });
+
+  it("writes one entry per valid playlist", () => {
+    const inputs = [
+      makeInput("Rock", [makeRule("genre", "Rock")], 1),
+      makeInput("Beatles", [makeRule("artist", "Beatles")], 2),
+    ];
+    const config = buildTagnaviConfig(inputs, { now: fixedNow });
+    expect(config).toContain('"Rock"');
+    expect(config).toContain('"Beatles"');
+  });
+
+  it("skips playlists that produce null entry lines", () => {
+    const inputs = [
+      makeInput("Bad", [makeRule("bpm", "120")], 1),
+      makeInput("Rock", [makeRule("genre", "Rock")], 2),
+    ];
+    const config = buildTagnaviConfig(inputs, { now: fixedNow });
+    expect(config).not.toContain('"Bad"');
+    expect(config).toContain('"Rock"');
+  });
+
+  it("preserves UTF-8 in output", () => {
+    const inputs = [makeInput("日本のロック", [makeRule("genre", "Rock")])];
+    const config = buildTagnaviConfig(inputs, { now: fixedNow });
+    expect(config).toContain("日本のロック");
+  });
+});

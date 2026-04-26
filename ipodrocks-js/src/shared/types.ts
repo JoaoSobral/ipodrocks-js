@@ -104,6 +104,7 @@ export interface DeviceProfile extends Device {
   modelName: string | null;
   modelInternalValue: string | null;
   skipPlaybackLog?: boolean;
+  rockboxSmartPlaylists?: boolean;
 }
 
 export type ContentType = "music" | "podcast" | "audiobook" | "playlist";
@@ -148,6 +149,7 @@ export interface AddDeviceConfig {
   sourceLibraryType?: "primary" | "shadow";
   shadowLibraryId?: number | null;
   skipPlaybackLog?: boolean;
+  rockboxSmartPlaylists?: boolean;
 }
 
 export interface DeviceValidation {
@@ -191,6 +193,7 @@ export interface PlaylistTrack {
   completionRate?: number;
   rediscoveryScore?: number;
   forgottenGemScore?: number;
+  rating?: number | null;
 }
 
 export interface SmartPlaylistRule {
@@ -263,6 +266,7 @@ export interface MatchedPlayEvent extends PlayEvent {
   title: string;
   genre: string;
   duration: number;
+  rating: number | null;
 }
 
 export interface AnalysisSummary {
@@ -327,8 +331,19 @@ export interface ScanProgress {
   status: "scanning" | "added" | "skipped" | "complete" | "error" | "cancelled";
 }
 
+export type SyncProgressEventName =
+  | "log"
+  | "convert_log"
+  | "copy"
+  | "compare"
+  | "analysis"
+  | "remove"
+  | "total"
+  | "total_add"
+  | "complete";
+
 export interface SyncProgress {
-  event: string;
+  event: SyncProgressEventName;
   path: string;
   destination?: string;
   status: "pending" | "syncing" | "complete" | "error" | "cancelled";

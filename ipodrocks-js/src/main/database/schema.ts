@@ -206,6 +206,7 @@ CREATE TABLE IF NOT EXISTS devices (
     last_sync_date TIMESTAMP,
     total_synced_items INTEGER DEFAULT 0,
     last_sync_count INTEGER DEFAULT 0,
+    rockbox_smart_playlists BOOLEAN NOT NULL DEFAULT 0,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (default_transfer_mode_id) REFERENCES device_transfer_modes (id),
     FOREIGN KEY (default_codec_config_id) REFERENCES codec_configurations (id),
@@ -398,6 +399,49 @@ INSERT OR IGNORE INTO device_models (name, internal_value, description) VALUES (
 INSERT OR IGNORE INTO device_models (name, internal_value, description) VALUES ('iPod Original', 'ipod_touch_colour', 'iPod Original model');
 INSERT OR IGNORE INTO device_models (name, internal_value, description) VALUES ('iPod Shuffle', 'ipod_shuffle', 'iPod Shuffle model');
 INSERT OR IGNORE INTO device_models (name, internal_value, description) VALUES ('iPod Mini', 'ipod_mini', 'iPod Mini model');
+INSERT OR IGNORE INTO device_models (name, internal_value, description) VALUES ('AIGO EROS Q', 'aigo_eros_q', 'AIGO EROS Q (native port)');
+INSERT OR IGNORE INTO device_models (name, internal_value, description) VALUES ('AIGO EROS K', 'aigo_eros_k', 'AIGO EROS K (native port)');
+INSERT OR IGNORE INTO device_models (name, internal_value, description) VALUES ('AGPTek H3', 'agptek_h3', 'AGPTek H3 (native port)');
+INSERT OR IGNORE INTO device_models (name, internal_value, description) VALUES ('HIFI WALKER H2', 'hifi_walker_h2', 'HIFI WALKER H2 (native port)');
+INSERT OR IGNORE INTO device_models (name, internal_value, description) VALUES ('Surfans F20', 'surfans_f20', 'Surfans F20 (native port)');
+INSERT OR IGNORE INTO device_models (name, internal_value, description) VALUES ('Agptek Rocker / Benjie T6', 'agptek_rocker', 'Agptek Rocker and Benjie T6');
+INSERT OR IGNORE INTO device_models (name, internal_value, description) VALUES ('Archos FM Recorder', 'archos_fm_recorder', 'Archos FM Recorder (retired)');
+INSERT OR IGNORE INTO device_models (name, internal_value, description) VALUES ('Archos Ondio FM', 'archos_ondio_fm', 'Archos Ondio FM (retired)');
+INSERT OR IGNORE INTO device_models (name, internal_value, description) VALUES ('Archos Ondio SP', 'archos_ondio_sp', 'Archos Ondio SP (retired)');
+INSERT OR IGNORE INTO device_models (name, internal_value, description) VALUES ('Archos Player/Studio', 'archos_player_studio', 'Archos Player/Studio (retired)');
+INSERT OR IGNORE INTO device_models (name, internal_value, description) VALUES ('Archos Recorder v1', 'archos_recorder_v1', 'Archos Recorder v1 (retired)');
+INSERT OR IGNORE INTO device_models (name, internal_value, description) VALUES ('Archos Recorder v2', 'archos_recorder_v2', 'Archos Recorder v2 (retired)');
+INSERT OR IGNORE INTO device_models (name, internal_value, description) VALUES ('FiiO M3K', 'fiio_m3k', 'FiiO M3K native port');
+INSERT OR IGNORE INTO device_models (name, internal_value, description) VALUES ('iAudio M3', 'iaudio_m3', 'iAudio M3');
+INSERT OR IGNORE INTO device_models (name, internal_value, description) VALUES ('iAudio M5', 'iaudio_m5', 'iAudio M5');
+INSERT OR IGNORE INTO device_models (name, internal_value, description) VALUES ('iAudio X5', 'iaudio_x5', 'iAudio X5');
+INSERT OR IGNORE INTO device_models (name, internal_value, description) VALUES ('iriver H10 20GB', 'iriver_h10_20gb', 'iriver H10 20GB');
+INSERT OR IGNORE INTO device_models (name, internal_value, description) VALUES ('iriver H10 5GB', 'iriver_h10_5gb', 'iriver H10 5GB');
+INSERT OR IGNORE INTO device_models (name, internal_value, description) VALUES ('iriver H100/115', 'iriver_h100_115', 'iriver H100/H115');
+INSERT OR IGNORE INTO device_models (name, internal_value, description) VALUES ('iriver H120/140', 'iriver_h120_140', 'iriver H120/H140');
+INSERT OR IGNORE INTO device_models (name, internal_value, description) VALUES ('iriver H320/340', 'iriver_h320_340', 'iriver H320/H340');
+INSERT OR IGNORE INTO device_models (name, internal_value, description) VALUES ('Olympus M-Robe 100', 'olympus_mrobe_100', 'Olympus M-Robe 100');
+INSERT OR IGNORE INTO device_models (name, internal_value, description) VALUES ('Packard Bell Vibe 500', 'packard_bell_vibe_500', 'Packard Bell Vibe 500');
+INSERT OR IGNORE INTO device_models (name, internal_value, description) VALUES ('Philips GoGear SA9200', 'philips_gogear_sa9200', 'Philips GoGear SA9200');
+INSERT OR IGNORE INTO device_models (name, internal_value, description) VALUES ('Philips GoGear HDD16x0', 'philips_gogear_hdd16x0', 'Philips GoGear HDD16x0');
+INSERT OR IGNORE INTO device_models (name, internal_value, description) VALUES ('Philips GoGear HDD63x0', 'philips_gogear_hdd63x0', 'Philips GoGear HDD63x0');
+INSERT OR IGNORE INTO device_models (name, internal_value, description) VALUES ('Samsung YH-820', 'samsung_yh820', 'Samsung YH-820');
+INSERT OR IGNORE INTO device_models (name, internal_value, description) VALUES ('Samsung YH-920', 'samsung_yh920', 'Samsung YH-920');
+INSERT OR IGNORE INTO device_models (name, internal_value, description) VALUES ('Samsung YH-925', 'samsung_yh925', 'Samsung YH-925');
+INSERT OR IGNORE INTO device_models (name, internal_value, description) VALUES ('SanDisk Sansa c200', 'sandisk_sansa_c200', 'SanDisk Sansa c200');
+INSERT OR IGNORE INTO device_models (name, internal_value, description) VALUES ('SanDisk Sansa Clip', 'sandisk_sansa_clip', 'SanDisk Sansa Clip');
+INSERT OR IGNORE INTO device_models (name, internal_value, description) VALUES ('SanDisk Sansa Clip Zip', 'sandisk_sansa_clip_zip', 'SanDisk Sansa Clip Zip');
+INSERT OR IGNORE INTO device_models (name, internal_value, description) VALUES ('SanDisk Sansa Clip+', 'sandisk_sansa_clip_plus', 'SanDisk Sansa Clip+');
+INSERT OR IGNORE INTO device_models (name, internal_value, description) VALUES ('SanDisk Sansa e200', 'sandisk_sansa_e200', 'SanDisk Sansa e200');
+INSERT OR IGNORE INTO device_models (name, internal_value, description) VALUES ('SanDisk Sansa e200R', 'sandisk_sansa_e200r', 'SanDisk Sansa e200R');
+INSERT OR IGNORE INTO device_models (name, internal_value, description) VALUES ('SanDisk Sansa e200v2', 'sandisk_sansa_e200v2', 'SanDisk Sansa e200v2');
+INSERT OR IGNORE INTO device_models (name, internal_value, description) VALUES ('SanDisk Sansa Fuze', 'sandisk_sansa_fuze', 'SanDisk Sansa Fuze');
+INSERT OR IGNORE INTO device_models (name, internal_value, description) VALUES ('Sansa Fuze+', 'sansa_fuze_plus', 'SanDisk Sansa Fuze+');
+INSERT OR IGNORE INTO device_models (name, internal_value, description) VALUES ('Toshiba Gigabeat F & X', 'toshiba_gigabeat_fx', 'Toshiba Gigabeat F and X series');
+INSERT OR IGNORE INTO device_models (name, internal_value, description) VALUES ('Shanling Q1', 'shanling_q1', 'Shanling Q1');
+INSERT OR IGNORE INTO device_models (name, internal_value, description) VALUES ('XDuoo X3', 'xduoo_x3', 'XDuoo X3');
+INSERT OR IGNORE INTO device_models (name, internal_value, description) VALUES ('XDuoo X3ii', 'xduoo_x3ii', 'XDuoo X3ii');
+INSERT OR IGNORE INTO device_models (name, internal_value, description) VALUES ('XDuoo X20', 'xduoo_x20', 'XDuoo X20');
 INSERT OR IGNORE INTO device_models (name, internal_value, description) VALUES ('Other device', 'other_device', 'Other device type');
 
 -- Transfer modes

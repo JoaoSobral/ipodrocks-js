@@ -221,6 +221,7 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
             {analyzeWithEssentia && (
               <Input
                 label="Analyze % of library"
+                tooltip="When scanning new tracks, limit Essentia key/BPM detection to this percentage to control CPU usage."
                 type="number"
                 min={1}
                 max={100}
@@ -233,6 +234,7 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
 
             <Input
               label="Backfill: process up to % of library"
+              tooltip="Run key and BPM detection on tracks that are missing harmonic data, up to this percentage of your total library."
               type="number"
               min={1}
               max={100}

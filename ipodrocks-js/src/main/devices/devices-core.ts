@@ -38,6 +38,7 @@ interface DeviceRow {
   model_name: string | null;
   model_internal_value: string | null;
   skip_playback_log: number;
+  rockbox_smart_playlists: number;
 }
 
 const DEVICES_QUERY = `
@@ -45,7 +46,7 @@ const DEVICES_QUERY = `
          d.audiobook_folder, d.playlist_folder, d.description, d.last_sync_date, d.total_synced_items, d.last_sync_count,
          d.default_transfer_mode_id, d.default_codec_config_id, d.model_id,
          d.override_bitrate, d.override_quality, d.override_bits,
-         d.partial_sync_enabled, d.skip_playback_log,
+         d.partial_sync_enabled, d.skip_playback_log, d.rockbox_smart_playlists,
          d.source_library_type, d.shadow_library_id,
          dtm.name as transfer_mode_name,
          cc.name as codec_config_name, cc.bitrate_value, cc.quality_value,
@@ -78,6 +79,7 @@ const ALLOWED_UPDATE_FIELDS = new Set([
   "source_library_type",
   "shadow_library_id",
   "skip_playback_log",
+  "rockbox_smart_playlists",
 ]);
 
 const FIELD_MAP: Record<string, string> = {
@@ -100,6 +102,7 @@ const FIELD_MAP: Record<string, string> = {
   sourceLibraryType: "source_library_type",
   shadowLibraryId: "shadow_library_id",
   skipPlaybackLog: "skip_playback_log",
+  rockboxSmartPlaylists: "rockbox_smart_playlists",
 };
 
 export class DevicesCore {
@@ -148,8 +151,8 @@ export class DevicesCore {
         `INSERT INTO devices
          (name, mount_path, music_folder, podcast_folder, audiobook_folder, playlist_folder,
           default_transfer_mode_id, default_codec_config_id, description,
-          model_id, source_library_type, shadow_library_id, skip_playback_log)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          model_id, source_library_type, shadow_library_id, skip_playback_log, rockbox_smart_playlists)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         config.name,
@@ -164,7 +167,8 @@ export class DevicesCore {
         config.modelId ?? null,
         config.sourceLibraryType ?? "primary",
         config.shadowLibraryId ?? null,
-        config.skipPlaybackLog ? 1 : 0
+        config.skipPlaybackLog ? 1 : 0,
+        config.rockboxSmartPlaylists ? 1 : 0
       );
 
     const newId = Number(info.lastInsertRowid);
@@ -195,7 +199,7 @@ export class DevicesCore {
       if (!dbField || !ALLOWED_UPDATE_FIELDS.has(dbField)) continue;
       fields.push(`${dbField} = ?`);
       const normalized =
-        dbField === "partial_sync_enabled" || dbField === "skip_playback_log"
+        dbField === "partial_sync_enabled" || dbField === "skip_playback_log" || dbField === "rockbox_smart_playlists"
           ? (value ? 1 : 0)
           : value;
       values.push(normalized);
@@ -214,8 +218,22 @@ export class DevicesCore {
   deleteDevice(id: number): boolean {
     const device = this.getDeviceById(id);
     if (!device) throw new Error(`Device with ID ${id} not found`);
-    const info = this.stmtDelete.run(id);
-    return info.changes > 0;
+    const result = this.db.transaction(() => {
+      this.db.prepare(
+        "DELETE FROM sync_rules WHERE sync_config_id IN (SELECT id FROM sync_configurations WHERE device_id = ?)"
+      ).run(id);
+      this.db.prepare("DELETE FROM sync_configurations WHERE device_id = ?").run(id);
+      this.db.prepare("DELETE FROM device_synced_tracks WHERE device_id = ?").run(id);
+      this.db.prepare("UPDATE genius_playlist_configs SET device_id = NULL WHERE device_id = ?").run(id);
+      this.db.prepare("UPDATE tracks SET rating_source_device_id = NULL WHERE rating_source_device_id = ?").run(id);
+      this.db.prepare("UPDATE rating_events SET device_id = NULL WHERE device_id = ?").run(id);
+      this.db.prepare("UPDATE playback_logs SET device_db_id = NULL WHERE device_db_id = ?").run(id);
+      this.db.prepare(
+        "DELETE FROM app_settings WHERE key = 'default_device_id' AND value = ?"
+      ).run(String(id));
+      return this.stmtDelete.run(id);
+    })();
+    return result.changes > 0;
   }
 
   getDefaultDeviceId(): number | null {
@@ -327,6 +345,7 @@ export class DevicesCore {
       modelName: row.model_name,
       modelInternalValue: row.model_internal_value,
       skipPlaybackLog: !!(row.skip_playback_log ?? 0),
+      rockboxSmartPlaylists: !!(row.rockbox_smart_playlists ?? 0),
     };
   }
 }

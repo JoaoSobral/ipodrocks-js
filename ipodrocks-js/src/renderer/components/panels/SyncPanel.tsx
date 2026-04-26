@@ -3,6 +3,7 @@ import { Card } from "../common/Card";
 import { Button } from "../common/Button";
 import { ErrorBox } from "../common/ErrorBox";
 import { Select } from "../common/Select";
+import { InfoTooltip } from "../common/InfoTooltip";
 import { useDeviceStore } from "../../stores/device-store";
 import { useSyncStore } from "../../stores/sync-store";
 import {
@@ -451,7 +452,10 @@ export function SyncPanel() {
       <Card title="Sync Configuration">
         <div className="grid grid-cols-2 gap-4">
           <div>
-            <p className="text-xs font-medium text-muted-foreground mb-2">Sync Type</p>
+            <p className="text-xs font-medium text-muted-foreground mb-2 flex items-center gap-1">
+              Sync Type
+              <InfoTooltip text="Full syncs your entire library (music, podcasts, audiobooks) to the device. Custom lets you pick specific albums, artists, genres, podcasts, audiobooks, or playlists." />
+            </p>
             <div className="flex gap-4">
               {(["full", "custom"] as const).map((type) => (
                 <label key={type} className="flex items-center gap-2 cursor-default">
@@ -509,6 +513,7 @@ export function SyncPanel() {
           </div>
           <Select
             label="Orphan Policy"
+            tooltip="What to do with tracks already on the device that are not in the current sync selection or part of the main library. Remove deletes them, Keep leaves them untouched, Prompt asks you before making changes."
             value={extraTrackPolicy}
             onChange={(v) => setExtraTrackPolicy(v)}
             options={[

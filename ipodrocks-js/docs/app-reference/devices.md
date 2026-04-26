@@ -24,3 +24,4 @@ The Devices panel lets you add, edit, and check Rockbox and mountable players.
 3. **Use shadow libraries** when you want to pre-transcode once and sync quickly to multiple devices.
 4. **Check Device** before syncing to see what will change. Use "Recheck" after a sync to confirm.
 5. **Playback log** — Enable if you use Genius playlists; iPodRocks reads `playback.log` from the device for listening history.
+6. **Rockbox smart playlists (tagnavi)** — When enabled, smart playlists sync as live tagnavi query entries (written to `.rockbox/tagnavi_user.config`) instead of static `.m3u` files. Genius, Savant, and Custom playlists always write `.m3u` regardless of this setting. See [Smart Playlists → Rockbox dynamic mode](./playlists-smart.md#rockbox-dynamic-mode-per-device-opt-in).

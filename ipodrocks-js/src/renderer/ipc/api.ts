@@ -74,6 +74,7 @@ export interface TrackFilter {
 export interface CheckResult {
   deviceId: number;
   name: string;
+  offline?: boolean;
   music: { fileCount: number; totalGb: number };
   podcasts: { fileCount: number; totalGb: number };
   audiobooks?: { fileCount: number; totalGb: number };
@@ -170,6 +171,32 @@ export async function setMpcRemindDisabled(
 
 export async function getAppVersion(): Promise<{ version: string }> {
   return window.api.invoke("app:getVersion") as Promise<{ version: string }>;
+}
+
+export interface CheckForUpdatesResult {
+  current: string;
+  latest: string;
+  updateAvailable: boolean;
+  htmlUrl?: string;
+  snoozed?: boolean;
+  error?: string;
+}
+
+export async function checkForUpdates(
+  opts?: { auto?: boolean }
+): Promise<CheckForUpdatesResult> {
+  return window.api.invoke(
+    "app:checkForUpdates",
+    opts
+  ) as Promise<CheckForUpdatesResult>;
+}
+
+export async function setUpdateSnooze(snoozeUntil: number | null): Promise<void> {
+  return window.api.invoke("app:setUpdateSnooze", snoozeUntil) as Promise<void>;
+}
+
+export async function openExternal(url: string): Promise<void> {
+  return window.api.invoke("app:openExternal", url) as Promise<void>;
 }
 
 // ---------------------------------------------------------------------------
@@ -282,11 +309,16 @@ export async function checkDevice(deviceId: number): Promise<CheckResult> {
   return window.api.invoke("device:check", deviceId) as Promise<CheckResult>;
 }
 
+export async function pingDevice(deviceId: number): Promise<{ online: boolean }> {
+  return window.api.invoke("device:ping", deviceId) as Promise<{ online: boolean }>;
+}
+
 export interface ReadPlaybackLogResult {
   ingested: number;
   skipped: number;
   summary: AnalysisSummary;
   error?: string;
+  offline?: boolean;
 }
 
 export async function readDevicePlaybackLog(
@@ -362,6 +394,19 @@ export async function exportPlaylist(id: number, deviceId?: number): Promise<str
 
 export async function getGenres(): Promise<GenreInfo[]> {
   return window.api.invoke("playlist:getGenres") as Promise<GenreInfo[]>;
+}
+
+export async function previewSmartTracks(
+  rules: SmartPlaylistRule[],
+  trackLimit?: number
+): Promise<{ count: number; totalCount: number; affectedArtistIds: number[]; affectedGenreIds: number[]; affectedAlbumIds: number[] }> {
+  return window.api.invoke("playlist:previewSmartTracks", { rules, trackLimit }) as Promise<{
+    count: number;
+    totalCount: number;
+    affectedArtistIds: number[];
+    affectedGenreIds: number[];
+    affectedAlbumIds: number[];
+  }>;
 }
 
 export async function getArtists(): Promise<ArtistInfo[]> {

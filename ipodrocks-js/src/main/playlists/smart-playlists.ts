@@ -2,6 +2,7 @@ import Database from "better-sqlite3";
 import { PlaylistGenerationResult, PlaylistTrack } from "../../shared/types";
 
 interface TrackRow {
+  id?: number;
   path: string;
   filename: string;
   artist: string | null;
@@ -10,6 +11,7 @@ interface TrackRow {
   genre: string | null;
   duration: number | null;
   play_count: number | null;
+  rating?: number | null;
 }
 
 /**
@@ -20,24 +22,14 @@ interface TrackRow {
  */
 export class SmartPlaylistGenerator {
   private db: Database.Database;
+  private readonly generators: Record<
+    string,
+    (opts: Record<string, unknown>) => PlaylistGenerationResult
+  >;
 
   constructor(db: Database.Database) {
     this.db = db;
-  }
-
-  /**
-   * Generate a smart playlist of the specified type.
-   * @param playlistType - One of the available smart playlist types.
-   * @param options - Additional parameters for playlist generation.
-   */
-  generate(
-    playlistType: string,
-    options: Record<string, unknown> = {}
-  ): PlaylistGenerationResult {
-    const generators: Record<
-      string,
-      (opts: Record<string, unknown>) => PlaylistGenerationResult
-    > = {
+    this.generators = {
       by_genre: (o) => this._generateByGenre(o),
       by_artist: (o) => this._generateByArtist(o),
       by_album: (o) => this._generateByAlbum(o),
@@ -48,29 +40,22 @@ export class SmartPlaylistGenerator {
       long_tracks: (o) => this._generateLongTracks(o),
       short_tracks: (o) => this._generateShortTracks(o),
       compilation_albums: (o) => this._generateCompilationAlbums(o),
+      top_rated: (o) => this._generateTopRated(o),
       auto: (o) => this._generateAuto(o),
     };
+  }
 
-    const gen = generators[playlistType];
+  generate(
+    playlistType: string,
+    options: Record<string, unknown> = {}
+  ): PlaylistGenerationResult {
+    const gen = this.generators[playlistType];
     if (!gen) throw new Error(`Unknown smart playlist type: ${playlistType}`);
     return gen(options);
   }
 
-  /** Get list of available smart playlist types. */
   getAvailableTypes(): string[] {
-    return [
-      "by_genre",
-      "by_artist",
-      "by_album",
-      "by_decade",
-      "recently_added",
-      "never_played",
-      "random_mix",
-      "long_tracks",
-      "short_tracks",
-      "compilation_albums",
-      "auto",
-    ];
+    return Object.keys(this.generators);
   }
 
   // -- strategies ---------------------------------------------------------
@@ -527,7 +512,7 @@ export class SmartPlaylistGenerator {
 
   private _toTrack(r: TrackRow): PlaylistTrack {
     return {
-      id: 0,
+      id: r.id ?? 0,
       path: r.path,
       filename: r.filename,
       artist: r.artist || "Unknown",
@@ -536,6 +521,39 @@ export class SmartPlaylistGenerator {
       genre: r.genre || "Unknown",
       duration: r.duration || 0,
       playCount: r.play_count || 0,
+      rating: r.rating ?? null,
+    };
+  }
+
+  private _generateTopRated(opts: Record<string, unknown>): PlaylistGenerationResult {
+    const limit = (opts.limit as number) || 50;
+    const minRating = 8; // 4+ stars on the Rockbox 0–10 scale
+
+    const rows = this.db
+      .prepare(
+        `SELECT t.id, t.path, t.filename, a.name AS artist, al.title AS album,
+                t.title, g.name AS genre, t.duration, t.play_count, t.rating
+         FROM tracks t
+         LEFT JOIN artists a ON t.artist_id = a.id
+         LEFT JOIN albums al ON t.album_id = al.id
+         LEFT JOIN genres g ON t.genre_id = g.id
+         WHERE t.content_type = 'music' AND t.rating IS NOT NULL AND t.rating >= ?
+         ORDER BY t.rating DESC, RANDOM()
+         LIMIT ?`
+      )
+      .all(minRating, limit) as TrackRow[];
+
+    if (!rows.length) {
+      return this._empty("No rated tracks found (rate tracks 4+ stars on your device)");
+    }
+
+    return {
+      playlistName: "Top Rated",
+      criteria: `${rows.length} tracks rated 4+ stars`,
+      tracks: rows.map((r) => this._toTrack(r)),
+      generatedAt: new Date().toISOString(),
+      type: "smart",
+      subtype: "top_rated",
     };
   }
 

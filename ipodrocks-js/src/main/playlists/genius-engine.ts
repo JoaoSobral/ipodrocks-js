@@ -22,6 +22,7 @@ interface LibraryTrackRow {
   genre: string | null;
   duration: number | null;
   library_folder_id: number | null;
+  rating: number | null;
 }
 
 /**
@@ -40,7 +41,7 @@ function buildLibraryLookup(
     .prepare(
       `SELECT t.id, t.path, t.filename, t.title,
               a.name AS artist, al.title AS album,
-              g.name AS genre, t.duration, t.library_folder_id
+              g.name AS genre, t.duration, t.library_folder_id, t.rating
        FROM tracks t
        LEFT JOIN artists a ON t.artist_id = a.id
        LEFT JOIN albums al ON t.album_id = al.id
@@ -113,6 +114,7 @@ export function matchEventsToLibrary(
       title: row.title ?? row.filename,
       genre: row.genre ?? "Unknown",
       duration: row.duration ?? 0,
+      rating: row.rating ?? null,
     });
   }
 
@@ -196,7 +198,7 @@ function loadMatchedEventsFromDb(
               pl.total_ms AS totalMs, pl.file_path AS filePath,
               pl.completion_rate AS completionRatio, pl.matched_track_id AS trackId,
               a.name AS artist, al.title AS album, t.title AS trackTitle,
-              g.name AS genre, t.duration
+              g.name AS genre, t.duration, t.rating
        FROM playback_logs pl
        JOIN tracks t ON t.id = pl.matched_track_id AND t.content_type = 'music'
        LEFT JOIN artists a ON t.artist_id = a.id
@@ -216,6 +218,7 @@ function loadMatchedEventsFromDb(
     trackTitle: string | null;
     genre: string | null;
     duration: number | null;
+    rating: number | null;
   }>;
 
   return rows.map((r) => ({
@@ -230,6 +233,7 @@ function loadMatchedEventsFromDb(
     title: r.trackTitle ?? "Unknown",
     genre: r.genre ?? "Unknown",
     duration: r.duration ?? 0,
+    rating: r.rating ?? null,
   }));
 }
 
@@ -332,6 +336,12 @@ export function buildAnalysisSummaryFromDb(
 // -- available genius types -----------------------------------------------
 
 const GENIUS_TYPES: GeniusTypeOption[] = [
+  {
+    value: "top_rated",
+    label: "Top Rated",
+    description: "Tracks you've rated 4+ stars, ordered by rating then play count",
+    icon: "\u2B50",
+  },
   {
     value: "most_played",
     label: "Most Played",
@@ -460,6 +470,7 @@ interface TrackAggregation {
   title: string;
   genre: string;
   duration: number;
+  rating: number | null;
   playCount: number;
   completionRatios: number[];
   timestamps: number[];
@@ -479,6 +490,7 @@ function aggregateByTrack(
         title: ev.title,
         genre: ev.genre,
         duration: ev.duration,
+        rating: ev.rating,
         playCount: 0,
         completionRatios: [],
         timestamps: [],
@@ -507,6 +519,7 @@ function aggToTrack(a: TrackAggregation): PlaylistTrack {
     album: a.album,
     genre: a.genre,
     duration: a.duration,
+    rating: a.rating ?? null,
     playCount: a.playCount,
     avgCompletionRate: avgCompletion(a.completionRatios),
   };
@@ -523,7 +536,7 @@ function getLibraryTracksByArtist(
     .prepare(
       `SELECT t.id, t.path, t.filename, t.title,
               a.name AS artist, al.title AS album,
-              g.name AS genre, t.duration, t.play_count
+              g.name AS genre, t.duration, t.play_count, t.rating
        FROM tracks t
        LEFT JOIN artists a ON t.artist_id = a.id
        LEFT JOIN albums al ON t.album_id = al.id
@@ -541,6 +554,7 @@ function getLibraryTracksByArtist(
     genre: string | null;
     duration: number | null;
     play_count: number | null;
+    rating: number | null;
   }>;
 
   return rows.map((r) => ({
@@ -553,6 +567,7 @@ function getLibraryTracksByArtist(
     genre: r.genre ?? "Unknown",
     duration: r.duration ?? 0,
     playCount: r.play_count ?? 0,
+    rating: r.rating ?? null,
   }));
 }
 
@@ -568,7 +583,7 @@ function getLibraryTracksByAlbum(
     .prepare(
       `SELECT t.id, t.path, t.filename, t.title,
               a.name AS artist, al.title AS album,
-              g.name AS genre, t.duration, t.play_count
+              g.name AS genre, t.duration, t.play_count, t.rating
        FROM tracks t
        LEFT JOIN artists a ON t.artist_id = a.id
        LEFT JOIN albums al ON t.album_id = al.id
@@ -586,6 +601,7 @@ function getLibraryTracksByAlbum(
     genre: string | null;
     duration: number | null;
     play_count: number | null;
+    rating: number | null;
   }>;
 
   return rows.map((r) => ({
@@ -598,6 +614,7 @@ function getLibraryTracksByAlbum(
     genre: r.genre ?? "Unknown",
     duration: r.duration ?? 0,
     playCount: r.play_count ?? 0,
+    rating: r.rating ?? null,
   }));
 }
 
@@ -1043,6 +1060,66 @@ function generateDeepDive(
   };
 }
 
+// -- top_rated: DB-driven, no play history required -----------------------
+
+function generateTopRated(
+  db: Database.Database,
+  opts: GeniusGenerateOptions
+): PlaylistGenerationResult {
+  const limit = opts.maxTracks ?? 25;
+  const minRating = 8; // 4+ stars on the Rockbox 0–10 scale
+
+  const rows = db
+    .prepare(
+      `SELECT t.id, t.path, t.filename, t.title,
+              a.name AS artist, al.title AS album,
+              g.name AS genre, t.duration, t.rating,
+              COALESCE(ps.total_plays, 0) AS play_count
+       FROM tracks t
+       LEFT JOIN artists a ON t.artist_id = a.id
+       LEFT JOIN albums al ON t.album_id = al.id
+       LEFT JOIN genres g ON t.genre_id = g.id
+       LEFT JOIN playback_stats ps ON ps.track_id = t.id
+       WHERE t.content_type = 'music' AND t.rating IS NOT NULL AND t.rating >= ?
+       ORDER BY t.rating DESC, play_count DESC
+       LIMIT ?`
+    )
+    .all(minRating, limit) as Array<{
+    id: number;
+    path: string;
+    filename: string;
+    title: string | null;
+    artist: string | null;
+    album: string | null;
+    genre: string | null;
+    duration: number | null;
+    rating: number;
+    play_count: number;
+  }>;
+
+  const tracks: PlaylistTrack[] = rows.map((r) => ({
+    id: r.id,
+    path: r.path,
+    filename: r.filename,
+    title: r.title ?? r.filename,
+    artist: r.artist ?? "Unknown",
+    album: r.album ?? "Unknown",
+    genre: r.genre ?? "Unknown",
+    duration: r.duration ?? 0,
+    rating: r.rating,
+    playCount: r.play_count,
+  }));
+
+  return {
+    playlistName: "Top Rated",
+    criteria: `${tracks.length} tracks rated 4+ stars, by rating then play count`,
+    tracks,
+    generatedAt: new Date().toISOString(),
+    type: "genius",
+    subtype: "top_rated",
+  };
+}
+
 // -- public generator entry point -----------------------------------------
 
 function emptyResult(
@@ -1087,6 +1164,11 @@ export function generateGeniusPlaylist(
   db: Database.Database,
   opts: GeniusGenerateOptions = {}
 ): PlaylistGenerationResult {
+  // top_rated is purely DB-driven — no play history required
+  if (geniusType === "top_rated") {
+    return generateTopRated(db, opts);
+  }
+
   if (!events.length) {
     return emptyResult(
       "No playback history in database. Connect a device and recheck for " +

@@ -4,6 +4,9 @@ import { WelcomePanel } from "../renderer/components/panels/WelcomePanel";
 
 vi.mock("@assets/ipodRocks_transp.png?url", () => ({ default: "/mock-transp.png" }));
 vi.mock("@assets/ipodRocks_black.png?url", () => ({ default: "/mock-black.png" }));
+vi.mock("../renderer/ipc/api", () => ({
+  checkForUpdates: vi.fn().mockResolvedValue({ updateAvailable: false, current: "1.3.0", latest: "1.3.0" }),
+}));
 
 describe("WelcomePanel", () => {
   it("renders the app title", () => {
@@ -19,7 +22,7 @@ describe("WelcomePanel", () => {
 
   it("renders Sync feature", () => {
     render(<WelcomePanel />);
-    expect(screen.getByRole("heading", { name: "Sync" })).toBeInTheDocument();
+    expect(screen.getByText("Full or custom sync by album, artist, genre, or playlist.")).toBeInTheDocument();
   });
 
   it("renders Get started section", () => {
