@@ -331,8 +331,19 @@ export interface ScanProgress {
   status: "scanning" | "added" | "skipped" | "complete" | "error" | "cancelled";
 }
 
+export type SyncProgressEventName =
+  | "log"
+  | "convert_log"
+  | "copy"
+  | "compare"
+  | "analysis"
+  | "remove"
+  | "total"
+  | "total_add"
+  | "complete";
+
 export interface SyncProgress {
-  event: string;
+  event: SyncProgressEventName;
   path: string;
   destination?: string;
   status: "pending" | "syncing" | "complete" | "error" | "cancelled";

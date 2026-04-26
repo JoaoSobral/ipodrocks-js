@@ -102,6 +102,14 @@ export function sanitizeQuotedString(input: string): string {
   return s;
 }
 
+// Rockbox `@` ("one of") expects values pipe-separated inside a single
+// quoted string — see str_oneof() in apps/tagcache.c. A literal `|` in a
+// value would split the entry; replace it before joining. Only safe for
+// `@` clauses — `=` clauses must keep `|` so values match tag literals.
+export function escapeOneOfValue(input: string): string {
+  return input.replace(/\|/g, "/");
+}
+
 export function buildEntryLine(input: TagnaviPlaylistInput): string | null {
   const { playlist, rules } = input;
 
@@ -125,12 +133,7 @@ export function buildEntryLine(input: TagnaviPlaylistInput): string | null {
     if (labels.length === 1) {
       return `${tag} = "${labels[0]}"`;
     }
-    // Rockbox @ ("one of") expects values pipe-separated inside a single
-    // quoted string — see str_oneof() in apps/tagcache.c. Space-separated
-    // quoted strings parse only the first value. Literal '|' in a label
-    // would split the value, so replace it with '/'.
-    const safeLabels = labels.map((l) => l.replace(/\|/g, "/"));
-    return `${tag} @ "${safeLabels.join("|")}"`;
+    return `${tag} @ "${labels.map(escapeOneOfValue).join("|")}"`;
   });
 
   if (clauses.length === 0) return null;

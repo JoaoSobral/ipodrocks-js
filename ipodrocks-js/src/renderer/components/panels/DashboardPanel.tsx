@@ -1,11 +1,12 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Card } from "../common/Card";
+import { DeviceIcon } from "../common/DeviceIcon";
 import { InfoTooltip } from "../common/InfoTooltip";
 import { ListRow } from "../common/ListRow";
 import { useLibraryStore } from "../../stores/library-store";
 import { useDeviceStore } from "../../stores/device-store";
 import { getShadowLibraries, getRecentActivity } from "../../ipc/api";
-import { getDeviceIconSrc } from "../../utils/device-icon";
+import { createDeviceIconResolver } from "../../utils/device-icon";
 import type { ShadowLibrary } from "@shared/types";
 import type { ActivityEntry } from "../../ipc/api";
 
@@ -85,6 +86,10 @@ export function DashboardPanel() {
 
   const deviceList = Array.isArray(devices) ? devices : [];
   const shadowList = Array.isArray(shadowLibs) ? shadowLibs : [];
+  const resolveDeviceIcon = useMemo(
+    () => createDeviceIconResolver(deviceList.filter((d): d is NonNullable<typeof d> => d != null)),
+    [deviceList],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -179,15 +184,11 @@ export function DashboardPanel() {
           <div className="space-y-3">
             {deviceList.map((d, i) => (
               <ListRow key={d?.id ?? `device-${i}`}>
-                <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 overflow-hidden">
-                  {d ? (
-                    <img
-                      src={getDeviceIconSrc(d, deviceList)}
-                      alt={d.modelName ?? "Device"}
-                      className="w-full h-full object-contain"
-                    />
-                  ) : null}
-                </div>
+                <DeviceIcon
+                  src={d ? resolveDeviceIcon(d) : null}
+                  alt={d?.modelName ?? "Device"}
+                  size="sm"
+                />
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium text-foreground truncate">
                     {d?.name ?? "Unknown device"}

@@ -1,7 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
 
-import { Track } from "../../shared/types";
+import { Track, SyncProgressEventName } from "../../shared/types";
 import { Device } from "../devices/device";
 import {
   CompareOptions,
@@ -24,12 +24,12 @@ export class SyncCancelled extends Error {
   }
 }
 
-export interface SyncProgressEvent {
-  event: string;
+export interface SyncProgressPayload {
+  event: SyncProgressEventName;
   [key: string]: unknown;
 }
 
-export type ProgressCallback = (event: SyncProgressEvent) => void;
+export type ProgressCallback = (event: SyncProgressPayload) => void;
 
 export interface RunSyncOptions {
   syncType?: string;

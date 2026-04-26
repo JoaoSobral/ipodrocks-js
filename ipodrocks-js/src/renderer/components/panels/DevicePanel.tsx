@@ -30,7 +30,8 @@ import {
 import { MpcUnavailableModal } from "../modals/MpcUnavailableModal";
 import { formatCodecLabel } from "../../utils/format";
 import { getTranscodableCodecConfigs } from "../../utils/codec";
-import { getDeviceIconSrc } from "../../utils/device-icon";
+import { createDeviceIconResolver } from "../../utils/device-icon";
+import { DeviceIcon } from "../common/DeviceIcon";
 import type { CheckResult, DeviceModel, CodecConfig } from "../../ipc/api";
 import type { DeviceProfile, ShadowLibrary } from "@shared/types";
 
@@ -66,6 +67,10 @@ export function DevicePanel() {
   const loading = useDeviceStore((s) => s.loading);
   const fetchDevices = useDeviceStore((s) => s.fetchDevices);
   const deviceList = Array.isArray(devices) ? devices : [];
+  const resolveDeviceIcon = useMemo(
+    () => createDeviceIconResolver(deviceList.filter((d): d is NonNullable<typeof d> => d != null)),
+    [deviceList],
+  );
   const [showDeviceModal, setShowDeviceModal] = useState(false);
   const [editingDeviceId, setEditingDeviceId] = useState<number | null>(null);
   const [checkResults, setCheckResults] = useState<Record<number, CheckResult>>({});
@@ -331,23 +336,12 @@ export function DevicePanel() {
             return (
               <Card key={d?.id ?? `device-${idx}`}>
                 <div className="flex items-start gap-3 mb-4">
-                  <div className="relative w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0">
-                    {d ? (
-                      <img
-                        src={getDeviceIconSrc(d, deviceList)}
-                        alt={d.modelName ?? "Device"}
-                        className="w-full h-full object-contain rounded-xl"
-                      />
-                    ) : null}
-                    {status !== null && status !== undefined && (
-                      <span
-                        className={`absolute -top-1 -left-1 w-4 h-4 rounded-full border-2 border-card ${
-                          status ? "bg-green-500" : "bg-red-500"
-                        }`}
-                        title={status ? "Device connected" : "Device not connected"}
-                      />
-                    )}
-                  </div>
+                  <DeviceIcon
+                    src={d ? resolveDeviceIcon(d) : null}
+                    alt={d?.modelName ?? "Device"}
+                    size="md"
+                    connected={status}
+                  />
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
                       <h4 className="text-sm font-semibold text-white">{d?.name ?? "Unknown"}</h4>

@@ -27,9 +27,15 @@ export type DeviceIconInput = {
   modelName?: string | null;
 };
 
-type SpecificIpod = "classic" | "nano" | "mini" | null;
+type SpecificIpod = "classic" | "nano" | "mini";
 
-function classifySpecific(device: DeviceIconInput): SpecificIpod {
+const SPECIFIC_ICONS: Record<SpecificIpod, string> = {
+  classic: ipodClassicIcon,
+  nano: ipodNanoIcon,
+  mini: ipodMiniIcon,
+};
+
+function classifySpecific(device: DeviceIconInput): SpecificIpod | null {
   const internal = (device.modelInternalValue ?? "").toLowerCase();
   const name = (device.modelName ?? "").toLowerCase();
   if (internal.includes("classic") || name.includes("classic")) return "classic";
@@ -38,20 +44,29 @@ function classifySpecific(device: DeviceIconInput): SpecificIpod {
   return null;
 }
 
-export function getDeviceIconSrc(
-  device: DeviceIconInput,
-  allDevices: readonly DeviceIconInput[],
-): string {
-  const specific = classifySpecific(device);
-  if (specific === "classic") return ipodClassicIcon;
-  if (specific === "nano") return ipodNanoIcon;
-  if (specific === "mini") return ipodMiniIcon;
+export type DeviceIconResolver = (device: DeviceIconInput) => string;
 
+export function createDeviceIconResolver(
+  allDevices: readonly DeviceIconInput[],
+): DeviceIconResolver {
+  const genericSlot = new Map<number, number>();
   const genericIds = allDevices
     .filter((d) => classifySpecific(d) === null)
     .map((d) => d.id)
     .sort((a, b) => a - b);
-  const position = genericIds.indexOf(device.id);
-  const slot = position >= 0 ? position : 0;
-  return ROCKBOX_GENS[GEN_SHUFFLE[slot % GEN_SHUFFLE.length]];
+  genericIds.forEach((id, i) => genericSlot.set(id, i));
+
+  return (device) => {
+    const specific = classifySpecific(device);
+    if (specific) return SPECIFIC_ICONS[specific];
+    const slot = genericSlot.get(device.id) ?? 0;
+    return ROCKBOX_GENS[GEN_SHUFFLE[slot % GEN_SHUFFLE.length]];
+  };
+}
+
+export function getDeviceIconSrc(
+  device: DeviceIconInput,
+  allDevices: readonly DeviceIconInput[],
+): string {
+  return createDeviceIconResolver(allDevices)(device);
 }
