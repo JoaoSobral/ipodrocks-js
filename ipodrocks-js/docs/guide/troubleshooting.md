@@ -17,9 +17,9 @@ Common issues and how to fix them.
 - **Symptom:** Genius tab says no playback data or no matched plays.
 - **Fix:** Connect the device and enable "Read playback log" in Devices. Click **Recheck device for playback.log** to read `playback.log` from the device. Rockbox must have written this file by playing tracks. If you already synced, try **Load from Database** instead.
 
-## Savant or Assistant not working
+## Savant or Rocksy not working
 
-- **Symptom:** Savant playlists or Music Assistant fail or return errors.
+- **Symptom:** Savant playlists or Rocksy fail or return errors.
 - **Fix:** Add your OpenRouter API key in **Settings** → OpenRouter API. Test the connection before saving. Ensure you have credits and the selected model is available. Check your network for API errors.
 
 ## Harmonic analysis fails after many tracks

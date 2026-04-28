@@ -1,10 +1,10 @@
 {
   "name": "ipodrocks",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "iPod sync and library management",
   "author": {
-    "name": "Joao Sobral",
-    "email": "nomail@example.com"
+    "name": "Pedro Goncalves",
+    "email": "pedro@ipodrocks.dev"
   },
   "homepage": "https://github.com/JoaoSobral/ipodrocks-js",
   "license": "GPL-3.0-only",

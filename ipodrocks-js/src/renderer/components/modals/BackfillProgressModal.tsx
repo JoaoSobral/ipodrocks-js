@@ -19,7 +19,7 @@ interface RecentItem {
 export interface BackfillCompleteResult {
   processed: number;
   total: number;
-  status: "success" | "error";
+  status: "success" | "error" | "cancelled";
 }
 
 interface BackfillProgressModalProps {
@@ -123,21 +123,11 @@ export function BackfillProgressModal({
       .then((result) => {
         setFinished(true);
         if (result.cancelled) setCancelled(true);
-        onCompleteRef.current?.({
-          processed: result.processed,
-          total: totalRef.current || result.processed,
-          status: result.cancelled ? "cancelled" : "success",
-        });
       })
       .catch((e) => {
         const msg = e instanceof Error ? e.message : String(e);
         setError(msg);
         setFinished(true);
-        onCompleteRef.current?.({
-          processed: 0,
-          total: 0,
-          status: "error",
-        });
       })
       .finally(() => {
         progressUnsubRef.current?.();
@@ -190,7 +180,11 @@ export function BackfillProgressModal({
           >
             {recentItems.length === 0 && (
               <p className="text-muted-foreground">
-                {total ? "Analyzing tracks…" : "Waiting for backfill…"}
+                {finished
+                  ? "No tracks were found to process."
+                  : total
+                    ? "Analyzing tracks…"
+                    : "Waiting for backfill…"}
               </p>
             )}
             {recentItems.map((item) => (
@@ -232,6 +226,14 @@ export function BackfillProgressModal({
                 <p className="text-xs text-muted-foreground">With key/BPM</p>
               </div>
             </div>
+            {!cancelled && processedCount === 0 && (
+              <p className="mt-3 text-xs text-muted-foreground border-t border-border pt-3">
+                No key data was found in your file tags. Enable{" "}
+                <strong>Essentia.js analysis</strong> in{" "}
+                <em>Settings → Savant</em> and run Backfill again to detect
+                keys directly from your audio waveforms.
+              </p>
+            )}
           </div>
         )}
 
@@ -251,7 +253,7 @@ export function BackfillProgressModal({
                 onClose();
               }}
             >
-              Close
+              Done
             </Button>
           )}
         </div>

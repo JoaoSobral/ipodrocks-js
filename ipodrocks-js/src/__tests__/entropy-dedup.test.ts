@@ -32,7 +32,7 @@ describe("ENTROPY deduplication", () => {
     musicRoot = path.join(tmpDir, "music");
     if (canRunDbTests) {
       const Database = require("better-sqlite3");
-      db = new Database(":memory:");
+      db = new Database(":memory:") as import("better-sqlite3").Database;
       db.pragma("journal_mode = WAL");
       db.pragma("foreign_keys = ON");
       db.exec(SCHEMA_SQL);

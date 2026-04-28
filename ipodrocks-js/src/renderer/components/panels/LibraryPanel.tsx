@@ -18,6 +18,7 @@ import { Badge } from "../common/Badge";
 import { ListRow } from "../common/ListRow";
 import { ScanProgressModal } from "../modals/ScanProgressModal";
 import { useLibraryStore } from "../../stores/library-store";
+import { usePlayerStore } from "../../stores/player-store";
 import { useUIStore } from "../../stores/ui-store";
 import {
   addLibraryFolder,
@@ -81,6 +82,8 @@ export function LibraryPanel() {
   const fetchTracks = useLibraryStore((s) => s.fetchTracks);
   const fetchFolders = useLibraryStore((s) => s.fetchFolders);
   const fetchStats = useLibraryStore((s) => s.fetchStats);
+  const playTrack = usePlayerStore((s) => s.playTrack);
+  const currentTrackId = usePlayerStore((s) => s.currentTrack?.id);
   const [search, setSearch] = useState("");
   const [sortField, setSortField] = useState<SortField>("artist");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
@@ -727,7 +730,10 @@ export function LibraryPanel() {
                     return (
                       <div
                         style={style}
-                        className="flex items-center gap-2 px-2 py-1.5 text-xs hover:bg-muted/30 border-b border-border transition-colors"
+                        className={`flex items-center gap-2 px-2 py-1.5 text-xs hover:bg-muted/30 border-b border-border transition-colors cursor-default ${
+                          t.id === currentTrackId ? "bg-primary/10" : ""
+                        }`}
+                        onDoubleClick={() => playTrack(t, filtered)}
                       >
                         <span className="flex-[3] min-w-[120px] truncate text-foreground">{t.title}</span>
                         <span className="flex-[2] min-w-[100px] truncate text-muted-foreground">{t.artist}</span>

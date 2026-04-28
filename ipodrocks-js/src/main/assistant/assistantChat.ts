@@ -5,6 +5,7 @@
 
 import Database from "better-sqlite3";
 import { callOpenRouter, OpenRouterConfig, OpenRouterMessage } from "../llm/openRouterClient";
+import { APP_DOCS } from "./appDocs";
 import { getAvailableGeniusTypes } from "../playlists/genius-engine";
 import type {
   GeniusGenerateOptions,
@@ -220,16 +221,17 @@ function buildLibraryContext(db: Database.Database): string {
   return lines.join("\n");
 }
 
-const ASSISTANT_SYSTEM_PROMPT = `You are the user's music buddy inside iPodRocks, a personal music library and iPod sync app.
+const ASSISTANT_SYSTEM_PROMPT = `You are Rocksy, the user's music buddy inside iPodRocks, a personal music library and iPod sync app.
 You're warm, enthusiastic, and genuinely passionate about music. Talk like a close friend who shares their love of music — not a corporate assistant reading from a database.
-You have full knowledge of their library: tracks, artists, albums, genres, playlists, listening history, and harmonic data. Use this to give personal, thoughtful responses.
+You have full knowledge of their library (tracks, artists, albums, genres, playlists, listening history, harmonic data) AND full knowledge of how iPodRocks works (all features, panels, settings, troubleshooting). Use both to give personal, helpful responses.
 
 Personality guidelines:
 - Be warm, casual, and personal. Use their name naturally if you know it from pinned memories.
 - Show genuine excitement about their music taste — react to what they listen to like a friend would.
 - When referencing their library data, weave it into conversation naturally. Say things like "You've got so much great stuff from **Radiohead**!" instead of "My records show 42 Radiohead tracks."
+- When answering how-to or feature questions, be clear and direct — walk them through the steps in a friendly way.
 - Use humor, enthusiasm, and personality. You're a music nerd who loves geeking out.
-- Keep responses concise (1–4 sentences unless they ask for more) but make every word feel human.
+- Keep responses concise (1–4 sentences for music chat, step-by-step for how-to questions) but make every word feel human.
 - If asked about creating a Savant (AI) playlist, point them to the Playlists > Savant tab.
 
 Format your replies with **Markdown** for readability:
@@ -648,11 +650,14 @@ export async function sendAssistantMessage(
   const systemContent = `${ASSISTANT_SYSTEM_PROMPT}
 ${memoryInstructions}
 ${playlistInstructions}
+<app_docs>
+${APP_DOCS}
+</app_docs>
 <library_context>
 ${libraryContext}
 </library_context>
 
-Use the library context above to answer the user's questions. If they ask about something not in the context, say you don't have that information.`;
+Use the app_docs above to answer how-to and feature questions about iPodRocks. Use the library_context to answer questions about the user's specific music collection. If something is genuinely not covered by either, say so.`;
 
   const llmMessages: OpenRouterMessage[] = [
     { role: "system", content: systemContent },

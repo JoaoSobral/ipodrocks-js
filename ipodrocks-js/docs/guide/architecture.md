@@ -26,7 +26,7 @@ Runs in Node.js. Has full filesystem and OS access.
 | **PlaylistCore** | Smart and Genius playlist creation. |
 | **GeniusEngine** | Generates Genius playlists from playback history (graph-based scoring). |
 | **OpenRouterClient** | Calls the OpenRouter API with timeout, rate limiting, and prompt injection mitigation. |
-| **SavantEngine / AssistantChat** | LLM orchestration for playlist generation and the Music Assistant. |
+| **SavantEngine / AssistantChat** | LLM orchestration for playlist generation and Rocksy. |
 | **Essentia.js** | WASM module for key and BPM detection (harmonic analysis). |
 | **Prefs** | Reads and writes `prefs.json` (settings, encrypted API key via `safeStorage`). |
 | **PathAllowlist** | Validates that library and shadow library paths stay within allowed directories. |
@@ -44,7 +44,7 @@ Runs in a Chromium sandbox. Cannot access the filesystem directly.
 | **RatingConflictsModal** | Lists unresolved rating conflicts and lets the user resolve them (keep library, use device, or set manually). |
 | **ScanProgressModal** | Shows file-by-file scan progress; captures `folders` in a ref to prevent restart on re-render. |
 | **SyncProgressModal** | Shows copy progress; uses `useRef` counters to avoid stale-closure bugs in the `onComplete` callback. |
-| **FloatChat** | Floating Music Assistant chat backed by `AssistantChat` on the main process. |
+| **FloatChat** | Floating Rocksy chat backed by `AssistantChat` on the main process. |
 
 ## IPC communication
 

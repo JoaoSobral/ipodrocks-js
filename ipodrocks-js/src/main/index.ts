@@ -2,6 +2,10 @@ import { app, BrowserWindow } from "electron";
 import * as fs from "fs";
 import * as path from "path";
 import { registerIpcHandlers } from "./ipc";
+import { registerMediaScheme, registerMediaProtocol } from "./player/media-protocol";
+import { cleanupPlayerTemp } from "./player/player-source";
+
+registerMediaScheme();
 
 const devServerUrl = process.env.VITE_DEV_SERVER_URL;
 
@@ -69,6 +73,7 @@ function createWindow(): BrowserWindow {
 }
 
 app.whenReady().then(() => {
+  registerMediaProtocol();
   registerIpcHandlers();
   createWindow();
 
@@ -77,6 +82,10 @@ app.whenReady().then(() => {
       createWindow();
     }
   });
+});
+
+app.on("before-quit", () => {
+  cleanupPlayerTemp();
 });
 
 app.on("window-all-closed", () => {

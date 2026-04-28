@@ -12,6 +12,7 @@ import {
   getPlaylistTracks,
   getShadowLibraries,
   getLibraryStats,
+  getDeviceSyncPreferences,
 } from "../../ipc/api";
 import { SyncProgressModal } from "../modals/SyncProgressModal";
 import type { Track, Playlist, ShadowLibrary } from "@shared/types";
@@ -308,6 +309,50 @@ export function SyncPanel() {
       setDeviceId(deviceList[0]?.id ?? "");
     }
   }, [deviceList, deviceId]);
+
+  useEffect(() => {
+    if (!deviceId) return;
+    let cancelled = false;
+    getDeviceSyncPreferences(deviceId as number).then((prefs) => {
+      if (cancelled) return;
+      if (!prefs) {
+        setSyncType("full");
+        setFullIncludeMusic(true);
+        setFullIncludePodcasts(true);
+        setFullIncludeAudiobooks(true);
+        setFullIncludePlaylists(true);
+        setExtraTrackPolicy("keep");
+        setIgnoreSpaceCheck(false);
+        setSkipAlbumArtwork(false);
+        setSelectedItems({
+          albums: new Set(),
+          artists: new Set(),
+          genres: new Set(),
+          podcasts: new Set(),
+          audiobooks: new Set(),
+          playlists: new Set(),
+        });
+      } else {
+        setSyncType(prefs.syncType);
+        setFullIncludeMusic(prefs.includeMusic);
+        setFullIncludePodcasts(prefs.includePodcasts);
+        setFullIncludeAudiobooks(prefs.includeAudiobooks);
+        setFullIncludePlaylists(prefs.includePlaylists);
+        setExtraTrackPolicy(prefs.extraTrackPolicy);
+        setIgnoreSpaceCheck(prefs.ignoreSpaceCheck);
+        setSkipAlbumArtwork(prefs.skipAlbumArtwork);
+        setSelectedItems({
+          albums: new Set(prefs.selections.albums),
+          artists: new Set(prefs.selections.artists),
+          genres: new Set(prefs.selections.genres),
+          podcasts: new Set(prefs.selections.podcasts),
+          audiobooks: new Set(prefs.selections.audiobooks),
+          playlists: new Set(prefs.selections.playlists),
+        });
+      }
+    }).catch(console.error);
+    return () => { cancelled = true; };
+  }, [deviceId]);
 
   const selectedDevice = useMemo(
     () => (deviceId ? deviceList.find((d) => d?.id === deviceId) : undefined),

@@ -12,7 +12,7 @@ const FEATURES: { icon: string; label: string; description: string }[] = [
   { icon: "📱", label: "Multiple devices", description: "Each device has its own codec and folder layout." },
   { icon: "📚", label: "Library & shadows", description: "Music, podcasts, audiobooks; FLAC→MPC mirrors." },
   { icon: "📋", label: "Playlists", description: "Smart, Genius, Savant (AI), voice via Assistant." },
-  { icon: "💬", label: "Music Assistant", description: "Chat that knows your library; create playlists by voice." },
+  { icon: "💬", label: "Rocksy", description: "Chat that knows your library; create playlists by voice." },
   { icon: "🎹", label: "Harmonic mixing", description: "Key/BPM detection and Camelot wheel." },
   { icon: "🔄", label: "Conversion & codecs", description: "MP3, AAC, Musepack, Opus via FFmpeg." },
   { icon: "⭐", label: "Star ratings", description: "5-star (half-star), synced from Rockbox with 3-way merge." },
@@ -133,7 +133,7 @@ export function WelcomePanel() {
           <li><strong className="text-foreground">Playlists</strong> — create smart, Genius, or Savant playlists</li>
           <li><strong className="text-foreground">Devices</strong> — add and configure each Rockbox or mountable device</li>
           <li><strong className="text-foreground">Sync</strong> — copy music and podcasts to the device</li>
-          <li><strong className="text-foreground">Settings</strong> (gear icon) — add your OpenRouter API key for Savant and Assistant</li>
+          <li><strong className="text-foreground">Settings</strong> (gear icon) — add your OpenRouter API key for Savant and Rocksy</li>
         </ul>
       </Card>
 

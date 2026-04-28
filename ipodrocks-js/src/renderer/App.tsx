@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, type JSX } from "react";
 import { getAppVersion } from "./ipc/api";
 import { WelcomePanel } from "./components/panels/WelcomePanel";
 import { DashboardPanel } from "./components/panels/DashboardPanel";
@@ -9,6 +9,7 @@ import { PlaylistPanel } from "./components/panels/PlaylistPanel";
 import { SettingsPanel } from "./components/panels/SettingsPanel";
 import { FloatChat } from "./components/assistant/FloatChat";
 import { ThemeToggle } from "./components/common/ThemeToggle";
+import { PlayerBar } from "./components/player/PlayerBar";
 import { useThemeStore } from "./stores/theme-store";
 import { useUIStore } from "./stores/ui-store";
 
@@ -112,7 +113,7 @@ export function App() {
       </nav>
 
       {/* Main content */}
-      <main className="flex-1 flex flex-col overflow-hidden bg-background">
+      <main className="flex-1 min-w-0 flex flex-col overflow-hidden bg-background">
         <header className="border-b border-border bg-card px-8 py-4 shrink-0 [-webkit-app-region:drag] flex items-center justify-between">
           <h2 className="text-xl font-semibold text-foreground flex items-center gap-2">
             <span>{current.icon}</span>
@@ -136,11 +137,12 @@ export function App() {
             return <ActivePanel />;
           })()}
         </div>
+        <PlayerBar />
       </main>
 
-      <SettingsPanel open={settingsOpen} onClose={() => setSettingsOpen(false)} />
-
       <FloatChat />
+
+      <SettingsPanel open={settingsOpen} onClose={() => setSettingsOpen(false)} />
     </div>
   );
 }

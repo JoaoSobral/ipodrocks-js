@@ -8,7 +8,7 @@ import { MarkdownContent } from "../common/MarkdownContent";
 import { ErrorBox } from "../common/ErrorBox";
 
 const OPENING_MESSAGE =
-  "How can I help with your music library? I know your tracks, playlists, and artists.";
+  "Hey! I'm Rocksy. How can I help? 😊 I know your library, understand iPodrocks, and can craft playlists in seconds.";
 
 export function FloatChat() {
   const [open, setOpen] = useState(false);
@@ -51,11 +51,13 @@ export function FloatChat() {
         return;
       }
 
-      const replyContent =
-        result.playlistCreated
-          ? `**Playlist created: "${result.playlistCreated}"**\n\n${result.reply}`
-          : result.reply;
-      const next = [...messagesRef.current, { role: "assistant", content: replyContent }];
+      const replyContent = result.playlistCreated
+        ? `**Playlist created: "${result.playlistCreated}"**\n\n${result.reply}`
+        : result.reply;
+      const next = [
+        ...messagesRef.current,
+        { role: "assistant" as const, content: replyContent },
+      ];
       messagesRef.current = next;
       setMessages(next);
     } catch (err) {
@@ -68,30 +70,34 @@ export function FloatChat() {
   if (hasApiKey === false) return null;
 
   return (
-    <>
-      {/* Toggle button - always visible when collapsed */}
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        className="fixed bottom-6 right-6 z-50 w-14 h-14 rounded-full bg-primary text-primary-foreground shadow-lg hover:bg-primary/90 active:scale-95 transition-all flex items-center justify-center text-2xl"
-        title={open ? "Close chat" : "Music Assistant"}
-      >
-        💬
-      </button>
-
-      {/* Chat panel - slides in from bottom-right */}
-      {open && (
-        <div
-          className="fixed bottom-24 right-6 z-50 w-96 max-h-[480px] flex flex-col rounded-2xl border border-border bg-card shadow-2xl overflow-hidden"
-          style={{ boxShadow: "0 8px 32px rgba(0,0,0,0.4)" }}
+    <div
+      className="shrink-0 border-l border-border bg-card flex flex-col overflow-hidden"
+      style={{ width: open ? 320 : 36, transition: "width 300ms ease-in-out" }}
+    >
+      {!open ? (
+        /* Collapsed tab strip */
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          className="flex flex-col items-center justify-start pt-8 gap-3 h-full w-full text-muted-foreground hover:text-foreground hover:bg-accent/30 transition-colors"
+          title="Ask Rocksy"
         >
+          <span className="text-base">💬</span>
+          <span
+            className="text-[10px] font-medium tracking-widest uppercase text-muted-foreground"
+            style={{ writingMode: "vertical-rl", transform: "rotate(180deg)" }}
+          >
+            Rocksy
+          </span>
+        </button>
+      ) : (
+        /* Expanded drawer */
+        <div className="flex flex-col h-full" style={{ width: 320 }}>
           {/* Header */}
-          <div className="flex items-center justify-between px-4 py-3 border-b border-border">
+          <div className="flex items-center justify-between px-4 py-3 border-b border-border shrink-0">
             <div className="flex items-center gap-2">
-              <span className="text-lg">💬</span>
-              <h3 className="text-sm font-semibold text-foreground">
-                Music Assistant
-              </h3>
+              <span className="text-base">💬</span>
+              <h3 className="text-sm font-semibold text-foreground">Rocksy</h3>
             </div>
             <div className="flex items-center gap-1">
               <button
@@ -101,7 +107,7 @@ export function FloatChat() {
                   setMessages([]);
                 }}
                 className="p-1 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/50"
-                title="Clear memory (hidden past context)"
+                title="Clear conversation"
               >
                 🗑
               </button>
@@ -109,22 +115,23 @@ export function FloatChat() {
                 type="button"
                 onClick={() => setOpen(false)}
                 className="p-1 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/50"
-                title="Minimize"
+                title="Close"
               >
-                ▼
+                ✕
               </button>
             </div>
           </div>
 
-          {/* Greeting */}
-          <div className="px-4 py-2 border-b border-border">
+          {/* Subtitle */}
+          <div className="px-4 py-2 border-b border-border shrink-0">
             <p className="text-xs text-muted-foreground">
-              Questions? I know your library, tracks, and playlists.
+              Questions? I know iPodRocks inside out — docs, your library,
+              tracks, and playlists.
             </p>
           </div>
 
           {/* Messages */}
-          <div className="flex-1 overflow-y-auto min-h-[200px] max-h-[280px] p-4 space-y-3">
+          <div className="flex-1 overflow-y-auto p-4 space-y-3">
             {messages.length === 0 ? (
               <div className="flex justify-start">
                 <div className="max-w-[85%] rounded-xl px-3 py-2 bg-muted/50 text-sm text-foreground select-text">
@@ -164,13 +171,13 @@ export function FloatChat() {
           </div>
 
           {error && (
-            <div className="px-4 py-2">
+            <div className="px-4 py-2 shrink-0">
               <ErrorBox>{error}</ErrorBox>
             </div>
           )}
 
           {/* Input */}
-          <div className="p-3 border-t border-border">
+          <div className="p-3 border-t border-border shrink-0">
             <div className="flex gap-2">
               <input
                 type="text"
@@ -198,6 +205,6 @@ export function FloatChat() {
           </div>
         </div>
       )}
-    </>
+    </div>
   );
 }

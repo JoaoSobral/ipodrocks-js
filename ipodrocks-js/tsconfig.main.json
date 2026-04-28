@@ -6,7 +6,8 @@
     "outDir": "dist/main",
     "rootDir": "src",
     "declaration": false,
-    "sourceMap": true
+    "sourceMap": true,
+    "noEmit": false
   },
   "include": ["src/main/**/*.ts", "src/shared/**/*.ts"]
 }

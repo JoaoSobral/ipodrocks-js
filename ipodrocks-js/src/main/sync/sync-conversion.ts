@@ -1,29 +1,8 @@
 import { ChildProcess, spawn } from "child_process";
 import * as fs from "fs";
 import * as path from "path";
-import { app } from "electron";
 import { getEncoderEnv } from "../utils/encoder-env";
-
-let cachedFfmpegPath: string | null = null;
-
-/**
- * Returns the path to the FFmpeg binary. Uses @ffmpeg-installer/ffmpeg in dev;
- * in packaged app uses the binary from extraResources.
- */
-function getFfmpegPath(): string {
-  if (cachedFfmpegPath) return cachedFfmpegPath;
-  if (app.isPackaged && process.resourcesPath) {
-    const name = process.platform === "win32" ? "ffmpeg.exe" : "ffmpeg";
-    const candidate = path.join(process.resourcesPath, "ffmpeg", name);
-    if (fs.existsSync(candidate)) {
-      cachedFfmpegPath = candidate;
-      return candidate;
-    }
-  }
-  const ffmpeg = require("@ffmpeg-installer/ffmpeg");
-  cachedFfmpegPath = ffmpeg.path;
-  return cachedFfmpegPath as string;
-}
+import { getFfmpegPath } from "../utils/ffmpeg-path";
 
 /** Metadata to write into converted files (e.g. MPC). */
 export interface ConversionMetadata {

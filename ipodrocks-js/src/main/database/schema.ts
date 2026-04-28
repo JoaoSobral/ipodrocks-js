@@ -263,6 +263,21 @@ CREATE TABLE IF NOT EXISTS sync_rules (
 );
 
 
+CREATE TABLE IF NOT EXISTS device_sync_preferences (
+    device_id INTEGER PRIMARY KEY,
+    sync_type TEXT NOT NULL DEFAULT 'full',
+    extra_track_policy TEXT NOT NULL DEFAULT 'keep',
+    include_music INTEGER NOT NULL DEFAULT 1,
+    include_podcasts INTEGER NOT NULL DEFAULT 1,
+    include_audiobooks INTEGER NOT NULL DEFAULT 1,
+    include_playlists INTEGER NOT NULL DEFAULT 1,
+    ignore_space_check INTEGER NOT NULL DEFAULT 0,
+    skip_album_artwork INTEGER NOT NULL DEFAULT 0,
+    custom_selections_json TEXT,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (device_id) REFERENCES devices (id) ON DELETE CASCADE
+);
+
 -- ============================================================
 -- Playlists
 -- ============================================================
