@@ -73,6 +73,7 @@ function createWindow(): BrowserWindow {
 }
 
 app.whenReady().then(() => {
+  cleanupPlayerTemp();
   registerMediaProtocol();
   registerIpcHandlers();
   createWindow();

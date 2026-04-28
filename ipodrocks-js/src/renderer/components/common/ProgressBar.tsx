@@ -7,7 +7,7 @@ interface ProgressBarProps {
   variant?: "default" | "success" | "error";
 }
 
-const VARIANT_COLORS: Record<string, string> = {
+const VARIANT_COLORS: Record<"default" | "success" | "error", string> = {
   success: "bg-green-500",
   error: "bg-destructive",
   default: "bg-primary",
@@ -22,7 +22,7 @@ export function ProgressBar({
   variant = "default",
 }: ProgressBarProps) {
   const clamped = Math.min(100, Math.max(0, value));
-  const barColor = color ? undefined : VARIANT_COLORS[variant] ?? VARIANT_COLORS.default;
+  const barColor = color ? undefined : VARIANT_COLORS[variant];
   return (
     <div className={`flex items-center gap-3 ${className}`}>
       <div className="flex-1 h-2 rounded-full bg-muted overflow-hidden">

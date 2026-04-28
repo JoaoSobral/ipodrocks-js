@@ -1,18 +1,10 @@
 import { create } from "zustand";
 import { preparePlayback } from "../ipc/api";
+import { safeLocalStorage } from "../utils/storage";
 import type { Track } from "../ipc/api";
 
 const VOLUME_KEY = "ipodrocks_player_volume";
 const MUTE_KEY = "ipodrocks_player_muted";
-
-function safeLocalStorage(): Storage | null {
-  try {
-    if (typeof localStorage === "undefined" || typeof localStorage.getItem !== "function") return null;
-    return localStorage;
-  } catch {
-    return null;
-  }
-}
 
 function loadVolume(): number {
   const v = safeLocalStorage()?.getItem(VOLUME_KEY);
@@ -52,6 +44,21 @@ export interface PlayerState {
   _onEnded: () => void;
 }
 
+async function runPrepare(
+  track: Track,
+  forceTranscode: boolean,
+  set: (partial: Partial<PlayerState>) => void,
+  extraOnSuccess?: Partial<PlayerState>,
+): Promise<void> {
+  try {
+    const { url, strategy } = await (forceTranscode ? preparePlayback(track, true) : preparePlayback(track));
+    set({ sourceUrl: url, strategy, isPreparing: false, ...extraOnSuccess });
+  } catch (e) {
+    set({ isPreparing: false });
+    console.error(`player:prepare${forceTranscode ? " (transcode)" : ""} failed`, e);
+  }
+}
+
 export const usePlayerStore = create<PlayerState>((set, get) => ({
   currentTrack: null,
   queue: [],
@@ -67,22 +74,8 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
 
   playTrack: async (track, queue) => {
     const index = queue.findIndex((t) => t.id === track.id);
-    set({
-      currentTrack: track,
-      queue,
-      queueIndex: index,
-      isPreparing: true,
-      sourceUrl: null,
-      currentTime: 0,
-      isPlaying: false,
-    });
-    try {
-      const { url, strategy } = await preparePlayback(track);
-      set({ sourceUrl: url, strategy, isPreparing: false });
-    } catch (e) {
-      set({ isPreparing: false });
-      console.error("player:prepare failed", e);
-    }
+    set({ currentTrack: track, queue, queueIndex: index, isPreparing: true, sourceUrl: null, currentTime: 0, isPlaying: false });
+    await runPrepare(track, false, set);
   },
 
   togglePlayPause: () => {
@@ -148,13 +141,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     if (!currentTrack) return;
     const index = queue.findIndex((t) => t.id === currentTrack.id);
     set({ isPreparing: true, sourceUrl: null });
-    try {
-      const { url, strategy } = await preparePlayback(currentTrack, true);
-      set({ sourceUrl: url, strategy, queueIndex: index, isPreparing: false });
-    } catch (e) {
-      set({ isPreparing: false });
-      console.error("player:prepare (transcode) failed", e);
-    }
+    await runPrepare(currentTrack, true, set, { queueIndex: index });
   },
 
   _setIsPlaying: (v) => set({ isPlaying: v }),

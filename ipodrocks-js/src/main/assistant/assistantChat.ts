@@ -647,20 +647,15 @@ export async function sendAssistantMessage(
     buildPinnedMemoriesContext(db);
   const memoryInstructions = buildMemoryInstructions(pinnedText, pinnedCount);
 
-  const systemContent = `${ASSISTANT_SYSTEM_PROMPT}
-${memoryInstructions}
-${playlistInstructions}
-<app_docs>
-${APP_DOCS}
-</app_docs>
-<library_context>
-${libraryContext}
-</library_context>
-
-Use the app_docs above to answer how-to and feature questions about iPodRocks. Use the library_context to answer questions about the user's specific music collection. If something is genuinely not covered by either, say so.`;
-
   const llmMessages: OpenRouterMessage[] = [
-    { role: "system", content: systemContent },
+    {
+      role: "system",
+      content: `${ASSISTANT_SYSTEM_PROMPT}\n<app_docs>\n${APP_DOCS}\n</app_docs>`,
+    },
+    {
+      role: "system",
+      content: `${memoryInstructions}\n${playlistInstructions}\n<library_context>\n${libraryContext}\n</library_context>\n\nUse the app_docs from the earlier context to answer how-to and feature questions about iPodRocks. Use the library_context to answer questions about the user's specific music collection. If something is genuinely not covered by either, say so.`,
+    },
     ...messages.map((m) => ({ role: m.role, content: m.content })),
   ];
 

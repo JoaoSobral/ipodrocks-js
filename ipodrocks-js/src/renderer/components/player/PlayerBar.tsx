@@ -5,6 +5,7 @@ import { formatDuration } from "../../utils/format";
 
 export function PlayerBar() {
   const audioRef = useRef<HTMLAudioElement>(null);
+  const lastReportedTimeRef = useRef(0);
 
   const currentTrack = usePlayerStore((s) => s.currentTrack);
   const sourceUrl = usePlayerStore((s) => s.sourceUrl);
@@ -88,7 +89,13 @@ export function PlayerBar() {
         ref={audioRef}
         onPlay={() => _setIsPlaying(true)}
         onPause={() => _setIsPlaying(false)}
-        onTimeUpdate={(e) => _setCurrentTime(e.currentTarget.currentTime)}
+        onTimeUpdate={(e) => {
+          const t = e.currentTarget.currentTime;
+          if (Math.abs(t - lastReportedTimeRef.current) >= 0.25) {
+            lastReportedTimeRef.current = t;
+            _setCurrentTime(t);
+          }
+        }}
         onLoadedMetadata={(e) => _setDuration(e.currentTarget.duration)}
         onEnded={_onEnded}
         onError={(e) => {

@@ -5,16 +5,12 @@ import { spawn, ChildProcess } from "child_process";
 import { app } from "electron";
 import { getFfmpegPath } from "../utils/ffmpeg-path";
 import { getEncoderEnv } from "../utils/encoder-env";
+import { AUDIO_EXTENSIONS } from "../utils/audio-extensions";
 import type { PlaybackStrategy, Track } from "../../shared/types";
 
 export type { PlaybackStrategy };
 
 const NATIVE_CODECS = new Set(["MP3", "AAC", "FLAC", "OGG", "OPUS", "PCM", "ALAC"]);
-
-const AUDIO_EXTENSIONS = new Set([
-  ".mp3", ".m4a", ".flac", ".wav", ".aiff", ".aif",
-  ".ogg", ".opus", ".ape", ".mpc",
-]);
 
 let activeFfmpegProcess: ChildProcess | null = null;
 let activeTempFile: string | null = null;

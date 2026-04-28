@@ -733,7 +733,10 @@ export function LibraryPanel() {
                         className={`flex items-center gap-2 px-2 py-1.5 text-xs hover:bg-muted/30 border-b border-border transition-colors cursor-default ${
                           t.id === currentTrackId ? "bg-primary/10" : ""
                         }`}
-                        onDoubleClick={() => playTrack(t, filtered)}
+                        onDoubleClick={() => {
+                          const start = Math.max(0, index - 250);
+                          playTrack(t, filtered.slice(start, start + 500));
+                        }}
                       >
                         <span className="flex-[3] min-w-[120px] truncate text-foreground">{t.title}</span>
                         <span className="flex-[2] min-w-[100px] truncate text-muted-foreground">{t.artist}</span>

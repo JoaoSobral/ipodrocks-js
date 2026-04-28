@@ -155,6 +155,28 @@ describe("PlayerBar", () => {
     pauseSpy.mockRestore();
   });
 
+  it("onTimeUpdate only updates store when change is >= 0.25s", () => {
+    usePlayerStore.setState({
+      currentTrack: baseTrack as any,
+      sourceUrl: "media://local/abc",
+      currentTime: 0,
+    });
+    render(<PlayerBar />);
+    const audio = document.querySelector("audio")!;
+
+    // Small change (< 0.25s) — should NOT update store
+    fireEvent.timeUpdate(audio, { target: { currentTime: 0.1 } });
+    expect(usePlayerStore.getState().currentTime).toBe(0);
+
+    // Change >= 0.25s — should update store
+    fireEvent.timeUpdate(audio, { target: { currentTime: 10 } });
+    expect(usePlayerStore.getState().currentTime).toBe(10);
+
+    // Another small change from 10 — should NOT update
+    fireEvent.timeUpdate(audio, { target: { currentTime: 10.1 } });
+    expect(usePlayerStore.getState().currentTime).toBe(10);
+  });
+
   it("play() is not called redundantly when audio is already playing", async () => {
     const playSpy = vi.spyOn(HTMLMediaElement.prototype, "play");
     Object.defineProperty(HTMLMediaElement.prototype, "paused", {

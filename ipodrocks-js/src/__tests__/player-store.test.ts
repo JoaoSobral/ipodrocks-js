@@ -221,6 +221,40 @@ describe("player-store", () => {
     });
   });
 
+  describe("retryAsTranscode", () => {
+    it("calls preparePlayback with forceTranscode=true", async () => {
+      const t = makeTrack();
+      usePlayerStore.setState({ currentTrack: t, queue: [t], queueIndex: 0, sourceUrl: "media://local/old" });
+      await usePlayerStore.getState().retryAsTranscode();
+      expect(api.preparePlayback).toHaveBeenCalledWith(t, true);
+    });
+
+    it("updates sourceUrl and strategy on success", async () => {
+      vi.mocked(api.preparePlayback).mockResolvedValue({ url: "media://local/transcode", strategy: "transcode" });
+      const t = makeTrack();
+      usePlayerStore.setState({ currentTrack: t, queue: [t], queueIndex: 0 });
+      await usePlayerStore.getState().retryAsTranscode();
+      const s = usePlayerStore.getState();
+      expect(s.sourceUrl).toBe("media://local/transcode");
+      expect(s.strategy).toBe("transcode");
+      expect(s.isPreparing).toBe(false);
+    });
+
+    it("clears isPreparing on failure", async () => {
+      vi.mocked(api.preparePlayback).mockRejectedValue(new Error("transcode failed"));
+      const t = makeTrack();
+      usePlayerStore.setState({ currentTrack: t, queue: [t], queueIndex: 0 });
+      await usePlayerStore.getState().retryAsTranscode();
+      expect(usePlayerStore.getState().isPreparing).toBe(false);
+    });
+
+    it("does nothing when no current track", async () => {
+      usePlayerStore.setState({ currentTrack: null });
+      await usePlayerStore.getState().retryAsTranscode();
+      expect(api.preparePlayback).not.toHaveBeenCalled();
+    });
+  });
+
   describe("auto-advance (_onEnded)", () => {
     it("calls next when a track ends", async () => {
       const t1 = makeTrack({ id: 1 });
