@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useMemo } from "react";
+import { useEffect, useState, useReducer, useCallback, useMemo } from "react";
 import { Card } from "../common/Card";
 import { Button } from "../common/Button";
 import { ErrorBox } from "../common/ErrorBox";
@@ -12,10 +12,97 @@ import {
   getPlaylistTracks,
   getShadowLibraries,
   getLibraryStats,
+  getDeviceSyncPreferences,
 } from "../../ipc/api";
 import { SyncProgressModal } from "../modals/SyncProgressModal";
 import type { Track, Playlist, ShadowLibrary } from "@shared/types";
-import type { CustomSelections, SyncOptions } from "@shared/types";
+import type { CustomSelections, ExtraTrackPolicy, SyncOptions, SyncType } from "@shared/types";
+
+interface SyncPrefsState {
+  syncType: SyncType;
+  fullIncludeMusic: boolean;
+  fullIncludePodcasts: boolean;
+  fullIncludeAudiobooks: boolean;
+  fullIncludePlaylists: boolean;
+  extraTrackPolicy: ExtraTrackPolicy;
+  ignoreSpaceCheck: boolean;
+  skipAlbumArtwork: boolean;
+  selectedItems: Record<string, Set<string>>;
+}
+
+const EMPTY_SELECTIONS: Record<string, Set<string>> = {
+  albums: new Set(),
+  artists: new Set(),
+  genres: new Set(),
+  podcasts: new Set(),
+  audiobooks: new Set(),
+  playlists: new Set(),
+};
+
+const INITIAL_PREFS: SyncPrefsState = {
+  syncType: "full",
+  fullIncludeMusic: true,
+  fullIncludePodcasts: true,
+  fullIncludeAudiobooks: true,
+  fullIncludePlaylists: true,
+  extraTrackPolicy: "keep",
+  ignoreSpaceCheck: false,
+  skipAlbumArtwork: false,
+  selectedItems: EMPTY_SELECTIONS,
+};
+
+type SyncPrefsAction =
+  | { type: "reset" }
+  | { type: "load"; prefs: import("@shared/types").DeviceSyncPreferences }
+  | { type: "setSyncType"; value: SyncType }
+  | { type: "setFullIncludeMusic"; value: boolean }
+  | { type: "setFullIncludePodcasts"; value: boolean }
+  | { type: "setFullIncludeAudiobooks"; value: boolean }
+  | { type: "setFullIncludePlaylists"; value: boolean }
+  | { type: "setExtraTrackPolicy"; value: ExtraTrackPolicy }
+  | { type: "setIgnoreSpaceCheck"; value: boolean }
+  | { type: "setSkipAlbumArtwork"; value: boolean }
+  | { type: "toggleSelection"; category: string; label: string; checked: boolean };
+
+function syncPrefsReducer(state: SyncPrefsState, action: SyncPrefsAction): SyncPrefsState {
+  switch (action.type) {
+    case "reset":
+      return { ...INITIAL_PREFS, selectedItems: { albums: new Set(), artists: new Set(), genres: new Set(), podcasts: new Set(), audiobooks: new Set(), playlists: new Set() } };
+    case "load":
+      return {
+        syncType: action.prefs.syncType,
+        fullIncludeMusic: action.prefs.includeMusic,
+        fullIncludePodcasts: action.prefs.includePodcasts,
+        fullIncludeAudiobooks: action.prefs.includeAudiobooks,
+        fullIncludePlaylists: action.prefs.includePlaylists,
+        extraTrackPolicy: action.prefs.extraTrackPolicy,
+        ignoreSpaceCheck: action.prefs.ignoreSpaceCheck,
+        skipAlbumArtwork: action.prefs.skipAlbumArtwork,
+        selectedItems: {
+          albums: new Set(action.prefs.selections.albums),
+          artists: new Set(action.prefs.selections.artists),
+          genres: new Set(action.prefs.selections.genres),
+          podcasts: new Set(action.prefs.selections.podcasts),
+          audiobooks: new Set(action.prefs.selections.audiobooks),
+          playlists: new Set(action.prefs.selections.playlists),
+        },
+      };
+    case "setSyncType": return { ...state, syncType: action.value };
+    case "setFullIncludeMusic": return { ...state, fullIncludeMusic: action.value };
+    case "setFullIncludePodcasts": return { ...state, fullIncludePodcasts: action.value };
+    case "setFullIncludeAudiobooks": return { ...state, fullIncludeAudiobooks: action.value };
+    case "setFullIncludePlaylists": return { ...state, fullIncludePlaylists: action.value };
+    case "setExtraTrackPolicy": return { ...state, extraTrackPolicy: action.value };
+    case "setIgnoreSpaceCheck": return { ...state, ignoreSpaceCheck: action.value };
+    case "setSkipAlbumArtwork": return { ...state, skipAlbumArtwork: action.value };
+    case "toggleSelection": {
+      const next = { ...state.selectedItems, [action.category]: new Set(state.selectedItems[action.category]) };
+      if (action.checked) next[action.category].add(action.label);
+      else next[action.category].delete(action.label);
+      return { ...state, selectedItems: next };
+    }
+  }
+}
 
 const statusColors = {
   success: "var(--success)",
@@ -39,28 +126,14 @@ export function SyncPanel() {
 
   const [deviceId, setDeviceId] = useState<number | "">("");
   const [shadowLibs, setShadowLibs] = useState<ShadowLibrary[]>([]);
-  const [syncType, setSyncType] = useState("full");
-  const [fullIncludeMusic, setFullIncludeMusic] = useState(true);
-  const [fullIncludePodcasts, setFullIncludePodcasts] = useState(true);
-  const [fullIncludeAudiobooks, setFullIncludeAudiobooks] = useState(true);
-  const [fullIncludePlaylists, setFullIncludePlaylists] = useState(true);
-  const [extraTrackPolicy, setExtraTrackPolicy] = useState("keep");
-  const [ignoreSpaceCheck, setIgnoreSpaceCheck] = useState(false);
-  const [skipAlbumArtwork, setSkipAlbumArtwork] = useState(false);
+  const [prefs, dispatch] = useReducer(syncPrefsReducer, INITIAL_PREFS);
+  const { syncType, fullIncludeMusic, fullIncludePodcasts, fullIncludeAudiobooks, fullIncludePlaylists, extraTrackPolicy, ignoreSpaceCheck, skipAlbumArtwork, selectedItems } = prefs;
 
   const [tracks, setTracks] = useState<Track[]>([]);
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
   const [playlistAffectedAlbums, setPlaylistAffectedAlbums] = useState<Set<string>>(new Set());
   const [playlistAffectedArtists, setPlaylistAffectedArtists] = useState<Set<string>>(new Set());
   const [playlistAffectedGenres, setPlaylistAffectedGenres] = useState<Set<string>>(new Set());
-  const [selectedItems, setSelectedItems] = useState<Record<string, Set<string>>>({
-    albums: new Set(),
-    artists: new Set(),
-    genres: new Set(),
-    podcasts: new Set(),
-    audiobooks: new Set(),
-    playlists: new Set(),
-  });
 
   const albums = useMemo(() => {
     const list = Array.isArray(tracks) ? tracks : [];
@@ -283,12 +356,7 @@ export function SyncPanel() {
   ]);
 
   const toggleSelection = useCallback((category: string, label: string, checked: boolean) => {
-    setSelectedItems((prev) => {
-      const next = { ...prev, [category]: new Set(prev[category]) };
-      if (checked) next[category].add(label);
-      else next[category].delete(label);
-      return next;
-    });
+    dispatch({ type: "toggleSelection", category, label, checked });
   }, []);
 
   useEffect(() => {
@@ -308,6 +376,20 @@ export function SyncPanel() {
       setDeviceId(deviceList[0]?.id ?? "");
     }
   }, [deviceList, deviceId]);
+
+  useEffect(() => {
+    if (!deviceId) return;
+    let cancelled = false;
+    getDeviceSyncPreferences(deviceId as number).then((loaded) => {
+      if (cancelled) return;
+      if (!loaded) {
+        dispatch({ type: "reset" });
+      } else {
+        dispatch({ type: "load", prefs: loaded });
+      }
+    }).catch(console.error);
+    return () => { cancelled = true; };
+  }, [deviceId]);
 
   const selectedDevice = useMemo(
     () => (deviceId ? deviceList.find((d) => d?.id === deviceId) : undefined),
@@ -463,7 +545,7 @@ export function SyncPanel() {
                     type="radio"
                     name="syncType"
                     checked={syncType === type}
-                    onChange={() => setSyncType(type)}
+                    onChange={() => dispatch({ type: "setSyncType", value: type })}
                     className="accent-primary"
                   />
                   <span className="text-sm text-foreground capitalize">{type}</span>
@@ -476,7 +558,7 @@ export function SyncPanel() {
                   <input
                     type="checkbox"
                     checked={fullIncludeMusic}
-                    onChange={(e) => setFullIncludeMusic(e.target.checked)}
+                    onChange={(e) => dispatch({ type: "setFullIncludeMusic", value: e.target.checked })}
                     className="accent-primary rounded"
                   />
                   <span className="text-sm text-foreground">Music</span>
@@ -485,7 +567,7 @@ export function SyncPanel() {
                   <input
                     type="checkbox"
                     checked={fullIncludePodcasts}
-                    onChange={(e) => setFullIncludePodcasts(e.target.checked)}
+                    onChange={(e) => dispatch({ type: "setFullIncludePodcasts", value: e.target.checked })}
                     className="accent-primary rounded"
                   />
                   <span className="text-sm text-foreground">Podcasts</span>
@@ -494,7 +576,7 @@ export function SyncPanel() {
                   <input
                     type="checkbox"
                     checked={fullIncludeAudiobooks}
-                    onChange={(e) => setFullIncludeAudiobooks(e.target.checked)}
+                    onChange={(e) => dispatch({ type: "setFullIncludeAudiobooks", value: e.target.checked })}
                     className="accent-primary rounded"
                   />
                   <span className="text-sm text-foreground">Audiobooks</span>
@@ -503,7 +585,7 @@ export function SyncPanel() {
                   <input
                     type="checkbox"
                     checked={fullIncludePlaylists}
-                    onChange={(e) => setFullIncludePlaylists(e.target.checked)}
+                    onChange={(e) => dispatch({ type: "setFullIncludePlaylists", value: e.target.checked })}
                     className="accent-primary rounded"
                   />
                   <span className="text-sm text-foreground">Playlists</span>
@@ -515,7 +597,7 @@ export function SyncPanel() {
             label="Orphan Policy"
             tooltip="What to do with tracks already on the device that are not in the current sync selection or part of the main library. Remove deletes them, Keep leaves them untouched, Prompt asks you before making changes."
             value={extraTrackPolicy}
-            onChange={(v) => setExtraTrackPolicy(v)}
+            onChange={(v) => dispatch({ type: "setExtraTrackPolicy", value: v as ExtraTrackPolicy })}
             options={[
               { value: "remove", label: "Remove" },
               { value: "keep", label: "Keep" },
@@ -528,7 +610,7 @@ export function SyncPanel() {
             <input
               type="checkbox"
               checked={ignoreSpaceCheck}
-              onChange={(e) => setIgnoreSpaceCheck(e.target.checked)}
+              onChange={(e) => dispatch({ type: "setIgnoreSpaceCheck", value: e.target.checked })}
               className="accent-primary rounded"
             />
             <span className="text-sm text-muted-foreground">Ignore space check</span>
@@ -537,7 +619,7 @@ export function SyncPanel() {
             <input
               type="checkbox"
               checked={skipAlbumArtwork}
-              onChange={(e) => setSkipAlbumArtwork(e.target.checked)}
+              onChange={(e) => dispatch({ type: "setSkipAlbumArtwork", value: e.target.checked })}
               className="accent-primary rounded"
             />
             <span className="text-sm text-muted-foreground">Not syncing album artwork</span>

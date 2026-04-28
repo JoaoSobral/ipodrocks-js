@@ -40,7 +40,7 @@ iPodRocks is NOT a library manager. I strongly advise you to use beets and beets
 ### Sync
 <img src="https://github.com/JoaoSobral/ipodrocks-js/blob/main/ipodrocks-js/docs/screenshots/sync.png?raw=true" width="70%">
 
-### Music Assistant — create playlists by chat
+### Rocksy — create playlists by chat
 <img src="https://github.com/JoaoSobral/ipodrocks-js/blob/main/ipodrocks-js/docs/screenshots/assistant-create.png?raw=true" width="40%">
 <img src="https://github.com/JoaoSobral/ipodrocks-js/blob/main/ipodrocks-js/docs/screenshots/playlist-result.png?raw=true" width="70%">
 
@@ -80,7 +80,7 @@ iPodRocks is NOT a library manager. I strongly advise you to use beets and beets
 - Camelot wheel compatibility for DJ-style flow
 - Optional backfill with genre-based sampling
 
-### Music Assistant
+### Rocksy
 - **Floating chat** — Ask about your library, playlists, artists, and get recommendations
 - **Persistent memory** — The assistant remembers important things you tell it across sessions (up to 40 pinned memories). Say "always remember my name is Pedro" or "don't forget I love jazz" and it will carry that context every time you open the app
 - **Rolling conversation history** — Keeps the last 100 exchanges as hidden context so the assistant stays informed without cluttering your chat
@@ -179,7 +179,7 @@ If `mpcenc` is not on your PATH, iPodRocks will prompt when you select Musepack.
 - **Genius** — From Rockbox playback logs; analyze device first. Includes a `top_rated` Genius type that works without any play history
 - **Savant** — AI-generated from mood (requires OpenRouter API key in Settings); rating-aware curation
 - **Tagnavi mode** — Enable "Rockbox smart playlists (tagnavi)" on a device to sync Smart playlists as live, auto-updating Rockbox tagtree entries instead of static `.m3u` files
-- **Via Assistant** — Ask the floating chat to create a Smart or Genius playlist for you in plain English. The assistant knows your genres, artists, albums, and listening history and builds the playlist instantly
+- **Via Rocksy** — Ask the floating chat to create a Smart or Genius playlist for you in plain English. Rocksy knows your genres, artists, albums, and listening history and builds the playlist instantly
 
 ### Sync
 
@@ -189,7 +189,7 @@ If `mpcenc` is not on your PATH, iPodRocks will prompt when you select Musepack.
 
 ### Settings
 
-- **OpenRouter API key** — required for AI features (Savant playlists and Assistant). Add your key and test the connection before saving.
+- **OpenRouter API key** — required for AI features (Savant playlists and Rocksy). Add your key and test the connection before saving.
 - **Harmonic analysis** — configure key/BPM detection from tags or audio analysis
 
 ---

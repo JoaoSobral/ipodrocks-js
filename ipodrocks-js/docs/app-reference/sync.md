@@ -34,3 +34,13 @@ The Sync panel copies music, podcasts, audiobooks, and playlists from your libra
 3. **Custom sync** — Use when you want only certain albums, artists, or playlists. Pick from the lists and click Start Sync.
 4. **Check Device** first (in Devices) to see synced vs to-sync vs orphans before syncing.
 5. **Ignore space check** — Only if you are sure the device has enough space; normally the app checks.
+
+## Per-Device Sync Preferences
+
+Selecting a device in the Sync panel automatically restores that device's last-used sync configuration: sync type, content toggles (music/podcasts/audiobooks/playlists), orphan policy, space-check setting, artwork-skip setting, and any custom selections of albums, artists, genres, playlists, podcasts, and audiobooks.
+
+The state is saved every time you click **Sync** for that device — even if the sync errors partway through, because the saved state captures your intent, not the outcome.
+
+Devices that have never been synced through this panel fall back to the panel defaults: full sync, all content types enabled, keep-orphans policy, no artwork skip.
+
+When you switch between devices, the panel live-swaps to that device's saved configuration. Removing a device from the Devices panel also clears its saved preferences.

@@ -28,7 +28,7 @@ iPodRocks is a **sync manager** for Rockbox devices and any mountable player. It
 - **Multiple devices** — iPods, Rockbox players, any FAT32/exFAT-mounted drive
 - **Smart, Genius, and Savant playlists** — Rule-based, playback-history, or AI-generated
 - **Harmonic mixing** — Key and BPM detection, Camelot wheel compatibility
-- **Music Assistant** — Floating chat that knows your library and can create playlists by voice
+- **Rocksy** — Floating chat that knows your library and can create playlists by voice
 
 ## Next steps
 

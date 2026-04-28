@@ -1016,7 +1016,7 @@ export function PlaylistPanel() {
                 <div className="space-y-3">
                   <div>
                     <Label>
-                      Range: {geniusRangeEnd}\u2013{geniusRangeStart} months ago
+                      Range: {geniusRangeEnd}{"\u2013"}{geniusRangeStart} months ago
                     </Label>
                     <div className="flex gap-2 items-center">
                       <input
@@ -1310,7 +1310,6 @@ export function PlaylistPanel() {
                     open={showBackfillModal}
                     onClose={handleBackfillComplete}
                     backfillOpts={backfillOpts}
-                    onComplete={handleBackfillComplete}
                   />
                 </>
               )}

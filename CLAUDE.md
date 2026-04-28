@@ -19,3 +19,4 @@ These are confirmed reuse/efficiency issues found during `src/main/` review. Add
 | Efficiency | `playback-log-ingest.ts:90` | Full library aggregation on every ingest — should be incremental |
 | GitHub Actions | `.github/dependabot.yml` | `package-ecosystem: ""` — Dependabot is disabled |
 | GitHub Actions | All workflows | Actions pinned to floating `@vN` tags instead of commit SHAs |
+

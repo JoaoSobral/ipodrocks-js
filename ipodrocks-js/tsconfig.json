@@ -1,22 +1,24 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "module": "CommonJS",
-    "moduleResolution": "node",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
     "isolatedModules": true,
+    "noEmit": true,
     "sourceMap": true,
     "baseUrl": ".",
     "paths": {
       "@renderer/*": ["src/renderer/*"],
       "@main/*": ["src/main/*"],
-      "@shared/*": ["src/shared/*"],
-      "@assets/*": ["assets/*"]
+      "@shared/*": ["src/shared/*"]
     }
   },
+  "include": ["src/**/*.ts", "src/**/*.tsx", "vite.config.ts"],
   "exclude": ["node_modules", "dist", "out"]
 }

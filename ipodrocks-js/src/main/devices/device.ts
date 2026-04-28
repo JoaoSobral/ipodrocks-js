@@ -8,19 +8,7 @@ import {
   DiskSpace,
   FitCheck,
 } from "../../shared/types";
-
-const AUDIO_EXTENSIONS = new Set([
-  ".m4a",
-  ".mp3",
-  ".flac",
-  ".wav",
-  ".aiff",
-  ".aif",
-  ".ogg",
-  ".opus",
-  ".mpc",
-  ".mpp",
-]);
+import { AUDIO_EXTENSIONS } from "../utils/audio-extensions";
 
 interface GetTracksOptions {
   cancelSignal?: AbortSignal;

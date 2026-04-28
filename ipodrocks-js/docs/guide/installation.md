@@ -26,7 +26,7 @@ FFmpeg is bundled automatically. No separate installation is required.
 
 ## OpenRouter API key
 
-Required for **Savant playlists** and the **Music Assistant** chat. Get your API key at [openrouter.ai/keys](https://openrouter.ai/keys), then add it in **Settings** (gear icon) → OpenRouter API. You can test the connection before saving.
+Required for **Savant playlists** and **Rocksy** chat. Get your API key at [openrouter.ai/keys](https://openrouter.ai/keys), then add it in **Settings** (gear icon) → OpenRouter API. You can test the connection before saving.
 
 ## Musepack (mpcenc)
 

@@ -371,10 +371,26 @@ export interface CustomSelections {
   playlists: string[];
 }
 
+export type SyncType = "full" | "custom";
+export type ExtraTrackPolicy = "keep" | "remove" | "prompt";
+export type PlaybackStrategy = "native" | "transcode";
+
+export interface DeviceSyncPreferences {
+  syncType: SyncType;
+  extraTrackPolicy: ExtraTrackPolicy;
+  includeMusic: boolean;
+  includePodcasts: boolean;
+  includeAudiobooks: boolean;
+  includePlaylists: boolean;
+  ignoreSpaceCheck: boolean;
+  skipAlbumArtwork: boolean;
+  selections: CustomSelections;
+}
+
 export interface SyncOptions {
   deviceId: number;
-  syncType: string;
-  extraTrackPolicy: string;
+  syncType: SyncType;
+  extraTrackPolicy: ExtraTrackPolicy;
   ignoreSpaceCheck: boolean;
   selections?: CustomSelections;
   /** For full sync: include music tracks (default true). */

@@ -14,22 +14,12 @@ import Database from "better-sqlite3";
 import { ScanProgress, ScanResult } from "../../shared/types";
 import { HashManager } from "./hash-manager";
 import { MetadataExtractor } from "./metadata-extractor";
+import { AUDIO_EXTENSIONS } from "../utils/audio-extensions";
 
 /** Escape LIKE special chars (% _ \) so folder paths are safe in LIKE patterns. */
 function escapeLike(s: string): string {
   return s.replace(/[%_\\]/g, (c) => "\\" + c);
 }
-
-const AUDIO_EXTENSIONS = new Set([
-  ".m4a",
-  ".mp3",
-  ".flac",
-  ".wav",
-  ".aiff",
-  ".aif",
-  ".ogg",
-  ".opus",
-]);
 
 interface TrackUpsertData {
   path: string;

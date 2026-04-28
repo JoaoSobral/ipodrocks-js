@@ -119,7 +119,13 @@ import {
   MatchedPlayEvent,
   SyncOptions,
   SmartPlaylistRule,
+  DeviceSyncPreferences,
 } from "../shared/types";
+import {
+  emptySelections,
+  getDeviceSyncPreferences,
+  saveDeviceSyncPreferences,
+} from "./sync/device-sync-preferences";
 import { DevicesCore } from "./devices/devices-core";
 import { Library } from "./library/library";
 import { LibraryScanner } from "./library/library-scanner";
@@ -201,6 +207,8 @@ import {
   hasRockboxChangelog,
   buildDeviceRelativePath,
 } from "./rockbox/tagcache";
+import { prepareTrack, cancelPrepare } from "./player/player-source";
+import type { Track } from "../shared/types";
 
 // ---------------------------------------------------------------------------
 // Singleton state
@@ -1088,6 +1096,18 @@ export function registerIpcHandlers(): void {
       const device = dc.getDeviceById(opts.deviceId);
       if (!device) return { error: `Device ${opts.deviceId} not found` };
 
+      saveDeviceSyncPreferences(lib.getConnection(), opts.deviceId, {
+        syncType: opts.syncType,
+        extraTrackPolicy: opts.extraTrackPolicy,
+        includeMusic: opts.includeMusic !== false,
+        includePodcasts: opts.includePodcasts !== false,
+        includeAudiobooks: opts.includeAudiobooks !== false,
+        includePlaylists: opts.includePlaylists !== false,
+        ignoreSpaceCheck: opts.ignoreSpaceCheck,
+        skipAlbumArtwork: opts.skipAlbumArtwork === true,
+        selections: opts.selections ?? emptySelections(),
+      } satisfies DeviceSyncPreferences);
+
       activeSyncAbort = new AbortController();
 
       const { music: musicMap, podcast: podcastMap, audiobook: audiobookMap } =
@@ -1603,6 +1623,12 @@ export function registerIpcHandlers(): void {
       }
       return { cancelled: false };
     })
+  );
+
+  ipcMain.handle(
+    "sync:getDevicePreferences",
+    safe("sync:getDevicePreferences", async (_e, deviceId: number) =>
+      getDeviceSyncPreferences(getLibrary().getConnection(), deviceId))
   );
 
   // ---- Playlists ---------------------------------------------------------
@@ -2231,5 +2257,20 @@ export function registerIpcHandlers(): void {
         return { ok: true, newRating };
       }
     )
+  );
+
+  // ---- Player ----
+  ipcMain.handle(
+    "player:prepare",
+    safe("player:prepare", async (_event, track: Track, forceTranscode?: boolean) => {
+      return prepareTrack(track, forceTranscode ?? false);
+    })
+  );
+  ipcMain.handle(
+    "player:cancel",
+    safe("player:cancel", async () => {
+      await cancelPrepare();
+      return undefined;
+    })
   );
 }

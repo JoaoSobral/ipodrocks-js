@@ -11,6 +11,7 @@ The Library panel manages your music catalog: folders, scans, shadow libraries, 
 - **Library Folders** — Compact list of added folders with remove option.
 - **Shadow Libraries** — Pre-transcoded mirrors (e.g. FLAC → MPC). Create, rebuild, or delete them.
 - **Tracks / Playlists** — Switch between the track list and library playlists. Search, sort, and filter by device, type, and sync status.
+- **Preview tracks** — double-click a track to play it in the persistent player bar at the bottom of the window.
 
 ## How it works
 
@@ -24,3 +25,17 @@ The Library panel manages your music catalog: folders, scans, shadow libraries, 
 2. **After adding a folder:** A scan runs automatically. Wait for it to finish before syncing.
 3. **Shadow libraries:** Create one if you sync to a device that needs a different codec (e.g. MPC). Point the device to the shadow in Devices.
 4. **Clear cache:** Only when you know files or tags changed outside iPodRocks and you want a full re-scan.
+
+## Music Preview Player
+
+Double-click any track in the library list to start playback in the player bar that appears at the bottom of the window.
+
+**Queue** — The panel's currently filtered track list becomes the playback queue. Next/Previous navigate within it; playback stops automatically after the last track.
+
+**Controls** — Play/pause, previous (restarts the current track if more than 3 seconds in, otherwise jumps to the previous track), stop, next, seek slider (0.5 s granularity), volume slider, mute toggle, and close (✕) to dismiss the player.
+
+**Persistence** — Volume and mute state are remembered across sessions via `localStorage`.
+
+**Format support** — Native playback for MP3, AAC, FLAC, OGG, Opus, PCM, and ALAC. Musepack, APE, WAV, and AIFF are transcoded to Ogg Vorbis on demand via FFmpeg the first time you press play; the transcoded copy is stored in a temp directory and reused on subsequent plays.
+
+**Caveats** — Missing or unreadable files fail silently in the player bar. Transcoding errors are logged to the console. There is no pre-cache; each transcode happens on demand at playback time.

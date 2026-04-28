@@ -25,6 +25,8 @@ import type {
   GenerateSavantResult,
   RatingConflict,
   RatingConflictRow,
+  DeviceSyncPreferences,
+  PlaybackStrategy,
 } from "@shared/types";
 
 export type {
@@ -342,12 +344,27 @@ export async function removeDevice(deviceId: number): Promise<void> {
 // Sync
 // ---------------------------------------------------------------------------
 
-export async function startSync(options: SyncOptions): Promise<unknown> {
-  return window.api.invoke("sync:start", options);
+export async function startSync(
+  options: SyncOptions
+): Promise<{ synced?: number; removed?: number; errors?: number; error?: string }> {
+  return window.api.invoke("sync:start", options) as Promise<{
+    synced?: number;
+    removed?: number;
+    errors?: number;
+    error?: string;
+  }>;
 }
 
 export async function cancelSync(): Promise<void> {
   await window.api.invoke("sync:cancel");
+}
+
+export async function getDeviceSyncPreferences(
+  deviceId: number
+): Promise<DeviceSyncPreferences | null> {
+  return window.api.invoke("sync:getDevicePreferences", deviceId) as Promise<
+    DeviceSyncPreferences | null
+  >;
 }
 
 // ---------------------------------------------------------------------------
@@ -685,4 +702,30 @@ export function onScanProgress(cb: (progress: ScanProgress) => void): () => void
 
 export function onSyncProgress(cb: (progress: SyncProgress) => void): () => void {
   return window.api.on("sync:progress", cb as (...args: unknown[]) => void);
+}
+
+// ---------------------------------------------------------------------------
+// Player
+// ---------------------------------------------------------------------------
+
+export type { PlaybackStrategy };
+
+export interface PreparePlaybackResult {
+  url: string;
+  strategy: PlaybackStrategy;
+}
+
+export async function preparePlayback(
+  track: Track,
+  forceTranscode = false,
+): Promise<PreparePlaybackResult> {
+  return window.api.invoke(
+    "player:prepare",
+    track,
+    forceTranscode,
+  ) as Promise<PreparePlaybackResult>;
+}
+
+export async function cancelPlayback(): Promise<void> {
+  await window.api.invoke("player:cancel");
 }

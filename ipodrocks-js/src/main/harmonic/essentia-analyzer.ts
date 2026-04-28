@@ -18,28 +18,11 @@ g.Module = { ...g.Module, print: () => {}, printErr: () => {} };
 import * as os from "os";
 import * as path from "path";
 import { spawn } from "child_process";
-import { app } from "electron";
 import { toCamelot } from "./camelotWheel";
+import { getFfmpegPath } from "../utils/ffmpeg-path";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const wav = require("node-wav");
-
-let cachedFfmpegPath: string | null = null;
-
-function getFfmpegPath(): string {
-  if (cachedFfmpegPath) return cachedFfmpegPath;
-  if (app.isPackaged && process.resourcesPath) {
-    const name = process.platform === "win32" ? "ffmpeg.exe" : "ffmpeg";
-    const candidate = path.join(process.resourcesPath, "ffmpeg", name);
-    if (fs.existsSync(candidate)) {
-      cachedFfmpegPath = candidate;
-      return candidate;
-    }
-  }
-  const ffmpeg = require("@ffmpeg-installer/ffmpeg");
-  cachedFfmpegPath = ffmpeg.path;
-  return cachedFfmpegPath as string;
-}
 
 export interface EssentiaFeatures {
   key: string | null;

@@ -10,6 +10,7 @@ vi.mock("../renderer/ipc/api", () => ({
   getPlaylistTracks: vi.fn().mockResolvedValue([]),
   getShadowLibraries: vi.fn().mockResolvedValue([]),
   getLibraryStats: vi.fn().mockResolvedValue({ totalTracks: 0 }),
+  getDeviceSyncPreferences: vi.fn().mockResolvedValue(null),
   startSync: vi.fn().mockResolvedValue({ synced: 0, errors: 0 }),
   cancelSync: vi.fn().mockResolvedValue(undefined),
   onSyncProgress: vi.fn(() => () => {}),

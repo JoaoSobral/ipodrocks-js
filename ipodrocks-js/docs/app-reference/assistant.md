@@ -1,6 +1,6 @@
-# Music Assistant
+# Rocksy
 
-The Music Assistant is a floating chat that knows your library, playlists, and listening history. You can ask questions and create playlists by talking.
+Rocksy is a floating chat that knows your library, playlists, and listening history. You can ask questions and create playlists by talking.
 
 ## What it does
 

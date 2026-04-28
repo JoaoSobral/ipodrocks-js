@@ -1,6 +1,6 @@
 # Settings — OpenRouter API
 
-The OpenRouter API connects iPodRocks to AI models (Claude, etc.) for Savant playlists and the Music Assistant.
+The OpenRouter API connects iPodRocks to AI models (Claude, etc.) for Savant playlists and Rocksy.
 
 ## What it does
 
@@ -17,5 +17,5 @@ OpenRouter is a proxy to multiple AI providers. iPodRocks sends prompts (mood, l
 1. Create an account at [openrouter.ai](https://openrouter.ai) and get an API key.
 2. Paste the key in Settings. Optionally change the model (default is Claude Sonnet).
 3. Click **Test Connection** to confirm it works.
-4. Click **Save**. Savant and the Assistant will now work.
-5. Without a key, Savant and the Assistant will prompt you to add one.
+4. Click **Save**. Savant and Rocksy will now work.
+5. Without a key, Savant and Rocksy will prompt you to add one.
