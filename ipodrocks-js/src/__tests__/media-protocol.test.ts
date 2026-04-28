@@ -4,6 +4,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import * as os from "os";
 import * as path from "path";
+import { pathToFileURL } from "url";
 
 const TEMP_DIR = path.join(os.tmpdir(), "ipodrocks-player");
 
@@ -95,7 +96,7 @@ describe("registerMediaProtocol handler", () => {
     const res = await handle("media://local/sometoken");
     expect(res.status).toBe(200);
     expect(mockFetch).toHaveBeenCalledWith(
-      expect.stringContaining(path.resolve(tempFile).replace(/\\/g, "/")),
+      expect.stringContaining(pathToFileURL(path.resolve(tempFile)).toString()),
     );
   });
 
