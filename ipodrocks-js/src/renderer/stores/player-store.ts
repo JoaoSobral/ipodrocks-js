@@ -6,7 +6,12 @@ const VOLUME_KEY = "ipodrocks_player_volume";
 const MUTE_KEY = "ipodrocks_player_muted";
 
 function safeLocalStorage(): Storage | null {
-  return typeof localStorage !== "undefined" ? localStorage : null;
+  try {
+    if (typeof localStorage === "undefined" || typeof localStorage.getItem !== "function") return null;
+    return localStorage;
+  } catch {
+    return null;
+  }
 }
 
 function loadVolume(): number {
