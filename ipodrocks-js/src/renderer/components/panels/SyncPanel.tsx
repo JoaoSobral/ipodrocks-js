@@ -16,7 +16,7 @@ import {
 } from "../../ipc/api";
 import { SyncProgressModal } from "../modals/SyncProgressModal";
 import type { Track, Playlist, ShadowLibrary } from "@shared/types";
-import type { CustomSelections, SyncOptions } from "@shared/types";
+import type { CustomSelections, ExtraTrackPolicy, SyncOptions, SyncType } from "@shared/types";
 
 const statusColors = {
   success: "var(--success)",
@@ -40,12 +40,12 @@ export function SyncPanel() {
 
   const [deviceId, setDeviceId] = useState<number | "">("");
   const [shadowLibs, setShadowLibs] = useState<ShadowLibrary[]>([]);
-  const [syncType, setSyncType] = useState("full");
+  const [syncType, setSyncType] = useState<SyncType>("full");
   const [fullIncludeMusic, setFullIncludeMusic] = useState(true);
   const [fullIncludePodcasts, setFullIncludePodcasts] = useState(true);
   const [fullIncludeAudiobooks, setFullIncludeAudiobooks] = useState(true);
   const [fullIncludePlaylists, setFullIncludePlaylists] = useState(true);
-  const [extraTrackPolicy, setExtraTrackPolicy] = useState("keep");
+  const [extraTrackPolicy, setExtraTrackPolicy] = useState<ExtraTrackPolicy>("keep");
   const [ignoreSpaceCheck, setIgnoreSpaceCheck] = useState(false);
   const [skipAlbumArtwork, setSkipAlbumArtwork] = useState(false);
 
@@ -560,7 +560,7 @@ export function SyncPanel() {
             label="Orphan Policy"
             tooltip="What to do with tracks already on the device that are not in the current sync selection or part of the main library. Remove deletes them, Keep leaves them untouched, Prompt asks you before making changes."
             value={extraTrackPolicy}
-            onChange={(v) => setExtraTrackPolicy(v)}
+            onChange={(v) => setExtraTrackPolicy(v as ExtraTrackPolicy)}
             options={[
               { value: "remove", label: "Remove" },
               { value: "keep", label: "Keep" },

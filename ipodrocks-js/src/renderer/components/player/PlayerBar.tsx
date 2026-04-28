@@ -1,13 +1,7 @@
 import { useEffect, useRef } from "react";
 import { usePlayerStore } from "../../stores/player-store";
 import { Button } from "../common/Button";
-
-function formatTime(secs: number): string {
-  if (!isFinite(secs) || isNaN(secs) || secs < 0) return "0:00";
-  const m = Math.floor(secs / 60);
-  const s = Math.floor(secs % 60);
-  return `${m}:${s.toString().padStart(2, "0")}`;
-}
+import { formatDuration } from "../../utils/format";
 
 export function PlayerBar() {
   const audioRef = useRef<HTMLAudioElement>(null);
@@ -145,7 +139,7 @@ export function PlayerBar() {
 
         <div className="flex items-center gap-2 w-full max-w-lg">
           <span className="text-[10px] text-muted-foreground tabular-nums w-8 text-right shrink-0">
-            {formatTime(currentTime)}
+            {formatDuration(currentTime)}
           </span>
           <input
             type="range"
@@ -159,10 +153,10 @@ export function PlayerBar() {
               if (audioRef.current) audioRef.current.currentTime = t;
             }}
             className="flex-1 h-1 appearance-none bg-muted rounded-full accent-primary cursor-pointer"
-            title={`${formatTime(currentTime)} / ${formatTime(duration)}`}
+            title={`${formatDuration(currentTime)} / ${formatDuration(duration)}`}
           />
           <span className="text-[10px] text-muted-foreground tabular-nums w-8 shrink-0">
-            {formatTime(duration)}
+            {formatDuration(duration)}
           </span>
         </div>
       </div>

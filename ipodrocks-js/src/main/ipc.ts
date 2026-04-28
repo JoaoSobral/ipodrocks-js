@@ -122,6 +122,7 @@ import {
   DeviceSyncPreferences,
 } from "../shared/types";
 import {
+  emptySelections,
   getDeviceSyncPreferences,
   saveDeviceSyncPreferences,
 } from "./sync/device-sync-preferences";
@@ -1104,9 +1105,7 @@ export function registerIpcHandlers(): void {
         includePlaylists: opts.includePlaylists !== false,
         ignoreSpaceCheck: opts.ignoreSpaceCheck,
         skipAlbumArtwork: opts.skipAlbumArtwork === true,
-        selections: opts.selections ?? {
-          albums: [], artists: [], genres: [], podcasts: [], audiobooks: [], playlists: [],
-        },
+        selections: opts.selections ?? emptySelections(),
       } satisfies DeviceSyncPreferences);
 
       activeSyncAbort = new AbortController();

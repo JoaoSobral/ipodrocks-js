@@ -5,9 +5,9 @@ import { spawn, ChildProcess } from "child_process";
 import { app } from "electron";
 import { getFfmpegPath } from "../utils/ffmpeg-path";
 import { getEncoderEnv } from "../utils/encoder-env";
-import type { Track } from "../../shared/types";
+import type { PlaybackStrategy, Track } from "../../shared/types";
 
-export type PlaybackStrategy = "native" | "transcode";
+export type { PlaybackStrategy };
 
 const NATIVE_CODECS = new Set(["MP3", "AAC", "FLAC", "OGG", "OPUS", "PCM", "ALAC"]);
 

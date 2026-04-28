@@ -49,7 +49,6 @@ export function BackfillProgressModal({
   const backfillStartedRef = useRef(false);
   const progressUnsubRef = useRef<(() => void) | null>(null);
   const onCompleteRef = useRef(onComplete);
-  const totalRef = useRef(0);
   const lastProcessedRef = useRef(0);
   onCompleteRef.current = onComplete;
 
@@ -59,7 +58,6 @@ export function BackfillProgressModal({
 
   const handleProgress = useCallback((p: BackfillProgress) => {
     setProgress(p);
-    if (p.total > 0) totalRef.current = p.total;
 
     if (p.status === "complete") {
       setFinished(true);
@@ -110,7 +108,6 @@ export function BackfillProgressModal({
     setElapsedSec(0);
     setProcessedCount(0);
     lastProcessedRef.current = 0;
-    totalRef.current = 0;
 
     elapsedInterval.current = setInterval(() => {
       setElapsedSec((s) => s + 1);

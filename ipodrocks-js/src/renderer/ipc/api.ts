@@ -26,6 +26,7 @@ import type {
   RatingConflict,
   RatingConflictRow,
   DeviceSyncPreferences,
+  PlaybackStrategy,
 } from "@shared/types";
 
 export type {
@@ -707,7 +708,7 @@ export function onSyncProgress(cb: (progress: SyncProgress) => void): () => void
 // Player
 // ---------------------------------------------------------------------------
 
-export type PlaybackStrategy = "native" | "transcode";
+export type { PlaybackStrategy };
 
 export interface PreparePlaybackResult {
   url: string;

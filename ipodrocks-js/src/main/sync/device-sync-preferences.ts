@@ -1,7 +1,7 @@
 import type Database from "better-sqlite3";
 import type { CustomSelections, DeviceSyncPreferences } from "../../shared/types";
 
-const emptySelections = (): CustomSelections => ({
+export const emptySelections = (): CustomSelections => ({
   albums: [],
   artists: [],
   genres: [],
@@ -48,8 +48,11 @@ export function getDeviceSyncPreferences(
     .get(deviceId) as Row | undefined;
   if (!row) return null;
   return {
-    syncType: row.sync_type,
-    extraTrackPolicy: row.extra_track_policy,
+    syncType: row.sync_type === "custom" ? "custom" : "full",
+    extraTrackPolicy:
+      row.extra_track_policy === "remove" || row.extra_track_policy === "prompt"
+        ? row.extra_track_policy
+        : "keep",
     includeMusic: row.include_music === 1,
     includePodcasts: row.include_podcasts === 1,
     includeAudiobooks: row.include_audiobooks === 1,
