@@ -1,5 +1,29 @@
 # Changelog
 
+## [1.3.0] — 2026-05
+
+### Features
+
+#### Auto Podcasts
+
+- **Podcast Index integration** — Podcast search is powered by the Podcast Index API. API key and secret are configured in Settings → Auto Podcasts and tested against the live API before saving.
+- **Subscribe & manage podcasts** — Search for shows by name, subscribe in one click, and manage all subscriptions from the new Auto Podcasts panel. Each subscription shows the show artwork, author, and whether all target episodes are downloaded.
+- **Auto-download modes** — Each subscription can be set to automatically keep the N most recent episodes (1–5) or operate in manual mode, where individual episodes are hand-picked from the episode list.
+- **Episode management modal** — Clicking a subscription opens a per-show panel listing all fetched episodes with their download state (pending, downloading, ready, failed, skipped), duration, and publish date. Auto-count and manual selection can be changed at any time; "Download Now" re-triggers a refresh and download for the current target set.
+- **Background scheduler** — A boot refresh runs once at startup. A configurable periodic refresh (every 15, 30, or 60 minutes) fetches new episodes and downloads any that are missing. A 1-minute device-connection poller triggers an immediate refresh-and-sync cycle whenever a podcast-enabled device is newly detected as online.
+- **Device sync** — Subscribed episodes are synced to each device's `Podcasts/<ShowName>/` folder automatically. Each device has an opt-in "Allow Auto Podcasts" toggle (set at add-device time or via device settings). The sync skips already-transferred episodes using a `device_podcast_synced` tracking table.
+- **Configurable download folder** — Episodes are stored in `<userData>/auto-podcasts` by default. A custom folder can be set via Browse in Settings; changing it re-queues all ready episodes for re-download into the new location.
+- **Automatic episode pruning** — When auto-count mode is active, episodes beyond the 10 most-recent ready downloads are deleted from disk and marked skipped, keeping storage use bounded.
+
+#### UI
+
+- **Player bar icons** — Playback controls (skip previous/next, play/pause, stop) and the volume indicator now use crisp MDI SVG icons instead of emoji or Unicode glyphs.
+- **Theme toggle** — The light/dark mode button now shows animated SVG sun and moon icons with a smooth rotation transition.
+
+Bug fixes and general improvements.
+
+---
+
 ## [1.2.1] — 2026-05
 
 ### Bug fixes
