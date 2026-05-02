@@ -5,6 +5,9 @@ import { listSubscriptions } from "./podcast-subscriptions";
 import { getReadyTargetEpisodes } from "./podcast-refresh";
 import { sanitizeDevicePathComponent } from "../sync/sync-core";
 import { copyFileToDevice } from "../sync/sync-executor";
+import type { SyncProgressPayload } from "../sync/sync-core";
+
+type ProgressCallback = (event: SyncProgressPayload) => void;
 
 interface DeviceRow {
   id: number;
@@ -13,13 +16,22 @@ interface DeviceRow {
   auto_podcasts_enabled: number;
 }
 
+interface EpisodeToSync {
+  subTitle: string;
+  epId: number;
+  localPath: string;
+  destRelative: string;
+  destAbsolute: string;
+}
+
 /**
  * Sync all ready podcast episodes for a device.
  * Only writes into the device's Podcasts folder; never touches library tables.
  */
 export async function syncPodcastsToDevice(
   db: Database.Database,
-  deviceId: number
+  deviceId: number,
+  progressCallback?: ProgressCallback
 ): Promise<{ synced: number; errors: number }> {
   const device = db
     .prepare(
@@ -35,19 +47,20 @@ export async function syncPodcastsToDevice(
     return { synced: 0, errors: 0 };
   }
 
-  const podcastRoot = path.join(device.mount_path, device.podcast_folder ?? "Podcasts");
   const subs = listSubscriptions(db);
-  let synced = 0;
-  let errors = 0;
 
+  if (subs.length === 0) {
+    progressCallback?.({ event: "log", message: "Auto Podcasts: no subscriptions configured." });
+    return { synced: 0, errors: 0 };
+  }
+
+  // Collect all episodes that need to be copied to this device
+  const toSync: EpisodeToSync[] = [];
   for (const sub of subs) {
     const episodes = getReadyTargetEpisodes(db, sub.id);
-
     for (const ep of episodes) {
       const alreadySynced = db
-        .prepare(
-          "SELECT 1 FROM device_podcast_synced WHERE device_id = ? AND episode_id = ?"
-        )
+        .prepare("SELECT 1 FROM device_podcast_synced WHERE device_id = ? AND episode_id = ?")
         .get(deviceId, ep.id);
       if (alreadySynced) continue;
 
@@ -56,18 +69,46 @@ export async function syncPodcastsToDevice(
       const filename = `${ep.id}${ext}`;
       const destRelative = path.join(device.podcast_folder ?? "Podcasts", showDir, filename);
       const destAbsolute = path.join(device.mount_path, destRelative);
+      toSync.push({ subTitle: sub.title, epId: ep.id, localPath: ep.localPath, destRelative, destAbsolute });
+    }
+  }
 
-      try {
-        await copyFileToDevice(ep.localPath, destAbsolute);
-        db.prepare(
-          `INSERT OR IGNORE INTO device_podcast_synced (device_id, episode_id, device_relative_path)
-           VALUES (?, ?, ?)`
-        ).run(deviceId, ep.id, destRelative);
-        synced++;
-      } catch (err) {
-        console.error(`[podcasts] sync failed ep ${ep.id} → device ${deviceId}:`, err);
-        errors++;
-      }
+  if (toSync.length === 0) {
+    progressCallback?.({ event: "log", message: "Auto Podcasts: all episodes already synced to this device." });
+    return { synced: 0, errors: 0 };
+  }
+
+  progressCallback?.({ event: "total_add", path: String(toSync.length) });
+  progressCallback?.({ event: "log", message: `Auto Podcasts: syncing ${toSync.length} episode(s)...` });
+
+  let synced = 0;
+  let errors = 0;
+
+  for (const ep of toSync) {
+    try {
+      await copyFileToDevice(ep.localPath, ep.destAbsolute);
+      db.prepare(
+        `INSERT OR IGNORE INTO device_podcast_synced (device_id, episode_id, device_relative_path)
+         VALUES (?, ?, ?)`
+      ).run(deviceId, ep.epId, ep.destRelative);
+      synced++;
+      progressCallback?.({
+        event: "copy",
+        path: path.basename(ep.destAbsolute),
+        destination: ep.destAbsolute,
+        status: "copied",
+        contentType: "podcast",
+      });
+    } catch (err) {
+      console.error(`[podcasts] sync failed ep ${ep.epId} → device ${deviceId}:`, err);
+      errors++;
+      progressCallback?.({
+        event: "copy",
+        path: ep.localPath,
+        destination: ep.destAbsolute,
+        status: "error",
+        contentType: "podcast",
+      });
     }
   }
 

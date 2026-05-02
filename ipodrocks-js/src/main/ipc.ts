@@ -1456,8 +1456,7 @@ export function registerIpcHandlers(): void {
 
       if (hasAutoPodcasts) {
         try {
-          syncOpts.progressCallback?.({ event: "log", message: "Syncing auto-podcast subscription episodes..." });
-          const autoPodResult = await syncPodcastsToDevice(lib.getConnection(), opts.deviceId);
+          const autoPodResult = await syncPodcastsToDevice(lib.getConnection(), opts.deviceId, syncOpts.progressCallback);
           result.synced += autoPodResult.synced;
           result.errors += autoPodResult.errors;
         } catch (err) {

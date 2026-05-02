@@ -170,4 +170,63 @@ describe("syncPodcastsToDevice", () => {
       expect(row).toBeDefined();
     }
   );
+
+  it.skipIf(!canRunDbTests)("emits total_add and copy progress events when episodes are found", async () => {
+    const deviceId = insertDevice({ autoPodcasts: true });
+    subscribe(db, testFeed);
+
+    const srcFile = path.join(tmpSrc, "ep_progress.mp3");
+    fs.writeFileSync(srcFile, Buffer.alloc(50));
+
+    vi.mocked(getReadyTargetEpisodes).mockReturnValue([
+      { id: 20, feedId: 7, localPath: srcFile },
+    ]);
+    vi.mocked(copyFileToDevice).mockImplementation(async (_src, dest) => {
+      fs.mkdirSync(path.dirname(dest), { recursive: true });
+      fs.copyFileSync(srcFile, dest);
+      return true;
+    });
+
+    const events: unknown[] = [];
+    await syncPodcastsToDevice(db, deviceId, (e) => events.push(e));
+
+    const totalAdd = events.find((e: any) => e.event === "total_add") as any;
+    expect(totalAdd).toBeDefined();
+    expect(totalAdd.path).toBe("1");
+
+    const copyEvent = events.find((e: any) => e.event === "copy") as any;
+    expect(copyEvent).toBeDefined();
+    expect(copyEvent.status).toBe("copied");
+    expect(copyEvent.contentType).toBe("podcast");
+  });
+
+  it.skipIf(!canRunDbTests)("emits log message when no subscriptions are configured", async () => {
+    const deviceId = insertDevice({ autoPodcasts: true });
+
+    const events: unknown[] = [];
+    await syncPodcastsToDevice(db, deviceId, (e) => events.push(e));
+
+    const logEvent = events.find((e: any) => e.event === "log") as any;
+    expect(logEvent).toBeDefined();
+    expect(logEvent.message).toMatch(/no subscriptions/i);
+  });
+
+  it.skipIf(!canRunDbTests)("emits log message when all episodes are already synced", async () => {
+    const deviceId = insertDevice({ autoPodcasts: true });
+    subscribe(db, testFeed);
+
+    vi.mocked(getReadyTargetEpisodes).mockReturnValue([
+      { id: 30, feedId: 7, localPath: "/fake/ep30.mp3" },
+    ]);
+    db.prepare(
+      "INSERT INTO device_podcast_synced (device_id, episode_id, device_relative_path) VALUES (?, 30, ?)"
+    ).run(deviceId, "Podcasts/Dev Podcast/30.mp3");
+
+    const events: unknown[] = [];
+    await syncPodcastsToDevice(db, deviceId, (e) => events.push(e));
+
+    const logEvent = events.find((e: any) => e.event === "log") as any;
+    expect(logEvent).toBeDefined();
+    expect(logEvent.message).toMatch(/already synced/i);
+  });
 });
