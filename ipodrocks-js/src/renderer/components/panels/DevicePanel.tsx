@@ -26,6 +26,7 @@ import {
   isMpcencAvailable,
   getMpcRemindDisabled,
   setMpcRemindDisabled,
+  podcastSetDeviceAutoPodcasts,
 } from "../../ipc/api";
 import { MpcUnavailableModal } from "../modals/MpcUnavailableModal";
 import { formatCodecLabel } from "../../utils/format";
@@ -86,6 +87,7 @@ export function DevicePanel() {
   const [isDefault, setIsDefault] = useState(false);
   const [playbackLogEnabled, setPlaybackLogEnabled] = useState(true);
   const [rockboxSmartPlaylists, setRockboxSmartPlaylists] = useState(false);
+  const [autoPodcastsEnabled, setAutoPodcastsEnabled] = useState(false);
   const [devMode, setDevMode] = useState(false);
   const [musicFolder, setMusicFolder] = useState("Music");
   const [podcastFolder, setPodcastFolder] = useState("Podcasts");
@@ -146,6 +148,7 @@ export function DevicePanel() {
     setIsDefault(false);
     setPlaybackLogEnabled(true); // true = read playback.log (default)
     setRockboxSmartPlaylists(false);
+    setAutoPodcastsEnabled(false);
     setDevMode(false);
     setMusicFolder("Music");
     setPodcastFolder("Podcasts");
@@ -191,6 +194,7 @@ export function DevicePanel() {
 
     setPlaybackLogEnabled(!(device.skipPlaybackLog ?? false));
     setRockboxSmartPlaylists(device.rockboxSmartPlaylists ?? false);
+    setAutoPodcastsEnabled(device.autoPodcastsEnabled ?? false);
     setDevMode(device.devMode ?? false);
 
     setShowDeviceModal(true);
@@ -252,12 +256,16 @@ export function DevicePanel() {
     if (editingDeviceId !== null) {
       const result = await updateDevice(editingDeviceId, payload);
       if ("error" in result) return;
+      await podcastSetDeviceAutoPodcasts(editingDeviceId, autoPodcastsEnabled);
       if (isDefault) {
         await setDefaultDevice(editingDeviceId);
         setDefaultDeviceId(editingDeviceId);
       }
     } else {
       const device = await addDevice(payload);
+      if (device?.id) {
+        await podcastSetDeviceAutoPodcasts(device.id, autoPodcastsEnabled);
+      }
       if (isDefault && device?.id) {
         await setDefaultDevice(device.id);
         setDefaultDeviceId(device.id);
@@ -761,6 +769,18 @@ export function DevicePanel() {
               <span className="text-sm text-foreground flex items-center gap-1">
                 Rockbox smart playlists (tagnavi)
                 <InfoTooltip text="When enabled, smart playlists are written to .rockbox/tagnavi_custom.config as live, auto-updating tagtree views instead of frozen .m3u snapshots. Requires Rockbox firmware on the device. Other playlist kinds still write .m3u." />
+              </span>
+            </label>
+            <label className="flex items-center gap-2.5 cursor-pointer">
+              <input
+                type="checkbox"
+                className={checkboxClass}
+                checked={autoPodcastsEnabled}
+                onChange={(e) => setAutoPodcastsEnabled(e.target.checked)}
+              />
+              <span className="text-sm text-foreground flex items-center gap-1">
+                Auto Podcasts
+                <InfoTooltip text="When enabled, new podcast episodes are automatically copied to this device in the background as they are downloaded, independently of any manual sync." />
               </span>
             </label>
             <label className="flex items-center gap-2.5 cursor-pointer opacity-60">

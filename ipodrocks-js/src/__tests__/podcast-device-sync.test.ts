@@ -136,4 +136,38 @@ describe("syncPodcastsToDevice", () => {
     expect(result.synced).toBe(0);
     expect(copyFileToDevice).not.toHaveBeenCalled();
   });
+
+  it.skipIf(!canRunDbTests)(
+    "copies episodes when called during manual sync (autoPodcastsEnabled = true)",
+    async () => {
+      // Regression: syncPodcastsToDevice was never called during sync:start,
+      // so devices with autoPodcastsEnabled would never receive subscription episodes.
+      const deviceId = insertDevice({ autoPodcasts: true });
+      subscribe(db, testFeed);
+
+      const srcFile = path.join(tmpSrc, "ep_manual.mp3");
+      fs.writeFileSync(srcFile, Buffer.alloc(200));
+
+      vi.mocked(getReadyTargetEpisodes).mockReturnValue([
+        { id: 10, feedId: 7, localPath: srcFile },
+      ]);
+      vi.mocked(copyFileToDevice).mockImplementation(async (_src, dest) => {
+        fs.mkdirSync(path.dirname(dest), { recursive: true });
+        fs.copyFileSync(srcFile, dest);
+        return true;
+      });
+
+      // Simulate what sync:start now does: call syncPodcastsToDevice for auto-podcast devices
+      const result = await syncPodcastsToDevice(db, deviceId);
+
+      expect(result.synced).toBe(1);
+      expect(result.errors).toBe(0);
+      expect(copyFileToDevice).toHaveBeenCalledWith(srcFile, expect.stringContaining("Podcasts"));
+
+      const row = db
+        .prepare("SELECT 1 FROM device_podcast_synced WHERE device_id = ? AND episode_id = 10")
+        .get(deviceId);
+      expect(row).toBeDefined();
+    }
+  );
 });

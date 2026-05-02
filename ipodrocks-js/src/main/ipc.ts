@@ -1289,9 +1289,10 @@ export function registerIpcHandlers(): void {
       const willRunMusic = Object.keys(musicLibraryTracks).length > 0;
       const willRunPodcast = Object.keys(podcastLibraryTracks).length > 0;
       const willRunAudiobook = Object.keys(audiobookLibraryTracks).length > 0;
+      const hasAutoPodcasts = device.profile.autoPodcastsEnabled === true;
       const isEmptyLibrary = !willRunMusic && !willRunPodcast && !willRunAudiobook;
 
-      if (isEmptyLibrary) {
+      if (isEmptyLibrary && !hasAutoPodcasts) {
         const isShadow = device.profile.sourceLibraryType === "shadow" && device.profile.shadowLibraryId != null;
         const emptyMessage = isShadow
           ? "Shadow library contains no files to sync. Build or select a shadow library that has tracks."
@@ -1451,6 +1452,17 @@ export function registerIpcHandlers(): void {
         result.errors += audiobookResult.errors;
         result.extras = [...result.extras, ...audiobookResult.extras];
         result.missingFiles = [...result.missingFiles, ...audiobookResult.missingFiles];
+      }
+
+      if (hasAutoPodcasts) {
+        try {
+          syncOpts.progressCallback?.({ event: "log", message: "Syncing auto-podcast subscription episodes..." });
+          const autoPodResult = await syncPodcastsToDevice(lib.getConnection(), opts.deviceId);
+          result.synced += autoPodResult.synced;
+          result.errors += autoPodResult.errors;
+        } catch (err) {
+          console.error("[ipc] Auto podcast sync to device failed:", err);
+        }
       }
 
       if (result.errors > 0) result.status = "error";

@@ -7,7 +7,7 @@ const USER_AGENT = "iPodRocks/1.0";
 function buildHeaders(apiKey: string, apiSecret: string): Record<string, string> {
   const authDate = Math.floor(Date.now() / 1000).toString();
   const hash = crypto
-    .createHash("sha1")
+    .createHash("sha256")
     .update(apiKey + apiSecret + authDate)
     .digest("hex");
 

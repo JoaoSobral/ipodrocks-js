@@ -52,8 +52,8 @@ describe("searchPodcasts", () => {
     expect(url).toContain("test%20term");
     expect(options.headers["X-Auth-Key"]).toBe(API_KEY);
     expect(options.headers["X-Auth-Date"]).toMatch(/^\d+$/);
-    // Authorization is sha1(apiKey + apiSecret + authDate)
-    expect(options.headers["Authorization"]).toMatch(/^[a-f0-9]{40}$/);
+    // Authorization is sha256(apiKey + apiSecret + authDate)
+    expect(options.headers["Authorization"]).toMatch(/^[a-f0-9]{64}$/);
 
     expect(results).toHaveLength(1);
     expect(results[0]).toMatchObject({
