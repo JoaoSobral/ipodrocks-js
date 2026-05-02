@@ -142,10 +142,10 @@ export function computeDeviceRelativePath(
         if (relParts.length <= 2) {
           const baseName = path.basename(basePath);
           if (!folderNames.includes(baseName)) {
-            return path.posix.join(sanitizeDevicePathComponent(baseName), ...relParts.map(sanitizeDevicePathComponent));
+            return path.posix.join(sanitizeDevicePathComponent(baseName), ...relParts.map((p) => sanitizeDevicePathComponent(p)));
           }
         }
-        return relParts.map(sanitizeDevicePathComponent).join("/");
+        return relParts.map((p) => sanitizeDevicePathComponent(p)).join("/");
       }
     }
   }
@@ -596,20 +596,16 @@ export function copyAlbumArtworkToDevice(
     }
   }
 
-  if (candidates.length > 0) {
-    progressCallback?.({
-      event: "total_add",
-      path: String(candidates.length),
-    });
-  }
-
   let copied = 0;
   let skipped = 0;
   let errors = 0;
 
+  // First pass: pre-filter candidates so we only bump the total counter for
+  // artwork that actually needs to be copied. Artwork already on device with
+  // matching size is silently skipped (matches music-track behavior).
+  const toCopy: { srcPath: string; destPath: string }[] = [];
   for (const { srcPath, destPath } of candidates) {
     if (cancelSignal?.aborted) throw new SyncCancelled();
-
     let srcStat: fs.Stats;
     try {
       srcStat = fs.statSync(srcPath);
@@ -624,28 +620,28 @@ export function copyAlbumArtworkToDevice(
       });
       continue;
     }
-
     let destStat: fs.Stats | null = null;
     try {
       destStat = fs.statSync(destPath);
     } catch {
       /* destination missing, will copy */
     }
-
-    if (destStat?.isFile()) {
-      const sizeMatch = destStat.size === srcStat.size;
-      if (sizeMatch) {
-        skipped++;
-        progressCallback?.({
-          event: "copy",
-          path: srcPath,
-          destination: destPath,
-          status: "skipped",
-          contentType: "artwork",
-        });
-        continue;
-      }
+    if (destStat?.isFile() && destStat.size === srcStat.size) {
+      skipped++;
+      continue;
     }
+    toCopy.push({ srcPath, destPath });
+  }
+
+  if (toCopy.length > 0) {
+    progressCallback?.({
+      event: "total_add",
+      path: String(toCopy.length),
+    });
+  }
+
+  for (const { srcPath, destPath } of toCopy) {
+    if (cancelSignal?.aborted) throw new SyncCancelled();
 
     try {
       fs.mkdirSync(path.dirname(destPath), { recursive: true });

@@ -6,9 +6,10 @@ interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
   label?: string;
   tooltip?: string;
   error?: string;
+  hint?: string;
 }
 
-export function Input({ label, tooltip, error, className = "", id, ...props }: InputProps) {
+export function Input({ label, tooltip, error, hint, className = "", id, ...props }: InputProps) {
   const inputId = id ?? (label ? `input-${label.replace(/\s/g, "-").toLowerCase()}` : undefined);
   return (
     <div className={className}>
@@ -26,6 +27,7 @@ export function Input({ label, tooltip, error, className = "", id, ...props }: I
         {...props}
       />
       {error && <p className="mt-1 text-xs text-destructive">{error}</p>}
+      {hint && !error && <p className="mt-1 text-xs text-blue-500">{hint}</p>}
     </div>
   );
 }

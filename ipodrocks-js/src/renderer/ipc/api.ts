@@ -27,6 +27,9 @@ import type {
   RatingConflictRow,
   DeviceSyncPreferences,
   PlaybackStrategy,
+  PodcastSubscription,
+  PodcastEpisode,
+  PodcastSearchResult,
 } from "@shared/types";
 
 export type {
@@ -35,6 +38,9 @@ export type {
   RatingConflict,
   RatingConflictRow,
   DeviceProfile,
+  PodcastSubscription,
+  PodcastEpisode,
+  PodcastSearchResult,
   AddDeviceConfig,
   ScanResult,
   SyncOptions,
@@ -728,4 +734,95 @@ export async function preparePlayback(
 
 export async function cancelPlayback(): Promise<void> {
   await window.api.invoke("player:cancel");
+}
+
+// ---------------------------------------------------------------------------
+// Auto Podcasts
+// ---------------------------------------------------------------------------
+
+export interface PodcastSettings {
+  hasApiKey: boolean;
+  hasSecret: boolean;
+  apiKey: string;
+  apiSecret: string;
+  autoEnabled: boolean;
+  intervalMin: number;
+  downloadDir: string;
+  downloadDirCustom: string | null;
+}
+
+export async function podcastSearch(
+  term: string
+): Promise<PodcastSearchResult[] | { error: string }> {
+  return window.api.invoke("podcast:search", term) as Promise<PodcastSearchResult[] | { error: string }>;
+}
+
+export async function podcastListSubs(): Promise<PodcastSubscription[]> {
+  return window.api.invoke("podcast:listSubs") as Promise<PodcastSubscription[]>;
+}
+
+export async function podcastSubscribeFeed(
+  feed: PodcastSearchResult
+): Promise<PodcastSubscription> {
+  return window.api.invoke("podcast:subscribe", feed) as Promise<PodcastSubscription>;
+}
+
+export async function podcastUnsubscribe(subId: number): Promise<void> {
+  await window.api.invoke("podcast:unsubscribe", subId);
+}
+
+export async function podcastSetAutoCount(subId: number, count: number): Promise<void> {
+  await window.api.invoke("podcast:setAutoCount", subId, count);
+}
+
+export async function podcastListEpisodes(subId: number): Promise<PodcastEpisode[]> {
+  return window.api.invoke("podcast:listEpisodes", subId) as Promise<PodcastEpisode[]>;
+}
+
+export async function podcastSetManualSelection(
+  subId: number,
+  episodeIds: number[]
+): Promise<void> {
+  await window.api.invoke("podcast:setManualSelection", subId, episodeIds);
+}
+
+export async function podcastDownloadNow(
+  subId: number
+): Promise<{ ok: boolean } | { error: string }> {
+  return window.api.invoke("podcast:downloadNow", subId) as Promise<{ ok: boolean } | { error: string }>;
+}
+
+export async function podcastSyncDeviceNow(
+  deviceId: number
+): Promise<{ synced: number; errors: number }> {
+  return window.api.invoke("podcast:syncDeviceNow", deviceId) as Promise<{ synced: number; errors: number }>;
+}
+
+export async function podcastGetSettings(): Promise<PodcastSettings> {
+  return window.api.invoke("podcast:getSettings") as Promise<PodcastSettings>;
+}
+
+export async function podcastSetSettings(payload: {
+  apiKey?: string;
+  apiSecret?: string;
+  autoEnabled?: boolean;
+  intervalMin?: number;
+  downloadDir?: string | null;
+}): Promise<void> {
+  await window.api.invoke("podcast:setSettings", payload);
+}
+
+export async function podcastBrowseDownloadDir(): Promise<string | null> {
+  return window.api.invoke("podcast:browseDownloadDir") as Promise<string | null>;
+}
+
+export async function podcastRefreshAllForNewFolder(): Promise<{ ok?: boolean; error?: string }> {
+  return window.api.invoke("podcast:refreshAllForNewFolder") as Promise<{ ok?: boolean; error?: string }>;
+}
+
+export async function podcastSetDeviceAutoPodcasts(
+  deviceId: number,
+  enabled: boolean
+): Promise<void> {
+  await window.api.invoke("podcast:setDeviceAutoPodcasts", deviceId, enabled);
 }

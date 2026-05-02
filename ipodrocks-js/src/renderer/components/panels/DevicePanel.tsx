@@ -94,6 +94,7 @@ export function DevicePanel() {
   const [transferMode, setTransferMode] = useState<"direct" | "transcode">("direct");
   const [sourceLibraryType, setSourceLibraryType] = useState<"primary" | "shadow">("primary");
   const [shadowLibraryId, setShadowLibraryId] = useState<number | null>(null);
+  const [formSubmitted, setFormSubmitted] = useState(false);
 
   // Lookup data
   const [models, setModels] = useState<DeviceModel[]>([]);
@@ -154,6 +155,7 @@ export function DevicePanel() {
     setTransferMode("direct");
     setSourceLibraryType("primary");
     setShadowLibraryId(null);
+    setFormSubmitted(false);
   }, []);
 
   const openForEdit = useCallback(
@@ -210,7 +212,10 @@ export function DevicePanel() {
   }, [codecConfigs]);
 
   async function handleSaveDevice() {
-    if (!name.trim() || !mountPath.trim() || modelId == null) return;
+    if (!name.trim() || !mountPath.trim() || modelId == null) {
+      setFormSubmitted(true);
+      return;
+    }
 
     let resolvedCodecConfigId = defaultCodecConfigId;
     let resolvedSourceType: "primary" | "shadow" = sourceLibraryType;
@@ -569,6 +574,7 @@ export function DevicePanel() {
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="My iPod"
+            hint={formSubmitted && !name.trim() ? "Please enter a device name" : undefined}
           />
 
           {/* Device Model */}
@@ -584,6 +590,7 @@ export function DevicePanel() {
             value={modelId != null ? String(modelId) : ""}
             onChange={(v) => setModelId(v ? Number(v) : null)}
             placeholder="Select a model…"
+            hint={formSubmitted && modelId == null ? "Please select a device model" : undefined}
           />
 
           {/* Mount Path */}
@@ -605,6 +612,9 @@ export function DevicePanel() {
                 Browse
               </Button>
             </div>
+            {formSubmitted && !mountPath.trim() && (
+              <p className="mt-1 text-xs text-blue-500">Please enter a mount path</p>
+            )}
           </div>
 
           {/* Transfer Mode */}
@@ -780,7 +790,6 @@ export function DevicePanel() {
             <Button
               variant="primary"
               onClick={handleSaveDevice}
-              disabled={!name.trim() || !mountPath.trim() || modelId == null}
             >
               {editingDeviceId !== null ? "Update Device" : "Add Device"}
             </Button>

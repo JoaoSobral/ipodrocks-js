@@ -34,18 +34,19 @@ export async function writePlaylistsToDevice(
 ): Promise<WritePlaylistsResult> {
   const { playlistFolder, mountPath, playlistsToWrite, core, m3uOpts, useTagnavi, progressCallback } = args;
 
-  let playlistsWritten = 0;
-  let tagnaviCount = 0;
-  const smartForTagnavi: TagnaviPlaylistInput[] = [];
-
   await fsp.mkdir(playlistFolder, { recursive: true });
+
+  // First pass: determine which m3u playlists actually need to be (re)written
+  // and which tagnavi entries should be included. Playlists that already match
+  // on disk are silently skipped (matches music-track sync behavior — no
+  // counter bump, no event).
+  const m3uToWrite: { outPath: string; content: string }[] = [];
+  const smartForTagnavi: TagnaviPlaylistInput[] = [];
 
   for (const pl of playlistsToWrite) {
     if (pl.typeName === "smart" && useTagnavi) {
       const rules = core.getSmartRules(pl.id);
       if (rules.length > 0) smartForTagnavi.push({ playlist: pl, rules });
-      // Progress for tagnavi playlists is deferred until after we know
-      // whether the config file actually needs to be rewritten.
       continue;
     }
 
@@ -62,15 +63,8 @@ export async function writePlaylistsToDevice(
       existingRaw === null ||
       normalizeForCompare(existingRaw) !== normalizeForCompare(content);
     if (needsWrite) {
-      await fsp.writeFile(outPath, content, "utf-8");
-      playlistsWritten += 1;
+      m3uToWrite.push({ outPath, content });
     }
-    progressCallback?.({
-      event: "copy",
-      path: outPath,
-      status: needsWrite ? "copied" : "skipped",
-      contentType: "playlist",
-    });
   }
 
   const rockboxDir = path.join(mountPath, ".rockbox");
@@ -82,31 +76,53 @@ export async function writePlaylistsToDevice(
   // tagnavi_user.config (which fully overrides tagnavi.config) instead.
   await fsp.rm(legacyCustomPath, { force: true });
 
+  let tagnaviContent = "";
+  let tagnaviNeedsWrite = false;
+  if (useTagnavi && smartForTagnavi.length > 0) {
+    tagnaviContent = buildTagnaviConfig(smartForTagnavi);
+    let existing: string | null = null;
+    try {
+      existing = await fsp.readFile(configPath, "utf-8");
+    } catch {
+      // file doesn't exist yet
+    }
+    tagnaviNeedsWrite =
+      existing === null ||
+      normalizeForCompare(existing) !== normalizeForCompare(tagnaviContent);
+  }
+
+  // Bump the total counter only for playlists that will actually be written.
+  const totalToWrite = m3uToWrite.length + (tagnaviNeedsWrite ? smartForTagnavi.length : 0);
+  if (totalToWrite > 0) {
+    progressCallback?.({ event: "total_add", path: String(totalToWrite) });
+  }
+
+  // Second pass: write what needs writing and emit one progress event per item.
+  let playlistsWritten = 0;
+  for (const { outPath, content } of m3uToWrite) {
+    await fsp.writeFile(outPath, content, "utf-8");
+    playlistsWritten += 1;
+    progressCallback?.({
+      event: "copy",
+      path: outPath,
+      status: "copied",
+      contentType: "playlist",
+    });
+  }
+
+  let tagnaviCount = 0;
   if (useTagnavi) {
     if (smartForTagnavi.length === 0) {
       await fsp.rm(configPath, { force: true });
-    } else {
-      const content = buildTagnaviConfig(smartForTagnavi);
-      let existing: string | null = null;
-      try {
-        existing = await fsp.readFile(configPath, "utf-8");
-      } catch {
-        // file doesn't exist yet
-      }
-      const needsWrite =
-        existing === null || normalizeForCompare(existing) !== normalizeForCompare(content);
-      if (needsWrite) {
-        await fsp.mkdir(rockboxDir, { recursive: true });
-        await fsp.writeFile(configPath, content, "utf-8");
-        tagnaviCount = smartForTagnavi.length;
-      }
-      // Now that we know whether anything changed, emit one progress event per tagnavi playlist.
-      const tagnaviStatus = needsWrite ? "copied" : "skipped";
+    } else if (tagnaviNeedsWrite) {
+      await fsp.mkdir(rockboxDir, { recursive: true });
+      await fsp.writeFile(configPath, tagnaviContent, "utf-8");
+      tagnaviCount = smartForTagnavi.length;
       for (const entry of smartForTagnavi) {
         progressCallback?.({
           event: "copy",
           path: `<tagnavi> ${entry.playlist.name}`,
-          status: tagnaviStatus,
+          status: "copied",
           contentType: "playlist",
         });
       }

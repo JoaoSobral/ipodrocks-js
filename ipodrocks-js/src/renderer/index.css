@@ -14,6 +14,7 @@
 
 /* Light theme (default) — shadcn/ui neutral */
 :root {
+  --player-fill: #3b82f6;
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);
   --card: oklch(1 0 0);
@@ -55,6 +56,7 @@
 
 /* Dark theme — shadcn/ui neutral */
 .dark {
+  --player-fill: #3b82f6;
   --background: oklch(0.145 0 0);
   --foreground: oklch(0.985 0 0);
   --card: oklch(0.205 0 0);
@@ -136,4 +138,29 @@
   --radius-xl: calc(var(--radius) + 0.25rem);
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji",
     "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+}
+
+.player-slider {
+  appearance: none;
+  cursor: pointer;
+  border-radius: 9999px;
+  height: 4px;
+  outline: none;
+}
+.player-slider::-webkit-slider-runnable-track {
+  border-radius: 9999px;
+  height: 4px;
+}
+.player-slider::-webkit-slider-thumb {
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--foreground);
+  margin-top: -4px;
+  cursor: pointer;
+  transition: transform 100ms ease;
+}
+.player-slider:hover::-webkit-slider-thumb {
+  transform: scale(1.25);
 }

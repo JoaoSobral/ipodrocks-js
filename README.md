@@ -12,7 +12,7 @@
 
 ## ✨ Why iPodRocks?
 
-iPodRocks is a sync manager for Rockbox devices — and any mountable player. Multiple libraries, shadow transcoding, AI-powered playlists, harmonic mixing, and a floating assistant that knows your entire collection. All in one desktop app.
+iPodRocks is a sync manager for Rockbox devices — and any mountable player. Multiple libraries, shadow transcoding, auto-downloading podcasts, AI-powered playlists, harmonic mixing, and AI assistant Rocksy that knows your entire collection. All in one desktop app.
 
 ### What is not!
 
@@ -81,12 +81,19 @@ iPodRocks is NOT a library manager. I strongly advise you to use beets and beets
 - Optional backfill with genre-based sampling
 
 ### Rocksy
-- **Floating chat** — Ask about your library, playlists, artists, and get recommendations
+- **Chat** — Ask about your library, playlists, artists, and get recommendations
 - **Persistent memory** — The assistant remembers important things you tell it across sessions (up to 40 pinned memories). Say "always remember my name is Pedro" or "don't forget I love jazz" and it will carry that context every time you open the app
 - **Rolling conversation history** — Keeps the last 100 exchanges as hidden context so the assistant stays informed without cluttering your chat
 - **Create playlists by talking** — Ask the assistant to make a Smart or Genius playlist in plain English: "Make me a rock playlist with 30 tracks" or "Create a late night favorites playlist from my listening history" — it handles the rest
 - **Smart memory management** — Up to 40 permanently pinned memories that survive the rolling history limit. Say "forget about that" or "actually my name is X" to update or remove memories
 - Markdown rendering, copy-paste friendly
+
+### Auto Podcasts
+- **Search & subscribe** — Find any podcast by keyword using the free [Podcast Index](https://podcastindex.org/) API
+- **Auto-download** — Keep the last 1–5 episodes per subscription, or switch to manual episode selection (pick up to 5 specific episodes)
+- **Background refresh** — Checks feeds automatically while the app is open (every 15 min, 30 min, or 1 hour — your choice)
+- **Device sync** — Downloaded episodes are automatically copied to each device that has Auto Podcasts enabled, into its `Podcasts` folder
+- **Per-subscription control** — Change the download window or retrigger downloads instantly with "Download now"
 
 ### Sync & Conversion
 - **Full or custom sync** — Pick albums, artists, genres, playlists
@@ -179,7 +186,15 @@ If `mpcenc` is not on your PATH, iPodRocks will prompt when you select Musepack.
 - **Genius** — From Rockbox playback logs; analyze device first. Includes a `top_rated` Genius type that works without any play history
 - **Savant** — AI-generated from mood (requires OpenRouter API key in Settings); rating-aware curation
 - **Tagnavi mode** — Enable "Rockbox smart playlists (tagnavi)" on a device to sync Smart playlists as live, auto-updating Rockbox tagtree entries instead of static `.m3u` files
-- **Via Rocksy** — Ask the floating chat to create a Smart or Genius playlist for you in plain English. Rocksy knows your genres, artists, albums, and listening history and builds the playlist instantly
+- **Via Rocksy** — Ask the chat to create a Smart or Genius playlist for you in plain English. Rocksy knows your genres, artists, albums, and listening history and builds the playlist instantly
+
+### Auto Podcasts
+
+- Subscribe to any podcast via the **Search & Subscribe** modal (powered by Podcast Index — free API key required)
+- Set each subscription to auto-download the last 1–5 episodes, or pick episodes manually
+- Background scheduler refreshes feeds and downloads new episodes automatically
+- Enable Auto Podcasts on a device (in its settings) to have ready episodes copied there on every refresh cycle
+- Get credentials at [api.podcastindex.org/signup](https://api.podcastindex.org/signup), then configure in **Settings → Auto Podcasts**
 
 ### Sync
 
@@ -218,7 +233,7 @@ If `mpcenc` is not on your PATH, iPodRocks will prompt when you select Musepack.
 
 ## Contributing
 
-Development happens on the **dev** branch. All PRs to **main** must pass CI (tests + build). See [CONTRIBUTING.md](../CONTRIBUTING.md) for details.
+Development happens on the **dev** branch. All PRs to **main** must pass CI (tests + build). See [CONTRIBUTING.md](CONTRIBUTING.md) for details.
 
 ---
 

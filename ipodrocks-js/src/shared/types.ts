@@ -106,6 +106,7 @@ export interface DeviceProfile extends Device {
   skipPlaybackLog?: boolean;
   rockboxSmartPlaylists?: boolean;
   devMode?: boolean;
+  autoPodcastsEnabled?: boolean;
 }
 
 export type ContentType = "music" | "podcast" | "audiobook" | "playlist";
@@ -403,6 +404,63 @@ export interface SyncOptions {
   includePlaylists?: boolean;
   /** When true, do not copy album artwork (*.jpg, *.png) to device (default false). */
   skipAlbumArtwork?: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// Auto Podcasts
+// ---------------------------------------------------------------------------
+
+export interface PodcastSubscription {
+  id: number;
+  feedId: number;
+  title: string;
+  author: string | null;
+  description: string | null;
+  imageUrl: string | null;
+  feedUrl: string;
+  autoCount: number;
+  lastRefreshedAt: string | null;
+  createdAt: string;
+  isUpToDate: boolean;
+}
+
+export type EpisodeDownloadState = "pending" | "downloading" | "ready" | "failed" | "skipped";
+
+export interface PodcastEpisode {
+  id: number;
+  subscriptionId: number;
+  guid: string;
+  title: string;
+  description: string | null;
+  enclosureUrl: string;
+  durationSeconds: number | null;
+  publishedAt: string | null;
+  fileSize: number | null;
+  localPath: string | null;
+  downloadState: EpisodeDownloadState;
+  downloadError: string | null;
+  manualSelected: boolean;
+  createdAt: string;
+}
+
+export interface PodcastSearchResult {
+  feedId: number;
+  title: string;
+  author: string;
+  description: string;
+  imageUrl: string;
+  feedUrl: string;
+  episodeCount: number;
+}
+
+export interface PodcastIndexConfig {
+  apiKey: string;
+  apiSecret: string;
+}
+
+export interface AutoPodcastSettings {
+  enabled: boolean;
+  refreshIntervalMinutes: number;
 }
 
 export interface ScanResult {

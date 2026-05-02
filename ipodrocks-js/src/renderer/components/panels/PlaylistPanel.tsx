@@ -99,6 +99,7 @@ export function PlaylistPanel() {
 
   // -- smart create state -------------------------------------------------
   const [newName, setNewName] = useState("");
+  const [playlistSubmitted, setPlaylistSubmitted] = useState(false);
   const [trackLimit, setTrackLimit] = useState(50);
   const [trackLimitAll, setTrackLimitAll] = useState(false);
   const [genres, setGenres] = useState<GenreInfo[]>([]);
@@ -301,9 +302,11 @@ export function PlaylistPanel() {
   }
 
   async function handleCreate() {
-    if (!newName.trim()) return;
     const rules = buildRules();
-    if (rules.length === 0) return;
+    if (!newName.trim() || rules.length === 0) {
+      setPlaylistSubmitted(true);
+      return;
+    }
     const isCapped = !trackLimitAll && totalPreviewCount !== null && totalPreviewCount > trackLimit;
     if (isCapped && !showCutConfirm) {
       setShowCutConfirm(true);
@@ -318,6 +321,7 @@ export function PlaylistPanel() {
     });
     setShowCreate(false);
     setNewName("");
+    setPlaylistSubmitted(false);
     setTrackLimit(50);
     setTrackLimitAll(false);
     setSelectedGenreIds(new Set());
@@ -598,6 +602,7 @@ export function PlaylistPanel() {
     setShowCreate(false);
     setCreateKind(null);
     setGeniusError(null);
+    setPlaylistSubmitted(false);
     if (createKind === "smart") {
       setSelectedGenreIds(new Set());
       setSelectedArtistIds(new Set());
@@ -1621,6 +1626,7 @@ export function PlaylistPanel() {
                 value={newName}
                 onChange={(e) => setNewName(e.target.value)}
                 placeholder="My Playlist"
+                hint={playlistSubmitted && !newName.trim() ? "Please enter a playlist name" : undefined}
               />
               <div>
                 <label className="flex items-center gap-2 mb-1.5 cursor-pointer text-xs font-medium text-muted-foreground">
@@ -1819,7 +1825,7 @@ export function PlaylistPanel() {
                 return (
                   <>
                     <div className="flex items-center justify-between pt-1">
-                      <p className={`text-xs ${isCapped ? "text-amber-500 dark:text-amber-400 font-medium" : "text-muted-foreground"}`}>
+                      <p className={`text-xs ${isCapped ? "text-amber-500 dark:text-amber-400 font-medium" : playlistSubmitted && selectedGenreIds.size === 0 && selectedArtistIds.size === 0 && selectedAlbumIds.size === 0 ? "text-blue-500" : "text-muted-foreground"}`}>
                         {previewCount === null
                           ? "Select genres, artists, or albums to build your playlist."
                           : previewCount === 0
@@ -1833,10 +1839,6 @@ export function PlaylistPanel() {
                         <Button
                           variant="primary"
                           onClick={handleCreate}
-                          disabled={
-                            !newName.trim() ||
-                            (selectedGenreIds.size === 0 && selectedArtistIds.size === 0 && selectedAlbumIds.size === 0)
-                          }
                         >
                           {showCutConfirm ? "Confirm" : "Create"}
                         </Button>

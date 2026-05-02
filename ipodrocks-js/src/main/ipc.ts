@@ -153,6 +153,7 @@ import { compareLibraries } from "./sync/name-size-sync";
 import { writePlaylistsToDevice } from "./sync/playlist-sync";
 import { isMpcencAvailable } from "./utils/mpcenc";
 import {
+  readPrefs,
   getMpcRemindDisabled,
   setMpcRemindDisabled,
   getOpenRouterConfig,
@@ -161,8 +162,26 @@ import {
   setHarmonicPrefs,
   getUpdateSnoozeUntil,
   setUpdateSnoozeUntil,
+  getPodcastIndexConfig,
+  setPodcastIndexConfig,
+  getAutoPodcastSettings,
+  setAutoPodcastSettings,
   type HarmonicPrefs,
 } from "./utils/prefs";
+import { searchPodcasts } from "./podcasts/podcast-index-client";
+import {
+  listSubscriptions,
+  subscribe as podcastSubscribe,
+  unsubscribe as podcastUnsubscribe,
+  setAutoCount,
+  listEpisodes,
+  setManualSelection,
+} from "./podcasts/podcast-subscriptions";
+import { refreshSubscription, refreshAll, refreshAllForNewFolder } from "./podcasts/podcast-refresh";
+import { syncPodcastsToDevice } from "./podcasts/podcast-device-sync";
+import { startPodcastScheduler, stopPodcastScheduler } from "./podcasts/podcast-scheduler";
+import { downloadEpisode } from "./podcasts/podcast-downloader";
+import { getPodcastsRoot, getDefaultPodcastsRoot } from "./podcasts/podcast-storage";
 import {
   fetchLatestRelease,
   compareVersions,
@@ -191,6 +210,7 @@ import {
   getPinnedCount,
   MAX_PINNED_MEMORIES,
   invalidateAssistantCache,
+  type AppPaths,
 } from "./assistant/assistantChat";
 import { randomUUID } from "crypto";
 import { logActivity, getRecentActivity } from "./activity/activity-logger";
@@ -724,6 +744,7 @@ export function registerIpcHandlers(): void {
         "add_device",
         `Added device: ${device.profile.name}`
       );
+      invalidateAssistantCache(); // F9: device config changed
       return device.profile;
     })
   );
@@ -785,6 +806,7 @@ export function registerIpcHandlers(): void {
         "update_device",
         `Updated device: ${device?.name ?? deviceId}`
       );
+      invalidateAssistantCache(); // F9: device config changed
       return device;
     })
   );
@@ -792,7 +814,9 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     "device:remove",
     safe("device:remove", async (_event, deviceId: number) => {
-      return getDevicesCore().deleteDevice(deviceId);
+      const result = getDevicesCore().deleteDevice(deviceId);
+      invalidateAssistantCache(); // F9: device config changed
+      return result;
     })
   );
 
@@ -1455,10 +1479,6 @@ export function registerIpcHandlers(): void {
               codecName,
               libraryFolderPaths,
             };
-            syncOpts.progressCallback?.({
-              event: "total_add",
-              path: String(playlistsToWrite.length),
-            });
             const writeResult = await writePlaylistsToDevice({
               playlistFolder,
               mountPath: device.profile.mountPath,
@@ -1976,7 +1996,15 @@ export function registerIpcHandlers(): void {
         ...recentHistory,
         { role: "user" as const, content: userMessage },
       ];
-      const rawReply = await sendAssistantMessage(fullHistory, db, config);
+      const userData = app.getPath("userData");
+      const autoPodcastSettings = getAutoPodcastSettings();
+      const appPaths: AppPaths = {
+        userData,
+        podcastsRoot: getPodcastsRoot(),
+        autoPodcastEnabled: autoPodcastSettings.enabled,
+        autoPodcastIntervalMin: autoPodcastSettings.refreshIntervalMinutes,
+      };
+      const rawReply = await sendAssistantMessage(fullHistory, db, config, appPaths);
       const {
         cleanReply,
         pin,
@@ -2273,4 +2301,165 @@ export function registerIpcHandlers(): void {
       return undefined;
     })
   );
+
+  // ---- Auto Podcasts ----
+  ipcMain.handle(
+    "podcast:search",
+    safe("podcast:search", async (_event, term: string) => {
+      const config = getPodcastIndexConfig();
+      if (!config) return { error: "NO_CREDS" };
+      return searchPodcasts(term, config.apiKey, config.apiSecret);
+    })
+  );
+
+  ipcMain.handle(
+    "podcast:listSubs",
+    safe("podcast:listSubs", async () => {
+      const db = getLibrary().getConnection();
+      return listSubscriptions(db);
+    })
+  );
+
+  ipcMain.handle(
+    "podcast:subscribe",
+    safe("podcast:subscribe", async (_event, feed: import("../shared/types").PodcastSearchResult) => {
+      const db = getLibrary().getConnection();
+      const result = podcastSubscribe(db, feed);
+      invalidateAssistantCache(); // F9: podcast config changed
+      return result;
+    })
+  );
+
+  ipcMain.handle(
+    "podcast:unsubscribe",
+    safe("podcast:unsubscribe", async (_event, subId: number) => {
+      const db = getLibrary().getConnection();
+      podcastUnsubscribe(db, subId);
+      invalidateAssistantCache(); // F9: podcast config changed
+      return undefined;
+    })
+  );
+
+  ipcMain.handle(
+    "podcast:setAutoCount",
+    safe("podcast:setAutoCount", async (_event, subId: number, count: number) => {
+      const db = getLibrary().getConnection();
+      setAutoCount(db, subId, count);
+      invalidateAssistantCache(); // F9: podcast config changed
+      return undefined;
+    })
+  );
+
+  ipcMain.handle(
+    "podcast:listEpisodes",
+    safe("podcast:listEpisodes", async (_event, subId: number) => {
+      const db = getLibrary().getConnection();
+      return listEpisodes(db, subId);
+    })
+  );
+
+  ipcMain.handle(
+    "podcast:setManualSelection",
+    safe("podcast:setManualSelection", async (_event, subId: number, episodeIds: number[]) => {
+      const db = getLibrary().getConnection();
+      setManualSelection(db, subId, episodeIds);
+      return undefined;
+    })
+  );
+
+  ipcMain.handle(
+    "podcast:downloadNow",
+    safe("podcast:downloadNow", async (_event, subId: number) => {
+      const db = getLibrary().getConnection();
+      const config = getPodcastIndexConfig();
+      if (!config) return { error: "NO_CREDS" };
+      await refreshSubscription(db, subId, config.apiKey, config.apiSecret);
+      return { ok: true };
+    })
+  );
+
+  ipcMain.handle(
+    "podcast:refreshAllForNewFolder",
+    safe("podcast:refreshAllForNewFolder", async () => {
+      const db = getLibrary().getConnection();
+      const config = getPodcastIndexConfig();
+      if (!config) return { error: "NO_CREDS" };
+      await refreshAllForNewFolder(db, config.apiKey, config.apiSecret);
+      return { ok: true };
+    })
+  );
+
+  ipcMain.handle(
+    "podcast:syncDeviceNow",
+    safe("podcast:syncDeviceNow", async (_event, deviceId: number) => {
+      const db = getLibrary().getConnection();
+      return syncPodcastsToDevice(db, deviceId);
+    })
+  );
+
+  ipcMain.handle(
+    "podcast:getSettings",
+    safe("podcast:getSettings", async () => {
+      const raw = readPrefs().podcastIndexConfig;
+      const autoSettings = getAutoPodcastSettings();
+      return {
+        hasApiKey: !!(raw?.apiKey?.trim()),
+        hasSecret: !!(raw?.apiSecret?.trim()),
+        apiKey: raw?.apiKey ?? "",
+        apiSecret: raw?.apiSecret ?? "",
+        autoEnabled: autoSettings.enabled,
+        intervalMin: autoSettings.refreshIntervalMinutes,
+        downloadDir: getDefaultPodcastsRoot(),
+        downloadDirCustom: readPrefs().autoPodcasts?.downloadDir ?? null,
+      };
+    })
+  );
+
+  ipcMain.handle(
+    "podcast:setSettings",
+    safe("podcast:setSettings", async (
+      _event,
+      payload: { apiKey?: string; apiSecret?: string; autoEnabled?: boolean; intervalMin?: number; downloadDir?: string | null }
+    ) => {
+      if (payload.apiKey !== undefined || payload.apiSecret !== undefined) {
+        const current = getPodcastIndexConfig() ?? { apiKey: "", apiSecret: "" };
+        setPodcastIndexConfig({
+          apiKey: payload.apiKey ?? current.apiKey,
+          apiSecret: payload.apiSecret ?? current.apiSecret,
+        });
+      }
+      if (payload.autoEnabled !== undefined || payload.intervalMin !== undefined || "downloadDir" in payload) {
+        setAutoPodcastSettings({
+          enabled: payload.autoEnabled,
+          refreshIntervalMinutes: payload.intervalMin,
+          downloadDir: payload.downloadDir ?? undefined,
+        });
+      }
+      return undefined;
+    })
+  );
+
+  ipcMain.handle(
+    "podcast:browseDownloadDir",
+    safe("podcast:browseDownloadDir", async () => {
+      const result = await dialog.showOpenDialog({
+        properties: ["openDirectory", "createDirectory"],
+        title: "Select Podcast Download Folder",
+        defaultPath: getDefaultPodcastsRoot(),
+      });
+      if (result.canceled || result.filePaths.length === 0) return null;
+      return result.filePaths[0];
+    })
+  );
+
+  ipcMain.handle(
+    "podcast:setDeviceAutoPodcasts",
+    safe("podcast:setDeviceAutoPodcasts", async (_event, deviceId: number, enabled: boolean) => {
+      getDevicesCore().updateDevice(deviceId, { autoPodcastsEnabled: enabled });
+      return undefined;
+    })
+  );
+
+  // Start the podcast background scheduler
+  startPodcastScheduler(getLibrary().getConnection());
 }

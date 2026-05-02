@@ -651,4 +651,51 @@ CREATE INDEX IF NOT EXISTS idx_rc_track ON rating_conflicts(track_id);
 
 -- rating_events
 CREATE INDEX IF NOT EXISTS idx_re_track ON rating_events(track_id, created_at DESC);
+
+-- ============================================================
+-- Auto Podcasts
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS podcast_subscriptions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    feed_id INTEGER NOT NULL UNIQUE,
+    title TEXT NOT NULL,
+    author TEXT,
+    description TEXT,
+    image_url TEXT,
+    feed_url TEXT NOT NULL,
+    auto_count INTEGER NOT NULL DEFAULT 1 CHECK(auto_count BETWEEN 0 AND 5),
+    last_refreshed_at TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS podcast_episodes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    subscription_id INTEGER NOT NULL REFERENCES podcast_subscriptions(id) ON DELETE CASCADE,
+    guid TEXT NOT NULL,
+    title TEXT NOT NULL,
+    description TEXT,
+    enclosure_url TEXT NOT NULL,
+    duration_seconds INTEGER,
+    published_at TIMESTAMP,
+    file_size INTEGER,
+    local_path TEXT,
+    download_state TEXT NOT NULL DEFAULT 'pending'
+        CHECK(download_state IN ('pending','downloading','ready','failed','skipped')),
+    download_error TEXT,
+    manual_selected INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(subscription_id, guid)
+);
+
+CREATE TABLE IF NOT EXISTS device_podcast_synced (
+    device_id INTEGER NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+    episode_id INTEGER NOT NULL REFERENCES podcast_episodes(id) ON DELETE CASCADE,
+    device_relative_path TEXT NOT NULL,
+    synced_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (device_id, episode_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_pe_sub_pub ON podcast_episodes(subscription_id, published_at DESC);
+CREATE INDEX IF NOT EXISTS idx_dps_episode ON device_podcast_synced(episode_id);
 `;

@@ -17,6 +17,7 @@ interface SelectProps {
   placeholder?: string;
   className?: string;
   disabled?: boolean;
+  hint?: string;
 }
 
 export function Select({
@@ -28,6 +29,7 @@ export function Select({
   placeholder = "Select…",
   className = "",
   disabled = false,
+  hint,
 }: SelectProps) {
   const options = Array.isArray(optionsProp) ? optionsProp : [];
   const [open, setOpen] = useState(false);
@@ -120,6 +122,7 @@ export function Select({
         <span className="text-muted-foreground ml-1">{open ? "▲" : "▼"}</span>
       </button>
       {dropdown}
+      {hint && <p className="mt-1 text-xs text-blue-500">{hint}</p>}
     </div>
   );
 }

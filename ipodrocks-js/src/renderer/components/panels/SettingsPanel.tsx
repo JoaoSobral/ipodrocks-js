@@ -11,8 +11,13 @@ import {
   checkSavantKeyData,
   getHarmonicPrefs,
   setHarmonicPrefs,
+  podcastGetSettings,
+  podcastSetSettings,
+  podcastBrowseDownloadDir,
+  podcastRefreshAllForNewFolder,
+  podcastSearch,
 } from "../../ipc/api";
-import type { OpenRouterConfig, SavantKeyData } from "../../ipc/api";
+import type { OpenRouterConfig, SavantKeyData, PodcastSettings } from "../../ipc/api";
 
 interface SettingsPanelProps {
   open: boolean;
@@ -28,6 +33,23 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
   const [testError, setTestError] = useState<string | null>(null);
   const [keyData, setKeyData] = useState<SavantKeyData | null>(null);
   const [saving, setSaving] = useState(false);
+  const [podcastSettings, setPodcastSettings] = useState<PodcastSettings>({
+    hasApiKey: false,
+    hasSecret: false,
+    apiKey: "",
+    apiSecret: "",
+    autoEnabled: false,
+    intervalMin: 15,
+    downloadDir: "",
+    downloadDirCustom: null,
+  });
+  const [podcastApiKey, setPodcastApiKey] = useState("");
+  const [podcastApiSecret, setPodcastApiSecret] = useState("");
+  const [podcastTestStatus, setPodcastTestStatus] = useState<"idle" | "testing" | "ok" | "error">("idle");
+  const [podcastTestError, setPodcastTestError] = useState<string | null>(null);
+  const [podcastDownloadDir, setPodcastDownloadDir] = useState("");
+  const [podcastDownloadDirDefault, setPodcastDownloadDirDefault] = useState("");
+  const [podcastDownloadDirOriginal, setPodcastDownloadDirOriginal] = useState("");
   const [scanHarmonicData, setScanHarmonicData] = useState(true);
   const [backfillPercent, setBackfillPercent] = useState(100);
   const [analyzeWithEssentia, setAnalyzeWithEssentia] = useState(false);
@@ -37,10 +59,11 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
     if (!open) return;
     let cancelled = false;
     (async () => {
-      const [config, data, harmonic] = await Promise.all([
+      const [config, data, harmonic, podcastCfg] = await Promise.all([
         getOpenRouterConfig(),
         checkSavantKeyData(),
         getHarmonicPrefs(),
+        podcastGetSettings(),
       ]);
       if (!cancelled) {
         setApiKey(config?.apiKey ?? "");
@@ -50,6 +73,13 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
         setBackfillPercent(harmonic.backfillPercent ?? 100);
         setAnalyzeWithEssentia(harmonic.analyzeWithEssentia ?? false);
         setAnalyzePercent(harmonic.analyzePercent ?? 10);
+        setPodcastSettings(podcastCfg);
+        setPodcastApiKey(podcastCfg.apiKey);
+        setPodcastApiSecret(podcastCfg.apiSecret);
+        setPodcastDownloadDirDefault(podcastCfg.downloadDir);
+        const loaded = podcastCfg.downloadDirCustom ?? podcastCfg.downloadDir;
+        setPodcastDownloadDir(loaded);
+        setPodcastDownloadDirOriginal(loaded);
       }
     })();
     return () => {
@@ -98,9 +128,38 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
         analyzeWithEssentia,
         analyzePercent: Math.min(100, Math.max(1, analyzePercent)),
       });
+      const customDir = podcastDownloadDir.trim();
+      const folderChanged = customDir !== podcastDownloadDirOriginal;
+      await podcastSetSettings({
+        apiKey: podcastApiKey.trim() || undefined,
+        apiSecret: podcastApiSecret.trim() || undefined,
+        autoEnabled: podcastSettings.autoEnabled,
+        intervalMin: podcastSettings.intervalMin,
+        downloadDir: customDir !== podcastDownloadDirDefault ? customDir : null,
+      });
+      if (folderChanged) {
+        podcastRefreshAllForNewFolder();
+      }
       onClose();
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function handlePodcastTest() {
+    setPodcastTestStatus("testing");
+    setPodcastTestError(null);
+    try {
+      const result = await podcastSearch("test");
+      if ("error" in result && result.error === "NO_CREDS") {
+        setPodcastTestStatus("error");
+        setPodcastTestError("No credentials configured");
+      } else {
+        setPodcastTestStatus("ok");
+      }
+    } catch (err) {
+      setPodcastTestStatus("error");
+      setPodcastTestError(err instanceof Error ? err.message : String(err));
     }
   }
 
@@ -134,12 +193,12 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
             <p className="text-xs text-muted-foreground">
               Get your API key at{" "}
               <a
-                href="https://openrouter.ai/keys"
+                href="https://openrouter.ai/"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-primary hover:underline"
               >
-                openrouter.ai/keys
+                openrouter.ai
               </a>
               . Model ID from{" "}
               <a
@@ -243,6 +302,128 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
                 setBackfillPercent(parseInt(e.target.value, 10) || 100)
               }
             />
+          </div>
+        </Card>
+
+        <Card
+          title="Auto Podcasts"
+          subtitle="Configure the Podcast Index API for podcast search and auto-download."
+        >
+          <div className="space-y-4">
+            <Input
+              label="API Key"
+              type="password"
+              value={podcastApiKey}
+              onChange={(e) => setPodcastApiKey(e.target.value)}
+              placeholder="Podcast Index API key"
+            />
+            <Input
+              label="API Secret"
+              type="password"
+              value={podcastApiSecret}
+              onChange={(e) => setPodcastApiSecret(e.target.value)}
+              placeholder="Podcast Index API secret"
+            />
+            <p className="text-xs text-muted-foreground">
+              Get your free API key at{" "}
+              <a
+                href="https://api.podcastindex.org/signup"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-primary hover:underline"
+              >
+                api.podcastindex.org/signup
+              </a>
+              .
+            </p>
+
+            <div className="flex items-center gap-3">
+              <Button
+                size="sm"
+                variant="secondary"
+                disabled={podcastTestStatus === "testing"}
+                onClick={handlePodcastTest}
+              >
+                {podcastTestStatus === "testing" ? "Testing…" : "Test Connection"}
+              </Button>
+              {podcastTestStatus === "ok" && (
+                <span className="text-xs text-success">Connected</span>
+              )}
+              {podcastTestStatus === "error" && podcastTestError && (
+                <span className="text-xs text-destructive">{podcastTestError}</span>
+              )}
+            </div>
+
+            <div className="flex items-start justify-between gap-4">
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-medium text-foreground">
+                  Enable auto refresh & sync
+                </p>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Automatically check for new episodes and sync to enabled devices.
+                </p>
+              </div>
+              <Switch
+                checked={podcastSettings.autoEnabled}
+                onChange={(v) => setPodcastSettings((s) => ({ ...s, autoEnabled: v }))}
+                className="shrink-0"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-foreground mb-1.5">
+                Download folder
+              </label>
+              <div className="flex gap-2">
+                <input
+                  readOnly
+                  value={podcastDownloadDir}
+                  title={podcastDownloadDir}
+                  className="flex-1 min-w-0 rounded-lg bg-input border border-border px-3 py-2 text-sm text-foreground truncate outline-none cursor-default"
+                />
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={async () => {
+                    const picked = await podcastBrowseDownloadDir();
+                    if (picked) setPodcastDownloadDir(picked);
+                  }}
+                >
+                  Browse…
+                </Button>
+                {podcastDownloadDir !== podcastDownloadDirDefault && (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => setPodcastDownloadDir(podcastDownloadDirDefault)}
+                  >
+                    Reset
+                  </Button>
+                )}
+              </div>
+            </div>
+
+            {podcastSettings.autoEnabled && (
+              <div>
+                <label className="text-xs font-medium text-foreground">
+                  Refresh interval
+                </label>
+                <select
+                  value={String(podcastSettings.intervalMin)}
+                  onChange={(e) =>
+                    setPodcastSettings((s) => ({
+                      ...s,
+                      intervalMin: parseInt(e.target.value, 10),
+                    }))
+                  }
+                  className="mt-1 block w-full rounded-lg border border-input bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
+                >
+                  <option value="15">Every 15 minutes</option>
+                  <option value="30">Every 30 minutes</option>
+                  <option value="60">Every hour</option>
+                </select>
+              </div>
+            )}
           </div>
         </Card>
 

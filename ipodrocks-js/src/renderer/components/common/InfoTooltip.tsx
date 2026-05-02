@@ -32,9 +32,11 @@ export function InfoTooltip({ text }: InfoTooltipProps) {
         onMouseEnter={() => { position(); setVisible(true); }}
         onMouseLeave={() => setVisible(false)}
         onClick={(e) => { e.stopPropagation(); position(); setVisible((v) => !v); }}
-        className="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full border border-muted-foreground/50 text-muted-foreground hover:border-primary hover:text-primary transition-colors text-[9px] font-bold leading-none cursor-default"
+        className="inline-flex items-center justify-center w-4 h-4 text-muted-foreground/60 hover:text-primary transition-colors cursor-default"
       >
-        i
+        <svg viewBox="0 0 24 24" className="w-full h-full" fill="currentColor" aria-hidden="true">
+          <path d="M12 22c5.5 0 10-4.5 10-10S17.5 2 12 2S2 6.5 2 12s4.5 10 10 10M11 7h2v2h-2zm3 10h-4v-2h1v-2h-1v-2h3v4h1z" />
+        </svg>
       </button>
       {visible && createPortal(
         <div

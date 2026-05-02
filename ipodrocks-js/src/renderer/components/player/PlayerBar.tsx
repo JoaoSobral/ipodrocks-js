@@ -1,7 +1,43 @@
 import { useEffect, useRef } from "react";
+import type { CSSProperties } from "react";
 import { usePlayerStore } from "../../stores/player-store";
 import { Button } from "../common/Button";
 import { formatDuration } from "../../utils/format";
+
+// MDI SVG paths (viewBox 0 0 24 24)
+const MDI = {
+  skipPrev:
+    "M6,18V6H8V18H6M9.5,12L18,6V18L9.5,12Z",
+  play:
+    "M8,5.14V19.14L19,12.14L8,5.14Z",
+  pause:
+    "M14,19H18V5H14M6,19H10V5H6V19Z",
+  stopCircle:
+    "M12,2C6.47,2 2,6.47 2,12C2,17.53 6.47,22 12,22C17.53,22 22,17.53 22,12C22,6.47 17.53,2 12,2M9,9H15V15H9V9Z",
+  skipNext:
+    "M16,18H18V6H16M6,18L14.5,12L6,6V18Z",
+  volumeHigh:
+    "M14,3.23V5.29C16.89,6.15 19,8.83 19,12C19,15.17 16.89,17.84 14,18.7V20.77C18,19.86 21,16.28 21,12C21,7.72 18,4.14 14,3.23M16.5,12C16.5,10.23 15.5,8.71 14,7.97V16C15.5,15.29 16.5,13.76 16.5,12M3,9V15H7L12,20V4L7,9H3Z",
+  volumeLow:
+    "M18.75,7.43L17.34,8.84C17.75,9.8 18,10.87 18,12C18,13.13 17.75,14.2 17.34,15.16L18.75,16.57C19.54,15.24 20,13.67 20,12C20,10.33 19.54,8.76 18.75,7.43M12,4L9.91,6.09L12,8.18M3,9V15H7L12,20V4L7,9H3Z",
+  volumeMute:
+    "M12,4L9.91,6.09L12,8.18M4.27,3L3,4.27L7.73,9H3V15H7L12,20V13.27L16.25,17.53C15.58,18.04 14.83,18.43 14,18.7V20.77C15.38,20.45 16.63,19.82 17.68,18.96L19.73,21L21,19.73L12,10.73M19,12C19,12.94 18.8,13.82 18.46,14.64L19.97,16.15C20.62,14.91 21,13.5 21,12C21,7.72 18,4.14 14,3.23V5.29C16.89,6.15 19,8.83 19,12Z",
+};
+
+function Icon({ path, size = 16 }: { path: string; size?: number }) {
+  return (
+    <svg viewBox="0 0 24 24" width={size} height={size} fill="currentColor" aria-hidden>
+      <path d={path} />
+    </svg>
+  );
+}
+
+function sliderStyle(value: number, max: number): CSSProperties {
+  const pct = max > 0 ? (value / max) * 100 : 0;
+  return {
+    background: `linear-gradient(to right, var(--player-fill) ${pct}%, var(--muted) ${pct}%)`,
+  };
+}
 
 export function PlayerBar() {
   const audioRef = useRef<HTMLAudioElement>(null);
@@ -80,7 +116,13 @@ export function PlayerBar() {
 
   if (!currentTrack) return null;
 
-  const progress = duration > 0 ? (currentTime / duration) * 100 : 0;
+  const effectiveVolume = isMuted ? 0 : volume;
+  const volumeIcon =
+    isMuted || volume === 0
+      ? MDI.volumeMute
+      : volume < 0.4
+        ? MDI.volumeLow
+        : MDI.volumeHigh;
 
   return (
     <footer className="relative shrink-0 border-t border-border bg-card px-30 h-16 flex items-center gap-4 overflow-hidden">
@@ -125,7 +167,7 @@ export function PlayerBar() {
             onClick={() => previous()}
             title="Previous"
           >
-            ⏮
+            <Icon path={MDI.skipPrev} />
           </Button>
           <Button
             variant="ghost"
@@ -134,13 +176,17 @@ export function PlayerBar() {
             disabled={isPreparing || !sourceUrl}
             title={isPlaying ? "Pause" : "Play"}
           >
-            {isPreparing ? "…" : isPlaying ? "⏸" : "⏯"}
+            {isPreparing ? (
+              "…"
+            ) : (
+              <Icon path={isPlaying ? MDI.pause : MDI.play} size={18} />
+            )}
           </Button>
           <Button variant="ghost" size="sm" onClick={stop} title="Stop">
-            ⏹
+            <Icon path={MDI.stopCircle} />
           </Button>
           <Button variant="ghost" size="sm" onClick={() => next()} title="Next">
-            ⏭
+            <Icon path={MDI.skipNext} />
           </Button>
         </div>
 
@@ -159,7 +205,8 @@ export function PlayerBar() {
               seek(t);
               if (audioRef.current) audioRef.current.currentTime = t;
             }}
-            className="flex-1 h-1 appearance-none bg-muted rounded-full accent-primary cursor-pointer"
+            className="player-slider flex-1"
+            style={sliderStyle(currentTime, duration || 0)}
             title={`${formatDuration(currentTime)} / ${formatDuration(duration)}`}
           />
           <span className="text-[10px] text-muted-foreground tabular-nums w-8 shrink-0">
@@ -182,23 +229,24 @@ export function PlayerBar() {
       <div className="flex items-center gap-2 w-32 shrink-0">
         <button
           onClick={toggleMute}
-          className="text-sm text-muted-foreground hover:text-foreground transition-colors cursor-default"
+          className="text-muted-foreground hover:text-foreground transition-colors cursor-default flex items-center"
           title={isMuted ? "Unmute" : "Mute"}
         >
-          {isMuted || volume === 0 ? "🔇" : volume < 0.4 ? "🔈" : "🔊"}
+          <Icon path={volumeIcon} size={18} />
         </button>
         <input
           type="range"
           min={0}
           max={1}
           step={0.01}
-          value={isMuted ? 0 : volume}
+          value={effectiveVolume}
           onChange={(e) => {
             const v = parseFloat(e.target.value);
             setVolume(v);
             if (isMuted && v > 0) toggleMute();
           }}
-          className="flex-1 h-1 appearance-none bg-muted rounded-full accent-primary cursor-pointer"
+          className="player-slider flex-1"
+          style={sliderStyle(effectiveVolume, 1)}
           title={`Volume ${Math.round(volume * 100)}%`}
         />
       </div>

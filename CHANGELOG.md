@@ -1,5 +1,35 @@
 # Changelog
 
+## [1.2.1] — 2026-05
+
+### Bug fixes
+
+- **Sync re-copies tracks with Unknown Artist/Album every run** — `computeDeviceRelativePath` passed `sanitizeDevicePathComponent` directly to `Array.prototype.map`, so the array index was forwarded as the function's `maxLen` parameter. This truncated each path segment to N characters, producing destinations like `/P/01` instead of `Black Sabbath/Paranoid/01 - War Pigs.opus`. Files were copied to the wrong place every sync and never matched on subsequent runs. Affected tracks whose metadata fell back to the `libraryFolderId` branch (Unknown Artist/Unknown Album).
+- **Converted tracks re-converted on every sync** — `convertWithCodec` and `convertWithFfmpeg` did not preserve the source mtime on the output file, so the mtime fallback in `compareLibraries` never matched and lossless conversions (ALAC/FLAC) were always re-encoded. The conversion path now mirrors `copyFileToDevice` and calls `utimes` after a successful encode.
+- **Up-to-date artwork and playlists counted as "processed" items** — Artwork and `.m3u` playlists already on device with matching content emitted `total_add` and `copy{status:"skipped"}` progress events, so a no-op sync showed "2 / 2 items, 0 copied" instead of the empty-state expected by the user. Both code paths now pre-filter to actual writes before bumping counters, matching how unchanged music tracks are silently skipped.
+
+### Features
+
+#### Built-in audio player
+
+- **`media://` custom protocol** — A secure Electron protocol handler (`media-protocol.ts`) serves audio files directly to the renderer via `net.fetch`. Registered as privileged with `secure`, `standard`, `supportFetchAPI`, and `stream` flags so the renderer can use standard `<audio>` / Web Audio APIs against it.
+- **Native playback for common codecs** — MP3, AAC, FLAC, OGG, OPUS, PCM, and ALAC are served directly from disk without any conversion step.
+- **ffmpeg transcoding for unsupported codecs** — Tracks in formats the browser cannot play natively (MPC, APE, and others) are transcoded on the fly to Ogg Vorbis via ffmpeg and written to a per-session temp file before playback begins. The active ffmpeg process and temp file are tracked so `cancelPrepare()` can abort mid-transcode and clean up.
+- **Path security** — The protocol handler only serves files that are inside the player temp directory or have a recognised audio extension. Any other path returns `403 Forbidden`, preventing the renderer from reading arbitrary files from the filesystem.
+- **Base64url path encoding** — File paths are encoded as base64url tokens in `media://local/<token>` URLs, keeping special characters and spaces out of the URL while remaining fully reversible.
+- **Temp-dir cleanup** — `cleanupPlayerTemp()` removes all transcoded temp files on app quit.
+
+#### Rocksy (renamed from Music Assistant)
+
+- **Music Assistant is now Rocksy** — The floating AI chat panel has been renamed to Rocksy throughout the app.
+
+### Testing
+
+- **`media-protocol.test.ts`** — Tests for scheme registration flags, `400` on bad base64, `403` on path outside temp dir / non-audio, `200` fetches for temp-dir files, valid audio files outside temp dir, and `file://` URL derivation; verifies `net.fetch` is not called on forbidden requests.
+- **`player-source.test.ts`** — Tests for `pickStrategy` (native vs. transcode per codec), `isAudioFilePath` (audio and non-audio extensions), `encodePathToUrl`/`decodeUrlToPath` round-trips (spaces, Unicode, special chars), native `prepareTrack` returns correct `media://` URL, and `cancelPrepare` no-ops safely when nothing is active.
+
+---
+
 ## [1.2.0] — 2026-04
 
 ### Features

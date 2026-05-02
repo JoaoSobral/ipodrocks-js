@@ -4,6 +4,7 @@ import { addDevice } from "@renderer/ipc/api";
 import { Modal } from "../common/Modal";
 import { Button } from "../common/Button";
 import { Input } from "../common/Input";
+import { Switch } from "../common/Switch";
 import { ErrorBox } from "../common/ErrorBox";
 
 interface AddDeviceModalProps {
@@ -18,10 +19,10 @@ export function AddDeviceModal({ open, onClose }: AddDeviceModalProps) {
   const [podcastFolder, setPodcastFolder] = useState("Podcasts");
   const [audiobookFolder, setAudiobookFolder] = useState("Audiobooks");
   const [playlistFolder, setPlaylistFolder] = useState("Playlists");
+  const [autoPodcastsEnabled, setAutoPodcastsEnabled] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  const canSubmit = name.trim() !== "" && mountPath.trim() !== "" && !loading;
+  const [submitted, setSubmitted] = useState(false);
 
   const reset = () => {
     setName("");
@@ -30,8 +31,10 @@ export function AddDeviceModal({ open, onClose }: AddDeviceModalProps) {
     setPodcastFolder("Podcasts");
     setAudiobookFolder("Audiobooks");
     setPlaylistFolder("Playlists");
+    setAutoPodcastsEnabled(false);
     setError(null);
     setLoading(false);
+    setSubmitted(false);
   };
 
   const handleClose = () => {
@@ -40,7 +43,11 @@ export function AddDeviceModal({ open, onClose }: AddDeviceModalProps) {
   };
 
   const handleSubmit = async () => {
-    if (!canSubmit) return;
+    if (!name.trim() || !mountPath.trim()) {
+      setSubmitted(true);
+      return;
+    }
+    if (loading) return;
     setError(null);
     setLoading(true);
     try {
@@ -52,6 +59,10 @@ export function AddDeviceModal({ open, onClose }: AddDeviceModalProps) {
         audiobookFolder: audiobookFolder.trim() || "Audiobooks",
         playlistFolder: playlistFolder.trim() || "Playlists",
       });
+      if (autoPodcastsEnabled && device && "id" in device) {
+        const { podcastSetDeviceAutoPodcasts } = await import("@renderer/ipc/api");
+        await podcastSetDeviceAutoPodcasts(device.id, true);
+      }
       reset();
       onClose(device);
     } catch (e) {
@@ -76,12 +87,14 @@ export function AddDeviceModal({ open, onClose }: AddDeviceModalProps) {
           value={name}
           onChange={(e) => setName(e.target.value)}
           autoFocus
+          hint={submitted && !name.trim() ? "Please enter a device name" : undefined}
         />
         <Input
           label="Mount Path"
           placeholder="/media/ipod"
           value={mountPath}
           onChange={(e) => setMountPath(e.target.value)}
+          hint={submitted && !mountPath.trim() ? "Please enter a mount path" : undefined}
         />
 
         <div className="grid grid-cols-2 gap-3">
@@ -107,6 +120,20 @@ export function AddDeviceModal({ open, onClose }: AddDeviceModalProps) {
           />
         </div>
 
+        <div className="flex items-center justify-between gap-4">
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-medium text-foreground">Allow Auto Podcasts</p>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Automatically sync subscribed podcast episodes to this device.
+            </p>
+          </div>
+          <Switch
+            checked={autoPodcastsEnabled}
+            onChange={setAutoPodcastsEnabled}
+            className="shrink-0"
+          />
+        </div>
+
         {error && (
           <ErrorBox>{error}</ErrorBox>
         )}
@@ -115,7 +142,7 @@ export function AddDeviceModal({ open, onClose }: AddDeviceModalProps) {
           <Button variant="ghost" type="button" onClick={handleClose}>
             Cancel
           </Button>
-          <Button type="submit" disabled={!canSubmit}>
+          <Button type="submit" disabled={loading}>
             {loading ? "Adding…" : "Add Device"}
           </Button>
         </div>

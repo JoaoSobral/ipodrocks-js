@@ -388,6 +388,38 @@ describe("sync-core utilities", () => {
       );
       expect(result).toBe("Artist/Album/track.mp3");
     });
+
+    it("preserves full Artist/Album/filename when Unknown metadata + libraryFolderId", () => {
+      // Regression: relParts.map(sanitizeDevicePathComponent) used to pass the
+      // array index as the function's `maxLen` parameter, truncating each
+      // segment to N characters and producing paths like "/P/01" instead of
+      // "Black Sabbath/Paranoid/01 - War Pigs.opus".
+      const folderPaths = new Map([[7, "/Users/pedro/Music/music-lib"]]);
+      const result = computeDeviceRelativePath(
+        "/Users/pedro/Music/music-lib/Black Sabbath/Paranoid/01 - War Pigs.opus",
+        {
+          artist: "Unknown Artist",
+          album: "Unknown Album",
+          libraryFolderId: 7,
+        },
+        "music",
+        folderPaths
+      );
+      expect(result).toBe("Black Sabbath/Paranoid/01 - War Pigs.opus");
+    });
+
+    it("preserves both segments when libraryFolderId path has 2 relParts", () => {
+      // Branch C: relParts.length <= 2, basePath's baseName is not a folderName.
+      // Same map-callback bug applied here too.
+      const folderPaths = new Map([[1, "/library"]]);
+      const result = computeDeviceRelativePath(
+        "/library/Artist/track.mp3",
+        { artist: "", album: "", libraryFolderId: 1 },
+        "music",
+        folderPaths
+      );
+      expect(result).toBe("library/Artist/track.mp3");
+    });
   });
 
   describe("getProfileCodecExt", () => {
