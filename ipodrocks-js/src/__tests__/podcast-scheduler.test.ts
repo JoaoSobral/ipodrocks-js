@@ -26,6 +26,10 @@ vi.mock("../main/utils/prefs", () => ({
   getAutoPodcastSettings: vi.fn().mockReturnValue({ enabled: true, refreshIntervalMinutes: 15 }),
 }));
 
+vi.mock("../main/devices/device-online", () => ({
+  isDeviceMountPathOnline: vi.fn().mockReturnValue(true),
+}));
+
 import { refreshAll } from "../main/podcasts/podcast-refresh";
 import { syncPodcastsToDevice, getAutoPodcastDeviceIds } from "../main/podcasts/podcast-device-sync";
 import { getPodcastIndexConfig } from "../main/utils/prefs";

@@ -26,8 +26,15 @@ vi.mock("../main/sync/sync-executor", () => ({
   copyFileToDevice: vi.fn(),
 }));
 
+// The real check requires a mounted-volume `dev` mismatch which a tmpdir does
+// not provide; force it to true so the sync logic itself is what's tested.
+vi.mock("../main/devices/device-online", () => ({
+  isDeviceMountPathOnline: vi.fn().mockReturnValue(true),
+}));
+
 import { getReadyTargetEpisodes } from "../main/podcasts/podcast-refresh";
 import { copyFileToDevice } from "../main/sync/sync-executor";
+import { isDeviceMountPathOnline } from "../main/devices/device-online";
 
 let db: import("better-sqlite3").Database;
 let tmpMount: string;
@@ -209,6 +216,23 @@ describe("syncPodcastsToDevice", () => {
     const logEvent = events.find((e: any) => e.event === "log") as any;
     expect(logEvent).toBeDefined();
     expect(logEvent.message).toMatch(/no subscriptions/i);
+  });
+
+  it.skipIf(!canRunDbTests)("returns 0/0 when the device mount path is not actually online", async () => {
+    // Regression: previously used fs.existsSync, which returns true for orphan
+    // directories left after ejection. isDeviceMountPathOnline correctly treats
+    // those as offline (different filesystem dev id).
+    const deviceId = insertDevice({ autoPodcasts: true });
+    subscribe(db, testFeed);
+    vi.mocked(isDeviceMountPathOnline).mockReturnValueOnce(false);
+
+    vi.mocked(getReadyTargetEpisodes).mockReturnValue([
+      { id: 99, feedId: 7, localPath: "/fake/ep99.mp3" },
+    ]);
+
+    const result = await syncPodcastsToDevice(db, deviceId);
+    expect(result).toEqual({ synced: 0, errors: 0 });
+    expect(copyFileToDevice).not.toHaveBeenCalled();
   });
 
   it.skipIf(!canRunDbTests)("emits log message when all episodes are already synced", async () => {

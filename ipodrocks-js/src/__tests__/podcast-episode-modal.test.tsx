@@ -12,7 +12,7 @@ vi.mock("../renderer/ipc/api", () => ({
   podcastSetManualSelection: vi.fn().mockResolvedValue(undefined),
   podcastDownloadNow: vi.fn().mockResolvedValue({ ok: true }),
   podcastSearch: vi.fn().mockResolvedValue([]),
-  podcastGetSettings: vi.fn().mockResolvedValue({ hasApiKey: false, hasSecret: false, apiKey: "", apiSecret: "", autoEnabled: false, intervalMin: 15, downloadDir: "/tmp/auto-podcasts", downloadDirCustom: null }),
+  podcastGetSettings: vi.fn().mockResolvedValue({ hasApiKey: false, hasApiSecret: false, autoEnabled: false, intervalMin: 15, downloadDir: "/tmp/auto-podcasts", downloadDirCustom: null }),
   podcastSetSettings: vi.fn().mockResolvedValue(undefined),
   podcastSetDeviceAutoPodcasts: vi.fn().mockResolvedValue(undefined),
 }));

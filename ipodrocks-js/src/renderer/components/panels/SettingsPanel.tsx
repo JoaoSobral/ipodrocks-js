@@ -35,9 +35,7 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
   const [saving, setSaving] = useState(false);
   const [podcastSettings, setPodcastSettings] = useState<PodcastSettings>({
     hasApiKey: false,
-    hasSecret: false,
-    apiKey: "",
-    apiSecret: "",
+    hasApiSecret: false,
     autoEnabled: false,
     intervalMin: 15,
     downloadDir: "",
@@ -74,8 +72,10 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
         setAnalyzeWithEssentia(harmonic.analyzeWithEssentia ?? false);
         setAnalyzePercent(harmonic.analyzePercent ?? 10);
         setPodcastSettings(podcastCfg);
-        setPodcastApiKey(podcastCfg.apiKey);
-        setPodcastApiSecret(podcastCfg.apiSecret);
+        // Credentials are never sent to the renderer (F1); inputs stay blank
+        // and the placeholder indicates whether a value is already stored.
+        setPodcastApiKey("");
+        setPodcastApiSecret("");
         setPodcastDownloadDirDefault(podcastCfg.downloadDir);
         const loaded = podcastCfg.downloadDirCustom ?? podcastCfg.downloadDir;
         setPodcastDownloadDir(loaded);
@@ -130,9 +130,13 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
       });
       const customDir = podcastDownloadDir.trim();
       const folderChanged = customDir !== podcastDownloadDirOriginal;
+      // Only send credential fields when the user actually typed a value;
+      // an empty input means "leave the stored value untouched".
+      const newApiKey = podcastApiKey.trim();
+      const newApiSecret = podcastApiSecret.trim();
       await podcastSetSettings({
-        apiKey: podcastApiKey.trim() || undefined,
-        apiSecret: podcastApiSecret.trim() || undefined,
+        apiKey: newApiKey || undefined,
+        apiSecret: newApiSecret || undefined,
         autoEnabled: podcastSettings.autoEnabled,
         intervalMin: podcastSettings.intervalMin,
         downloadDir: customDir !== podcastDownloadDirDefault ? customDir : null,
@@ -320,14 +324,14 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
                 type="password"
                 value={podcastApiKey}
                 onChange={(e) => setPodcastApiKey(e.target.value)}
-                placeholder="Podcast Index API key"
+                placeholder={podcastSettings.hasApiKey ? "Stored — type to replace" : "Podcast Index API key"}
               />
               <Input
                 label="API Secret"
                 type="password"
                 value={podcastApiSecret}
                 onChange={(e) => setPodcastApiSecret(e.target.value)}
-                placeholder="Podcast Index API secret"
+                placeholder={podcastSettings.hasApiSecret ? "Stored — type to replace" : "Podcast Index API secret"}
               />
               <p className="text-xs text-muted-foreground">
                 Get your free API key at{" "}

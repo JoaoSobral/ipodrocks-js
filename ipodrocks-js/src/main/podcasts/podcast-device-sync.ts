@@ -1,4 +1,3 @@
-import * as fs from "fs";
 import * as path from "path";
 import type Database from "better-sqlite3";
 import { listSubscriptions } from "./podcast-subscriptions";
@@ -6,6 +5,7 @@ import { getReadyTargetEpisodes } from "./podcast-refresh";
 import { sanitizeDevicePathComponent } from "../sync/sync-core";
 import { copyFileToDevice } from "../sync/sync-executor";
 import type { SyncProgressPayload } from "../sync/sync-core";
+import { isDeviceMountPathOnline } from "../devices/device-online";
 
 type ProgressCallback = (event: SyncProgressPayload) => void;
 
@@ -17,7 +17,6 @@ interface DeviceRow {
 }
 
 interface EpisodeToSync {
-  subTitle: string;
   epId: number;
   localPath: string;
   destRelative: string;
@@ -43,7 +42,7 @@ export async function syncPodcastsToDevice(
     return { synced: 0, errors: 0 };
   }
 
-  if (!fs.existsSync(device.mount_path)) {
+  if (!isDeviceMountPathOnline(device.mount_path)) {
     return { synced: 0, errors: 0 };
   }
 
@@ -69,7 +68,7 @@ export async function syncPodcastsToDevice(
       const filename = `${ep.id}${ext}`;
       const destRelative = path.join(device.podcast_folder ?? "Podcasts", showDir, filename);
       const destAbsolute = path.join(device.mount_path, destRelative);
-      toSync.push({ subTitle: sub.title, epId: ep.id, localPath: ep.localPath, destRelative, destAbsolute });
+      toSync.push({ epId: ep.id, localPath: ep.localPath, destRelative, destAbsolute });
     }
   }
 
@@ -115,12 +114,14 @@ export async function syncPodcastsToDevice(
   return { synced, errors };
 }
 
-/** Returns device IDs of online devices that have auto_podcasts_enabled = 1. */
+/**
+ * Returns IDs of all devices with `auto_podcasts_enabled = 1`.
+ * Callers are responsible for checking `isDeviceMountPathOnline` before
+ * attempting to sync — this function does not filter by online status.
+ */
 export function getAutoPodcastDeviceIds(db: Database.Database): number[] {
   const rows = db
-    .prepare(
-      "SELECT id FROM devices WHERE auto_podcasts_enabled = 1"
-    )
+    .prepare("SELECT id FROM devices WHERE auto_podcasts_enabled = 1")
     .all() as { id: number }[];
   return rows.map((r) => r.id);
 }

@@ -81,37 +81,7 @@ function validateFolderPath(rawPath: string): { path: string } | { error: string
   return { path: realPath };
 }
 
-/**
- * Check whether a device mount path is actually online (volume is mounted).
- *
- * A device is considered online only when its mount path is a real mount
- * point — i.e., a separate filesystem. We verify this by comparing the `dev`
- * (filesystem device id) of the mount path against its parent directory:
- * a real mounted volume always has a different `dev` than its parent, while
- * a regular folder on the main filesystem (or an orphan directory left behind
- * after ejection) shares the parent's `dev`.
- *
- * `fs.existsSync` alone is not reliable because:
- *   - macOS/Linux can leave an empty orphan directory after ejection
- *   - a local folder "test device" always exists but is not a connected device
- *
- * On Windows (no POSIX dev ids in a meaningful way), we fall back to checking
- * that the path exists and is a directory; Windows drive letters are naturally
- * isolated so this is sufficient there.
- */
-function isDeviceMountPathOnline(mountPath: string): boolean {
-  if (!mountPath) return false;
-  try {
-    const resolved = path.resolve(mountPath);
-    const pathStat = fs.statSync(resolved);
-    if (!pathStat.isDirectory()) return false;
-    if (process.platform === "win32") return true;
-    const parentStat = fs.statSync(path.dirname(resolved));
-    return pathStat.dev !== parentStat.dev;
-  } catch {
-    return false;
-  }
-}
+import { isDeviceMountPathOnline } from "./devices/device-online";
 
 import {
   AddDeviceConfig,
@@ -2374,6 +2344,7 @@ export function registerIpcHandlers(): void {
     safe("podcast:setManualSelection", async (_event, subId: number, episodeIds: number[]) => {
       const db = getLibrary().getConnection();
       setManualSelection(db, subId, episodeIds);
+      invalidateAssistantCache(); // F9: podcast config changed
       return undefined;
     })
   );
@@ -2411,17 +2382,18 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     "podcast:getSettings",
     safe("podcast:getSettings", async () => {
-      const raw = readPrefs().podcastIndexConfig;
+      const prefs = readPrefs();
+      const raw = prefs.podcastIndexConfig;
       const autoSettings = getAutoPodcastSettings();
+      // Never return plaintext credentials to the renderer (F1) — only booleans
+      // indicating whether each is configured.
       return {
-        hasApiKey: !!(raw?.apiKey?.trim()),
-        hasSecret: !!(raw?.apiSecret?.trim()),
-        apiKey: raw?.apiKey ?? "",
-        apiSecret: raw?.apiSecret ?? "",
+        hasApiKey: !!raw?.apiKey?.trim(),
+        hasApiSecret: !!raw?.apiSecret?.trim(),
         autoEnabled: autoSettings.enabled,
         intervalMin: autoSettings.refreshIntervalMinutes,
         downloadDir: getDefaultPodcastsRoot(),
-        downloadDirCustom: readPrefs().autoPodcasts?.downloadDir ?? null,
+        downloadDirCustom: prefs.autoPodcasts?.downloadDir ?? null,
       };
     })
   );
@@ -2439,12 +2411,24 @@ export function registerIpcHandlers(): void {
           apiSecret: payload.apiSecret ?? current.apiSecret,
         });
       }
+
+      const intervalChanged =
+        payload.intervalMin !== undefined &&
+        payload.intervalMin !== getAutoPodcastSettings().refreshIntervalMinutes;
+
       if (payload.autoEnabled !== undefined || payload.intervalMin !== undefined || "downloadDir" in payload) {
         setAutoPodcastSettings({
           enabled: payload.autoEnabled,
           refreshIntervalMinutes: payload.intervalMin,
           downloadDir: payload.downloadDir ?? undefined,
         });
+      }
+
+      // Restart the scheduler when the refresh interval changes so the new
+      // cadence takes effect without requiring an app restart.
+      if (intervalChanged) {
+        stopPodcastScheduler();
+        startPodcastScheduler(getLibrary().getConnection());
       }
       return undefined;
     })

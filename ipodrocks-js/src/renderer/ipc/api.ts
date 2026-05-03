@@ -742,9 +742,7 @@ export async function cancelPlayback(): Promise<void> {
 
 export interface PodcastSettings {
   hasApiKey: boolean;
-  hasSecret: boolean;
-  apiKey: string;
-  apiSecret: string;
+  hasApiSecret: boolean;
   autoEnabled: boolean;
   intervalMin: number;
   downloadDir: string;
