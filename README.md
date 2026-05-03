@@ -12,7 +12,7 @@
 
 ## ✨ Why iPodRocks?
 
-iPodRocks is a sync manager for Rockbox devices — and any mountable player. Multiple libraries, shadow transcoding, auto-downloading podcasts, AI-powered playlists, harmonic mixing, and AI assistant Rocksy that knows your entire collection. All in one desktop app.
+iPodRocks is a sync manager for [Rockbox devices](https://www.rockbox.org/) — and any mountable player. Multiple libraries, shadow transcoding, auto-downloading podcasts, AI-powered playlists, harmonic mixing, and AI assistant Rocksy that knows your entire collection. All in one desktop app.
 
 ### What is not!
 
