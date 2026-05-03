@@ -52,6 +52,8 @@ After adding, a scan runs automatically. You can run **Scan Library** again anyt
 
 The app creates `Music`, `Podcasts`, `Audiobooks`, and `Playlists` folders on the device if they do not exist.
 
+> **Auto Podcasts** — to enable automatic podcast sync for a device, you need a free [Podcast Index API key](https://podcastindex.org/developer). Add the key and secret in **Settings** → Podcasts before enabling Auto Podcasts on the device.
+
 ## Run your first sync
 
 1. Open **Sync** from the sidebar.

@@ -28,6 +28,10 @@ FFmpeg is bundled automatically. No separate installation is required.
 
 Required for **Savant playlists** and **Rocksy** chat. Get your API key at [openrouter.ai/keys](https://openrouter.ai/keys), then add it in **Settings** (gear icon) → OpenRouter API. You can test the connection before saving.
 
+## Podcast Index API key
+
+Required for **Auto Podcasts** (automatic podcast sync to devices). Get a free API key at [podcastindex.org/developer](https://podcastindex.org/developer), then add the key and secret in **Settings** → Podcasts → API credentials.
+
 ## Musepack (mpcenc)
 
 Required only if you use Musepack (MPC) as a codec for devices or shadow libraries.
