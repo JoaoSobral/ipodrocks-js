@@ -31,18 +31,17 @@ iPodRocks is NOT a library manager. I strongly advise you to use beets and beets
 ### Devices
 <img src="https://github.com/JoaoSobral/ipodrocks-js/blob/main/ipodrocks-js/docs/screenshots/devices.png?raw=true" width="70%">
 
-### Playlists — Smart, Genius, Savant
-<img src="https://github.com/JoaoSobral/ipodrocks-js/blob/main/ipodrocks-js/docs/screenshots/playlist-create.png?raw=true" width="70%">
-<img src="https://github.com/JoaoSobral/ipodrocks-js/blob/main/ipodrocks-js/docs/screenshots/playlist-smart.png?raw=true" width="70%">
+### Auto-Podcasts
+<img src="https://github.com/JoaoSobral/ipodrocks-js/blob/main/ipodrocks-js/docs/screenshots/autopodcasts.png?raw=true" width="70%">
+
+### Playlists
 <img src="https://github.com/JoaoSobral/ipodrocks-js/blob/main/ipodrocks-js/docs/screenshots/playlist-genius.png?raw=true" width="70%">
-<img src="https://github.com/JoaoSobral/ipodrocks-js/blob/main/ipodrocks-js/docs/screenshots/playlist-savant.png?raw=true" width="70%">
 
 ### Sync
 <img src="https://github.com/JoaoSobral/ipodrocks-js/blob/main/ipodrocks-js/docs/screenshots/sync.png?raw=true" width="70%">
 
 ### Rocksy — create playlists by chat
-<img src="https://github.com/JoaoSobral/ipodrocks-js/blob/main/ipodrocks-js/docs/screenshots/assistant-create.png?raw=true" width="40%">
-<img src="https://github.com/JoaoSobral/ipodrocks-js/blob/main/ipodrocks-js/docs/screenshots/playlist-result.png?raw=true" width="70%">
+<img src="https://github.com/JoaoSobral/ipodrocks-js/blob/main/ipodrocks-js/docs/screenshots/assistant-chat.png?raw=true" width="70%">
 
 ### Light & Dark themes
 <img src="https://github.com/JoaoSobral/ipodrocks-js/blob/main/ipodrocks-js/docs/screenshots/welcome-light.png?raw=true" width="45%"> <img src="https://github.com/JoaoSobral/ipodrocks-js/blob/main/ipodrocks-js/docs/screenshots/welcome-dark.png?raw=true" width="45%">
