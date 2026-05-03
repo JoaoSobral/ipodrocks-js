@@ -70,14 +70,14 @@ afterEach(() => {
   if (tmpSrc) fs.rmSync(tmpSrc, { recursive: true, force: true });
 });
 
-function insertDevice(opts: { autoPodcasts: boolean }): number {
+function insertDevice(opts: { autoPodcasts: boolean; devMode?: boolean }): number {
   const modeRow = db.prepare("SELECT id FROM device_transfer_modes WHERE name='copy'").get() as { id: number };
   const result = db.prepare([
     "INSERT INTO devices",
     "(name, mount_path, music_folder, podcast_folder, audiobook_folder, playlist_folder,",
-    " default_transfer_mode_id, auto_podcasts_enabled)",
-    "VALUES (?, ?, 'Music', 'Podcasts', 'Audiobooks', 'Playlists', ?, ?)",
-  ].join(" ")).run("TestDevice", tmpMount, modeRow.id, opts.autoPodcasts ? 1 : 0);
+    " default_transfer_mode_id, auto_podcasts_enabled, dev_mode)",
+    "VALUES (?, ?, 'Music', 'Podcasts', 'Audiobooks', 'Playlists', ?, ?, ?)",
+  ].join(" ")).run("TestDevice", tmpMount, modeRow.id, opts.autoPodcasts ? 1 : 0, opts.devMode ? 1 : 0);
   return Number(result.lastInsertRowid);
 }
 
@@ -233,6 +233,29 @@ describe("syncPodcastsToDevice", () => {
     const result = await syncPodcastsToDevice(db, deviceId);
     expect(result).toEqual({ synced: 0, errors: 0 });
     expect(copyFileToDevice).not.toHaveBeenCalled();
+  });
+
+  it.skipIf(!canRunDbTests)("syncs to a dev mode device even when isDeviceMountPathOnline returns false", async () => {
+    const deviceId = insertDevice({ autoPodcasts: true, devMode: true });
+    subscribe(db, testFeed);
+
+    const srcFile = path.join(tmpSrc, "ep_dev.mp3");
+    fs.writeFileSync(srcFile, Buffer.alloc(50));
+
+    vi.mocked(isDeviceMountPathOnline).mockReturnValue(false);
+    vi.mocked(getReadyTargetEpisodes).mockReturnValue([
+      { id: 50, feedId: 7, localPath: srcFile },
+    ]);
+    vi.mocked(copyFileToDevice).mockImplementation(async (_src, dest) => {
+      fs.mkdirSync(path.dirname(dest), { recursive: true });
+      fs.copyFileSync(srcFile, dest);
+      return true;
+    });
+
+    const result = await syncPodcastsToDevice(db, deviceId);
+    expect(result.synced).toBe(1);
+    expect(result.errors).toBe(0);
+    expect(copyFileToDevice).toHaveBeenCalled();
   });
 
   it.skipIf(!canRunDbTests)("emits log message when all episodes are already synced", async () => {

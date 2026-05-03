@@ -7,7 +7,7 @@ const USER_AGENT = "iPodRocks/1.0";
 function buildHeaders(apiKey: string, apiSecret: string): Record<string, string> {
   const authDate = Math.floor(Date.now() / 1000).toString();
   // Podcast Index API mandates SHA-1(apiKey + apiSecret + authDate) — not our choice.
-  // lgtm[js/weak-cryptographic-algorithm]
+  // lgtm[js/weak-cryptographic-algorithm, js/insufficient-password-hash]
   const hash = crypto
     .createHash("sha1")
     .update(apiKey + apiSecret + authDate)

@@ -7,24 +7,34 @@ import { isDeviceMountPathOnline } from "../devices/device-online";
 interface DeviceRow {
   id: number;
   mount_path: string;
+  dev_mode: number;
 }
 
-function getDeviceMountPath(db: Database.Database, deviceId: number): string | null {
-  const row = db
-    .prepare("SELECT id, mount_path FROM devices WHERE id = ?")
-    .get(deviceId) as DeviceRow | undefined;
-  return row?.mount_path ?? null;
+function getDeviceInfo(db: Database.Database, deviceId: number): DeviceRow | null {
+  return (
+    (db
+      .prepare("SELECT id, mount_path, dev_mode FROM devices WHERE id = ?")
+      .get(deviceId) as DeviceRow | undefined) ?? null
+  );
 }
 
 async function runRefreshAndSync(db: Database.Database): Promise<void> {
+  console.log("[autopod-debug] runRefreshAndSync start");
   const config = getPodcastIndexConfig();
+  console.log(`[autopod-debug] podcastIndexConfig present=${!!config}`);
   if (!config) return;
 
   await refreshAll(db, config.apiKey, config.apiSecret);
 
-  for (const deviceId of getAutoPodcastDeviceIds(db)) {
-    const mountPath = getDeviceMountPath(db, deviceId);
-    if (!mountPath || !isDeviceMountPathOnline(mountPath)) continue;
+  const autoPodDeviceIds = getAutoPodcastDeviceIds(db);
+  console.log(`[autopod-debug] auto-podcast device IDs:`, autoPodDeviceIds);
+  for (const deviceId of autoPodDeviceIds) {
+    const info = getDeviceInfo(db, deviceId);
+    const mountPath = info?.mount_path ?? null;
+    const devMode = !!(info?.dev_mode);
+    const online = mountPath ? (devMode || isDeviceMountPathOnline(mountPath)) : false;
+    console.log(`[autopod-debug] deviceId=${deviceId} mountPath="${mountPath}" devMode=${devMode} online=${online}`);
+    if (!mountPath || !online) continue;
     await syncPodcastsToDevice(db, deviceId);
   }
 }
@@ -34,6 +44,7 @@ let pollerTimer: ReturnType<typeof setInterval> | null = null;
 let lastOnlineDeviceIds = new Set<number>();
 
 export function startPodcastScheduler(db: Database.Database): void {
+  console.log("[autopod-debug] startPodcastScheduler called");
   // Boot refresh — runRefreshAndSync no-ops when creds are missing.
   runRefreshAndSync(db).catch((err) =>
     console.error("[podcasts] boot refresh failed:", err)
@@ -60,10 +71,12 @@ export function startPodcastScheduler(db: Database.Database): void {
       if (!getPodcastIndexConfig()) return;
 
       for (const deviceId of getAutoPodcastDeviceIds(db)) {
-        const mountPath = getDeviceMountPath(db, deviceId);
+        const info = getDeviceInfo(db, deviceId);
+        const mountPath = info?.mount_path ?? null;
         if (mountPath === null) continue;
 
-        const online = isDeviceMountPathOnline(mountPath);
+        const devMode = !!(info?.dev_mode);
+        const online = devMode || isDeviceMountPathOnline(mountPath);
         const wasOnline = lastOnlineDeviceIds.has(deviceId);
 
         if (online) lastOnlineDeviceIds.add(deviceId);

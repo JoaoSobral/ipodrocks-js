@@ -1261,6 +1261,7 @@ export function registerIpcHandlers(): void {
       const willRunAudiobook = Object.keys(audiobookLibraryTracks).length > 0;
       const hasAutoPodcasts = device.profile.autoPodcastsEnabled === true;
       const isEmptyLibrary = !willRunMusic && !willRunPodcast && !willRunAudiobook;
+      console.log(`[autopod-debug] sync:start deviceId=${opts.deviceId} autoPodcastsEnabled=${device.profile.autoPodcastsEnabled} hasAutoPodcasts=${hasAutoPodcasts} isEmptyLibrary=${isEmptyLibrary}`);
 
       if (isEmptyLibrary && !hasAutoPodcasts) {
         const isShadow = device.profile.sourceLibraryType === "shadow" && device.profile.shadowLibraryId != null;
@@ -1425,8 +1426,10 @@ export function registerIpcHandlers(): void {
       }
 
       if (hasAutoPodcasts) {
+        console.log(`[autopod-debug] entering auto-podcast sync phase for deviceId=${opts.deviceId}`);
         try {
           const autoPodResult = await syncPodcastsToDevice(lib.getConnection(), opts.deviceId, syncOpts.progressCallback);
+          console.log(`[autopod-debug] auto-podcast sync result:`, autoPodResult);
           result.synced += autoPodResult.synced;
           result.errors += autoPodResult.errors;
         } catch (err) {

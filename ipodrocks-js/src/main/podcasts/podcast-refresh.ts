@@ -166,6 +166,7 @@ export function getReadyTargetEpisodes(
   const sub = db
     .prepare("SELECT id, feed_id, auto_count FROM podcast_subscriptions WHERE id = ?")
     .get(subId) as SubRow | undefined;
+  console.log(`[autopod-debug] getReadyTargetEpisodes subId=${subId} sub=${JSON.stringify(sub)}`);
   if (!sub) return [];
 
   let rows: Array<{ id: number; local_path: string }>;
@@ -188,6 +189,12 @@ export function getReadyTargetEpisodes(
       )
       .all(subId) as Array<{ id: number; local_path: string }>;
   }
+
+  // Also log non-ready episodes for diagnostics
+  const allEps = db
+    .prepare("SELECT id, download_state, local_path, manual_selected FROM podcast_episodes WHERE subscription_id = ? ORDER BY published_at DESC LIMIT 10")
+    .all(subId) as Array<{ id: number; download_state: string; local_path: string | null; manual_selected: number }>;
+  console.log(`[autopod-debug] subId=${subId} auto_count=${sub.auto_count} ready rows=${rows.length} all recent episodes:`, JSON.stringify(allEps));
 
   return rows.map((r) => ({ id: r.id, feedId: sub.feed_id, localPath: r.local_path }));
 }
