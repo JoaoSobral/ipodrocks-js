@@ -26,7 +26,7 @@ Grab the latest release for macOS or Windows from the [GitHub Releases page](htt
 
 ## What is iPodRocks?
 
-iPodRocks is a **sync manager** for Rockbox devices and any mountable player. It is **not** a library manager — use [beets](https://beets.io/) or similar to manage your collection. Once your library is ready, iPodRocks syncs it to multiple devices with transcoding, playlists, and AI-powered features.
+iPodRocks is a **sync manager** for [Rockbox devices](https://www.rockbox.org/) and any mountable player. It is **not** a library manager — use [beets](https://beets.io/) or similar to manage your collection. Once your library is ready, iPodRocks syncs it to multiple devices with transcoding, playlists, and AI-powered features.
 
 ## Key features
 
