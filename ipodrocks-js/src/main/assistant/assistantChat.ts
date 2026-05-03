@@ -25,11 +25,13 @@ const LIBRARY_CONTEXT_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
 let libraryContextCache: { text: string; ts: number } | null = null;
 let playlistInstructionsCache: { text: string; ts: number } | null = null;
+let appDataContextCache: { text: string; ts: number } | null = null;
 
-/** Invalidate the assistant context caches (call after library/playlist changes). */
+/** Invalidate the assistant context caches (call after library/playlist/device/podcast changes). */
 export function invalidateAssistantCache(): void {
   libraryContextCache = null;
   playlistInstructionsCache = null;
+  appDataContextCache = null;
 }
 
 function buildLibraryContext(db: Database.Database): string {
@@ -221,9 +223,280 @@ function buildLibraryContext(db: Database.Database): string {
   return lines.join("\n");
 }
 
+function buildDevicesContext(db: Database.Database): string {
+  const devices = db
+    .prepare(
+      `SELECT d.id, d.name, d.mount_path, d.music_folder, d.podcast_folder,
+              d.audiobook_folder, d.playlist_folder, d.description,
+              d.last_sync_date, d.total_synced_items, d.last_sync_count,
+              d.source_library_type, d.shadow_library_id,
+              d.partial_sync_enabled, d.skip_playback_log, d.rockbox_smart_playlists,
+              d.dev_mode, d.auto_podcasts_enabled,
+              dm.name as model_name,
+              cc.name as codec_config_name, co.name as codec_name,
+              cc.bitrate_value, cc.quality_value, cc.bits_per_sample,
+              dtm.name as transfer_mode,
+              sl.name as shadow_library_name
+       FROM devices d
+       LEFT JOIN device_models dm ON d.model_id = dm.id
+       LEFT JOIN codec_configurations cc ON d.default_codec_config_id = cc.id
+       LEFT JOIN codecs co ON cc.codec_id = co.id
+       LEFT JOIN device_transfer_modes dtm ON d.default_transfer_mode_id = dtm.id
+       LEFT JOIN shadow_libraries sl ON d.shadow_library_id = sl.id
+       ORDER BY d.id`
+    )
+    .all() as Array<{
+    id: number;
+    name: string;
+    mount_path: string;
+    music_folder: string;
+    podcast_folder: string;
+    audiobook_folder: string;
+    playlist_folder: string;
+    description: string | null;
+    last_sync_date: string | null;
+    total_synced_items: number;
+    last_sync_count: number;
+    source_library_type: string;
+    shadow_library_id: number | null;
+    partial_sync_enabled: number;
+    skip_playback_log: number;
+    rockbox_smart_playlists: number;
+    dev_mode: number;
+    auto_podcasts_enabled: number;
+    model_name: string | null;
+    codec_config_name: string | null;
+    codec_name: string | null;
+    bitrate_value: number | null;
+    quality_value: number | null;
+    bits_per_sample: number | null;
+    transfer_mode: string | null;
+    shadow_library_name: string | null;
+  }>;
+
+  const getSyncPrefs = db.prepare(
+    `SELECT sync_type, extra_track_policy, include_music, include_podcasts,
+            include_audiobooks, include_playlists, skip_album_artwork
+     FROM device_sync_preferences WHERE device_id = ?`
+  );
+
+  if (devices.length === 0) return "## Devices\nNo devices configured.";
+
+  const lines = ["## Devices", `Total: ${devices.length}`];
+  for (const d of devices) {
+    lines.push("", `### Device: ${d.name}`);
+    lines.push(`- Model: ${d.model_name ?? "Unknown"}`);
+    lines.push(`- Mount path: ${d.mount_path}`);
+    lines.push(
+      `- Folders: Music: ${d.music_folder}, Podcasts: ${d.podcast_folder}, Audiobooks: ${d.audiobook_folder}, Playlists: ${d.playlist_folder}`
+    );
+    if (d.codec_config_name) {
+      const bitrateLabel = d.bitrate_value
+        ? `${d.bitrate_value}kbps`
+        : d.quality_value
+          ? `Q${d.quality_value}`
+          : d.bits_per_sample
+            ? `${d.bits_per_sample}bit`
+            : "";
+      lines.push(
+        `- Codec: ${d.codec_name ?? "?"} / ${d.codec_config_name}${bitrateLabel ? ` (${bitrateLabel})` : ""}`
+      );
+    }
+    const shadowSuffix =
+      d.source_library_type === "shadow" && d.shadow_library_name
+        ? ` → ${d.shadow_library_name}`
+        : "";
+    lines.push(`- Source library: ${d.source_library_type}${shadowSuffix}`);
+    lines.push(
+      `- Last sync: ${d.last_sync_date ?? "Never"} (total synced: ${d.total_synced_items}, last run: ${d.last_sync_count})`
+    );
+    const flags: string[] = [];
+    if (d.auto_podcasts_enabled) flags.push("AutoPodcasts");
+    if (d.skip_playback_log) flags.push("SkipPlaybackLog");
+    if (d.dev_mode) flags.push("DevMode");
+    if (d.rockbox_smart_playlists) flags.push("RockboxSmartPlaylists");
+    if (d.partial_sync_enabled) flags.push("PartialSync");
+    if (flags.length > 0) lines.push(`- Features: ${flags.join(", ")}`);
+    if (d.description) lines.push(`- Notes: ${d.description}`);
+    const prefs = getSyncPrefs.get(d.id) as {
+      sync_type: string;
+      extra_track_policy: string;
+      include_music: number;
+      include_podcasts: number;
+      include_audiobooks: number;
+      include_playlists: number;
+      skip_album_artwork: number;
+    } | undefined;
+    if (prefs) {
+      const content: string[] = [];
+      if (prefs.include_music) content.push("music");
+      if (prefs.include_podcasts) content.push("podcasts");
+      if (prefs.include_audiobooks) content.push("audiobooks");
+      if (prefs.include_playlists) content.push("playlists");
+      lines.push(
+        `- Sync config: ${prefs.sync_type}${content.length ? ` (${content.join(", ")})` : ""}, extra tracks: ${prefs.extra_track_policy}${prefs.skip_album_artwork ? ", no artwork" : ""}`
+      );
+    }
+  }
+
+  return lines.join("\n");
+}
+
+function buildShadowLibrariesContext(db: Database.Database): string {
+  const libs = db
+    .prepare(
+      `SELECT sl.id, sl.name, sl.path, sl.status, sl.created_at,
+              cc.name as codec_config_name, co.name as codec_name,
+              cc.bitrate_value, cc.quality_value, cc.bits_per_sample,
+              (SELECT COUNT(*) FROM shadow_tracks st
+               WHERE st.shadow_library_id = sl.id AND st.status = 'synced') as synced_tracks,
+              (SELECT COUNT(*) FROM shadow_tracks st
+               WHERE st.shadow_library_id = sl.id) as total_tracks
+       FROM shadow_libraries sl
+       JOIN codec_configurations cc ON sl.codec_config_id = cc.id
+       JOIN codecs co ON cc.codec_id = co.id
+       ORDER BY sl.id`
+    )
+    .all() as Array<{
+    id: number;
+    name: string;
+    path: string;
+    status: string;
+    created_at: string;
+    codec_config_name: string;
+    codec_name: string;
+    bitrate_value: number | null;
+    quality_value: number | null;
+    bits_per_sample: number | null;
+    synced_tracks: number;
+    total_tracks: number;
+  }>;
+
+  const getDevicesUsing = db.prepare(
+    "SELECT name FROM devices WHERE shadow_library_id = ?"
+  );
+
+  if (libs.length === 0) return "## Shadow Libraries\nNo shadow libraries configured.";
+
+  const lines = ["## Shadow Libraries", `Total: ${libs.length}`];
+  for (const sl of libs) {
+    const bitrateLabel = sl.bitrate_value
+      ? `${sl.bitrate_value}kbps`
+      : sl.quality_value
+        ? `Q${sl.quality_value}`
+        : sl.bits_per_sample
+          ? `${sl.bits_per_sample}bit`
+          : "";
+    const usingDevices = (
+      getDevicesUsing.all(sl.id) as Array<{ name: string }>
+    ).map((d) => d.name);
+    lines.push("", `### Shadow Library: ${sl.name}`);
+    lines.push(
+      `- Codec: ${sl.codec_name} / ${sl.codec_config_name}${bitrateLabel ? ` (${bitrateLabel})` : ""}`
+    );
+    lines.push(`- Path: ${sl.path}`);
+    lines.push(
+      `- Status: ${sl.status} (${sl.synced_tracks}/${sl.total_tracks} tracks synced)`
+    );
+    lines.push(
+      `- Used by devices: ${usingDevices.length > 0 ? usingDevices.join(", ") : "none"}`
+    );
+  }
+
+  return lines.join("\n");
+}
+
+function buildAutoPodcastsContext(
+  db: Database.Database,
+  autoPodcastEnabled: boolean,
+  autoPodcastIntervalMin: number
+): string {
+  const subs = db
+    .prepare(
+      `SELECT ps.id, ps.title, ps.author, ps.auto_count, ps.last_refreshed_at,
+              (SELECT COUNT(*) FROM podcast_episodes pe WHERE pe.subscription_id = ps.id) as total_eps,
+              (SELECT COUNT(*) FROM podcast_episodes pe
+               WHERE pe.subscription_id = ps.id AND pe.download_state = 'ready') as ready_eps,
+              (SELECT COUNT(*) FROM podcast_episodes pe
+               WHERE pe.subscription_id = ps.id AND pe.download_state = 'pending') as pending_eps,
+              (SELECT COUNT(*) FROM podcast_episodes pe
+               WHERE pe.subscription_id = ps.id AND pe.download_state = 'failed') as failed_eps
+       FROM podcast_subscriptions ps
+       ORDER BY ps.title`
+    )
+    .all() as Array<{
+    id: number;
+    title: string;
+    author: string | null;
+    auto_count: number;
+    last_refreshed_at: string | null;
+    total_eps: number;
+    ready_eps: number;
+    pending_eps: number;
+    failed_eps: number;
+  }>;
+
+  const devicesWithPodcasts = db
+    .prepare("SELECT name FROM devices WHERE auto_podcasts_enabled = 1")
+    .all() as Array<{ name: string }>;
+
+  const lines = [
+    "## Auto Podcasts",
+    `- Auto-download: ${autoPodcastEnabled ? `enabled (refresh every ${autoPodcastIntervalMin} min)` : "disabled"}`,
+    `- Devices with auto-podcasts: ${devicesWithPodcasts.length > 0 ? devicesWithPodcasts.map((d) => d.name).join(", ") : "none"}`,
+    `- Subscriptions: ${subs.length}`,
+  ];
+
+  if (subs.length > 0) {
+    lines.push("", "### Subscriptions");
+    for (const s of subs) {
+      const autoLabel =
+        s.auto_count === 0 ? "manual selection" : `auto latest ${s.auto_count}`;
+      const statusLabel =
+        s.failed_eps > 0
+          ? "has errors"
+          : s.pending_eps > 0
+            ? "pending downloads"
+            : s.ready_eps > 0
+              ? "up-to-date"
+              : "no episodes";
+      lines.push(
+        `- **${s.title}**${s.author ? ` by ${s.author}` : ""} — ${autoLabel}, ${s.ready_eps}/${s.total_eps} ready (${statusLabel}), last refreshed: ${s.last_refreshed_at ?? "never"}`
+      );
+    }
+  }
+
+  return lines.join("\n");
+}
+
+function buildActivityContext(db: Database.Database): string {
+  const entries = db
+    .prepare(
+      `SELECT operation, detail, created_at
+       FROM activity_log
+       ORDER BY id DESC
+       LIMIT 20`
+    )
+    .all() as Array<{
+    operation: string;
+    detail: string | null;
+    created_at: string;
+  }>;
+
+  if (entries.length === 0) return "## Recent Activity\nNo recent activity.";
+
+  const lines = ["## Recent Activity (last 20 events)"];
+  for (const e of entries) {
+    lines.push(
+      `- [${e.created_at}] ${e.operation}${e.detail ? `: ${e.detail}` : ""}`
+    );
+  }
+  return lines.join("\n");
+}
+
 const ASSISTANT_SYSTEM_PROMPT = `You are Rocksy, the user's music buddy inside iPodRocks, a personal music library and iPod sync app.
 You're warm, enthusiastic, and genuinely passionate about music. Talk like a close friend who shares their love of music — not a corporate assistant reading from a database.
-You have full knowledge of their library (tracks, artists, albums, genres, playlists, listening history, harmonic data) AND full knowledge of how iPodRocks works (all features, panels, settings, troubleshooting). Use both to give personal, helpful responses.
+You have full knowledge of their setup: library (tracks, artists, albums, genres, playlists, listening history, harmonic data), all configured devices (models, codec profiles, sync settings, last sync dates), shadow libraries (transcoded copies), auto-podcast subscriptions and episode status, recent app activity, AND full knowledge of how iPodRocks works (all features, panels, settings, troubleshooting). Use all of this to give personal, helpful responses.
 
 Personality guidelines:
 - Be warm, casual, and personal. Use their name naturally if you know it from pinned memories.
@@ -240,6 +513,7 @@ Format your replies with **Markdown** for readability:
 - Use numbered lists for step-by-step guidance.
 - Use *italic* for emphasis or song titles.
 - Use \`code\` for technical terms (e.g. genres, key/BPM).
+- Always wrap file paths and directory paths in \`code\` backticks (e.g. \`/Users/you/Music\`). Never write a path as plain text.
 - Add line breaks between logical sections.`;
 
 // ---------------------------------------------------------------------------
@@ -627,10 +901,41 @@ ${geniusList}
 `;
 }
 
+export interface AppPaths {
+  userData: string;
+  podcastsRoot: string;
+  autoPodcastEnabled: boolean;
+  autoPodcastIntervalMin: number;
+}
+
+function buildAppPathsContext(db: Database.Database, paths: AppPaths): string {
+  const folders = db
+    .prepare("SELECT name, path, content_type FROM library_folders ORDER BY content_type, name")
+    .all() as Array<{ name: string; path: string; content_type: string }>;
+
+  const lines: string[] = ["## App paths"];
+  lines.push(`- App data directory: ${paths.userData}`);
+  lines.push(`- Database: ${paths.userData}/ipodrock.db`);
+  lines.push(`- Preferences file: ${paths.userData}/ipodrocks-prefs.json`);
+  lines.push(`- Auto-podcasts storage: ${paths.podcastsRoot}`);
+
+  if (folders.length > 0) {
+    lines.push("", "## Library folders");
+    for (const f of folders) {
+      lines.push(`- [${f.content_type}] ${f.name}: ${f.path}`);
+    }
+  } else {
+    lines.push("", "## Library folders", "- No library folders configured yet.");
+  }
+
+  return lines.join("\n");
+}
+
 export async function sendAssistantMessage(
   messages: Array<{ role: "user" | "assistant"; content: string }>,
   db: Database.Database,
-  config: OpenRouterConfig
+  config: OpenRouterConfig,
+  appPaths: AppPaths
 ): Promise<string> {
   // F9: Cache the expensive context queries with a 5-minute TTL
   const now = Date.now();
@@ -640,8 +945,24 @@ export async function sendAssistantMessage(
   if (!playlistInstructionsCache || now - playlistInstructionsCache.ts > LIBRARY_CONTEXT_TTL_MS) {
     playlistInstructionsCache = { text: buildPlaylistInstructions(db), ts: now };
   }
+  if (!appDataContextCache || now - appDataContextCache.ts > LIBRARY_CONTEXT_TTL_MS) {
+    const devicesCtx = buildDevicesContext(db);
+    const shadowCtx = buildShadowLibrariesContext(db);
+    const podcastCtx = buildAutoPodcastsContext(
+      db,
+      appPaths.autoPodcastEnabled,
+      appPaths.autoPodcastIntervalMin
+    );
+    appDataContextCache = {
+      text: `${devicesCtx}\n\n${shadowCtx}\n\n${podcastCtx}`,
+      ts: now,
+    };
+  }
   const libraryContext = libraryContextCache.text;
   const playlistInstructions = playlistInstructionsCache.text;
+  const appDataContext = appDataContextCache.text;
+  const appPathsContext = buildAppPathsContext(db, appPaths);
+  const activityContext = buildActivityContext(db);
 
   const { text: pinnedText, count: pinnedCount } =
     buildPinnedMemoriesContext(db);
@@ -654,7 +975,7 @@ export async function sendAssistantMessage(
     },
     {
       role: "system",
-      content: `${memoryInstructions}\n${playlistInstructions}\n<library_context>\n${libraryContext}\n</library_context>\n\nUse the app_docs from the earlier context to answer how-to and feature questions about iPodRocks. Use the library_context to answer questions about the user's specific music collection. If something is genuinely not covered by either, say so.`,
+      content: `${memoryInstructions}\n${playlistInstructions}\n<library_context>\n${libraryContext}\n</library_context>\n<app_data>\n${appDataContext}\n</app_data>\n<app_paths>\n${appPathsContext}\n</app_paths>\n<dashboard>\n${activityContext}\n</dashboard>\n\nUse the app_docs to answer how-to and feature questions about iPodRocks. Use library_context for the music collection. Use app_data for devices, shadow libraries, and podcast configuration. Use app_paths for file locations. Use dashboard for recent activity. If something is genuinely not covered, say so.`,
     },
     ...messages.map((m) => ({ role: m.role, content: m.content })),
   ];

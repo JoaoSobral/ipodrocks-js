@@ -24,6 +24,16 @@ interface Prefs {
   harmonic?: HarmonicPrefs;
   /** Unix ms timestamp — auto update check is suppressed until this time. */
   updateSnoozeUntil?: number;
+  podcastIndexConfig?: { apiKey: string; apiSecret: string };
+  /** Encrypted Podcast Index API key (base64). */
+  _encPodcastIndexApiKey?: string;
+  /** Encrypted Podcast Index API secret (base64). */
+  _encPodcastIndexSecret?: string;
+  autoPodcasts?: {
+    enabled?: boolean;
+    refreshIntervalMinutes?: number;
+    downloadDir?: string;
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -36,7 +46,7 @@ function getPrefsPath(): string {
   return path.join(app.getPath("userData"), PREFS_FILENAME);
 }
 
-function readPrefs(): Prefs {
+export function readPrefs(): Prefs {
   if (prefsCache !== null) return prefsCache;
   try {
     const p = getPrefsPath();
@@ -57,6 +67,38 @@ function readPrefs(): Prefs {
           delete parsed._encApiKey;
         } catch {
           // Decryption failed — fall through, apiKey may be missing
+        }
+      }
+
+      // Decrypt Podcast Index API key
+      if (parsed._encPodcastIndexApiKey && safeStorage.isEncryptionAvailable()) {
+        try {
+          const buf = Buffer.from(parsed._encPodcastIndexApiKey, "base64");
+          const decrypted = safeStorage.decryptString(buf);
+          if (parsed.podcastIndexConfig) {
+            parsed.podcastIndexConfig.apiKey = decrypted;
+          } else {
+            parsed.podcastIndexConfig = { apiKey: decrypted, apiSecret: "" };
+          }
+          delete parsed._encPodcastIndexApiKey;
+        } catch {
+          // Decryption failed — fall through
+        }
+      }
+
+      // Decrypt Podcast Index API secret
+      if (parsed._encPodcastIndexSecret && safeStorage.isEncryptionAvailable()) {
+        try {
+          const buf = Buffer.from(parsed._encPodcastIndexSecret, "base64");
+          const decrypted = safeStorage.decryptString(buf);
+          if (parsed.podcastIndexConfig) {
+            parsed.podcastIndexConfig.apiSecret = decrypted;
+          } else {
+            parsed.podcastIndexConfig = { apiKey: "", apiSecret: decrypted };
+          }
+          delete parsed._encPodcastIndexSecret;
+        } catch {
+          // Decryption failed — fall through
         }
       }
 
@@ -88,6 +130,32 @@ function writePrefs(prefs: Prefs): void {
         }
       } else {
         console.warn("[prefs] safeStorage unavailable, API key stored in plaintext");
+      }
+    }
+
+    // Encrypt Podcast Index API key
+    if (toWrite.podcastIndexConfig?.apiKey) {
+      if (safeStorage.isEncryptionAvailable()) {
+        try {
+          const encrypted = safeStorage.encryptString(toWrite.podcastIndexConfig.apiKey);
+          toWrite._encPodcastIndexApiKey = encrypted.toString("base64");
+          toWrite.podcastIndexConfig = { ...toWrite.podcastIndexConfig, apiKey: "" };
+        } catch {
+          console.warn("[prefs] safeStorage encryption failed for podcast api key");
+        }
+      }
+    }
+
+    // Encrypt Podcast Index API secret
+    if (toWrite.podcastIndexConfig?.apiSecret) {
+      if (safeStorage.isEncryptionAvailable()) {
+        try {
+          const encrypted = safeStorage.encryptString(toWrite.podcastIndexConfig.apiSecret);
+          toWrite._encPodcastIndexSecret = encrypted.toString("base64");
+          toWrite.podcastIndexConfig = { ...toWrite.podcastIndexConfig, apiSecret: "" };
+        } catch {
+          console.warn("[prefs] safeStorage encryption failed for podcast secret");
+        }
       }
     }
 
@@ -152,4 +220,40 @@ export function setHarmonicPrefs(prefs: HarmonicPrefs): void {
   const all = readPrefs();
   all.harmonic = { ...all.harmonic, ...prefs };
   writePrefs(all);
+}
+
+export function getPodcastIndexConfig(): { apiKey: string; apiSecret: string } | null {
+  const cfg = readPrefs().podcastIndexConfig;
+  if (!cfg?.apiKey?.trim() || !cfg?.apiSecret?.trim()) return null;
+  return cfg;
+}
+
+export function setPodcastIndexConfig(
+  config: { apiKey: string; apiSecret: string } | null
+): void {
+  const prefs = readPrefs();
+  prefs.podcastIndexConfig = config ?? undefined;
+  writePrefs(prefs);
+}
+
+export function getAutoPodcastSettings(): { enabled: boolean; refreshIntervalMinutes: number } {
+  const s = readPrefs().autoPodcasts;
+  return {
+    enabled: s?.enabled ?? false,
+    refreshIntervalMinutes: s?.refreshIntervalMinutes ?? 15,
+  };
+}
+
+export function setAutoPodcastSettings(settings: {
+  enabled?: boolean;
+  refreshIntervalMinutes?: number;
+  downloadDir?: string;
+}): void {
+  const prefs = readPrefs();
+  prefs.autoPodcasts = { ...prefs.autoPodcasts, ...settings };
+  writePrefs(prefs);
+}
+
+export function getPodcastDownloadDir(): string | null {
+  return readPrefs().autoPodcasts?.downloadDir ?? null;
 }

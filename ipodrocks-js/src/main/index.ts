@@ -4,6 +4,12 @@ import * as path from "path";
 import { registerIpcHandlers } from "./ipc";
 import { registerMediaScheme, registerMediaProtocol } from "./player/media-protocol";
 import { cleanupPlayerTemp } from "./player/player-source";
+import { stopPodcastScheduler } from "./podcasts/podcast-scheduler";
+
+// Prevent SharedImageManager/mailbox GPU overlay errors on macOS
+if (process.platform === "darwin") {
+  app.commandLine.appendSwitch("disable-gpu-compositing");
+}
 
 registerMediaScheme();
 
@@ -87,6 +93,7 @@ app.whenReady().then(() => {
 
 app.on("before-quit", () => {
   cleanupPlayerTemp();
+  stopPodcastScheduler();
 });
 
 app.on("window-all-closed", () => {

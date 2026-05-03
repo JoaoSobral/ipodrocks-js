@@ -528,6 +528,24 @@ export function SyncPanel() {
             </span>
           </div>
         )}
+        {selectedDevice?.autoPodcastsEnabled && (
+          <div
+            className="mt-2 flex items-center gap-2 rounded-md px-3 py-2 text-xs"
+            style={{
+              backgroundColor: "var(--primary)10",
+              border: "1px solid var(--primary)30",
+            }}
+          >
+            <span
+              className="inline-block h-2 w-2 rounded-full shrink-0"
+              style={{ backgroundColor: "var(--primary)" }}
+            />
+            <span className="text-foreground">
+              <span className="font-medium" style={{ color: "var(--primary)" }}>Auto Podcasts enabled</span>
+              {" — new episodes sync to this device automatically, regardless of sync type."}
+            </span>
+          </div>
+        )}
       </Card>
 
       {/* Configuration */}

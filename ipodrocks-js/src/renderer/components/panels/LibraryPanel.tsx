@@ -90,6 +90,7 @@ export function LibraryPanel() {
   const [showAddFolder, setShowAddFolder] = useState(false);
   const [folderName, setFolderName] = useState("");
   const [folderPath, setFolderPath] = useState("");
+  const [folderSubmitted, setFolderSubmitted] = useState(false);
   const [contentType, setContentType] = useState("music");
   const [showScanProgress, setShowScanProgress] = useState(false);
   const [foldersToScan, setFoldersToScan] = useState<
@@ -109,6 +110,7 @@ export function LibraryPanel() {
   const [showCreateShadow, setShowCreateShadow] = useState(false);
   const [shadowName, setShadowName] = useState("");
   const [shadowPath, setShadowPath] = useState("");
+  const [shadowSubmitted, setShadowSubmitted] = useState(false);
   const [shadowCodecConfigId, setShadowCodecConfigId] = useState<number | null>(null);
   const [codecConfigs, setCodecConfigs] = useState<CodecConfig[]>([]);
   const [shadowBuildProgress, setShadowBuildProgress] = useState<ShadowBuildProgress | null>(null);
@@ -263,7 +265,10 @@ export function LibraryPanel() {
   }
 
   async function handleAddFolder() {
-    if (!folderName.trim() || !folderPath.trim()) return;
+    if (!folderName.trim() || !folderPath.trim()) {
+      setFolderSubmitted(true);
+      return;
+    }
     const name = folderName.trim();
     const pathVal = folderPath.trim();
     const type = contentType;
@@ -271,6 +276,7 @@ export function LibraryPanel() {
     setShowAddFolder(false);
     setFolderName("");
     setFolderPath("");
+    setFolderSubmitted(false);
     fetchFolders();
     setFoldersToScan([{ name, path: pathVal, contentType: type }]);
     setShowScanProgress(true);
@@ -316,7 +322,11 @@ export function LibraryPanel() {
   );
 
   async function handleCreateShadow() {
-    if (!shadowName || !shadowPath || shadowCodecConfigId == null) return;
+    if (!shadowName || !shadowPath || shadowCodecConfigId == null) {
+      setShadowSubmitted(true);
+      return;
+    }
+    setShadowSubmitted(false);
     setShowCreateShadow(false);
     setShowShadowBuild(true);
     setShadowBuildProgress(null);
@@ -730,15 +740,19 @@ export function LibraryPanel() {
                     return (
                       <div
                         style={style}
-                        className={`flex items-center gap-2 px-2 py-1.5 text-xs hover:bg-muted/30 border-b border-border transition-colors cursor-default ${
+                        className={`group flex items-center gap-2 px-2 py-1.5 text-xs hover:bg-muted/30 border-b border-border transition-colors cursor-pointer ${
                           t.id === currentTrackId ? "bg-primary/10" : ""
                         }`}
+                        title="Double-click to play"
                         onDoubleClick={() => {
                           const start = Math.max(0, index - 250);
                           playTrack(t, filtered.slice(start, start + 500));
                         }}
                       >
-                        <span className="flex-[3] min-w-[120px] truncate text-foreground">{t.title}</span>
+                        <span className="flex-[3] min-w-[120px] flex items-center gap-1.5 overflow-hidden">
+                          <span className="shrink-0 opacity-0 group-hover:opacity-100 text-primary transition-opacity text-[10px] leading-none">▶</span>
+                          <span className="truncate text-foreground">{t.title}</span>
+                        </span>
                         <span className="flex-[2] min-w-[100px] truncate text-muted-foreground">{t.artist}</span>
                         <span className="flex-[2] min-w-[100px] truncate text-muted-foreground">{t.album}</span>
                         <span className="w-24 min-w-[80px] truncate text-muted-foreground">{t.genre}</span>
@@ -818,13 +832,14 @@ export function LibraryPanel() {
       )}
 
       {/* Add Folder Modal */}
-      <Modal open={showAddFolder} onClose={() => setShowAddFolder(false)} title="Add Library Folder">
+      <Modal open={showAddFolder} onClose={() => { setShowAddFolder(false); setFolderSubmitted(false); }} title="Add Library Folder">
         <div className="space-y-4">
           <Input
             label="Name"
             value={folderName}
             onChange={(e) => setFolderName(e.target.value)}
             placeholder="My Music"
+            hint={folderSubmitted && !folderName.trim() ? "Please enter a folder name" : undefined}
           />
           <div>
             <Label htmlFor="folder-path">Path</Label>
@@ -840,6 +855,9 @@ export function LibraryPanel() {
                 Browse
               </Button>
             </div>
+            {folderSubmitted && !folderPath.trim() && (
+              <p className="mt-1 text-xs text-blue-500">Please enter a folder path</p>
+            )}
           </div>
           <Select
             label="Content Type"
@@ -856,11 +874,10 @@ export function LibraryPanel() {
             Supported formats: MP3, M4A, FLAC, WAV, AIFF, OGG, Opus
           </p>
           <div className="flex justify-end gap-2 pt-2">
-            <Button onClick={() => setShowAddFolder(false)}>Cancel</Button>
+            <Button onClick={() => { setShowAddFolder(false); setFolderSubmitted(false); }}>Cancel</Button>
             <Button
               variant="primary"
               onClick={handleAddFolder}
-              disabled={!folderName.trim() || !folderPath.trim()}
             >
               Add Folder
             </Button>
@@ -884,7 +901,7 @@ export function LibraryPanel() {
       {/* Create Shadow Library Modal */}
       <Modal
         open={showCreateShadow}
-        onClose={() => setShowCreateShadow(false)}
+        onClose={() => { setShowCreateShadow(false); setShadowSubmitted(false); }}
         title="Create Shadow Library"
       >
         <div className="space-y-4">
@@ -893,6 +910,7 @@ export function LibraryPanel() {
             value={shadowName}
             onChange={(e) => setShadowName(e.target.value)}
             placeholder="MP3 320k for iPod"
+            hint={shadowSubmitted && !shadowName.trim() ? "Please enter a library name" : undefined}
           />
           <div>
             <Label htmlFor="shadow-path">Path</Label>
@@ -908,6 +926,9 @@ export function LibraryPanel() {
                 Browse
               </Button>
             </div>
+            {shadowSubmitted && !shadowPath.trim() && (
+              <p className="mt-1 text-xs text-blue-500">Please enter a library path</p>
+            )}
           </div>
           <Select
             label="Codec Configuration"
@@ -922,13 +943,13 @@ export function LibraryPanel() {
             value={shadowCodecConfigId != null ? String(shadowCodecConfigId) : ""}
             onChange={(v) => setShadowCodecConfigId(v ? Number(v) : null)}
             placeholder="Select a codec…"
+            hint={shadowSubmitted && shadowCodecConfigId == null ? "Please select a codec configuration" : undefined}
           />
           <div className="flex justify-end gap-2 pt-2">
-            <Button onClick={() => setShowCreateShadow(false)}>Cancel</Button>
+            <Button onClick={() => { setShowCreateShadow(false); setShadowSubmitted(false); }}>Cancel</Button>
             <Button
               variant="primary"
               onClick={handleCreateShadow}
-              disabled={!shadowName || !shadowPath || shadowCodecConfigId == null}
             >
               Create & Build
             </Button>

@@ -10,12 +10,19 @@ hero:
     alt: iPodRocks
   actions:
     - theme: brand
+      text: Download iPodRocks
+      link: https://github.com/joaosobral/ipodrocks-js/releases/latest
+    - theme: alt
       text: Getting Started
       link: /guide/getting-started
     - theme: alt
       text: App Reference
       link: /app-reference/welcome
 ---
+
+## Download
+
+Grab the latest release for macOS or Windows from the [GitHub Releases page](https://github.com/joaosobral/ipodrocks-js/releases/latest). Unzip and run — no installer required.
 
 ## What is iPodRocks?
 
@@ -26,6 +33,7 @@ iPodRocks is a **sync manager** for Rockbox devices and any mountable player. It
 - **Multiple library folders** — Music, podcasts, audiobooks in one catalog
 - **Shadow libraries** — Pre-transcoded mirrors (e.g. FLAC → MPC) for fast sync
 - **Multiple devices** — iPods, Rockbox players, any FAT32/exFAT-mounted drive
+- **Auto Podcasts** — Subscribe, auto-download episodes, and sync to devices in the background
 - **Smart, Genius, and Savant playlists** — Rule-based, playback-history, or AI-generated
 - **Harmonic mixing** — Key and BPM detection, Camelot wheel compatibility
 - **Rocksy** — Floating chat that knows your library and can create playlists by voice

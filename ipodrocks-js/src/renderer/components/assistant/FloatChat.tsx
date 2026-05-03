@@ -145,7 +145,7 @@ export function FloatChat() {
                   className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}
                 >
                   <div
-                    className={`max-w-[85%] rounded-xl px-3 py-2 text-sm select-text ${
+                    className={`max-w-[85%] min-w-0 rounded-xl px-3 py-2 text-sm select-text [overflow-wrap:anywhere] ${
                       m.role === "user"
                         ? "bg-muted text-foreground whitespace-pre-wrap"
                         : "bg-muted/50 text-foreground"

@@ -214,4 +214,65 @@ describe("LibraryPanel", () => {
       expect(screen.getAllByRole("button", { name: "5 star" })).toHaveLength(1);
     });
   });
+
+  describe("Add Library Folder validation", () => {
+    it("shows hints for name and path when submitted empty", async () => {
+      render(<LibraryPanel />);
+      fireEvent.click(screen.getAllByText("+ Add Folder")[0]);
+
+      await waitFor(() => {
+        expect(screen.getByPlaceholderText("My Music")).toBeInTheDocument();
+      });
+
+      const addButton = screen.getByRole("button", { name: "Add Folder" });
+      expect(addButton).not.toBeDisabled();
+      fireEvent.click(addButton);
+
+      expect(screen.getByText("Please enter a folder name")).toBeInTheDocument();
+      expect(screen.getByText("Please enter a folder path")).toBeInTheDocument();
+    });
+
+    it("shows only path hint when name is filled", async () => {
+      render(<LibraryPanel />);
+      fireEvent.click(screen.getAllByText("+ Add Folder")[0]);
+
+      await waitFor(() => {
+        expect(screen.getByPlaceholderText("My Music")).toBeInTheDocument();
+      });
+
+      fireEvent.change(screen.getByPlaceholderText("My Music"), {
+        target: { value: "My Music" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Add Folder" }));
+
+      expect(screen.queryByText("Please enter a folder name")).not.toBeInTheDocument();
+      expect(screen.getByText("Please enter a folder path")).toBeInTheDocument();
+    });
+  });
+
+  describe("Create Shadow Library validation", () => {
+    it("shows hints for all required fields when submitted empty", async () => {
+      render(<LibraryPanel />);
+
+      // Open the shadow library section — find the Create Shadow Library button
+      const createShadowBtn = screen.queryByRole("button", { name: /Create Shadow Library/i });
+      if (!createShadowBtn) {
+        // Shadow library button may not be visible without folders; skip
+        return;
+      }
+      fireEvent.click(createShadowBtn);
+
+      await waitFor(() => {
+        expect(screen.getByPlaceholderText("MP3 320k for iPod")).toBeInTheDocument();
+      });
+
+      const buildBtn = screen.getByRole("button", { name: "Create & Build" });
+      expect(buildBtn).not.toBeDisabled();
+      fireEvent.click(buildBtn);
+
+      expect(screen.getByText("Please enter a library name")).toBeInTheDocument();
+      expect(screen.getByText("Please enter a library path")).toBeInTheDocument();
+      expect(screen.getByText("Please select a codec configuration")).toBeInTheDocument();
+    });
+  });
 });

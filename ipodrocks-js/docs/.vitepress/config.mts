@@ -71,6 +71,7 @@ export default defineConfig({
                 },
               ],
             },
+            { text: "Auto Podcasts", link: "/app-reference/autopodcasts" },
             { text: "Sync", link: "/app-reference/sync" },
             {
               text: "Settings",

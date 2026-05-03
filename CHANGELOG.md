@@ -1,5 +1,59 @@
 # Changelog
 
+## [1.3.0] — 2026-05
+
+### Features
+
+#### Auto Podcasts
+
+- **Podcast Index integration** — Podcast search is powered by the Podcast Index API. API key and secret are configured in Settings → Auto Podcasts and tested against the live API before saving.
+- **Subscribe & manage podcasts** — Search for shows by name, subscribe in one click, and manage all subscriptions from the new Auto Podcasts panel. Each subscription shows the show artwork, author, and whether all target episodes are downloaded.
+- **Auto-download modes** — Each subscription can be set to automatically keep the N most recent episodes (1–5) or operate in manual mode, where individual episodes are hand-picked from the episode list.
+- **Episode management modal** — Clicking a subscription opens a per-show panel listing all fetched episodes with their download state (pending, downloading, ready, failed, skipped), duration, and publish date. Auto-count and manual selection can be changed at any time; "Download Now" re-triggers a refresh and download for the current target set.
+- **Background scheduler** — A boot refresh runs once at startup. A configurable periodic refresh (every 15, 30, or 60 minutes) fetches new episodes and downloads any that are missing. A 1-minute device-connection poller triggers an immediate refresh-and-sync cycle whenever a podcast-enabled device is newly detected as online.
+- **Device sync** — Subscribed episodes are synced to each device's `Podcasts/<ShowName>/` folder automatically. Each device has an opt-in "Allow Auto Podcasts" toggle (set at add-device time or via device settings). The sync skips already-transferred episodes using a `device_podcast_synced` tracking table.
+- **Configurable download folder** — Episodes are stored in `<userData>/auto-podcasts` by default. A custom folder can be set via Browse in Settings; changing it re-queues all ready episodes for re-download into the new location.
+- **Automatic episode pruning** — When auto-count mode is active, episodes beyond the 10 most-recent ready downloads are deleted from disk and marked skipped, keeping storage use bounded.
+
+#### UI
+
+- **Player bar icons** — Playback controls (skip previous/next, play/pause, stop) and the volume indicator now use crisp MDI SVG icons instead of emoji or Unicode glyphs.
+- **Theme toggle** — The light/dark mode button now shows animated SVG sun and moon icons with a smooth rotation transition.
+
+Bug fixes and general improvements.
+
+---
+
+## [1.2.1] — 2026-05
+
+### Bug fixes
+
+- **Sync re-copies tracks with Unknown Artist/Album every run** — `computeDeviceRelativePath` passed `sanitizeDevicePathComponent` directly to `Array.prototype.map`, so the array index was forwarded as the function's `maxLen` parameter. This truncated each path segment to N characters, producing destinations like `/P/01` instead of `Black Sabbath/Paranoid/01 - War Pigs.opus`. Files were copied to the wrong place every sync and never matched on subsequent runs. Affected tracks whose metadata fell back to the `libraryFolderId` branch (Unknown Artist/Unknown Album).
+- **Converted tracks re-converted on every sync** — `convertWithCodec` and `convertWithFfmpeg` did not preserve the source mtime on the output file, so the mtime fallback in `compareLibraries` never matched and lossless conversions (ALAC/FLAC) were always re-encoded. The conversion path now mirrors `copyFileToDevice` and calls `utimes` after a successful encode.
+- **Up-to-date artwork and playlists counted as "processed" items** — Artwork and `.m3u` playlists already on device with matching content emitted `total_add` and `copy{status:"skipped"}` progress events, so a no-op sync showed "2 / 2 items, 0 copied" instead of the empty-state expected by the user. Both code paths now pre-filter to actual writes before bumping counters, matching how unchanged music tracks are silently skipped.
+
+### Features
+
+#### Built-in audio player
+
+- **`media://` custom protocol** — A secure Electron protocol handler (`media-protocol.ts`) serves audio files directly to the renderer via `net.fetch`. Registered as privileged with `secure`, `standard`, `supportFetchAPI`, and `stream` flags so the renderer can use standard `<audio>` / Web Audio APIs against it.
+- **Native playback for common codecs** — MP3, AAC, FLAC, OGG, OPUS, PCM, and ALAC are served directly from disk without any conversion step.
+- **ffmpeg transcoding for unsupported codecs** — Tracks in formats the browser cannot play natively (MPC, APE, and others) are transcoded on the fly to Ogg Vorbis via ffmpeg and written to a per-session temp file before playback begins. The active ffmpeg process and temp file are tracked so `cancelPrepare()` can abort mid-transcode and clean up.
+- **Path security** — The protocol handler only serves files that are inside the player temp directory or have a recognised audio extension. Any other path returns `403 Forbidden`, preventing the renderer from reading arbitrary files from the filesystem.
+- **Base64url path encoding** — File paths are encoded as base64url tokens in `media://local/<token>` URLs, keeping special characters and spaces out of the URL while remaining fully reversible.
+- **Temp-dir cleanup** — `cleanupPlayerTemp()` removes all transcoded temp files on app quit.
+
+#### Rocksy (renamed from Music Assistant)
+
+- **Music Assistant is now Rocksy** — The floating AI chat panel has been renamed to Rocksy throughout the app.
+
+### Testing
+
+- **`media-protocol.test.ts`** — Tests for scheme registration flags, `400` on bad base64, `403` on path outside temp dir / non-audio, `200` fetches for temp-dir files, valid audio files outside temp dir, and `file://` URL derivation; verifies `net.fetch` is not called on forbidden requests.
+- **`player-source.test.ts`** — Tests for `pickStrategy` (native vs. transcode per codec), `isAudioFilePath` (audio and non-audio extensions), `encodePathToUrl`/`decodeUrlToPath` round-trips (spaces, Unicode, special chars), native `prepareTrack` returns correct `media://` URL, and `cancelPrepare` no-ops safely when nothing is active.
+
+---
+
 ## [1.2.0] — 2026-04
 
 ### Features

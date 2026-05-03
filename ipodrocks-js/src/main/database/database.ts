@@ -26,6 +26,7 @@ export class AppDatabase {
     this.migrateCaseInsensitiveEntities();
     this.migrateDeduplicateTracks();
     this.migrateRatings();
+    this.migratePodcasts();
   }
 
   /**
@@ -637,6 +638,25 @@ export class AppDatabase {
       }
     } catch (err) {
       console.error("[db] migration failed (migrateRatings):", err);
+    }
+  }
+
+  private migratePodcasts(): void {
+    if (!this.db) return;
+    try {
+      const devRows = this.db
+        .prepare("PRAGMA table_info(devices)")
+        .all() as { name: string }[];
+      const devNames = new Set(devRows.map((r) => r.name));
+      if (!devNames.has("auto_podcasts_enabled")) {
+        this.db
+          .prepare(
+            "ALTER TABLE devices ADD COLUMN auto_podcasts_enabled INTEGER NOT NULL DEFAULT 0"
+          )
+          .run();
+      }
+    } catch (err) {
+      console.error("[db] migration failed (migratePodcasts):", err);
     }
   }
 

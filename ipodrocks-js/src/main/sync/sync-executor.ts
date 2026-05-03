@@ -163,6 +163,10 @@ export async function copyToDevice(
           appendSyncError(job.src, dest, "Conversion failed", conversionLog);
           progressCallback?.({ srcPath: job.src, destPath: dest, status: "error" });
         } else {
+          try {
+            const srcStat = await fs.promises.stat(job.src);
+            await fs.promises.utimes(dest, srcStat.atime, srcStat.mtime);
+          } catch { /* non-fatal: next sync falls back to size check */ }
           progressCallback?.({ srcPath: job.src, destPath: dest, status: "converted" });
         }
       } catch (err) {
@@ -174,6 +178,10 @@ export async function copyToDevice(
     } else {
       try {
         await convertWithFfmpeg(job.src, job.dest, job.profile, logWithCapture, cancelSignal);
+        try {
+          const srcStat = await fs.promises.stat(job.src);
+          await fs.promises.utimes(job.dest, srcStat.atime, srcStat.mtime);
+        } catch { /* non-fatal: next sync falls back to size check */ }
         progressCallback?.({ srcPath: job.src, destPath: job.dest, status: "converted" });
       } catch (err) {
         const msg = String(err);

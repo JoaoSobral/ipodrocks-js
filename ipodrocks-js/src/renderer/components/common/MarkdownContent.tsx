@@ -75,7 +75,7 @@ export function MarkdownContent({ content, className = "" }: MarkdownContentProp
               </code>
             ) : (
               <code
-                className={`px-1.5 py-0.5 rounded text-[0.9em] font-mono ${codeBg}`}
+                className={`px-1.5 py-0.5 rounded text-[0.9em] font-mono break-all ${codeBg}`}
                 {...props}
               >
                 {children}

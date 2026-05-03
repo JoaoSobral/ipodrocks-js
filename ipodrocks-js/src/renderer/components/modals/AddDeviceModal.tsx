@@ -4,7 +4,9 @@ import { addDevice } from "@renderer/ipc/api";
 import { Modal } from "../common/Modal";
 import { Button } from "../common/Button";
 import { Input } from "../common/Input";
+import { Switch } from "../common/Switch";
 import { ErrorBox } from "../common/ErrorBox";
+import { Card } from "../common/Card";
 
 interface AddDeviceModalProps {
   open: boolean;
@@ -18,10 +20,10 @@ export function AddDeviceModal({ open, onClose }: AddDeviceModalProps) {
   const [podcastFolder, setPodcastFolder] = useState("Podcasts");
   const [audiobookFolder, setAudiobookFolder] = useState("Audiobooks");
   const [playlistFolder, setPlaylistFolder] = useState("Playlists");
+  const [autoPodcastsEnabled, setAutoPodcastsEnabled] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  const canSubmit = name.trim() !== "" && mountPath.trim() !== "" && !loading;
+  const [submitted, setSubmitted] = useState(false);
 
   const reset = () => {
     setName("");
@@ -30,8 +32,10 @@ export function AddDeviceModal({ open, onClose }: AddDeviceModalProps) {
     setPodcastFolder("Podcasts");
     setAudiobookFolder("Audiobooks");
     setPlaylistFolder("Playlists");
+    setAutoPodcastsEnabled(false);
     setError(null);
     setLoading(false);
+    setSubmitted(false);
   };
 
   const handleClose = () => {
@@ -40,7 +44,11 @@ export function AddDeviceModal({ open, onClose }: AddDeviceModalProps) {
   };
 
   const handleSubmit = async () => {
-    if (!canSubmit) return;
+    if (!name.trim() || !mountPath.trim()) {
+      setSubmitted(true);
+      return;
+    }
+    if (loading) return;
     setError(null);
     setLoading(true);
     try {
@@ -52,6 +60,10 @@ export function AddDeviceModal({ open, onClose }: AddDeviceModalProps) {
         audiobookFolder: audiobookFolder.trim() || "Audiobooks",
         playlistFolder: playlistFolder.trim() || "Playlists",
       });
+      if (autoPodcastsEnabled && device && "id" in device) {
+        const { podcastSetDeviceAutoPodcasts } = await import("@renderer/ipc/api");
+        await podcastSetDeviceAutoPodcasts(device.id, true);
+      }
       reset();
       onClose(device);
     } catch (e) {
@@ -62,60 +74,81 @@ export function AddDeviceModal({ open, onClose }: AddDeviceModalProps) {
   };
 
   return (
-    <Modal open={open} onClose={handleClose} title="Add Device">
+    <Modal open={open} onClose={handleClose} title="Add Device" width="max-w-2xl">
       <form
-        className="flex flex-col gap-4"
+        className="flex flex-col gap-5"
         onSubmit={(e) => {
           e.preventDefault();
           handleSubmit();
         }}
       >
-        <Input
-          label="Device Name"
-          placeholder="e.g. iPod Classic"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          autoFocus
-        />
-        <Input
-          label="Mount Path"
-          placeholder="/media/ipod"
-          value={mountPath}
-          onChange={(e) => setMountPath(e.target.value)}
-        />
+        <div className="grid grid-cols-2 gap-5 items-start">
+          <Card title="Device" subtitle="Name and mount point for this device.">
+            <div className="space-y-4">
+              <Input
+                label="Device Name"
+                placeholder="e.g. iPod Classic"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                autoFocus
+                hint={submitted && !name.trim() ? "Please enter a device name" : undefined}
+              />
+              <Input
+                label="Mount Path"
+                placeholder="/media/ipod"
+                value={mountPath}
+                onChange={(e) => setMountPath(e.target.value)}
+                hint={submitted && !mountPath.trim() ? "Please enter a mount path" : undefined}
+              />
+              <div className="flex items-start justify-between gap-4 pt-1">
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium text-foreground">Allow Auto Podcasts</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Automatically sync subscribed podcast episodes to this device.
+                  </p>
+                </div>
+                <Switch
+                  checked={autoPodcastsEnabled}
+                  onChange={setAutoPodcastsEnabled}
+                  className="shrink-0"
+                />
+              </div>
+            </div>
+          </Card>
 
-        <div className="grid grid-cols-2 gap-3">
-          <Input
-            label="Music Folder"
-            value={musicFolder}
-            onChange={(e) => setMusicFolder(e.target.value)}
-          />
-          <Input
-            label="Podcast Folder"
-            value={podcastFolder}
-            onChange={(e) => setPodcastFolder(e.target.value)}
-          />
-          <Input
-            label="Audiobook Folder"
-            value={audiobookFolder}
-            onChange={(e) => setAudiobookFolder(e.target.value)}
-          />
-          <Input
-            label="Playlist Folder"
-            value={playlistFolder}
-            onChange={(e) => setPlaylistFolder(e.target.value)}
-          />
+          <Card title="Folders" subtitle="On-device folder names for each content type.">
+            <div className="space-y-4">
+              <Input
+                label="Music Folder"
+                value={musicFolder}
+                onChange={(e) => setMusicFolder(e.target.value)}
+              />
+              <Input
+                label="Podcast Folder"
+                value={podcastFolder}
+                onChange={(e) => setPodcastFolder(e.target.value)}
+              />
+              <Input
+                label="Audiobook Folder"
+                value={audiobookFolder}
+                onChange={(e) => setAudiobookFolder(e.target.value)}
+              />
+              <Input
+                label="Playlist Folder"
+                value={playlistFolder}
+                onChange={(e) => setPlaylistFolder(e.target.value)}
+              />
+            </div>
+          </Card>
         </div>
 
-        {error && (
-          <ErrorBox>{error}</ErrorBox>
-        )}
+        {error && <ErrorBox>{error}</ErrorBox>}
 
-        <div className="flex justify-end gap-2 pt-1">
+        <div className="flex justify-end gap-2 pt-2 border-t border-border">
           <Button variant="ghost" type="button" onClick={handleClose}>
             Cancel
           </Button>
-          <Button type="submit" disabled={!canSubmit}>
+          <Button type="submit" disabled={loading}>
             {loading ? "Adding…" : "Add Device"}
           </Button>
         </div>

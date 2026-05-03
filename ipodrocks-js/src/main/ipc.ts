@@ -81,37 +81,7 @@ function validateFolderPath(rawPath: string): { path: string } | { error: string
   return { path: realPath };
 }
 
-/**
- * Check whether a device mount path is actually online (volume is mounted).
- *
- * A device is considered online only when its mount path is a real mount
- * point — i.e., a separate filesystem. We verify this by comparing the `dev`
- * (filesystem device id) of the mount path against its parent directory:
- * a real mounted volume always has a different `dev` than its parent, while
- * a regular folder on the main filesystem (or an orphan directory left behind
- * after ejection) shares the parent's `dev`.
- *
- * `fs.existsSync` alone is not reliable because:
- *   - macOS/Linux can leave an empty orphan directory after ejection
- *   - a local folder "test device" always exists but is not a connected device
- *
- * On Windows (no POSIX dev ids in a meaningful way), we fall back to checking
- * that the path exists and is a directory; Windows drive letters are naturally
- * isolated so this is sufficient there.
- */
-function isDeviceMountPathOnline(mountPath: string): boolean {
-  if (!mountPath) return false;
-  try {
-    const resolved = path.resolve(mountPath);
-    const pathStat = fs.statSync(resolved);
-    if (!pathStat.isDirectory()) return false;
-    if (process.platform === "win32") return true;
-    const parentStat = fs.statSync(path.dirname(resolved));
-    return pathStat.dev !== parentStat.dev;
-  } catch {
-    return false;
-  }
-}
+import { isDeviceMountPathOnline } from "./devices/device-online";
 
 import {
   AddDeviceConfig,
@@ -153,6 +123,7 @@ import { compareLibraries } from "./sync/name-size-sync";
 import { writePlaylistsToDevice } from "./sync/playlist-sync";
 import { isMpcencAvailable } from "./utils/mpcenc";
 import {
+  readPrefs,
   getMpcRemindDisabled,
   setMpcRemindDisabled,
   getOpenRouterConfig,
@@ -161,8 +132,26 @@ import {
   setHarmonicPrefs,
   getUpdateSnoozeUntil,
   setUpdateSnoozeUntil,
+  getPodcastIndexConfig,
+  setPodcastIndexConfig,
+  getAutoPodcastSettings,
+  setAutoPodcastSettings,
   type HarmonicPrefs,
 } from "./utils/prefs";
+import { searchPodcasts } from "./podcasts/podcast-index-client";
+import {
+  listSubscriptions,
+  subscribe as podcastSubscribe,
+  unsubscribe as podcastUnsubscribe,
+  setAutoCount,
+  listEpisodes,
+  setManualSelection,
+} from "./podcasts/podcast-subscriptions";
+import { refreshSubscription, refreshAll, refreshAllForNewFolder } from "./podcasts/podcast-refresh";
+import { syncPodcastsToDevice } from "./podcasts/podcast-device-sync";
+import { startPodcastScheduler, stopPodcastScheduler } from "./podcasts/podcast-scheduler";
+import { downloadEpisode } from "./podcasts/podcast-downloader";
+import { getPodcastsRoot, getDefaultPodcastsRoot } from "./podcasts/podcast-storage";
 import {
   fetchLatestRelease,
   compareVersions,
@@ -191,6 +180,7 @@ import {
   getPinnedCount,
   MAX_PINNED_MEMORIES,
   invalidateAssistantCache,
+  type AppPaths,
 } from "./assistant/assistantChat";
 import { randomUUID } from "crypto";
 import { logActivity, getRecentActivity } from "./activity/activity-logger";
@@ -724,6 +714,7 @@ export function registerIpcHandlers(): void {
         "add_device",
         `Added device: ${device.profile.name}`
       );
+      invalidateAssistantCache(); // F9: device config changed
       return device.profile;
     })
   );
@@ -785,6 +776,7 @@ export function registerIpcHandlers(): void {
         "update_device",
         `Updated device: ${device?.name ?? deviceId}`
       );
+      invalidateAssistantCache(); // F9: device config changed
       return device;
     })
   );
@@ -792,7 +784,9 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     "device:remove",
     safe("device:remove", async (_event, deviceId: number) => {
-      return getDevicesCore().deleteDevice(deviceId);
+      const result = getDevicesCore().deleteDevice(deviceId);
+      invalidateAssistantCache(); // F9: device config changed
+      return result;
     })
   );
 
@@ -1265,9 +1259,11 @@ export function registerIpcHandlers(): void {
       const willRunMusic = Object.keys(musicLibraryTracks).length > 0;
       const willRunPodcast = Object.keys(podcastLibraryTracks).length > 0;
       const willRunAudiobook = Object.keys(audiobookLibraryTracks).length > 0;
+      const hasAutoPodcasts = device.profile.autoPodcastsEnabled === true;
       const isEmptyLibrary = !willRunMusic && !willRunPodcast && !willRunAudiobook;
+      console.log(`[autopod-debug] sync:start deviceId=${opts.deviceId} autoPodcastsEnabled=${device.profile.autoPodcastsEnabled} hasAutoPodcasts=${hasAutoPodcasts} isEmptyLibrary=${isEmptyLibrary}`);
 
-      if (isEmptyLibrary) {
+      if (isEmptyLibrary && !hasAutoPodcasts) {
         const isShadow = device.profile.sourceLibraryType === "shadow" && device.profile.shadowLibraryId != null;
         const emptyMessage = isShadow
           ? "Shadow library contains no files to sync. Build or select a shadow library that has tracks."
@@ -1429,6 +1425,18 @@ export function registerIpcHandlers(): void {
         result.missingFiles = [...result.missingFiles, ...audiobookResult.missingFiles];
       }
 
+      if (hasAutoPodcasts) {
+        console.log(`[autopod-debug] entering auto-podcast sync phase for deviceId=${opts.deviceId}`);
+        try {
+          const autoPodResult = await syncPodcastsToDevice(lib.getConnection(), opts.deviceId, syncOpts.progressCallback);
+          console.log(`[autopod-debug] auto-podcast sync result:`, autoPodResult);
+          result.synced += autoPodResult.synced;
+          result.errors += autoPodResult.errors;
+        } catch (err) {
+          console.error("[ipc] Auto podcast sync to device failed:", err);
+        }
+      }
+
       if (result.errors > 0) result.status = "error";
 
       const shouldWritePlaylists =
@@ -1455,10 +1463,6 @@ export function registerIpcHandlers(): void {
               codecName,
               libraryFolderPaths,
             };
-            syncOpts.progressCallback?.({
-              event: "total_add",
-              path: String(playlistsToWrite.length),
-            });
             const writeResult = await writePlaylistsToDevice({
               playlistFolder,
               mountPath: device.profile.mountPath,
@@ -1976,7 +1980,15 @@ export function registerIpcHandlers(): void {
         ...recentHistory,
         { role: "user" as const, content: userMessage },
       ];
-      const rawReply = await sendAssistantMessage(fullHistory, db, config);
+      const userData = app.getPath("userData");
+      const autoPodcastSettings = getAutoPodcastSettings();
+      const appPaths: AppPaths = {
+        userData,
+        podcastsRoot: getPodcastsRoot(),
+        autoPodcastEnabled: autoPodcastSettings.enabled,
+        autoPodcastIntervalMin: autoPodcastSettings.refreshIntervalMinutes,
+      };
+      const rawReply = await sendAssistantMessage(fullHistory, db, config, appPaths);
       const {
         cleanReply,
         pin,
@@ -2273,4 +2285,179 @@ export function registerIpcHandlers(): void {
       return undefined;
     })
   );
+
+  // ---- Auto Podcasts ----
+  ipcMain.handle(
+    "podcast:search",
+    safe("podcast:search", async (_event, term: string) => {
+      const config = getPodcastIndexConfig();
+      if (!config) return { error: "NO_CREDS" };
+      return searchPodcasts(term, config.apiKey, config.apiSecret);
+    })
+  );
+
+  ipcMain.handle(
+    "podcast:listSubs",
+    safe("podcast:listSubs", async () => {
+      const db = getLibrary().getConnection();
+      return listSubscriptions(db);
+    })
+  );
+
+  ipcMain.handle(
+    "podcast:subscribe",
+    safe("podcast:subscribe", async (_event, feed: import("../shared/types").PodcastSearchResult) => {
+      const db = getLibrary().getConnection();
+      const result = podcastSubscribe(db, feed);
+      invalidateAssistantCache(); // F9: podcast config changed
+      return result;
+    })
+  );
+
+  ipcMain.handle(
+    "podcast:unsubscribe",
+    safe("podcast:unsubscribe", async (_event, subId: number) => {
+      const db = getLibrary().getConnection();
+      podcastUnsubscribe(db, subId);
+      invalidateAssistantCache(); // F9: podcast config changed
+      return undefined;
+    })
+  );
+
+  ipcMain.handle(
+    "podcast:setAutoCount",
+    safe("podcast:setAutoCount", async (_event, subId: number, count: number) => {
+      const db = getLibrary().getConnection();
+      setAutoCount(db, subId, count);
+      invalidateAssistantCache(); // F9: podcast config changed
+      return undefined;
+    })
+  );
+
+  ipcMain.handle(
+    "podcast:listEpisodes",
+    safe("podcast:listEpisodes", async (_event, subId: number) => {
+      const db = getLibrary().getConnection();
+      return listEpisodes(db, subId);
+    })
+  );
+
+  ipcMain.handle(
+    "podcast:setManualSelection",
+    safe("podcast:setManualSelection", async (_event, subId: number, episodeIds: number[]) => {
+      const db = getLibrary().getConnection();
+      setManualSelection(db, subId, episodeIds);
+      invalidateAssistantCache(); // F9: podcast config changed
+      return undefined;
+    })
+  );
+
+  ipcMain.handle(
+    "podcast:downloadNow",
+    safe("podcast:downloadNow", async (_event, subId: number) => {
+      const db = getLibrary().getConnection();
+      const config = getPodcastIndexConfig();
+      if (!config) return { error: "NO_CREDS" };
+      await refreshSubscription(db, subId, config.apiKey, config.apiSecret);
+      return { ok: true };
+    })
+  );
+
+  ipcMain.handle(
+    "podcast:refreshAllForNewFolder",
+    safe("podcast:refreshAllForNewFolder", async () => {
+      const db = getLibrary().getConnection();
+      const config = getPodcastIndexConfig();
+      if (!config) return { error: "NO_CREDS" };
+      await refreshAllForNewFolder(db, config.apiKey, config.apiSecret);
+      return { ok: true };
+    })
+  );
+
+  ipcMain.handle(
+    "podcast:syncDeviceNow",
+    safe("podcast:syncDeviceNow", async (_event, deviceId: number) => {
+      const db = getLibrary().getConnection();
+      return syncPodcastsToDevice(db, deviceId);
+    })
+  );
+
+  ipcMain.handle(
+    "podcast:getSettings",
+    safe("podcast:getSettings", async () => {
+      const prefs = readPrefs();
+      const raw = prefs.podcastIndexConfig;
+      const autoSettings = getAutoPodcastSettings();
+      // Never return plaintext credentials to the renderer (F1) — only booleans
+      // indicating whether each is configured.
+      return {
+        hasApiKey: !!raw?.apiKey?.trim(),
+        hasApiSecret: !!raw?.apiSecret?.trim(),
+        autoEnabled: autoSettings.enabled,
+        intervalMin: autoSettings.refreshIntervalMinutes,
+        downloadDir: getDefaultPodcastsRoot(),
+        downloadDirCustom: prefs.autoPodcasts?.downloadDir ?? null,
+      };
+    })
+  );
+
+  ipcMain.handle(
+    "podcast:setSettings",
+    safe("podcast:setSettings", async (
+      _event,
+      payload: { apiKey?: string; apiSecret?: string; autoEnabled?: boolean; intervalMin?: number; downloadDir?: string | null }
+    ) => {
+      if (payload.apiKey !== undefined || payload.apiSecret !== undefined) {
+        const current = getPodcastIndexConfig() ?? { apiKey: "", apiSecret: "" };
+        setPodcastIndexConfig({
+          apiKey: payload.apiKey ?? current.apiKey,
+          apiSecret: payload.apiSecret ?? current.apiSecret,
+        });
+      }
+
+      const intervalChanged =
+        payload.intervalMin !== undefined &&
+        payload.intervalMin !== getAutoPodcastSettings().refreshIntervalMinutes;
+
+      if (payload.autoEnabled !== undefined || payload.intervalMin !== undefined || "downloadDir" in payload) {
+        setAutoPodcastSettings({
+          enabled: payload.autoEnabled,
+          refreshIntervalMinutes: payload.intervalMin,
+          downloadDir: payload.downloadDir ?? undefined,
+        });
+      }
+
+      // Restart the scheduler when the refresh interval changes so the new
+      // cadence takes effect without requiring an app restart.
+      if (intervalChanged) {
+        stopPodcastScheduler();
+        startPodcastScheduler(getLibrary().getConnection());
+      }
+      return undefined;
+    })
+  );
+
+  ipcMain.handle(
+    "podcast:browseDownloadDir",
+    safe("podcast:browseDownloadDir", async () => {
+      const result = await dialog.showOpenDialog({
+        properties: ["openDirectory", "createDirectory"],
+        title: "Select Podcast Download Folder",
+        defaultPath: getDefaultPodcastsRoot(),
+      });
+      if (result.canceled || result.filePaths.length === 0) return null;
+      return result.filePaths[0];
+    })
+  );
+
+  ipcMain.handle(
+    "podcast:setDeviceAutoPodcasts",
+    safe("podcast:setDeviceAutoPodcasts", async (_event, deviceId: number, enabled: boolean) => {
+      getDevicesCore().updateDevice(deviceId, { autoPodcastsEnabled: enabled });
+      return undefined;
+    })
+  );
+
+  // Start the podcast background scheduler
+  startPodcastScheduler(getLibrary().getConnection());
 }
