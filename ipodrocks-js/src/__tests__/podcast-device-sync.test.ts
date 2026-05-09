@@ -93,13 +93,11 @@ describe("syncPodcastsToDevice", () => {
   it.skipIf(!canRunDbTests)("copies ready episodes and records in device_podcast_synced", async () => {
     const deviceId = insertDevice({ autoPodcasts: true });
     subscribe(db, testFeed);
+    const subId = getSubId();
 
     const srcFile = path.join(tmpSrc, "ep1.mp3");
     fs.writeFileSync(srcFile, Buffer.alloc(100));
-
-    vi.mocked(getReadyTargetEpisodes).mockReturnValue([
-      { id: 1, feedId: 7, localPath: srcFile },
-    ]);
+    const epId = insertEpisode(subId, { localPath: srcFile });
 
     vi.mocked(copyFileToDevice).mockImplementation(async (_src, dest) => {
       fs.mkdirSync(path.dirname(dest), { recursive: true });
@@ -112,8 +110,8 @@ describe("syncPodcastsToDevice", () => {
     expect(result.errors).toBe(0);
 
     const row = db
-      .prepare("SELECT device_relative_path FROM device_podcast_synced WHERE device_id = ? AND episode_id = 1")
-      .get(deviceId) as { device_relative_path: string } | undefined;
+      .prepare("SELECT device_relative_path FROM device_podcast_synced WHERE device_id = ? AND episode_id = ?")
+      .get(deviceId, epId) as { device_relative_path: string } | undefined;
     expect(row).toBeDefined();
     expect(row!.device_relative_path).toContain("Podcasts");
 
@@ -126,53 +124,100 @@ describe("syncPodcastsToDevice", () => {
 
   it.skipIf(!canRunDbTests)("skips sync when auto_podcasts_enabled = 0", async () => {
     const deviceId = insertDevice({ autoPodcasts: false });
-    vi.mocked(getReadyTargetEpisodes).mockReturnValue([
-      { id: 1, feedId: 7, localPath: "/fake/ep.mp3" },
-    ]);
+    subscribe(db, testFeed);
+    const subId = getSubId();
+    insertEpisode(subId, { localPath: "/fake/ep.mp3" });
 
     const result = await syncPodcastsToDevice(db, deviceId);
     expect(result.synced).toBe(0);
     expect(copyFileToDevice).not.toHaveBeenCalled();
   });
 
-  it.skipIf(!canRunDbTests)("skips already-synced episodes", async () => {
+  it.skipIf(!canRunDbTests)("skips already-synced episodes when file exists on device", async () => {
     const deviceId = insertDevice({ autoPodcasts: true });
     subscribe(db, testFeed);
+    const subId = getSubId();
+    const epId = insertEpisode(subId, { localPath: "/fake/ep2.mp3" });
 
-    vi.mocked(getReadyTargetEpisodes).mockReturnValue([
-      { id: 2, feedId: 7, localPath: "/fake/ep2.mp3" },
-    ]);
+    const relPath = path.join("Podcasts", "Dev Podcast", "ep2.mp3");
+    const deviceFilePath = path.join(tmpMount, relPath);
+    fs.mkdirSync(path.dirname(deviceFilePath), { recursive: true });
+    fs.writeFileSync(deviceFilePath, Buffer.alloc(10));
 
     db.prepare(
-      "INSERT INTO device_podcast_synced (device_id, episode_id, device_relative_path) VALUES (?, 2, ?)"
-    ).run(deviceId, "Podcasts/show/ep2.mp3");
+      "INSERT INTO device_podcast_synced (device_id, episode_id, device_relative_path) VALUES (?, ?, ?)"
+    ).run(deviceId, epId, relPath);
 
     const result = await syncPodcastsToDevice(db, deviceId);
     expect(result.synced).toBe(0);
     expect(copyFileToDevice).not.toHaveBeenCalled();
+  });
+
+  it.skipIf(!canRunDbTests)("re-copies episodes whose device_podcast_synced record is stale (file missing from device)", async () => {
+    const deviceId = insertDevice({ autoPodcasts: true });
+    subscribe(db, testFeed);
+    const subId = getSubId();
+
+    const srcFile = path.join(tmpSrc, "ep_stale.mp3");
+    fs.writeFileSync(srcFile, Buffer.alloc(100));
+    const epId = insertEpisode(subId, { localPath: srcFile });
+
+    db.prepare(
+      "INSERT INTO device_podcast_synced (device_id, episode_id, device_relative_path) VALUES (?, ?, ?)"
+    ).run(deviceId, epId, path.join("Podcasts", "Dev Podcast", "missing.mp3"));
+
+    vi.mocked(copyFileToDevice).mockImplementation(async (_src, dest) => {
+      fs.mkdirSync(path.dirname(dest), { recursive: true });
+      fs.copyFileSync(srcFile, dest);
+      return true;
+    });
+
+    const result = await syncPodcastsToDevice(db, deviceId);
+    expect(result.synced).toBe(1);
+    expect(copyFileToDevice).toHaveBeenCalled();
+  });
+
+  it.skipIf(!canRunDbTests)("mirrors all ready episodes regardless of auto_count", async () => {
+    const deviceId = insertDevice({ autoPodcasts: true });
+    subscribe(db, testFeed);
+    const subId = getSubId();
+    db.prepare("UPDATE podcast_subscriptions SET auto_count = 1 WHERE id = ?").run(subId);
+
+    const src1 = path.join(tmpSrc, "ep_a.mp3");
+    const src2 = path.join(tmpSrc, "ep_b.mp3");
+    fs.writeFileSync(src1, Buffer.alloc(50));
+    fs.writeFileSync(src2, Buffer.alloc(50));
+    insertEpisode(subId, { localPath: src1 });
+    insertEpisode(subId, { localPath: src2 });
+
+    vi.mocked(copyFileToDevice).mockImplementation(async (_src, dest) => {
+      fs.mkdirSync(path.dirname(dest), { recursive: true });
+      fs.copyFileSync(_src, dest);
+      return true;
+    });
+
+    const result = await syncPodcastsToDevice(db, deviceId);
+    expect(result.synced).toBe(2);
+    expect(result.errors).toBe(0);
   });
 
   it.skipIf(!canRunDbTests)(
     "copies episodes when called during manual sync (autoPodcastsEnabled = true)",
     async () => {
-      // Regression: syncPodcastsToDevice was never called during sync:start,
-      // so devices with autoPodcastsEnabled would never receive subscription episodes.
       const deviceId = insertDevice({ autoPodcasts: true });
       subscribe(db, testFeed);
+      const subId = getSubId();
 
       const srcFile = path.join(tmpSrc, "ep_manual.mp3");
       fs.writeFileSync(srcFile, Buffer.alloc(200));
+      const epId = insertEpisode(subId, { localPath: srcFile });
 
-      vi.mocked(getReadyTargetEpisodes).mockReturnValue([
-        { id: 10, feedId: 7, localPath: srcFile },
-      ]);
       vi.mocked(copyFileToDevice).mockImplementation(async (_src, dest) => {
         fs.mkdirSync(path.dirname(dest), { recursive: true });
         fs.copyFileSync(srcFile, dest);
         return true;
       });
 
-      // Simulate what sync:start now does: call syncPodcastsToDevice for auto-podcast devices
       const result = await syncPodcastsToDevice(db, deviceId);
 
       expect(result.synced).toBe(1);
@@ -180,8 +225,8 @@ describe("syncPodcastsToDevice", () => {
       expect(copyFileToDevice).toHaveBeenCalledWith(srcFile, expect.stringContaining("Podcasts"));
 
       const row = db
-        .prepare("SELECT 1 FROM device_podcast_synced WHERE device_id = ? AND episode_id = 10")
-        .get(deviceId);
+        .prepare("SELECT 1 FROM device_podcast_synced WHERE device_id = ? AND episode_id = ?")
+        .get(deviceId, epId);
       expect(row).toBeDefined();
     }
   );
@@ -189,13 +234,12 @@ describe("syncPodcastsToDevice", () => {
   it.skipIf(!canRunDbTests)("emits total_add and copy progress events when episodes are found", async () => {
     const deviceId = insertDevice({ autoPodcasts: true });
     subscribe(db, testFeed);
+    const subId = getSubId();
 
     const srcFile = path.join(tmpSrc, "ep_progress.mp3");
     fs.writeFileSync(srcFile, Buffer.alloc(50));
+    insertEpisode(subId, { localPath: srcFile });
 
-    vi.mocked(getReadyTargetEpisodes).mockReturnValue([
-      { id: 20, feedId: 7, localPath: srcFile },
-    ]);
     vi.mocked(copyFileToDevice).mockImplementation(async (_src, dest) => {
       fs.mkdirSync(path.dirname(dest), { recursive: true });
       fs.copyFileSync(srcFile, dest);
@@ -227,16 +271,11 @@ describe("syncPodcastsToDevice", () => {
   });
 
   it.skipIf(!canRunDbTests)("returns 0/0 when the device mount path is not actually online", async () => {
-    // Regression: previously used fs.existsSync, which returns true for orphan
-    // directories left after ejection. isDeviceMountPathOnline correctly treats
-    // those as offline (different filesystem dev id).
     const deviceId = insertDevice({ autoPodcasts: true });
     subscribe(db, testFeed);
-    vi.mocked(isDeviceMountPathOnline).mockReturnValueOnce(false);
-
-    vi.mocked(getReadyTargetEpisodes).mockReturnValue([
-      { id: 99, feedId: 7, localPath: "/fake/ep99.mp3" },
-    ]);
+    const subId = getSubId();
+    insertEpisode(subId, { localPath: "/fake/ep99.mp3" });
+    vi.mocked(isDeviceMountPathOnline).mockReturnValue(false);
 
     const result = await syncPodcastsToDevice(db, deviceId);
     expect(result).toEqual({ synced: 0, errors: 0 });
@@ -246,14 +285,13 @@ describe("syncPodcastsToDevice", () => {
   it.skipIf(!canRunDbTests)("syncs to a dev mode device even when isDeviceMountPathOnline returns false", async () => {
     const deviceId = insertDevice({ autoPodcasts: true, devMode: true });
     subscribe(db, testFeed);
+    const subId = getSubId();
 
     const srcFile = path.join(tmpSrc, "ep_dev.mp3");
     fs.writeFileSync(srcFile, Buffer.alloc(50));
+    insertEpisode(subId, { localPath: srcFile });
 
     vi.mocked(isDeviceMountPathOnline).mockReturnValue(false);
-    vi.mocked(getReadyTargetEpisodes).mockReturnValue([
-      { id: 50, feedId: 7, localPath: srcFile },
-    ]);
     vi.mocked(copyFileToDevice).mockImplementation(async (_src, dest) => {
       fs.mkdirSync(path.dirname(dest), { recursive: true });
       fs.copyFileSync(srcFile, dest);
@@ -269,13 +307,17 @@ describe("syncPodcastsToDevice", () => {
   it.skipIf(!canRunDbTests)("emits log message when all episodes are already synced", async () => {
     const deviceId = insertDevice({ autoPodcasts: true });
     subscribe(db, testFeed);
+    const subId = getSubId();
+    const epId = insertEpisode(subId, { localPath: "/fake/ep30.mp3" });
 
-    vi.mocked(getReadyTargetEpisodes).mockReturnValue([
-      { id: 30, feedId: 7, localPath: "/fake/ep30.mp3" },
-    ]);
+    const relPath = path.join("Podcasts", "Dev Podcast", "30.mp3");
+    const deviceFilePath = path.join(tmpMount, relPath);
+    fs.mkdirSync(path.dirname(deviceFilePath), { recursive: true });
+    fs.writeFileSync(deviceFilePath, Buffer.alloc(10));
+
     db.prepare(
-      "INSERT INTO device_podcast_synced (device_id, episode_id, device_relative_path) VALUES (?, 30, ?)"
-    ).run(deviceId, "Podcasts/Dev Podcast/30.mp3");
+      "INSERT INTO device_podcast_synced (device_id, episode_id, device_relative_path) VALUES (?, ?, ?)"
+    ).run(deviceId, epId, relPath);
 
     const events: unknown[] = [];
     await syncPodcastsToDevice(db, deviceId, (e) => events.push(e));
