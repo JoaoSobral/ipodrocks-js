@@ -18,10 +18,6 @@ import { subscribe } from "../main/podcasts/podcast-subscriptions";
 import { syncPodcastsToDevice } from "../main/podcasts/podcast-device-sync";
 import type { PodcastSearchResult } from "../shared/types";
 
-vi.mock("../main/podcasts/podcast-refresh", () => ({
-  getReadyTargetEpisodes: vi.fn(),
-}));
-
 vi.mock("../main/sync/sync-executor", () => ({
   copyFileToDevice: vi.fn(),
 }));
@@ -32,7 +28,6 @@ vi.mock("../main/devices/device-online", () => ({
   isDeviceMountPathOnline: vi.fn().mockReturnValue(true),
 }));
 
-import { getReadyTargetEpisodes } from "../main/podcasts/podcast-refresh";
 import { copyFileToDevice } from "../main/sync/sync-executor";
 import { isDeviceMountPathOnline } from "../main/devices/device-online";
 
@@ -62,6 +57,7 @@ beforeEach(() => {
   tmpMount = fs.mkdtempSync(path.join(os.tmpdir(), "ipr-device-"));
   tmpSrc = fs.mkdtempSync(path.join(os.tmpdir(), "ipr-src-"));
   vi.clearAllMocks();
+  vi.mocked(isDeviceMountPathOnline).mockReturnValue(true);
 });
 
 afterEach(() => {
@@ -79,6 +75,18 @@ function insertDevice(opts: { autoPodcasts: boolean; devMode?: boolean }): numbe
     "VALUES (?, ?, 'Music', 'Podcasts', 'Audiobooks', 'Playlists', ?, ?, ?)",
   ].join(" ")).run("TestDevice", tmpMount, modeRow.id, opts.autoPodcasts ? 1 : 0, opts.devMode ? 1 : 0);
   return Number(result.lastInsertRowid);
+}
+
+function insertEpisode(subId: number, opts: { localPath: string | null; downloadState?: string }): number {
+  const result = db.prepare(
+    `INSERT INTO podcast_episodes (subscription_id, guid, title, enclosure_url, download_state, local_path)
+     VALUES (?, ?, 'Test Episode', 'https://example.com/ep.mp3', ?, ?)`
+  ).run(subId, `guid-${Math.random()}`, opts.downloadState ?? "ready", opts.localPath);
+  return Number(result.lastInsertRowid);
+}
+
+function getSubId(): number {
+  return (db.prepare("SELECT id FROM podcast_subscriptions LIMIT 1").get() as { id: number }).id;
 }
 
 describe("syncPodcastsToDevice", () => {
