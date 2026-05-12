@@ -118,6 +118,7 @@ import {
   buildLibraryDestMap,
   getProfileCodecExt,
   removeExtraTracks,
+  SyncCancelled,
 } from "./sync/sync-core";
 import { compareLibraries } from "./sync/name-size-sync";
 import { writePlaylistsToDevice } from "./sync/playlist-sync";
@@ -143,6 +144,7 @@ import {
   listSubscriptions,
   subscribe as podcastSubscribe,
   unsubscribe as podcastUnsubscribe,
+  deleteEpisodes as podcastDeleteEpisodes,
   setAutoCount,
   listEpisodes,
   setManualSelection,
@@ -827,10 +829,12 @@ export function registerIpcHandlers(): void {
         }
       }
 
-      const musicStats = device.getContentStats("music");
-      const podcastStats = device.getContentStats("podcast");
-      const audiobookStats = device.getContentStats("audiobook");
-      const playlistStats = device.getContentStats("playlist");
+      const [musicStats, podcastStats, audiobookStats, playlistStats] = await Promise.all([
+        device.getContentStats("music"),
+        device.getContentStats("podcast"),
+        device.getContentStats("audiobook"),
+        device.getContentStats("playlist"),
+      ]);
       const space = device.getAvailableSpace();
 
       const maps = buildLibraryTrackMaps(lib);
@@ -888,7 +892,11 @@ export function registerIpcHandlers(): void {
         profileCodecExt = getProfileCodecExt(codecName);
       }
 
-      const deviceMusicRaw = device.getTracks("music");
+      const [deviceMusicRaw, devicePodcastRaw, deviceAudiobookRaw] = await Promise.all([
+        device.getTracks("music"),
+        device.getTracks("podcast"),
+        device.getTracks("audiobook"),
+      ]);
       const deviceMusicMap: Record<string, { file_size: number; mtime?: number }> = {};
       for (const [p, info] of deviceMusicRaw) {
         deviceMusicMap[p] = {
@@ -896,7 +904,6 @@ export function registerIpcHandlers(): void {
           ...(info.mtimeMs != null && { mtime: info.mtimeMs }),
         };
       }
-      const devicePodcastRaw = device.getTracks("podcast");
       const devicePodcastMap: Record<string, { file_size: number; mtime?: number }> = {};
       for (const [p, info] of devicePodcastRaw) {
         devicePodcastMap[p] = {
@@ -904,7 +911,6 @@ export function registerIpcHandlers(): void {
           ...(info.mtimeMs != null && { mtime: info.mtimeMs }),
         };
       }
-      const deviceAudiobookRaw = device.getTracks("audiobook");
       const deviceAudiobookMap: Record<string, { file_size: number; mtime?: number }> = {};
       for (const [p, info] of deviceAudiobookRaw) {
         deviceAudiobookMap[p] = {
@@ -1103,6 +1109,7 @@ export function registerIpcHandlers(): void {
       } satisfies DeviceSyncPreferences);
 
       activeSyncAbort = new AbortController();
+      const syncSignal = activeSyncAbort.signal;
 
       const { music: musicMap, podcast: podcastMap, audiobook: audiobookMap } =
         buildLibraryTrackMaps(lib);
@@ -1235,7 +1242,7 @@ export function registerIpcHandlers(): void {
       const syncOpts: RunSyncOptions = {
         syncType: opts.syncType,
         extraTrackPolicy: opts.extraTrackPolicy,
-        cancelSignal: activeSyncAbort.signal,
+        cancelSignal: syncSignal,
         ignoreSpaceCheck: opts.ignoreSpaceCheck,
         skipAlbumArtwork: opts.skipAlbumArtwork,
         preloadedMtimes,
@@ -1261,7 +1268,6 @@ export function registerIpcHandlers(): void {
       const willRunAudiobook = Object.keys(audiobookLibraryTracks).length > 0;
       const hasAutoPodcasts = device.profile.autoPodcastsEnabled === true;
       const isEmptyLibrary = !willRunMusic && !willRunPodcast && !willRunAudiobook;
-      console.log(`[autopod-debug] sync:start deviceId=${opts.deviceId} autoPodcastsEnabled=${device.profile.autoPodcastsEnabled} hasAutoPodcasts=${hasAutoPodcasts} isEmptyLibrary=${isEmptyLibrary}`);
 
       if (isEmptyLibrary && !hasAutoPodcasts) {
         const isShadow = device.profile.sourceLibraryType === "shadow" && device.profile.shadowLibraryId != null;
@@ -1346,7 +1352,8 @@ export function registerIpcHandlers(): void {
       }
 
       if (willRunMusic) {
-        const deviceMusicRaw = device.getTracks("music", { cancelSignal: activeSyncAbort.signal });
+        const deviceMusicRaw = await device.getTracks("music", { cancelSignal: syncSignal });
+        if (syncSignal.aborted) throw new SyncCancelled();
         const deviceMusicMap: Record<string, { file_size: number; mtime?: number }> = {};
         for (const [p, info] of deviceMusicRaw) {
           deviceMusicMap[p] = {
@@ -1373,7 +1380,8 @@ export function registerIpcHandlers(): void {
 
       if (willRunPodcast) {
         const devicePodcastPath = device.getContentPath("podcast");
-        const devicePodcastRaw = device.getTracks("podcast", { cancelSignal: activeSyncAbort.signal });
+        const devicePodcastRaw = await device.getTracks("podcast", { cancelSignal: syncSignal });
+        if (syncSignal.aborted) throw new SyncCancelled();
         const devicePodcastMap: Record<string, { file_size: number; mtime?: number }> = {};
         for (const [p, info] of devicePodcastRaw) {
           devicePodcastMap[p] = {
@@ -1400,7 +1408,8 @@ export function registerIpcHandlers(): void {
 
       if (willRunAudiobook) {
         const deviceAudiobookPath = device.getContentPath("audiobook");
-        const deviceAudiobookRaw = device.getTracks("audiobook", { cancelSignal: activeSyncAbort.signal });
+        const deviceAudiobookRaw = await device.getTracks("audiobook", { cancelSignal: syncSignal });
+        if (syncSignal.aborted) throw new SyncCancelled();
         const deviceAudiobookMap: Record<string, { file_size: number; mtime?: number }> = {};
         for (const [p, info] of deviceAudiobookRaw) {
           deviceAudiobookMap[p] = {
@@ -1426,10 +1435,8 @@ export function registerIpcHandlers(): void {
       }
 
       if (hasAutoPodcasts) {
-        console.log(`[autopod-debug] entering auto-podcast sync phase for deviceId=${opts.deviceId}`);
         try {
           const autoPodResult = await syncPodcastsToDevice(lib.getConnection(), opts.deviceId, syncOpts.progressCallback);
-          console.log(`[autopod-debug] auto-podcast sync result:`, autoPodResult);
           result.synced += autoPodResult.synced;
           result.errors += autoPodResult.errors;
         } catch (err) {
@@ -1524,7 +1531,7 @@ export function registerIpcHandlers(): void {
               const { removed } = removeExtraTracks(
                 orphanPaths,
                 syncOpts.progressCallback,
-                activeSyncAbort?.signal
+                syncSignal
               );
               result.removed += removed;
               syncOpts.progressCallback?.({
@@ -2320,6 +2327,15 @@ export function registerIpcHandlers(): void {
       const db = getLibrary().getConnection();
       podcastUnsubscribe(db, subId);
       invalidateAssistantCache(); // F9: podcast config changed
+      return undefined;
+    })
+  );
+
+  ipcMain.handle(
+    "podcast:deleteEpisodes",
+    safe("podcast:deleteEpisodes", async (_event, episodeIds: number[]) => {
+      const db = getLibrary().getConnection();
+      podcastDeleteEpisodes(db, episodeIds);
       return undefined;
     })
   );

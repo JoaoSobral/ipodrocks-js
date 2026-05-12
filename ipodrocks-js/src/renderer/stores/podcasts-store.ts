@@ -4,6 +4,7 @@ import {
   podcastListSubs,
   podcastSubscribeFeed,
   podcastUnsubscribe,
+  podcastDeleteEpisodes as apiDeleteEpisodes,
   podcastSetAutoCount,
   podcastListEpisodes,
   podcastSetManualSelection,
@@ -24,6 +25,7 @@ interface PodcastsState {
   fetchSubs: () => Promise<void>;
   subscribe: (feed: PodcastSearchResult) => Promise<void>;
   unsubscribe: (subId: number) => Promise<void>;
+  deleteEpisodes: (subId: number, episodeIds: number[]) => Promise<void>;
   setAutoCount: (subId: number, count: number) => Promise<void>;
   fetchEpisodes: (subId: number) => Promise<void>;
   setManualSelection: (subId: number, episodeIds: number[]) => Promise<void>;
@@ -75,6 +77,20 @@ export const usePodcastsStore = create<PodcastsState>((set, get) => ({
         subscribedFeedIds: newFeedIds,
       };
     });
+  },
+
+  deleteEpisodes: async (subId, episodeIds) => {
+    await apiDeleteEpisodes(episodeIds);
+    set((state) => ({
+      episodesBySub: {
+        ...state.episodesBySub,
+        [subId]: (state.episodesBySub[subId] ?? []).map((ep) =>
+          episodeIds.includes(ep.id)
+            ? { ...ep, downloadState: "skipped" as const, localPath: null }
+            : ep
+        ),
+      },
+    }));
   },
 
   setAutoCount: async (subId, count) => {

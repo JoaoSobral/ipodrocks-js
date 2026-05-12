@@ -79,7 +79,8 @@ Click any subscription card to open its episode modal:
 - **Auto-download dropdown** — pick how many recent episodes to keep (1–5) or switch to Manual selection.
 - **Manual mode** — checkboxes appear next to each episode; tick up to 5 to mark them for download.
 - **Download now** — trigger an immediate refresh and download, without waiting for the scheduler.
-- **Unsubscribe** — removes the subscription and stops all future downloads for it.
+- **Delete episodes** — click **Select** (top-right of the episode list) to enter delete mode. Checkboxes appear on every episode. Use **Select all / Deselect all** to bulk-select, then click **Delete (N)** to remove the selected episodes. Deleting an episode removes the local file, removes the copy from every synced device, and marks it `skipped` so it is not re-downloaded. Click **Cancel** to exit without deleting anything.
+- **Unsubscribe** — removes the subscription, deletes all local episode files, and removes episode copies from every synced device. Stops all future downloads for that podcast.
 
 ### 5. Enable Auto Podcasts on a device
 
@@ -91,4 +92,5 @@ Open the **Devices** panel, select a device, and enable the **Auto Podcasts** to
 - **Download now** is handy after subscribing — it immediately fetches the feed so you don't have to wait for the next scheduler cycle.
 - If a download shows `failed`, click **Download now** to retry.
 - The subscriptions grid shows podcast artwork fetched from the Podcast Index. If artwork doesn't display, check that the URL is reachable.
-- Podcast episodes are placed in `<device root>/<Podcasts folder>/<Podcast title>/` on the device. Rockbox and most players recognise them automatically.
+- Podcast episodes are placed in `<device root>/<Podcasts folder>/<Podcast title>/<Episode Title>.mp3` on the device. Rockbox and most players recognise them automatically.
+- To rename episodes that were previously synced with numeric filenames, open the episode modal, use **Select → Select all → Delete**, then trigger a sync. The episodes will be re-downloaded and re-synced with their proper titles.

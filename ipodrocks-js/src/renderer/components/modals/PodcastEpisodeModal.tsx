@@ -54,12 +54,16 @@ export function PodcastEpisodeModal({
     setAutoCount,
     setManualSelection,
     downloadNow,
+    deleteEpisodes,
     unsubscribe,
   } = usePodcastsStore();
 
   const [downloading, setDownloading] = useState(false);
   const [downloadError, setDownloadError] = useState<string | null>(null);
   const [manualSelected, setManualSelected] = useState<Set<number>>(new Set());
+  const [deleteMode, setDeleteMode] = useState(false);
+  const [deleteSelected, setDeleteSelected] = useState<Set<number>>(new Set());
+  const [deleting, setDeleting] = useState(false);
 
   const subId = subscription?.id ?? -1;
   const episodes: PodcastEpisode[] = subId >= 0 ? (episodesBySub[subId] ?? []) : [];
@@ -77,6 +81,8 @@ export function PodcastEpisodeModal({
         new Set(episodes.filter((e) => e.manualSelected).map((e) => e.id))
       );
       setDownloadError(null);
+      setDeleteMode(false);
+      setDeleteSelected(new Set());
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, subscription?.id]);
@@ -107,6 +113,30 @@ export function PodcastEpisodeModal({
     if ("error" in result) {
       setDownloadError(result.error ?? "Download failed");
     }
+  }
+
+  function toggleDeleteEp(epId: number) {
+    const next = new Set(deleteSelected);
+    if (next.has(epId)) next.delete(epId);
+    else next.add(epId);
+    setDeleteSelected(next);
+  }
+
+  function toggleSelectAll() {
+    if (deleteSelected.size === episodes.length) {
+      setDeleteSelected(new Set());
+    } else {
+      setDeleteSelected(new Set(episodes.map((ep) => ep.id)));
+    }
+  }
+
+  async function handleDeleteSelected() {
+    if (deleteSelected.size === 0) return;
+    setDeleting(true);
+    await deleteEpisodes(subId, [...deleteSelected]);
+    setDeleteSelected(new Set());
+    setDeleteMode(false);
+    setDeleting(false);
   }
 
   async function handleUnsubscribe() {
@@ -185,6 +215,31 @@ export function PodcastEpisodeModal({
           <p className="text-xs text-destructive">{downloadError}</p>
         )}
 
+        {/* Episode list header */}
+        <div className="flex items-center justify-between">
+          <span className="text-xs text-muted-foreground">
+            {episodes.length} episode{episodes.length !== 1 ? "s" : ""}
+          </span>
+          {episodes.length > 0 && (
+            <div className="flex items-center gap-3">
+              {deleteMode && (
+                <button
+                  className="text-xs text-muted-foreground hover:text-foreground"
+                  onClick={toggleSelectAll}
+                >
+                  {deleteSelected.size === episodes.length ? "Deselect all" : "Select all"}
+                </button>
+              )}
+              <button
+                className="text-xs text-primary hover:underline"
+                onClick={() => { setDeleteMode((v) => !v); setDeleteSelected(new Set()); }}
+              >
+                {deleteMode ? "Cancel" : "Select"}
+              </button>
+            </div>
+          )}
+        </div>
+
         {/* Episode list */}
         <div className="space-y-1 overflow-y-auto max-h-[40vh]">
           {episodes.length === 0 && (
@@ -196,11 +251,22 @@ export function PodcastEpisodeModal({
             <div
               key={ep.id}
               className={`flex items-start gap-2 px-3 py-2 rounded-lg text-sm transition-colors ${
-                isManual ? "cursor-default hover:bg-accent/30" : ""
+                deleteMode || isManual ? "cursor-default hover:bg-accent/30" : ""
               }`}
-              onClick={() => isManual && handleToggleManual(ep.id)}
+              onClick={() => {
+                if (deleteMode) toggleDeleteEp(ep.id);
+                else if (isManual) handleToggleManual(ep.id);
+              }}
             >
-              {isManual && (
+              {deleteMode ? (
+                <input
+                  type="checkbox"
+                  checked={deleteSelected.has(ep.id)}
+                  onChange={() => toggleDeleteEp(ep.id)}
+                  className="mt-0.5 shrink-0 accent-primary"
+                  onClick={(e) => e.stopPropagation()}
+                />
+              ) : isManual ? (
                 <input
                   type="checkbox"
                   checked={manualSelected.has(ep.id)}
@@ -209,7 +275,7 @@ export function PodcastEpisodeModal({
                   className="mt-0.5 shrink-0 accent-primary"
                   onClick={(e) => e.stopPropagation()}
                 />
-              )}
+              ) : null}
               <div className="min-w-0 flex-1">
                 <p className="font-medium text-foreground truncate">{ep.title}</p>
                 <p className="text-xs text-muted-foreground">
@@ -237,12 +303,34 @@ export function PodcastEpisodeModal({
 
         {/* Footer */}
         <div className="flex justify-between items-center pt-2 border-t border-border">
-          <Button size="sm" variant="danger" onClick={handleUnsubscribe}>
-            Unsubscribe
-          </Button>
-          <Button size="sm" variant="secondary" onClick={onClose}>
-            Close
-          </Button>
+          {deleteMode ? (
+            <>
+              <Button
+                size="sm"
+                variant="danger"
+                disabled={deleteSelected.size === 0 || deleting}
+                onClick={handleDeleteSelected}
+              >
+                {deleting ? "Deleting…" : `Delete (${deleteSelected.size})`}
+              </Button>
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => { setDeleteMode(false); setDeleteSelected(new Set()); }}
+              >
+                Cancel
+              </Button>
+            </>
+          ) : (
+            <>
+              <Button size="sm" variant="danger" onClick={handleUnsubscribe}>
+                Unsubscribe
+              </Button>
+              <Button size="sm" variant="secondary" onClick={onClose}>
+                Close
+              </Button>
+            </>
+          )}
         </div>
       </div>
     </Modal>

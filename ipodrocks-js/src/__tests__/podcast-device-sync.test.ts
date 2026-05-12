@@ -77,11 +77,11 @@ function insertDevice(opts: { autoPodcasts: boolean; devMode?: boolean }): numbe
   return Number(result.lastInsertRowid);
 }
 
-function insertEpisode(subId: number, opts: { localPath: string | null; downloadState?: string }): number {
+function insertEpisode(subId: number, opts: { localPath: string | null; downloadState?: string; title?: string }): number {
   const result = db.prepare(
     `INSERT INTO podcast_episodes (subscription_id, guid, title, enclosure_url, download_state, local_path)
-     VALUES (?, ?, 'Test Episode', 'https://example.com/ep.mp3', ?, ?)`
-  ).run(subId, `guid-${Math.random()}`, opts.downloadState ?? "ready", opts.localPath);
+     VALUES (?, ?, ?, 'https://example.com/ep.mp3', ?, ?)`
+  ).run(subId, `guid-${Math.random()}`, opts.title ?? "Test Episode", opts.downloadState ?? "ready", opts.localPath);
   return Number(result.lastInsertRowid);
 }
 
@@ -257,6 +257,29 @@ describe("syncPodcastsToDevice", () => {
     expect(copyEvent).toBeDefined();
     expect(copyEvent.status).toBe("copied");
     expect(copyEvent.contentType).toBe("podcast");
+  });
+
+  it.skipIf(!canRunDbTests)("uses episode title as the destination filename", async () => {
+    const deviceId = insertDevice({ autoPodcasts: true });
+    subscribe(db, testFeed);
+    const subId = getSubId();
+
+    const srcFile = path.join(tmpSrc, "episode_titled.mp3");
+    fs.writeFileSync(srcFile, Buffer.alloc(100));
+    insertEpisode(subId, { localPath: srcFile, title: "My Great Episode" });
+
+    const capturedDest: string[] = [];
+    vi.mocked(copyFileToDevice).mockImplementation(async (_src, dest) => {
+      capturedDest.push(dest);
+      fs.mkdirSync(path.dirname(dest), { recursive: true });
+      fs.copyFileSync(srcFile, dest);
+      return true;
+    });
+
+    await syncPodcastsToDevice(db, deviceId);
+
+    expect(capturedDest).toHaveLength(1);
+    expect(path.basename(capturedDest[0])).toBe("My Great Episode.mp3");
   });
 
   it.skipIf(!canRunDbTests)("emits log message when no subscriptions are configured", async () => {
