@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.3.1] — 2026-05
+
+### Bug fixes
+
+- **Podcast episodes synced with numeric filenames** — Episodes were copied to devices as `<id>.mp3` (e.g. `107.mp3`) instead of using the episode title. Episodes now sync as `<Episode Title>.mp3` inside the show folder, making them readable on the device without a tag library.
+- **UI freezes during sync on Intel Mac** ([#70](https://github.com/JoaoSobral/ipodrocks-js/issues/70)) — `Device.getTracks` and `Device.getContentStats` walked the device filesystem with synchronous `fs.readdirSync`/`fs.statSync`, blocking the Electron main process event loop. On slow USB hosts (e.g. 2018 Intel Mac Mini) this could freeze the UI for 1–2 minutes per sync — progress events queued up and the Cancel button could not be clicked. Both walks are now fully async; the cancel signal is checked before every directory and stat call, and the sync handler bails out with `SyncCancelled` between content types so cancelling halts the whole queue, not just the in-flight copy.
+
+### Features
+
+#### Auto Podcasts
+
+- **Delete episodes** — The episode modal now has a **Select** button above the episode list. Clicking it enters delete mode: checkboxes appear on every episode, a **Select all / Deselect all** toggle appears, and the footer switches to a **Delete (N)** button. Deleting an episode removes the local downloaded file, removes the copy from every synced device, and marks the episode as `skipped` so it will not be re-downloaded automatically.
+- **Unsubscribe cleans up files** — Unsubscribing from a podcast now deletes the local episode files and removes episode copies from all synced devices before clearing the subscription record. Previously, local and device files were left behind.
+
+---
+
 ## [1.3.0] — 2026-05
 
 ### Features

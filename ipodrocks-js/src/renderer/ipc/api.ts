@@ -769,6 +769,10 @@ export async function podcastUnsubscribe(subId: number): Promise<void> {
   await window.api.invoke("podcast:unsubscribe", subId);
 }
 
+export async function podcastDeleteEpisodes(episodeIds: number[]): Promise<void> {
+  await window.api.invoke("podcast:deleteEpisodes", episodeIds);
+}
+
 export async function podcastSetAutoCount(subId: number, count: number): Promise<void> {
   await window.api.invoke("podcast:setAutoCount", subId, count);
 }

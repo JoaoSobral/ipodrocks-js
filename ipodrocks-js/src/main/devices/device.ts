@@ -85,10 +85,14 @@ export class Device {
     }
   }
 
-  getTracks(
+  // Walks the device's content folder asynchronously so the main process
+  // event loop stays free for IPC progress messages and cancel signals.
+  // The signal is checked before every readdir and stat — on abort, the
+  // walk returns the partial map immediately rather than continuing.
+  async getTracks(
     contentType: ContentType = "music",
     options?: GetTracksOptions
-  ): Map<string, DeviceTrackInfo> {
+  ): Promise<Map<string, DeviceTrackInfo>> {
     const contentPath = this.getContentPath(contentType);
     const tracks = new Map<string, DeviceTrackInfo>();
 
@@ -99,12 +103,12 @@ export class Device {
     let count = 0;
     let examined = 0;
 
-    const walk = (dir: string): void => {
+    const walk = async (dir: string): Promise<void> => {
       if (signal?.aborted) return;
 
       let entries: fs.Dirent[];
       try {
-        entries = fs.readdirSync(dir, { withFileTypes: true });
+        entries = await fs.promises.readdir(dir, { withFileTypes: true });
       } catch {
         return;
       }
@@ -115,7 +119,7 @@ export class Device {
         const fullPath = path.join(dir, entry.name);
 
         if (entry.isDirectory()) {
-          walk(fullPath);
+          await walk(fullPath);
           continue;
         }
 
@@ -125,7 +129,7 @@ export class Device {
           let fileSize = 0;
           let mtimeMs: number | undefined;
           try {
-            const stat = fs.statSync(fullPath);
+            const stat = await fs.promises.stat(fullPath);
             fileSize = stat.size;
             mtimeMs = stat.mtimeMs;
           } catch {
@@ -145,33 +149,39 @@ export class Device {
       }
     };
 
-    walk(contentPath);
+    await walk(contentPath);
     return tracks;
   }
 
-  getContentStats(contentType: ContentType = "music"): ContentStats {
+  async getContentStats(
+    contentType: ContentType = "music",
+    options?: { cancelSignal?: AbortSignal }
+  ): Promise<ContentStats> {
     const contentPath = this.getContentPath(contentType);
     if (!contentPath || !fs.existsSync(contentPath)) {
       return { fileCount: 0, totalGb: 0 };
     }
 
+    const signal = options?.cancelSignal;
     let totalSize = 0;
     let fileCount = 0;
 
-    const walk = (dir: string): void => {
+    const walk = async (dir: string): Promise<void> => {
+      if (signal?.aborted) return;
       let entries: fs.Dirent[];
       try {
-        entries = fs.readdirSync(dir, { withFileTypes: true });
+        entries = await fs.promises.readdir(dir, { withFileTypes: true });
       } catch {
         return;
       }
       for (const entry of entries) {
+        if (signal?.aborted) return;
         const fullPath = path.join(dir, entry.name);
         if (entry.isDirectory()) {
-          walk(fullPath);
+          await walk(fullPath);
         } else {
           try {
-            totalSize += fs.statSync(fullPath).size;
+            totalSize += (await fs.promises.stat(fullPath)).size;
             fileCount++;
           } catch {
             // skip inaccessible
@@ -181,7 +191,7 @@ export class Device {
     };
 
     try {
-      walk(contentPath);
+      await walk(contentPath);
     } catch {
       return { fileCount: 0, totalGb: 0 };
     }

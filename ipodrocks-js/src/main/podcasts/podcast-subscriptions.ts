@@ -1,3 +1,5 @@
+import * as fs from "fs";
+import * as path from "path";
 import type Database from "better-sqlite3";
 import type {
   PodcastSubscription,
@@ -144,7 +146,50 @@ export function subscribe(
   return getSubscriptionById(db, Number(info.lastInsertRowid))!;
 }
 
+/** Delete local files and device copies for a set of episodes. DB records are untouched. */
+function cleanupEpisodeArtifacts(db: Database.Database, episodeIds: number[]): void {
+  if (episodeIds.length === 0) return;
+  const ph = episodeIds.map(() => "?").join(",");
+
+  const localRows = db
+    .prepare(`SELECT local_path FROM podcast_episodes WHERE id IN (${ph}) AND local_path IS NOT NULL`)
+    .all(...episodeIds) as { local_path: string }[];
+  for (const row of localRows) {
+    try { fs.unlinkSync(row.local_path); } catch { /* ignore */ }
+  }
+
+  const deviceRows = db
+    .prepare(
+      `SELECT ds.device_relative_path, d.mount_path
+       FROM device_podcast_synced ds
+       JOIN devices d ON d.id = ds.device_id
+       WHERE ds.episode_id IN (${ph})`
+    )
+    .all(...episodeIds) as { device_relative_path: string; mount_path: string }[];
+  for (const row of deviceRows) {
+    try { fs.unlinkSync(path.join(row.mount_path, row.device_relative_path)); } catch { /* ignore */ }
+  }
+}
+
+/**
+ * Delete specific episodes: removes local files, removes copies from all synced
+ * devices, and marks each episode as 'skipped' so it won't be re-downloaded.
+ */
+export function deleteEpisodes(db: Database.Database, episodeIds: number[]): void {
+  if (episodeIds.length === 0) return;
+  const ph = episodeIds.map(() => "?").join(",");
+  cleanupEpisodeArtifacts(db, episodeIds);
+  db.transaction(() => {
+    db.prepare(`UPDATE podcast_episodes SET download_state = 'skipped', local_path = NULL WHERE id IN (${ph})`).run(...episodeIds);
+    db.prepare(`DELETE FROM device_podcast_synced WHERE episode_id IN (${ph})`).run(...episodeIds);
+  })();
+}
+
 export function unsubscribe(db: Database.Database, subId: number): void {
+  const episodes = db
+    .prepare("SELECT id FROM podcast_episodes WHERE subscription_id = ?")
+    .all(subId) as { id: number }[];
+  cleanupEpisodeArtifacts(db, episodes.map((e) => e.id));
   db.prepare("DELETE FROM podcast_subscriptions WHERE id = ?").run(subId);
 }
 

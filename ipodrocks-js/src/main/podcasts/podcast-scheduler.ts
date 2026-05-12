@@ -19,21 +19,16 @@ function getDeviceInfo(db: Database.Database, deviceId: number): DeviceRow | nul
 }
 
 async function runRefreshAndSync(db: Database.Database): Promise<void> {
-  console.log("[autopod-debug] runRefreshAndSync start");
   const config = getPodcastIndexConfig();
-  console.log(`[autopod-debug] podcastIndexConfig present=${!!config}`);
   if (!config) return;
 
   await refreshAll(db, config.apiKey, config.apiSecret);
 
-  const autoPodDeviceIds = getAutoPodcastDeviceIds(db);
-  console.log(`[autopod-debug] auto-podcast device IDs:`, autoPodDeviceIds);
-  for (const deviceId of autoPodDeviceIds) {
+  for (const deviceId of getAutoPodcastDeviceIds(db)) {
     const info = getDeviceInfo(db, deviceId);
     const mountPath = info?.mount_path ?? null;
     const devMode = !!(info?.dev_mode);
     const online = mountPath ? (devMode || isDeviceMountPathOnline(mountPath)) : false;
-    console.log(`[autopod-debug] deviceId=${deviceId} mountPath="${mountPath}" devMode=${devMode} online=${online}`);
     if (!mountPath || !online) continue;
     await syncPodcastsToDevice(db, deviceId);
   }
@@ -44,7 +39,6 @@ let pollerTimer: ReturnType<typeof setInterval> | null = null;
 let lastOnlineDeviceIds = new Set<number>();
 
 export function startPodcastScheduler(db: Database.Database): void {
-  console.log("[autopod-debug] startPodcastScheduler called");
   // Boot refresh — runRefreshAndSync no-ops when creds are missing.
   runRefreshAndSync(db).catch((err) =>
     console.error("[podcasts] boot refresh failed:", err)
