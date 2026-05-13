@@ -152,6 +152,17 @@ export class PlaylistCore {
 
   // -- helpers ------------------------------------------------------------
 
+  private static readonly TYPE_PREFIXES: Record<string, string> = {
+    smart: "smart_",
+    genius: "genius_",
+    savant: "savant_",
+  };
+
+  private _withTypePrefix(name: string, type: "smart" | "genius" | "savant"): string {
+    const prefix = PlaylistCore.TYPE_PREFIXES[type];
+    return name.startsWith(prefix) ? name : `${prefix}${name}`;
+  }
+
   private _playlistTypeId(name: string): number | undefined {
     const row = this.db
       .prepare("SELECT id FROM playlist_types WHERE name = ?")
@@ -233,10 +244,11 @@ export class PlaylistCore {
     const typeId = this._playlistTypeId("smart");
     if (!typeId) throw new Error("Playlist type 'smart' not found");
     const now = new Date().toISOString();
+    const storedName = this._withTypePrefix(name, "smart");
 
     const run = this.db.transaction(() => {
       const info = this.stmtInsertPlaylist.run(
-        name,
+        storedName,
         description,
         typeId,
         now,
@@ -338,12 +350,13 @@ export class PlaylistCore {
 
     const displayName = name ||
       geniusType.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+    const storedName = this._withTypePrefix(displayName, "genius");
     const scopeLabel = deviceId === null ? "Global" : `Device #${deviceId}`;
     const description = `${geniusType} | ${scopeLabel} | limit ${trackLimit}`;
 
     const run = this.db.transaction(() => {
       const info = this.stmtInsertPlaylist.run(
-        displayName,
+        storedName,
         description,
         typeId,
         now,
@@ -415,6 +428,7 @@ export class PlaylistCore {
     const typeId = this._playlistTypeId("savant");
     if (!typeId) throw new Error("Playlist type 'savant' not found");
     const now = new Date().toISOString();
+    const storedName = this._withTypePrefix(name, "savant");
 
     const stmtInsertSavant = this.db.prepare(`
       INSERT INTO playlists (name, description, playlist_type_id, savant_config, created_at, updated_at)
@@ -423,7 +437,7 @@ export class PlaylistCore {
 
     const run = this.db.transaction(() => {
       const info = stmtInsertSavant.run(
-        name,
+        storedName,
         "",
         typeId,
         savantConfig,

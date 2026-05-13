@@ -76,7 +76,7 @@ describe("writePlaylistsToDevice (rockbox tagnavi integration)", () => {
       useTagnavi: false,
     });
 
-    expect(fs.existsSync(path.join(playlistFolder, "Rock Hits.m3u"))).toBe(true);
+    expect(fs.existsSync(path.join(playlistFolder, "smart_Rock Hits.m3u"))).toBe(true);
     expect(fs.existsSync(tagnaviPath(mountPath))).toBe(false);
   });
 
@@ -93,10 +93,10 @@ describe("writePlaylistsToDevice (rockbox tagnavi integration)", () => {
       useTagnavi: true,
     });
 
-    expect(fs.existsSync(path.join(playlistFolder, "Rock Hits.m3u"))).toBe(false);
+    expect(fs.existsSync(path.join(playlistFolder, "smart_Rock Hits.m3u"))).toBe(false);
     expect(fs.existsSync(tagnaviPath(mountPath))).toBe(true);
     const config = fs.readFileSync(tagnaviPath(mountPath), "utf-8");
-    expect(config).toContain('"Rock Hits"');
+    expect(config).toContain('"smart_Rock Hits"');
     expect(config).toContain('genre = "Rock"');
   });
 
@@ -115,7 +115,7 @@ describe("writePlaylistsToDevice (rockbox tagnavi integration)", () => {
     });
 
     expect(fs.existsSync(path.join(playlistFolder, "My Custom.m3u"))).toBe(true);
-    expect(fs.existsSync(path.join(playlistFolder, "Rock Hits.m3u"))).toBe(false);
+    expect(fs.existsSync(path.join(playlistFolder, "smart_Rock Hits.m3u"))).toBe(false);
     expect(fs.existsSync(tagnaviPath(mountPath))).toBe(true);
   });
 
@@ -152,7 +152,7 @@ describe("writePlaylistsToDevice (rockbox tagnavi integration)", () => {
       useTagnavi: true,
     });
     expect(fs.existsSync(tagnaviPath(mountPath))).toBe(true);
-    expect(fs.existsSync(path.join(playlistFolder, "Rock Hits.m3u"))).toBe(false);
+    expect(fs.existsSync(path.join(playlistFolder, "smart_Rock Hits.m3u"))).toBe(false);
 
     await writePlaylistsToDevice({
       playlistFolder,
@@ -163,7 +163,7 @@ describe("writePlaylistsToDevice (rockbox tagnavi integration)", () => {
       useTagnavi: false,
     });
     expect(fs.existsSync(tagnaviPath(mountPath))).toBe(false);
-    expect(fs.existsSync(path.join(playlistFolder, "Rock Hits.m3u"))).toBe(true);
+    expect(fs.existsSync(path.join(playlistFolder, "smart_Rock Hits.m3u"))).toBe(true);
   });
 
   it.skipIf(!canRunDbTests)("write-if-changed: re-sync does not re-write tagnavi", async () => {
