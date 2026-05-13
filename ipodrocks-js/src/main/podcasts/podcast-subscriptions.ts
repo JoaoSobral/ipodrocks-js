@@ -116,9 +116,14 @@ function rowToEp(r: EpRow): PodcastEpisode {
 
 export function listSubscriptions(db: Database.Database): PodcastSubscription[] {
   const rows = db
-    .prepare("SELECT * FROM podcast_subscriptions ORDER BY created_at ASC")
-    .all() as SubRow[];
-  return rows.map((r) => rowToSub(r, computeIsUpToDate(db, r), getLatestEpisodeAt(db, r.id)));
+    .prepare(
+      `SELECT s.*,
+              (SELECT MAX(published_at) FROM podcast_episodes WHERE subscription_id = s.id) AS latest_episode_at
+       FROM podcast_subscriptions s
+       ORDER BY s.created_at ASC`
+    )
+    .all() as Array<SubRow & { latest_episode_at: string | null }>;
+  return rows.map((r) => rowToSub(r, computeIsUpToDate(db, r), r.latest_episode_at));
 }
 
 export function getSubscriptionById(db: Database.Database, id: number): PodcastSubscription | null {

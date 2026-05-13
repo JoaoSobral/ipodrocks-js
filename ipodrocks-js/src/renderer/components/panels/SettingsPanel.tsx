@@ -176,17 +176,19 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
   }
 
   async function handlePodcastTest() {
-    // podcastSearch on the main side always uses stored credentials — it has
-    // no override path — so testing with unsaved typed values would silently
-    // hit the old creds. Tell the user to Save first.
-    if (podcastApiKey.trim() || podcastApiSecret.trim()) {
-      setPodcastTestStatus("error");
-      setPodcastTestError("Save first — Test uses stored credentials");
-      return;
-    }
-    if (!podcastSettings.hasApiKey || !podcastSettings.hasApiSecret) {
+    const hasTyped = podcastApiKey.trim().length > 0 || podcastApiSecret.trim().length > 0;
+    const hasStored = podcastSettings.hasApiKey && podcastSettings.hasApiSecret;
+    if (!hasTyped && !hasStored) {
       setPodcastTestStatus("error");
       setPodcastTestError("Enter API key and secret first");
+      return;
+    }
+    // podcastSearch on the main side always uses stored credentials — it has
+    // no override path — so testing with unsaved typed values would silently
+    // hit the old creds (or fail when no creds are stored yet).
+    if (hasTyped) {
+      setPodcastTestStatus("error");
+      setPodcastTestError("Save first — Test uses stored credentials");
       return;
     }
     setPodcastTestStatus("testing");
@@ -288,9 +290,6 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
                     <span className="text-xs text-success">
                       Connected (using stored key)
                     </span>
-                  )}
-                  {testStatus === "ok" && testedSource === null && (
-                    <span className="text-xs text-success">Connected</span>
                   )}
                   {testStatus === "error" && testError && (
                     <span className="text-xs text-destructive">{testError}</span>

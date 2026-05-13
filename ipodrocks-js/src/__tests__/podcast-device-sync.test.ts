@@ -177,6 +177,55 @@ describe("syncPodcastsToDevice", () => {
     expect(copyFileToDevice).toHaveBeenCalled();
   });
 
+  it.skipIf(!canRunDbTests)(
+    "re-copies under the new filename when the stored path uses an old naming scheme",
+    async () => {
+      const deviceId = insertDevice({ autoPodcasts: true });
+      subscribe(db, testFeed);
+      const subId = getSubId();
+
+      const srcFile = path.join(tmpSrc, "ep_migrate.mp3");
+      fs.writeFileSync(srcFile, Buffer.alloc(100));
+      const epId = insertEpisode(subId, {
+        localPath: srcFile,
+        title: "Migrated Episode",
+        publishedAt: "2026-04-21 12:00:00",
+      });
+
+      // Simulate the pre-v1.3.2 layout: file synced under `{title}.mp3` (no date prefix).
+      const oldRel = path.join("Podcasts", "Dev Podcast", "Migrated Episode.mp3");
+      const oldAbsolute = path.join(tmpMount, oldRel);
+      fs.mkdirSync(path.dirname(oldAbsolute), { recursive: true });
+      fs.writeFileSync(oldAbsolute, Buffer.alloc(10));
+      db.prepare(
+        "INSERT INTO device_podcast_synced (device_id, episode_id, device_relative_path) VALUES (?, ?, ?)"
+      ).run(deviceId, epId, oldRel);
+
+      const capturedDest: string[] = [];
+      vi.mocked(copyFileToDevice).mockImplementation(async (_src, dest) => {
+        capturedDest.push(dest);
+        fs.mkdirSync(path.dirname(dest), { recursive: true });
+        fs.copyFileSync(srcFile, dest);
+        return true;
+      });
+
+      const result = await syncPodcastsToDevice(db, deviceId);
+
+      expect(result.synced).toBe(1);
+      expect(capturedDest).toHaveLength(1);
+      expect(path.basename(capturedDest[0])).toBe("26.04.21 Migrated Episode.mp3");
+      // Old file is removed so the device does not accumulate duplicates after a filename-scheme change.
+      expect(fs.existsSync(oldAbsolute)).toBe(false);
+
+      const row = db
+        .prepare("SELECT device_relative_path FROM device_podcast_synced WHERE device_id = ? AND episode_id = ?")
+        .get(deviceId, epId) as { device_relative_path: string };
+      expect(row.device_relative_path).toBe(
+        path.join("Podcasts", "Dev Podcast", "26.04.21 Migrated Episode.mp3")
+      );
+    }
+  );
+
   it.skipIf(!canRunDbTests)("mirrors all ready episodes regardless of auto_count", async () => {
     const deviceId = insertDevice({ autoPodcasts: true });
     subscribe(db, testFeed);

@@ -87,7 +87,9 @@ export function AutoPodcastsPanel() {
       {!loading && !error && subscriptions.length > 0 && (
         <>
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4 flex-1 content-start overflow-y-auto">
-            {paginated.map((sub) => (
+            {paginated.map((sub) => {
+              const latestEpisodeLabel = formatLatestEpisode(sub.latestEpisodeAt);
+              return (
               <button
                 key={sub.id}
                 onClick={() => setSelectedSubId(sub.id)}
@@ -126,18 +128,19 @@ export function AutoPodcastsPanel() {
                     <span className="inline-block text-[10px] font-medium px-1.5 py-0.5 rounded bg-primary/10 text-primary">
                       {badgeLabel(sub)}
                     </span>
-                    {formatLatestEpisode(sub.latestEpisodeAt) && (
+                    {latestEpisodeLabel && (
                       <span
                         className="text-[10px] text-muted-foreground"
                         title={`Latest episode: ${sub.latestEpisodeAt}`}
                       >
-                        {formatLatestEpisode(sub.latestEpisodeAt)}
+                        {latestEpisodeLabel}
                       </span>
                     )}
                   </div>
                 </div>
               </button>
-            ))}
+              );
+            })}
           </div>
 
           {/* Pagination */}

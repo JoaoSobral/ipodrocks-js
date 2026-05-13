@@ -79,21 +79,31 @@ export async function syncPodcastsToDevice(
       .all(sub.id) as Array<{ id: number; local_path: string; title: string; published_at: string | null }>)
       .map((r) => ({ id: r.id, localPath: r.local_path, title: r.title, publishedAt: r.published_at }));
     for (const ep of episodes) {
-      const syncedRow = db
-        .prepare("SELECT device_relative_path FROM device_podcast_synced WHERE device_id = ? AND episode_id = ?")
-        .get(deviceId, ep.id) as { device_relative_path: string } | undefined;
-      if (syncedRow) {
-        if (fs.existsSync(path.join(device.mount_path, syncedRow.device_relative_path))) continue;
-        // Stale record — file was removed from device; remove stale record and re-copy
-        db.prepare("DELETE FROM device_podcast_synced WHERE device_id = ? AND episode_id = ?").run(deviceId, ep.id);
-      }
-
       const showDir = sanitizeDevicePathComponent(sub.title);
       const ext = path.extname(ep.localPath) || ".mp3";
       const datePrefix = buildDatePrefix(ep.publishedAt);
       const filename = `${datePrefix}${sanitizeDevicePathComponent(ep.title)}${ext}`;
       const destRelative = path.join(device.podcast_folder ?? "Podcasts", showDir, filename);
       const destAbsolute = path.join(device.mount_path, destRelative);
+
+      const syncedRow = db
+        .prepare("SELECT device_relative_path FROM device_podcast_synced WHERE device_id = ? AND episode_id = ?")
+        .get(deviceId, ep.id) as { device_relative_path: string } | undefined;
+      if (syncedRow) {
+        const storedAbsolute = path.join(device.mount_path, syncedRow.device_relative_path);
+        if (syncedRow.device_relative_path === destRelative && fs.existsSync(storedAbsolute)) continue;
+        // Either the file is missing or the filename scheme changed (e.g. date prefix added).
+        // Drop the stale row and remove the old file so the episode re-syncs under the current name.
+        db.prepare("DELETE FROM device_podcast_synced WHERE device_id = ? AND episode_id = ?").run(deviceId, ep.id);
+        if (syncedRow.device_relative_path !== destRelative && fs.existsSync(storedAbsolute)) {
+          try {
+            fs.unlinkSync(storedAbsolute);
+          } catch (err) {
+            console.warn(`[podcasts] failed to remove stale device file ${storedAbsolute}:`, err);
+          }
+        }
+      }
+
       toSync.push({ epId: ep.id, localPath: ep.localPath, destRelative, destAbsolute });
     }
   }
