@@ -207,3 +207,51 @@ describe("PlaylistCore.previewSmartTracks", () => {
     expect(res.affectedGenreIds).toContain(jazzId);
   });
 });
+
+describe("PlaylistCore type prefix on create", () => {
+  let db: import("better-sqlite3").Database;
+  let core: PlaylistCore;
+
+  beforeEach(() => {
+    if (!canRunDbTests) return;
+    db = makeDb();
+    core = new PlaylistCore(db);
+  });
+
+  afterEach(() => {
+    if (db) db.close();
+  });
+
+  it.skipIf(!canRunDbTests)("createSmartPlaylist prepends smart_ to stored name", () => {
+    const { genreId } = seedTrack(db, { title: "T1", filename: "t1.mp3", genre: "Jazz" });
+    const id = core.createSmartPlaylist("My Mix", [rule("genre", genreId)]);
+    expect(core.getPlaylistById(id)?.name).toBe("smart_My Mix");
+  });
+
+  it.skipIf(!canRunDbTests)("createGeniusPlaylist prepends genius_ to stored name (explicit name)", () => {
+    const id = core.createGeniusPlaylist("most_played", [], null, 50, "My Favorites");
+    expect(core.getPlaylistById(id)?.name).toBe("genius_My Favorites");
+  });
+
+  it.skipIf(!canRunDbTests)("createGeniusPlaylist prepends genius_ to derived default name", () => {
+    const id = core.createGeniusPlaylist("most_played", []);
+    expect(core.getPlaylistById(id)?.name).toBe("genius_Most Played");
+  });
+
+  it.skipIf(!canRunDbTests)("createSavantPlaylist prepends savant_ to stored name", () => {
+    const id = core.createSavantPlaylist("Late Night", [], "{}");
+    expect(core.getPlaylistById(id)?.name).toBe("savant_Late Night");
+  });
+
+  it.skipIf(!canRunDbTests)("prefix is idempotent — does not double-prefix", () => {
+    const { genreId } = seedTrack(db, { title: "T1", filename: "t1.mp3", genre: "Jazz" });
+    const smartId = core.createSmartPlaylist("smart_Already", [rule("genre", genreId)]);
+    expect(core.getPlaylistById(smartId)?.name).toBe("smart_Already");
+
+    const geniusId = core.createGeniusPlaylist("most_played", [], null, 50, "genius_Already");
+    expect(core.getPlaylistById(geniusId)?.name).toBe("genius_Already");
+
+    const savantId = core.createSavantPlaylist("savant_Already", [], "{}");
+    expect(core.getPlaylistById(savantId)?.name).toBe("savant_Already");
+  });
+});
