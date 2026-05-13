@@ -422,6 +422,7 @@ export interface PodcastSubscription {
   lastRefreshedAt: string | null;
   createdAt: string;
   isUpToDate: boolean;
+  latestEpisodeAt: string | null;
 }
 
 export type EpisodeDownloadState = "pending" | "downloading" | "ready" | "failed" | "skipped";

@@ -780,6 +780,13 @@ export function PlaylistPanel() {
               </div>
             </div>
           </div>
+
+          <div className="rounded-lg border border-amber-500/50 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
+            <strong>No playback data?</strong> Enable playback logging on your
+            Rockbox device under{" "}
+            <em>Settings → Playback Settings → Logging → Yes</em>. A reboot is
+            required for the change to take effect.
+          </div>
         </div>
       );
     }

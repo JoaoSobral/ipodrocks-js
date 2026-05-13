@@ -18,6 +18,8 @@ Genius playlists are built from your Rockbox playback history. They help you red
 - **Genius types** — Each type uses different filters (play count, last played, artist, etc.) to select tracks.
 - **Database** — History is stored so you can generate Genius playlists without the device connected (after at least one load/recheck).
 
+> **Enable playback logging on the device:** Genius needs Rockbox to log what you play. On the device, go to **Settings → Playback Settings → Logging → Yes**. A reboot is required for the change to take effect. Without this, `playback.log` will not exist on the device and Genius will have no data to work with.
+
 ## How to work with it
 
 1. **Add a device** and enable playback log in Devices.

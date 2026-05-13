@@ -1,5 +1,37 @@
 # Changelog
 
+## [1.3.2] — 2026-05
+
+### Bug fixes
+
+- **Settings "Test Connection" no longer shows a misleading "Connected" badge** ([#73](https://github.com/JoaoSobral/ipodrocks-js/issues/73)) — `SettingsPanel` is mounted unconditionally, so its `testStatus` state survived a close→reopen cycle. A user could type a key, click **Test Connection** (success), close the panel without clicking **Save**, then reopen Settings and see an empty key field next to a stale green "Connected" label. The on-open effect now resets `testStatus` / `testError` (and the podcast equivalents), edits to the key or model field clear the badge immediately, and the OpenRouter button refuses to test when the field is empty and nothing is stored (was previously silently testing the stored key via the IPC fallback). When a stored key is tested via the empty-input fallback the badge now reads "Connected (using stored key)"; after testing a freshly typed key it reads "Connected — click Save to persist this key". The podcast Test button — whose IPC has no input override — now refuses to run when the user has typed unsaved values and surfaces "Save first — Test uses stored credentials".
+
+### Features
+
+#### Auto Podcasts
+
+- **Date-prefixed episode filenames on device** — Synced podcast episodes are now written to the device as `YY.MM.DD <Episode Title>.mp3` inside each show folder (e.g. `26.04.21 My Great Episode.mp3`). The date is derived from the episode's `published_at` (UTC) so the iPod's native filename sort puts the newest episodes first when navigating into a show. Episodes with no publish date fall back to the previous `<Episode Title>.mp3` form. The prefix is built by a new exported `buildDatePrefix()` helper in `podcast-device-sync.ts`; only the title is run through `sanitizeDevicePathComponent`, so the prefix's dots are preserved. Episodes synced under the v1.3.1 `<Episode Title>.mp3` scheme are migrated automatically on the next sync: when the stored `device_relative_path` no longer matches the computed destination, the stale row and on-device file are removed and the episode is re-copied under the new dated filename, so existing libraries don't end up with a permanent mix of prefixed and un-prefixed names.
+- **Latest-episode activity signal on subscription cards** — Each card on the Auto Podcasts panel now shows a small relative date next to the existing `last N` / `manual` badge (e.g. `today`, `yesterday`, `5d ago`, `3w ago`, `2mo ago`, `1y ago`), with the absolute publish timestamp on hover. This makes it obvious at a glance which subscriptions are still active vs. dormant. `PodcastSubscription` gains a `latestEpisodeAt: string | null` field, populated by a `MAX(published_at)` subquery in `listSubscriptions` / `getSubscriptionById`.
+
+### UI
+
+- **Genius splash screen now explains how to enable Rockbox playback logging** — When a user opens the Genius flow and the device or database has no playback history, the cause is almost always that Rockbox playback logging was never enabled. The splash screen now shows an inline amber hint pointing the user to **Settings → Playback Settings → Logging → Yes** on the device, and notes that a reboot is required for the change to take effect.
+
+### Documentation
+
+- **Genius playlists guide** — `docs/app-reference/playlists-genius.md` gains a callout with the same Rockbox playback-logging instructions, so the requirement is discoverable from the docs site as well as the app.
+
+### Testing
+
+- **`playlists.test.tsx`** — New test asserts the playback-logging hint is rendered on the Genius splash screen and includes the `Settings → Playback Settings → Logging → Yes` menu path and the "reboot required" note.
+- **`settings-panel-openrouter.test.tsx`** — New file covers the issue #73 fixes: stale "Connected" no longer leaks across close→reopen, the badge differentiates between testing a stored vs newly typed key, Test refuses when nothing is entered and nothing is stored, the badge clears on key/model edits, the podcast Test refuses with unsaved input and with no stored credentials, and the podcast badge clears on credential edits.
+- **`podcast-device-sync.test.ts`** — Two new tests cover the filename date prefix: filename becomes `26.04.21 Dated Episode.mp3` when `published_at` is set, and falls back to the un-prefixed title when `published_at` is null. The `insertEpisode` helper now accepts an optional `publishedAt` argument. A further test covers the v1.3.1 → v1.3.2 filename migration: an episode whose stored `device_relative_path` uses the old un-prefixed name is re-copied under the new dated name, the old on-device file is removed, and the `device_podcast_synced` row points at the new path.
+- **`podcast-subscriptions.test.ts`** — New `subscription latestEpisodeAt` describe block: `listSubscriptions` and `getSubscriptionById` return the most recent `published_at` across episodes, and `null` when the subscription has no episodes yet.
+- **`podcasts-panel.test.tsx`** — Two new tests for the latest-episode signal: the relative date renders when `latestEpisodeAt` is set, and nothing renders when it is null. `makeSub` helper updated to take an optional `latestEpisodeAt`.
+- **`podcast-episode-modal.test.tsx`** — `makeSub` helper updated to satisfy the new required `latestEpisodeAt` field on `PodcastSubscription`.
+
+---
+
 ## [1.3.1] — 2026-05
 
 ### Bug fixes

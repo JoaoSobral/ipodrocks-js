@@ -27,9 +27,13 @@ interface SettingsPanelProps {
 export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
   const [apiKey, setApiKey] = useState("");
   const [model, setModel] = useState("anthropic/claude-sonnet-4.6");
+  const [hasStoredKey, setHasStoredKey] = useState(false);
   const [testStatus, setTestStatus] = useState<
     "idle" | "testing" | "ok" | "error"
   >("idle");
+  // What was tested when testStatus became "ok": a freshly typed key (needs
+  // Save to persist) or the already-stored key.
+  const [testedSource, setTestedSource] = useState<"new" | "stored" | null>(null);
   const [testError, setTestError] = useState<string | null>(null);
   const [keyData, setKeyData] = useState<SavantKeyData | null>(null);
   const [saving, setSaving] = useState(false);
@@ -66,6 +70,7 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
       if (!cancelled) {
         setApiKey(config?.apiKey ?? "");
         setModel(config?.model ?? "anthropic/claude-sonnet-4.6");
+        setHasStoredKey(!!config?.apiKey);
         setKeyData(data);
         setScanHarmonicData(harmonic.scanHarmonicData ?? true);
         setBackfillPercent(harmonic.backfillPercent ?? 100);
@@ -80,6 +85,14 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
         const loaded = podcastCfg.downloadDirCustom ?? podcastCfg.downloadDir;
         setPodcastDownloadDir(loaded);
         setPodcastDownloadDirOriginal(loaded);
+        // SettingsPanel is mounted unconditionally (App.tsx), so its state
+        // survives close→reopen. Clear stale test results so a previous
+        // "Connected" badge doesn't sit next to a freshly-loaded form.
+        setTestStatus("idle");
+        setTestError(null);
+        setTestedSource(null);
+        setPodcastTestStatus("idle");
+        setPodcastTestError(null);
       }
     })();
     return () => {
@@ -88,21 +101,33 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
   }, [open]);
 
   async function handleTest() {
+    const trimmed = apiKey.trim();
+    const isNewKey = !!trimmed && !apiKey.includes("•");
+    // If the field is empty (or only contains mask chars) and nothing is
+    // stored on disk, there is nothing to test. Block before the IPC so the
+    // user gets a clear, immediate error instead of the generic server one.
+    if (!isNewKey && !hasStoredKey) {
+      setTestStatus("error");
+      setTestError("Enter an API key first");
+      setTestedSource(null);
+      return;
+    }
     setTestStatus("testing");
     setTestError(null);
+    setTestedSource(null);
     try {
       // If apiKey contains the mask char it is the server-returned placeholder;
       // pass null so the main process uses the stored key directly.
-      const isNewKey = apiKey.trim() && !apiKey.includes("•");
       const configToTest = isNewKey
         ? {
-            apiKey: apiKey.trim(),
+            apiKey: trimmed,
             model: model.trim() || "anthropic/claude-sonnet-4.6",
           }
         : null;
       const result = await testOpenRouterConnection(configToTest);
       if (result.ok) {
         setTestStatus("ok");
+        setTestedSource(isNewKey ? "new" : "stored");
       } else {
         setTestStatus("error");
         setTestError(result.error ?? "Connection failed");
@@ -151,6 +176,21 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
   }
 
   async function handlePodcastTest() {
+    const hasTyped = podcastApiKey.trim().length > 0 || podcastApiSecret.trim().length > 0;
+    const hasStored = podcastSettings.hasApiKey && podcastSettings.hasApiSecret;
+    if (!hasTyped && !hasStored) {
+      setPodcastTestStatus("error");
+      setPodcastTestError("Enter API key and secret first");
+      return;
+    }
+    // podcastSearch on the main side always uses stored credentials — it has
+    // no override path — so testing with unsaved typed values would silently
+    // hit the old creds (or fail when no creds are stored yet).
+    if (hasTyped) {
+      setPodcastTestStatus("error");
+      setPodcastTestError("Save first — Test uses stored credentials");
+      return;
+    }
     setPodcastTestStatus("testing");
     setPodcastTestError(null);
     try {
@@ -188,13 +228,27 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
                   label="API Key"
                   type="password"
                   value={apiKey}
-                  onChange={(e) => setApiKey(e.target.value)}
+                  onChange={(e) => {
+                    setApiKey(e.target.value);
+                    if (testStatus !== "idle") {
+                      setTestStatus("idle");
+                      setTestError(null);
+                      setTestedSource(null);
+                    }
+                  }}
                   placeholder="sk-or-v1-..."
                 />
                 <Input
                   label="Model"
                   value={model}
-                  onChange={(e) => setModel(e.target.value)}
+                  onChange={(e) => {
+                    setModel(e.target.value);
+                    if (testStatus !== "idle") {
+                      setTestStatus("idle");
+                      setTestError(null);
+                      setTestedSource(null);
+                    }
+                  }}
                   placeholder="anthropic/claude-sonnet-4.6"
                 />
                 <p className="text-xs text-muted-foreground">
@@ -227,8 +281,15 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
                   >
                     {testStatus === "testing" ? "Testing…" : "Test Connection"}
                   </Button>
-                  {testStatus === "ok" && (
-                    <span className="text-xs text-success">Connected</span>
+                  {testStatus === "ok" && testedSource === "new" && (
+                    <span className="text-xs text-success">
+                      Connected — click Save to persist this key
+                    </span>
+                  )}
+                  {testStatus === "ok" && testedSource === "stored" && (
+                    <span className="text-xs text-success">
+                      Connected (using stored key)
+                    </span>
                   )}
                   {testStatus === "error" && testError && (
                     <span className="text-xs text-destructive">{testError}</span>
@@ -323,14 +384,26 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
                 label="API Key"
                 type="password"
                 value={podcastApiKey}
-                onChange={(e) => setPodcastApiKey(e.target.value)}
+                onChange={(e) => {
+                  setPodcastApiKey(e.target.value);
+                  if (podcastTestStatus !== "idle") {
+                    setPodcastTestStatus("idle");
+                    setPodcastTestError(null);
+                  }
+                }}
                 placeholder={podcastSettings.hasApiKey ? "Stored — type to replace" : "Podcast Index API key"}
               />
               <Input
                 label="API Secret"
                 type="password"
                 value={podcastApiSecret}
-                onChange={(e) => setPodcastApiSecret(e.target.value)}
+                onChange={(e) => {
+                  setPodcastApiSecret(e.target.value);
+                  if (podcastTestStatus !== "idle") {
+                    setPodcastTestStatus("idle");
+                    setPodcastTestError(null);
+                  }
+                }}
                 placeholder={podcastSettings.hasApiSecret ? "Stored — type to replace" : "Podcast Index API secret"}
               />
               <p className="text-xs text-muted-foreground">

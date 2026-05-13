@@ -24,7 +24,7 @@ vi.mock("../renderer/stores/ui-store", () => ({
 import { podcastListSubs } from "../renderer/ipc/api";
 import { usePodcastsStore } from "../renderer/stores/podcasts-store";
 
-function makeSub(id: number, title: string) {
+function makeSub(id: number, title: string, latestEpisodeAt: string | null = null) {
   return {
     id,
     feedId: id * 100,
@@ -37,6 +37,7 @@ function makeSub(id: number, title: string) {
     lastRefreshedAt: null,
     createdAt: new Date().toISOString(),
     isUpToDate: false,
+    latestEpisodeAt,
   };
 }
 
@@ -100,6 +101,22 @@ describe("AutoPodcastsPanel", () => {
     await waitFor(() => {
       expect(screen.getByText("2 subscriptions")).toBeInTheDocument();
     });
+  });
+
+  it("renders latest-episode relative date when latestEpisodeAt is set", async () => {
+    const fiveDaysAgo = new Date(Date.now() - 5 * 86400000).toISOString();
+    vi.mocked(podcastListSubs).mockResolvedValue([makeSub(1, "Active Show", fiveDaysAgo)]);
+    render(<AutoPodcastsPanel />);
+    await waitFor(() => {
+      expect(screen.getByText("5d ago")).toBeInTheDocument();
+    });
+  });
+
+  it("does not render latest-episode label when latestEpisodeAt is null", async () => {
+    vi.mocked(podcastListSubs).mockResolvedValue([makeSub(1, "Quiet Show", null)]);
+    render(<AutoPodcastsPanel />);
+    await waitFor(() => screen.getByText("Quiet Show"));
+    expect(screen.queryByText(/ago|today|yesterday/i)).toBeNull();
   });
 
   it("renders podcast artwork img when imageUrl is set", async () => {
