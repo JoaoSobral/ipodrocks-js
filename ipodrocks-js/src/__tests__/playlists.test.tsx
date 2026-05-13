@@ -81,4 +81,22 @@ describe("PlaylistPanel", () => {
     const selectionHint = screen.getByText("Select genres, artists, or albums to build your playlist.");
     expect(selectionHint).toHaveClass("text-blue-500");
   });
+
+  it("shows Rockbox playback-logging hint on the Genius splash screen", async () => {
+    render(<PlaylistPanel />);
+    fireEvent.click(screen.getByText("+ Create Playlist"));
+
+    await waitFor(() => {
+      expect(screen.getByText("Genius Playlist")).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByText("Genius Playlist"));
+
+    await waitFor(() => {
+      expect(screen.getByText(/No playback data\?/)).toBeInTheDocument();
+    });
+    expect(
+      screen.getByText(/Settings → Playback Settings → Logging → Yes/)
+    ).toBeInTheDocument();
+    expect(screen.getByText(/A reboot is required/)).toBeInTheDocument();
+  });
 });

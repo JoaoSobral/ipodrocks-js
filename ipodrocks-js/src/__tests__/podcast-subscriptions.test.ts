@@ -19,6 +19,8 @@ import {
   subscribe,
   unsubscribe,
   deleteEpisodes,
+  listSubscriptions,
+  getSubscriptionById,
 } from "../main/podcasts/podcast-subscriptions";
 import type { PodcastSearchResult } from "../shared/types";
 
@@ -163,5 +165,34 @@ describe("unsubscribe with cleanup", () => {
     expect(fs.existsSync(deviceFile)).toBe(false);
     const subRow = db.prepare("SELECT 1 FROM podcast_subscriptions WHERE id = ?").get(subId);
     expect(subRow).toBeUndefined();
+  });
+});
+
+describe("subscription latestEpisodeAt", () => {
+  it.skipIf(!canRunDbTests)("returns the most recent published_at across episodes", () => {
+    subscribe(db, testFeed);
+    const subId = (db.prepare("SELECT id FROM podcast_subscriptions LIMIT 1").get() as { id: number }).id;
+
+    db.prepare(
+      `INSERT INTO podcast_episodes (subscription_id, guid, title, enclosure_url, published_at)
+       VALUES (?, 'g1', 'Old', 'https://example.com/a.mp3', '2026-01-15 10:00:00')`
+    ).run(subId);
+    db.prepare(
+      `INSERT INTO podcast_episodes (subscription_id, guid, title, enclosure_url, published_at)
+       VALUES (?, 'g2', 'New', 'https://example.com/b.mp3', '2026-04-20 10:00:00')`
+    ).run(subId);
+
+    const subs = listSubscriptions(db);
+    expect(subs).toHaveLength(1);
+    expect(subs[0].latestEpisodeAt).toBe("2026-04-20 10:00:00");
+
+    const single = getSubscriptionById(db, subId);
+    expect(single?.latestEpisodeAt).toBe("2026-04-20 10:00:00");
+  });
+
+  it.skipIf(!canRunDbTests)("returns null when subscription has no episodes", () => {
+    subscribe(db, testFeed);
+    const subs = listSubscriptions(db);
+    expect(subs[0].latestEpisodeAt).toBeNull();
   });
 });

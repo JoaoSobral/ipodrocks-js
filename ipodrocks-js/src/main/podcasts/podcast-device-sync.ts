@@ -24,6 +24,17 @@ interface EpisodeToSync {
   destAbsolute: string;
 }
 
+/** Build a `YY.MM.DD ` filename prefix from an ISO/SQL timestamp. Empty string when missing/invalid. */
+export function buildDatePrefix(publishedAt: string | null | undefined): string {
+  if (!publishedAt) return "";
+  const d = new Date(publishedAt.includes("T") ? publishedAt : publishedAt.replace(" ", "T") + "Z");
+  if (Number.isNaN(d.getTime())) return "";
+  const yy = String(d.getUTCFullYear() % 100).padStart(2, "0");
+  const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(d.getUTCDate()).padStart(2, "0");
+  return `${yy}.${mm}.${dd} `;
+}
+
 /**
  * Sync all ready podcast episodes for a device.
  * Only writes into the device's Podcasts folder; never touches library tables.
@@ -61,12 +72,12 @@ export async function syncPodcastsToDevice(
   for (const sub of subs) {
     const episodes = (db
       .prepare(
-        `SELECT id, local_path, title FROM podcast_episodes
+        `SELECT id, local_path, title, published_at FROM podcast_episodes
          WHERE subscription_id = ? AND download_state = 'ready' AND local_path IS NOT NULL
          ORDER BY published_at DESC`
       )
-      .all(sub.id) as Array<{ id: number; local_path: string; title: string }>)
-      .map((r) => ({ id: r.id, localPath: r.local_path, title: r.title }));
+      .all(sub.id) as Array<{ id: number; local_path: string; title: string; published_at: string | null }>)
+      .map((r) => ({ id: r.id, localPath: r.local_path, title: r.title, publishedAt: r.published_at }));
     for (const ep of episodes) {
       const syncedRow = db
         .prepare("SELECT device_relative_path FROM device_podcast_synced WHERE device_id = ? AND episode_id = ?")
@@ -79,7 +90,8 @@ export async function syncPodcastsToDevice(
 
       const showDir = sanitizeDevicePathComponent(sub.title);
       const ext = path.extname(ep.localPath) || ".mp3";
-      const filename = `${sanitizeDevicePathComponent(ep.title)}${ext}`;
+      const datePrefix = buildDatePrefix(ep.publishedAt);
+      const filename = `${datePrefix}${sanitizeDevicePathComponent(ep.title)}${ext}`;
       const destRelative = path.join(device.podcast_folder ?? "Podcasts", showDir, filename);
       const destAbsolute = path.join(device.mount_path, destRelative);
       toSync.push({ epId: ep.id, localPath: ep.localPath, destRelative, destAbsolute });

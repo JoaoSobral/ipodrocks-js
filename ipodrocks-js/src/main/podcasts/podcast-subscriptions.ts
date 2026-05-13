@@ -37,7 +37,7 @@ interface EpRow {
   created_at: string;
 }
 
-function rowToSub(r: SubRow, isUpToDate = false): PodcastSubscription {
+function rowToSub(r: SubRow, isUpToDate = false, latestEpisodeAt: string | null = null): PodcastSubscription {
   return {
     id: r.id,
     feedId: r.feed_id,
@@ -50,7 +50,17 @@ function rowToSub(r: SubRow, isUpToDate = false): PodcastSubscription {
     lastRefreshedAt: r.last_refreshed_at,
     createdAt: r.created_at,
     isUpToDate,
+    latestEpisodeAt,
   };
+}
+
+function getLatestEpisodeAt(db: Database.Database, subId: number): string | null {
+  const row = db
+    .prepare(
+      `SELECT MAX(published_at) AS latest FROM podcast_episodes WHERE subscription_id = ?`
+    )
+    .get(subId) as { latest: string | null } | undefined;
+  return row?.latest ?? null;
 }
 
 function computeIsUpToDate(db: Database.Database, sub: SubRow): boolean {
@@ -108,14 +118,14 @@ export function listSubscriptions(db: Database.Database): PodcastSubscription[] 
   const rows = db
     .prepare("SELECT * FROM podcast_subscriptions ORDER BY created_at ASC")
     .all() as SubRow[];
-  return rows.map((r) => rowToSub(r, computeIsUpToDate(db, r)));
+  return rows.map((r) => rowToSub(r, computeIsUpToDate(db, r), getLatestEpisodeAt(db, r.id)));
 }
 
 export function getSubscriptionById(db: Database.Database, id: number): PodcastSubscription | null {
   const row = db
     .prepare("SELECT * FROM podcast_subscriptions WHERE id = ?")
     .get(id) as SubRow | undefined;
-  return row ? rowToSub(row, computeIsUpToDate(db, row)) : null;
+  return row ? rowToSub(row, computeIsUpToDate(db, row), getLatestEpisodeAt(db, row.id)) : null;
 }
 
 export function subscribe(

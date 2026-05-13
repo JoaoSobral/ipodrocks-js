@@ -77,11 +77,11 @@ function insertDevice(opts: { autoPodcasts: boolean; devMode?: boolean }): numbe
   return Number(result.lastInsertRowid);
 }
 
-function insertEpisode(subId: number, opts: { localPath: string | null; downloadState?: string; title?: string }): number {
+function insertEpisode(subId: number, opts: { localPath: string | null; downloadState?: string; title?: string; publishedAt?: string | null }): number {
   const result = db.prepare(
-    `INSERT INTO podcast_episodes (subscription_id, guid, title, enclosure_url, download_state, local_path)
-     VALUES (?, ?, ?, 'https://example.com/ep.mp3', ?, ?)`
-  ).run(subId, `guid-${Math.random()}`, opts.title ?? "Test Episode", opts.downloadState ?? "ready", opts.localPath);
+    `INSERT INTO podcast_episodes (subscription_id, guid, title, enclosure_url, download_state, local_path, published_at)
+     VALUES (?, ?, ?, 'https://example.com/ep.mp3', ?, ?, ?)`
+  ).run(subId, `guid-${Math.random()}`, opts.title ?? "Test Episode", opts.downloadState ?? "ready", opts.localPath, opts.publishedAt ?? null);
   return Number(result.lastInsertRowid);
 }
 
@@ -280,6 +280,56 @@ describe("syncPodcastsToDevice", () => {
 
     expect(capturedDest).toHaveLength(1);
     expect(path.basename(capturedDest[0])).toBe("My Great Episode.mp3");
+  });
+
+  it.skipIf(!canRunDbTests)("prefixes destination filename with YY.MM.DD when published_at is set", async () => {
+    const deviceId = insertDevice({ autoPodcasts: true });
+    subscribe(db, testFeed);
+    const subId = getSubId();
+
+    const srcFile = path.join(tmpSrc, "ep_dated.mp3");
+    fs.writeFileSync(srcFile, Buffer.alloc(100));
+    insertEpisode(subId, {
+      localPath: srcFile,
+      title: "Dated Episode",
+      publishedAt: "2026-04-21 12:00:00",
+    });
+
+    const capturedDest: string[] = [];
+    vi.mocked(copyFileToDevice).mockImplementation(async (_src, dest) => {
+      capturedDest.push(dest);
+      fs.mkdirSync(path.dirname(dest), { recursive: true });
+      fs.copyFileSync(srcFile, dest);
+      return true;
+    });
+
+    await syncPodcastsToDevice(db, deviceId);
+
+    expect(capturedDest).toHaveLength(1);
+    expect(path.basename(capturedDest[0])).toBe("26.04.21 Dated Episode.mp3");
+  });
+
+  it.skipIf(!canRunDbTests)("omits date prefix when published_at is null", async () => {
+    const deviceId = insertDevice({ autoPodcasts: true });
+    subscribe(db, testFeed);
+    const subId = getSubId();
+
+    const srcFile = path.join(tmpSrc, "ep_undated.mp3");
+    fs.writeFileSync(srcFile, Buffer.alloc(100));
+    insertEpisode(subId, { localPath: srcFile, title: "Undated Episode", publishedAt: null });
+
+    const capturedDest: string[] = [];
+    vi.mocked(copyFileToDevice).mockImplementation(async (_src, dest) => {
+      capturedDest.push(dest);
+      fs.mkdirSync(path.dirname(dest), { recursive: true });
+      fs.copyFileSync(srcFile, dest);
+      return true;
+    });
+
+    await syncPodcastsToDevice(db, deviceId);
+
+    expect(capturedDest).toHaveLength(1);
+    expect(path.basename(capturedDest[0])).toBe("Undated Episode.mp3");
   });
 
   it.skipIf(!canRunDbTests)("emits log message when no subscriptions are configured", async () => {

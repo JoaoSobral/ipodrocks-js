@@ -33,6 +33,7 @@ function makeSub(autoCount = 2): PodcastSubscription {
     lastRefreshedAt: null,
     createdAt: new Date().toISOString(),
     isUpToDate: false,
+    latestEpisodeAt: null,
   };
 }
 

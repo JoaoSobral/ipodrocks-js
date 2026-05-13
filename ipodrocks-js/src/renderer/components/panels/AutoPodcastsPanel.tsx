@@ -14,6 +14,21 @@ function badgeLabel(sub: PodcastSubscription): string {
   return `last ${sub.autoCount}`;
 }
 
+function formatLatestEpisode(latestEpisodeAt: string | null): string | null {
+  if (!latestEpisodeAt) return null;
+  const d = new Date(latestEpisodeAt.includes("T") ? latestEpisodeAt : latestEpisodeAt.replace(" ", "T") + "Z");
+  if (Number.isNaN(d.getTime())) return null;
+  const diffMs = Date.now() - d.getTime();
+  const diffDays = Math.floor(diffMs / 86400000);
+  if (diffDays < 0) return "just now";
+  if (diffDays === 0) return "today";
+  if (diffDays === 1) return "yesterday";
+  if (diffDays < 7) return `${diffDays}d ago`;
+  if (diffDays < 30) return `${Math.floor(diffDays / 7)}w ago`;
+  if (diffDays < 365) return `${Math.floor(diffDays / 30)}mo ago`;
+  return `${Math.floor(diffDays / 365)}y ago`;
+}
+
 export function AutoPodcastsPanel() {
   const { subscriptions, loading, error, fetchSubs } = usePodcastsStore();
   const openSettings = useUIStore((s) => s.openSettings);
@@ -107,9 +122,19 @@ export function AutoPodcastsPanel() {
                   {sub.author && (
                     <p className="text-xs text-muted-foreground truncate mt-0.5">{sub.author}</p>
                   )}
-                  <span className="mt-2 inline-block text-[10px] font-medium px-1.5 py-0.5 rounded bg-primary/10 text-primary">
-                    {badgeLabel(sub)}
-                  </span>
+                  <div className="mt-2 flex items-center gap-1.5 flex-wrap">
+                    <span className="inline-block text-[10px] font-medium px-1.5 py-0.5 rounded bg-primary/10 text-primary">
+                      {badgeLabel(sub)}
+                    </span>
+                    {formatLatestEpisode(sub.latestEpisodeAt) && (
+                      <span
+                        className="text-[10px] text-muted-foreground"
+                        title={`Latest episode: ${sub.latestEpisodeAt}`}
+                      >
+                        {formatLatestEpisode(sub.latestEpisodeAt)}
+                      </span>
+                    )}
+                  </div>
                 </div>
               </button>
             ))}
