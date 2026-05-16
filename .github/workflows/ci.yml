@@ -24,8 +24,49 @@ jobs:
       - name: Install dependencies
         run: cd ipodrocks-js && npm ci
 
-      - name: Run tests
+      # Rebuild better-sqlite3 against system Node so the behavioral/regression
+      # tests that hit a real :memory: DB don't get skipped.
+      - name: Rebuild better-sqlite3 for system Node
+        run: cd ipodrocks-js && npm rebuild better-sqlite3
+
+      - name: Run unit + behavioral + regression tests
         run: cd ipodrocks-js && npm run test -- --run
+
+      # Switch better-sqlite3 back to Electron's ABI before building the app.
+      - name: Rebuild native deps for Electron
+        run: cd ipodrocks-js && npm run postinstall
 
       - name: Build
         run: cd ipodrocks-js && npm run build
+
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "25.7.0"
+          cache: "npm"
+          cache-dependency-path: ipodrocks-js/package-lock.json
+
+      - name: Install dependencies
+        run: cd ipodrocks-js && npm ci
+
+      - name: Install Playwright system dependencies
+        run: cd ipodrocks-js && npx playwright install-deps
+
+      - name: Build app
+        run: cd ipodrocks-js && npm run build
+
+      # Electron on Linux needs a virtual display.
+      - name: Run Playwright smoke tests
+        run: cd ipodrocks-js && xvfb-run --auto-servernum npx playwright test
+
+      - name: Upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: ipodrocks-js/playwright-report
+          retention-days: 7

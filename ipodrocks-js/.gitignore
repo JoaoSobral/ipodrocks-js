@@ -11,3 +11,8 @@ sync_error.log
 # VitePress
 docs/.vitepress/dist
 docs/.vitepress/cache
+
+# Playwright
+test-results/
+playwright-report/
+.playwright/

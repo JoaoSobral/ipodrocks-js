@@ -6,6 +6,7 @@ import { sanitizeDevicePathComponent } from "../sync/sync-core";
 import { copyFileToDevice } from "../sync/sync-executor";
 import type { SyncProgressPayload } from "../sync/sync-core";
 import { isDeviceMountPathOnline } from "../devices/device-online";
+import { ensureShowCoverArt } from "./podcast-cover-extractor";
 
 type ProgressCallback = (event: SyncProgressPayload) => void;
 
@@ -125,6 +126,9 @@ export async function syncPodcastsToDevice(
         `INSERT OR IGNORE INTO device_podcast_synced (device_id, episode_id, device_relative_path)
          VALUES (?, ?, ?)`
       ).run(deviceId, ep.epId, ep.destRelative);
+      // Rockbox can't always parse embedded APIC artwork; drop a cover.jpg
+      // sidecar in the show folder so it has a reliable fallback.
+      await ensureShowCoverArt(ep.localPath, path.dirname(ep.destAbsolute));
       synced++;
       progressCallback?.({
         event: "copy",
