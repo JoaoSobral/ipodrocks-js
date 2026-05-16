@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.3.3] — 2026-05
+
+### Testing
+
+- **Test suite refactored from technical units to behavioral journeys** — The previous suite (~54 files / ~440 cases) was dominated by fine-grained tests pinning internal function signatures and shallow-rendered React components with heavy IPC mocking. Maintenance cost was high and the tests didn't actually verify that user-facing workflows worked end-to-end. The suite is now reorganised into three layers: 11 retained pure-utility test files (`format`, `camelotWheel`, `device-icon`, `path-allowlist`, `validate-path`, `encoder-env`, `mpcenc`, `tagging/{block,detect,items,strip}`) covering 86 cases; 6 new behavioral journey files in `src/__tests__/behaviors/` covering 17 cases — `library-scan`, `playlists`, `device-sync`, `podcasts`, `ratings-sync`, `backfill`; and 5 new regression files in `src/__tests__/regressions/` covering 27 cases on historically fragile paths — rating-merge edge cases, podcast cover extraction branches, smart-playlist NULL/duplicate/limit edges, sync idempotency, and rockbox playback log parser quirks. Total: 22 files / 130 cases, full Vitest run completes in ~1.7s. 47 obsolete test files were removed in the same change.
+- **Shared test harness** — New `src/__tests__/harness/` directory consolidates infrastructure that was previously duplicated across tests: `db.ts` (in-memory SQLite with schema + post-schema migrations replayed), `tmp-fs.ts` (tmp directory + audio fixture helpers), `music-metadata-mock.ts` (shared `parseFile` registry so multiple tests can declare metadata for fixtures), `fake-device.ts` (Music/Podcasts/Audiobooks/Playlists folder layout), `seed.ts` (library folder / track / playlist / device seeders that resolve artist/album/genre/codec), and `ipc-harness.ts` (mocks Electron's `app` / `BrowserWindow` / `ipcMain` / `dialog` / `shell` / `net` / `protocol` and exposes registered IPC handlers via a callable `invoke()` map). The IPC harness lets `device-sync.test.ts` and `sync-idempotency.test.ts` exercise the real `library:addFolder` → `library:scan` → `device:add` → `sync:start` chain with realistic glue code, not just the underlying sync-core function.
+- **Playwright smoke tests** — New `tests/e2e/` directory with `playwright.config.ts`, `electron-launcher.ts` (launches the built app at `dist/main/main/index.js` with a tmp `--user-data-dir`), and `smoke.test.ts` (3 cases: app launches and a window opens, preload exposes the IPC bridge, the body renders some content). Run with `npm run test:e2e`. `@playwright/test` added as a devDependency.
+
+### Continuous integration
+
+- **CI workflow runs the full new suite on every push and PR to `main` and `dev`** — `.github/workflows/ci.yml` gains explicit `npm rebuild better-sqlite3` and `npm run postinstall` steps around the Vitest run so the behavioral/regression tests that use a real `:memory:` DB don't silently skip on CI's Node 25.7 (whose ABI doesn't match what `electron-builder install-app-deps` compiles better-sqlite3 for). A second parallel `e2e` job installs Playwright's Linux system dependencies, builds the app, and runs the smoke suite under `xvfb-run` (Electron on Linux needs a virtual display); failed Playwright reports are uploaded as a 7-day artifact for debugging. `.gitignore` gains entries for `test-results/`, `playwright-report/`, and `.playwright/`.
+
+---
+
 ## [1.3.2] — 2026-05
 
 ### Bug fixes
