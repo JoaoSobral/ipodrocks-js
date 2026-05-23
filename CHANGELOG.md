@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.3.4] — 2026-05
+
+### Bug fixes
+
+- **macOS AppleDouble (`._`) sidecar files no longer appear as tracks or sync to devices** ([#77](https://github.com/JoaoSobral/ipodrocks-js/issues/77)) — When a music library lives on a FAT32/exFAT/network volume (common for Rockbox memory sticks), Finder writes invisible `._<filename>` sidecar files next to every real file to carry HFS+-only metadata. They share the audio extension of their sibling (e.g. `._05 Mirage.ogg` next to `05 Mirage.ogg`), so the library scanner picked them up as additional zero-metadata tracks and the sync engine copied them onto the device. A new `isMacosMetadataFile()` helper in `src/main/utils/audio-extensions.ts` is now consulted by `LibraryScanner.collectAudioFiles()` and `Device.getTracks()` so `._*` entries are excluded from both the library walk and the device-side diff. Existing users who already imported `._` rows get a one-time cleanup: `LibraryCore`'s constructor runs `purgeMacosMetadataTracks()`, which deletes any `tracks` rows whose filename starts with `._` and logs `[library] purged N AppleDouble (._) track row(s)`. Idempotent — subsequent launches find nothing to purge.
+
+### Testing
+
+- **`library-scan.test.ts`** — Two new cases. `skips macOS AppleDouble (._) sidecar files when scanning (issue #77)` seeds a real `.ogg` plus a sibling `._05 Mirage.ogg` written via raw `fs.writeFileSync` and asserts the scan inserts exactly one row. `purges pre-existing AppleDouble (._) track rows when LibraryCore initializes` pre-inserts mixed real-and-`._` track rows directly into the test DB, constructs a fresh `LibraryCore`, and asserts only the real row survives.
+- **`device-scan.test.ts`** — New behavioral file covering `Device.getTracks()`. Builds a tmp device layout via `createFakeDevice`, drops `05 Mirage.ogg`, `._05 Mirage.ogg`, and `._.DS_Store` into the Music folder, and asserts the returned map has exactly one entry for the real file.
+
+---
+
 ## [1.3.3] — 2026-05
 
 ### Testing

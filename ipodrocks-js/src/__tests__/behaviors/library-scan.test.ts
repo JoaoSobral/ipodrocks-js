@@ -26,6 +26,7 @@ import {
 installMusicMetadataMock();
 
 import { LibraryScanner } from "../../main/library/library-scanner";
+import { LibraryCore } from "../../main/library/library-core";
 
 const itDb = it.skipIf(!canRunDbTests);
 
@@ -160,5 +161,83 @@ describe("Library — scan journey", () => {
       db.prepare("SELECT title FROM tracks ORDER BY title").all() as { title: string }[]
     ).map((r) => r.title);
     expect(titles).toEqual(["Keep", "New"]);
+  });
+
+  itDb("skips macOS AppleDouble (._) sidecar files when scanning (issue #77)", async () => {
+    seedAudioFile({
+      dir: libraryDir,
+      relPath: "Artist/Album/05 Mirage.ogg",
+      metadata: {
+        title: "Mirage",
+        artist: "Artist",
+        album: "Album",
+        genre: "Rock",
+        trackNumber: 5,
+        duration: 240,
+        bitrate: 192,
+        codec: "OGG",
+      },
+    });
+    // macOS-style sidecar with the same extension — must be ignored.
+    fs.writeFileSync(
+      path.join(libraryDir, "Artist/Album/._05 Mirage.ogg"),
+      Buffer.alloc(82)
+    );
+
+    const scanner = new LibraryScanner(db);
+    const result = await scanner.scanFolder(libraryDir, "music", undefined, undefined, {
+      scanHarmonicData: false,
+    });
+
+    expect(result.filesAdded).toBe(1);
+    expect(result.filesProcessed).toBe(1);
+
+    const rows = db
+      .prepare("SELECT path FROM tracks")
+      .all() as { path: string }[];
+    expect(rows).toHaveLength(1);
+    expect(path.basename(rows[0].path)).toBe("05 Mirage.ogg");
+  });
+
+  itDb("purges pre-existing AppleDouble (._) track rows when LibraryCore initializes", () => {
+    const folderId = Number(
+      db
+        .prepare(
+          "INSERT INTO library_folders (name, path, content_type) VALUES (?, ?, ?)"
+        )
+        .run("L", libraryDir, "music").lastInsertRowid
+    );
+    const insert = db.prepare(
+      "INSERT INTO tracks (path, filename, content_type, library_folder_id) VALUES (?, ?, 'music', ?)"
+    );
+    insert.run(
+      path.join(libraryDir, "Artist/Album/05 Mirage.ogg"),
+      "05 Mirage.ogg",
+      folderId
+    );
+    insert.run(
+      path.join(libraryDir, "Artist/Album/._05 Mirage.ogg"),
+      "._05 Mirage.ogg",
+      folderId
+    );
+    insert.run(
+      path.join(libraryDir, "Other/._hidden.mp3"),
+      "._hidden.mp3",
+      folderId
+    );
+
+    expect(
+      (db.prepare("SELECT COUNT(*) AS n FROM tracks").get() as { n: number }).n
+    ).toBe(3);
+
+    // Constructing LibraryCore runs the one-time purge.
+    new LibraryCore(db);
+
+    const remaining = (
+      db.prepare("SELECT filename FROM tracks ORDER BY filename").all() as {
+        filename: string;
+      }[]
+    ).map((r) => r.filename);
+    expect(remaining).toEqual(["05 Mirage.ogg"]);
   });
 });

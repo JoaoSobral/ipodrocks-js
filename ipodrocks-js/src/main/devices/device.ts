@@ -8,7 +8,7 @@ import {
   DiskSpace,
   FitCheck,
 } from "../../shared/types";
-import { AUDIO_EXTENSIONS } from "../utils/audio-extensions";
+import { AUDIO_EXTENSIONS, isMacosMetadataFile } from "../utils/audio-extensions";
 
 interface GetTracksOptions {
   cancelSignal?: AbortSignal;
@@ -122,6 +122,8 @@ export class Device {
           await walk(fullPath);
           continue;
         }
+
+        if (isMacosMetadataFile(entry.name)) continue;
 
         examined++;
         const ext = path.extname(entry.name).toLowerCase();

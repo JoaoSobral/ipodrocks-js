@@ -24,17 +24,8 @@ jobs:
       - name: Install dependencies
         run: cd ipodrocks-js && npm ci
 
-      # Rebuild better-sqlite3 against system Node so the behavioral/regression
-      # tests that hit a real :memory: DB don't get skipped.
-      - name: Rebuild better-sqlite3 for system Node
-        run: cd ipodrocks-js && npm rebuild better-sqlite3
-
       - name: Run unit + behavioral + regression tests
         run: cd ipodrocks-js && npm run test -- --run
-
-      # Switch better-sqlite3 back to Electron's ABI before building the app.
-      - name: Rebuild native deps for Electron
-        run: cd ipodrocks-js && npm run postinstall
 
       - name: Build
         run: cd ipodrocks-js && npm run build
