@@ -164,6 +164,31 @@ export class LibraryCore {
     this.stmtGetTrackByPath = db.prepare(
       BASE_TRACKS_QUERY + " WHERE t.path = ?"
     );
+
+    this.purgeMacosMetadataTracks();
+  }
+
+  /**
+   * Remove any track rows whose filename starts with "._" (AppleDouble sidecars
+   * macOS writes onto FAT32/exFAT/network volumes). Idempotent — once cleaned,
+   * the scanner filter prevents reintroduction, so subsequent runs are no-ops.
+   */
+  private purgeMacosMetadataTracks(): void {
+    const rows = this.db
+      .prepare("SELECT id, path FROM tracks")
+      .all() as { id: number; path: string }[];
+    const staleIds = rows
+      .filter((r) => path.basename(r.path).startsWith("._"))
+      .map((r) => r.id);
+    if (staleIds.length === 0) return;
+    const del = this.db.prepare("DELETE FROM tracks WHERE id = ?");
+    const tx = this.db.transaction((ids: number[]) => {
+      for (const id of ids) del.run(id);
+    });
+    tx(staleIds);
+    console.log(
+      `[library] purged ${staleIds.length} AppleDouble (._) track row(s)`
+    );
   }
 
   /**

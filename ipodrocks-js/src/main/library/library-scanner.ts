@@ -14,7 +14,7 @@ import Database from "better-sqlite3";
 import { ScanProgress, ScanResult } from "../../shared/types";
 import { HashManager } from "./hash-manager";
 import { MetadataExtractor } from "./metadata-extractor";
-import { AUDIO_EXTENSIONS } from "../utils/audio-extensions";
+import { AUDIO_EXTENSIONS, isMacosMetadataFile } from "../utils/audio-extensions";
 
 /** Escape LIKE special chars (% _ \) so folder paths are safe in LIKE patterns. */
 function escapeLike(s: string): string {
@@ -581,6 +581,7 @@ export class LibraryScanner {
           walk(full);
         } else if (
           entry.isFile() &&
+          !isMacosMetadataFile(entry.name) &&
           AUDIO_EXTENSIONS.has(path.extname(entry.name).toLowerCase())
         ) {
           files.push(full);
