@@ -72,7 +72,7 @@
     "vite": "^7.3.2",
     "vitepress": "^1.6.4",
     "vitepress-plugin-diagrams": "^1.2.2",
-    "vitest": "^3.0.0",
+    "vitest": "^4.1.0",
     "wait-on": "^9.0.0"
   }
 }
