@@ -156,9 +156,11 @@ import { downloadEpisode } from "./podcasts/podcast-downloader";
 import { getPodcastsRoot, getDefaultPodcastsRoot } from "./podcasts/podcast-storage";
 import {
   fetchLatestRelease,
+  fetchChangelogMarkdown,
   compareVersions,
   shouldAutoCheck,
 } from "./utils/update-checker";
+import { extractChangelogSection } from "./utils/changelog-parser";
 import { generateSavantPlaylist } from "./savant/savantEngine";
 import {
   startMoodChat,
@@ -358,6 +360,17 @@ export function registerIpcHandlers(): void {
     safe("app:setUpdateSnooze", async (_event, snoozeUntil: number | null) => {
       setUpdateSnoozeUntil(snoozeUntil);
       return undefined;
+    })
+  );
+  ipcMain.handle(
+    "app:fetchChangelogSection",
+    safe("app:fetchChangelogSection", async (_event, opts: { version: string }) => {
+      const version = (opts?.version ?? "").trim();
+      if (!version) return { markdown: null, error: "version" };
+      const text = await fetchChangelogMarkdown();
+      if (text === null) return { markdown: null, error: "network" };
+      const section = extractChangelogSection(text, version);
+      return { markdown: section };
     })
   );
   ipcMain.handle(
@@ -1120,6 +1133,7 @@ export function registerIpcHandlers(): void {
 
       if (opts.syncType === "custom" && opts.selections) {
         const sel = opts.selections;
+        const isExclude = sel.mode === "exclude";
         const albumSet = new Set(sel.albums ?? []);
         const artistSet = new Set(sel.artists ?? []);
         const genreSet = new Set(sel.genres ?? []);
@@ -1164,14 +1178,22 @@ export function registerIpcHandlers(): void {
           return audiobookSet.has(label) || audiobookSet.has(title);
         };
 
+        // In exclude mode the predicate is inverted: keep tracks that do NOT match.
+        const keepMusic = (t: Record<string, unknown>, p: string) =>
+          isExclude ? !matchMusic(t, p) : matchMusic(t, p);
+        const keepPodcast = (t: Record<string, unknown>, p: string) =>
+          isExclude ? !matchPodcast(t, p) : matchPodcast(t, p);
+        const keepAudiobook = (t: Record<string, unknown>, p: string) =>
+          isExclude ? !matchAudiobook(t, p) : matchAudiobook(t, p);
+
         for (const [p, t] of Object.entries(musicMap)) {
-          if (matchMusic(t, p)) musicLibraryTracks[p] = t;
+          if (keepMusic(t, p)) musicLibraryTracks[p] = t;
         }
         for (const [p, t] of Object.entries(podcastMap)) {
-          if (matchPodcast(t, p)) podcastLibraryTracks[p] = t;
+          if (keepPodcast(t, p)) podcastLibraryTracks[p] = t;
         }
         for (const [p, t] of Object.entries(audiobookMap)) {
-          if (matchAudiobook(t, p)) audiobookLibraryTracks[p] = t;
+          if (keepAudiobook(t, p)) audiobookLibraryTracks[p] = t;
         }
       } else {
         const includeMusic = opts.syncType === "full" ? opts.includeMusic === true : true;

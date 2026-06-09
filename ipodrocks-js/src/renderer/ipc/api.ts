@@ -203,6 +203,19 @@ export async function setUpdateSnooze(snoozeUntil: number | null): Promise<void>
   return window.api.invoke("app:setUpdateSnooze", snoozeUntil) as Promise<void>;
 }
 
+export interface ChangelogSectionResult {
+  markdown: string | null;
+  error?: string;
+}
+
+export async function fetchChangelogSection(
+  version: string
+): Promise<ChangelogSectionResult> {
+  return window.api.invoke("app:fetchChangelogSection", { version }) as Promise<
+    ChangelogSectionResult
+  >;
+}
+
 export async function openExternal(url: string): Promise<void> {
   return window.api.invoke("app:openExternal", url) as Promise<void>;
 }

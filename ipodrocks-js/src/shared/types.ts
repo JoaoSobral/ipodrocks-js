@@ -363,7 +363,11 @@ export interface BackfillProgress {
   message?: string;
 }
 
+export type CustomSelectionMode = "include" | "exclude";
+
 export interface CustomSelections {
+  /** Polarity of the selection. "include" syncs only the selected items; "exclude" syncs everything except the selected items. */
+  mode: CustomSelectionMode;
   albums: string[];
   artists: string[];
   genres: string[];
