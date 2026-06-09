@@ -65,8 +65,14 @@ Progress is shown in a modal. When it finishes, your device is ready to use.
 
 ## Next steps
 
+You have a library, a device, and a sync under your belt. From here, dig into the pieces that interest you most:
+
 - [Library](/app-reference/library) — Add folders, scan, create shadow libraries
 - [Devices](/app-reference/devices) — Configure codecs, check device status
 - [Playlists](/app-reference/playlists) — Create Smart, Genius, or Savant playlists
-- [Settings](/app-reference/settings) — OpenRouter API (for Savant and Assistant), harmonic analysis
+- [Auto Podcasts](/app-reference/autopodcasts) — Subscribe and auto-sync episodes
+- [Sync](/app-reference/sync) — Copy music, podcasts, and playlists to your device
+- [Ratings](/app-reference/ratings) — Bi-directional star ratings between library and device
+- [Rocksy](/app-reference/assistant) — The floating AI chat that knows your library
+- [Settings](/app-reference/settings) — OpenRouter API, harmonic analysis, codecs
 - [Troubleshooting](/guide/troubleshooting) — Common issues and fixes
