@@ -5,7 +5,7 @@
 📖 **[Full documentation →](https://ipodrocks.dev)**
 
 <p align="center">
-<img src="https://github.com/JoaoSobral/ipodrocks-js/blob/main/ipodrocks-js/assets/ipodRocks_transp.png?raw=true" width="20%">
+<img src="https://github.com/JoaoSobral/ipodrocks-js/blob/main/ipodrocks-js/assets/ipodRocks_transp.png?raw=true" width="40%">
 </p>
 
 ---
@@ -24,7 +24,7 @@ If you really like iPodRocks and want to keep it caffeinated, you can buy me a c
 
 <p align="center">
   <a href="https://buymeacoffee.com/vador">
-    <img src="https://github.com/JoaoSobral/ipodrocks-js/blob/main/ipodrocks-js/assets/buy_me_a_coffee.png?raw=true" alt="Buy me a coffee" width="220">
+    <img src="https://github.com/JoaoSobral/ipodrocks-js/blob/main/ipodrocks-js/assets/buy_me_a_coffee.png?raw=true" alt="Buy me a coffee" width="190">
   </a>
 </p>
 
