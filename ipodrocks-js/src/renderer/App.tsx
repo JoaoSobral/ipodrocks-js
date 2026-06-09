@@ -10,11 +10,19 @@ import { AutoPodcastsPanel } from "./components/panels/AutoPodcastsPanel";
 import { SettingsPanel } from "./components/panels/SettingsPanel";
 import { FloatChat } from "./components/assistant/FloatChat";
 import { ThemeToggle } from "./components/common/ThemeToggle";
+import { BuyMeACoffeeButton } from "./components/common/BuyMeACoffeeButton";
 import { PlayerBar } from "./components/player/PlayerBar";
 import { useThemeStore } from "./stores/theme-store";
 import { useUIStore } from "./stores/ui-store";
 
-type Panel = "welcome" | "dashboard" | "library" | "devices" | "sync" | "playlists" | "autopodcasts";
+type Panel =
+  | "welcome"
+  | "dashboard"
+  | "library"
+  | "devices"
+  | "sync"
+  | "playlists"
+  | "autopodcasts";
 
 interface NavItem {
   id: Panel;
@@ -27,7 +35,13 @@ const navItems: NavItem[] = [
     id: "welcome",
     label: "Welcome",
     icon: (
-      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        width="20"
+        height="20"
+        viewBox="0 0 24 24"
+        fill="currentColor"
+      >
         <path d="M1 10V2l9 3v2zm7 0V8h5V4H8V3l4-2l4 2v1h-1v4h1v2h-1.26l-6.3 3.64L9 10zM7 23l.04-.24l9.11-5.26l.52 3.38L13 23zm1.05-6.83L15.31 12l.52 3.37l-8.4 4.85z" />
       </svg>
     ),
@@ -36,7 +50,13 @@ const navItems: NavItem[] = [
     id: "dashboard",
     label: "Dashboard",
     icon: (
-      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        width="20"
+        height="20"
+        viewBox="0 0 24 24"
+        fill="currentColor"
+      >
         <path d="M21 16V4H3v12zm0-14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-7v2h2v2H8v-2h2v-2H3a2 2 0 0 1-2-2V4c0-1.11.89-2 2-2zM5 6h9v5H5zm10 0h4v2h-4zm4 3v5h-4V9zM5 12h4v2H5zm5 0h4v2h-4z" />
       </svg>
     ),
@@ -45,7 +65,13 @@ const navItems: NavItem[] = [
     id: "library",
     label: "Library",
     icon: (
-      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        width="20"
+        height="20"
+        viewBox="0 0 24 24"
+        fill="currentColor"
+      >
         <path d="M21 3v12.5a3.5 3.5 0 0 1-3.5 3.5a3.5 3.5 0 0 1-3.5-3.5a3.5 3.5 0 0 1 3.5-3.5c.54 0 1.05.12 1.5.34V6.47L9 8.6v8.9A3.5 3.5 0 0 1 5.5 21A3.5 3.5 0 0 1 2 17.5A3.5 3.5 0 0 1 5.5 14c.54 0 1.05.12 1.5.34V6z" />
       </svg>
     ),
@@ -54,7 +80,13 @@ const navItems: NavItem[] = [
     id: "playlists",
     label: "Playlists",
     icon: (
-      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        width="20"
+        height="20"
+        viewBox="0 0 24 24"
+        fill="currentColor"
+      >
         <path d="M15 6v2H3V6zm0 4v2H3v-2zM3 16v-2h8v2zM17 6h5v2h-3v9a3 3 0 0 1-3 3a3 3 0 0 1-3-3a3 3 0 0 1 3-3c.35 0 .69.07 1 .18zm-1 10a1 1 0 0 0-1 1a1 1 0 0 0 1 1a1 1 0 0 0 1-1a1 1 0 0 0-1-1" />
       </svg>
     ),
@@ -63,7 +95,13 @@ const navItems: NavItem[] = [
     id: "autopodcasts",
     label: "Auto Podcasts",
     icon: (
-      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        width="20"
+        height="20"
+        viewBox="0 0 24 24"
+        fill="currentColor"
+      >
         <path d="M17 18.25v3.25H7v-3.25c0-1.38 2.24-2.5 5-2.5s5 1.12 5 2.5M12 5.5a6.5 6.5 0 0 1 6.5 6.5c0 1.25-.35 2.42-.96 3.41L16 14.04c.32-.61.5-1.31.5-2.04c0-2.5-2-4.5-4.5-4.5s-4.5 2-4.5 4.5c0 .73.18 1.43.5 2.04l-1.54 1.37c-.61-.99-.96-2.16-.96-3.41A6.5 6.5 0 0 1 12 5.5m0-4A10.5 10.5 0 0 1 22.5 12c0 2.28-.73 4.39-1.96 6.11l-1.5-1.35c.92-1.36 1.46-3 1.46-4.76A8.5 8.5 0 0 0 12 3.5A8.5 8.5 0 0 0 3.5 12c0 1.76.54 3.4 1.46 4.76l-1.5 1.35A10.47 10.47 0 0 1 1.5 12A10.5 10.5 0 0 1 12 1.5m0 8a2.5 2.5 0 0 1 2.5 2.5a2.5 2.5 0 0 1-2.5 2.5A2.5 2.5 0 0 1 9.5 12A2.5 2.5 0 0 1 12 9.5" />
       </svg>
     ),
@@ -72,7 +110,13 @@ const navItems: NavItem[] = [
     id: "devices",
     label: "Devices",
     icon: (
-      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        width="20"
+        height="20"
+        viewBox="0 0 24 24"
+        fill="currentColor"
+      >
         <path d="M7 2a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2zm0 2h10v6H7zm5 8a4 4 0 0 1 4 4a4 4 0 0 1-4 4a4 4 0 0 1-4-4a4 4 0 0 1 4-4m0 2a2 2 0 0 0-2 2a2 2 0 0 0 2 2a2 2 0 0 0 2-2a2 2 0 0 0-2-2" />
       </svg>
     ),
@@ -81,7 +125,13 @@ const navItems: NavItem[] = [
     id: "sync",
     label: "Sync",
     icon: (
-      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        width="20"
+        height="20"
+        viewBox="0 0 24 24"
+        fill="currentColor"
+      >
         <path d="M2 12A10 10 0 1 0 12 2A10 10 0 0 0 2 12m13.6 1.72A4 4 0 0 0 16 12a4 4 0 0 0-4-4v2L8.88 7L12 4v2a6 6 0 0 1 6 6a5.9 5.9 0 0 1-.93 3.19M6 12a5.9 5.9 0 0 1 .93-3.19l1.47 1.47A4 4 0 0 0 8 12a4 4 0 0 0 4 4v-2l3 3l-3 3v-2a6 6 0 0 1-6-6" />
       </svg>
     ),
@@ -146,7 +196,9 @@ export function App() {
           <h1 className="text-lg font-bold tracking-tight text-sidebar-foreground">
             iPodRocks
           </h1>
-          <p className="text-[10px] text-muted-foreground mt-0.5">Electron Edition</p>
+          <p className="text-[10px] text-muted-foreground mt-0.5">
+            Electron Edition
+          </p>
         </div>
 
         <ul className="flex flex-col gap-0.5 px-2 flex-1">
@@ -160,15 +212,23 @@ export function App() {
                     : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
                 }`}
               >
-                <span className="w-5 h-5 flex items-center justify-center shrink-0">{item.icon}</span>
+                <span className="w-5 h-5 flex items-center justify-center shrink-0">
+                  {item.icon}
+                </span>
                 {item.label}
               </button>
             </li>
           ))}
         </ul>
 
+        <div className="px-3 pb-3 flex justify-center">
+          <BuyMeACoffeeButton />
+        </div>
+
         <div className="border-t border-sidebar-border px-5 py-3">
-          <p className="text-[10px] text-muted-foreground">{appVersion ? `v${appVersion}` : ""}</p>
+          <p className="text-[10px] text-muted-foreground">
+            {appVersion ? `v${appVersion}` : ""}
+          </p>
         </div>
       </nav>
 
@@ -195,7 +255,9 @@ export function App() {
             <div className="w-px h-4 bg-border mx-1" />
             <button
               type="button"
-              onClick={() => openExternal("https://github.com/JoaoSobral/ipodrocks-js")}
+              onClick={() =>
+                openExternal("https://github.com/JoaoSobral/ipodrocks-js")
+              }
               className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-accent/50 transition-colors cursor-default"
               title="iPodRocks on GitHub"
               aria-label="iPodRocks on GitHub"
@@ -217,7 +279,10 @@ export function App() {
 
       <FloatChat />
 
-      <SettingsPanel open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      <SettingsPanel
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+      />
     </div>
   );
 }

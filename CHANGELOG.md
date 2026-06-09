@@ -1,5 +1,33 @@
 # Changelog
 
+## [1.3.5] — 2026-06
+
+### Features
+
+#### Custom sync — Include/Exclude polarity
+
+- **New "Exclude" mode for custom sync** — The "Choose what to sync" card has a new `Include` / `Exclude` radio toggle at the top. **Include** keeps the existing behaviour (sync only the ticked items). **Exclude** inverts it: tick a few albums, artists, genres, podcasts, audiobooks, or playlists and everything *except* those gets synced — the easy way to do "sync the whole library minus this one box set". An empty Exclude selection is equivalent to a full sync, by design.
+- **Red highlighting in Exclude mode** — Selected items render in red (`bg-destructive/20 text-destructive`) instead of include-mode green, so the polarity is immediately obvious. Items transitively pulled in via a selected playlist render in light orange (`bg-orange-400/20 text-orange-500`), distinct from the deeper red of explicitly excluded items.
+- **Sticky per-device state for both selections *and* mode** — The selection mode and the selected items now both persist per device profile. Switching devices and coming back, or reopening the app, restores exactly what you had selected last time on that device. Implementation rides inside the existing `device_sync_preferences.custom_selections_json` blob via a new `mode` field on `CustomSelections`, so **no DB migration is needed**.
+- **Type-level support** — `src/shared/types.ts` gains a `CustomSelectionMode = "include" | "exclude"` union and a `mode: CustomSelectionMode` field on `CustomSelections`. The main-side sync filter (`src/main/ipc.ts` `sync:start` handler) computes the include-style predicate once and wraps it with three `keepX` inversions when `sel.mode === "exclude"`. The renderer (`src/renderer/components/panels/SyncPanel.tsx`) extends the existing reducer with `customMode` and a `setCustomMode` action; the on-mount `getDeviceSyncPreferences()` call already runs per device, so the new field is restored automatically. Legacy rows whose JSON predates this field parse as `mode: "include"`.
+
+#### "What's New" in the Update modal
+
+- **Release notes embedded in the update modal** — When `UpdateAvailableModal` opens, it now fetches the matching `CHANGELOG.md` section for the latest version from GitHub and renders it inline above the snooze checkbox. Users can read the notes without leaving the app or clicking "Go to Releases".
+- **Pure changelog parser** — New `src/main/utils/changelog-parser.ts` exports `extractChangelogSection(markdown, version)`, which finds the `## [<version>]` heading and returns the section body up to the next `## [` heading or `---` separator (heading and separator excluded). Returns `null` when the version isn't found. Handles four-segment versions like `1.1.3.1` and uses an anchored regex so a request for `1.3.5` doesn't match a `## [1.3]` heading.
+- **GitHub raw fetch + in-process cache** — `src/main/utils/update-checker.ts` gains `fetchChangelogMarkdown()`, which fetches `https://raw.githubusercontent.com/JoaoSobral/ipodrocks-js/main/CHANGELOG.md` with `AbortSignal.timeout(10_000)`, caches the body in-process so repeated modal opens don't re-hit GitHub, and returns `null` on any failure (network, non-200, timeout). Failures are *not* cached, so a retry can succeed after a transient outage. A `_resetChangelogCacheForTests()` export keeps tests isolated.
+- **New IPC handler `app:fetchChangelogSection`** — Registered alongside `app:checkForUpdates` in `src/main/ipc.ts`. Accepts `{ version }`, fetches the markdown, and returns `{ markdown: string | null; error?: "network" | "version" }`. The renderer's `fetchChangelogSection(version)` wrapper lives in `src/renderer/ipc/api.ts`.
+- **Markdown rendering** — `UpdateAvailableModal.tsx` uses `react-markdown` + `rehype-sanitize` (both already deps) with custom Tailwind-styled component overrides for headings, paragraphs, lists, bold, inline code, and links — links open in a new tab with `rel="noopener noreferrer"`. The section sits inside a `max-h-[24rem] overflow-y-auto` scrollable container so a long entry never blows up the modal. A small spinner shows while loading; fetch failures and missing sections silently degrade (no "What's New" block renders) so the modal still works without notes. The modal switches to the `wide` `Modal` variant for breathing room.
+
+### Testing
+
+- **`src/__tests__/changelog-parser.test.ts`** — 6 cases for `extractChangelogSection`: returns the body for a known version, excludes the heading and trailing separator, stops at the next version heading without bleeding into it, returns `null` when the version is absent, parses four-segment versions like `1.1.3.1`, and refuses prefix matches (asking for `1.3.5` does not match a `1.3` heading).
+- **`src/__tests__/changelog-fetch.test.ts`** — 5 cases for `fetchChangelogMarkdown` driving an injected `fetch` impl: returns the body on 2xx, returns `null` on a 404 response, returns `null` when fetch throws, caches the body across calls (single fetch on second call), and does *not* cache `null` results so a failing fetch can be retried after the outage clears.
+- **`src/__tests__/regressions/device-sync-preferences.test.ts`** — 5 cases against a real `:memory:` SQLite DB through `device-sync-preferences.ts`: `emptySelections()` defaults `mode` to `"include"`, `mode: "exclude"` round-trips through save → load, `mode: "include"` round-trips, legacy rows whose `custom_selections_json` was written without a `mode` field parse as `"include"` (back-compat), and a garbage `mode` value parses as `"include"`.
+- **`src/__tests__/behaviors/sync-exclude-mode.test.ts`** — 3 behavioral journey cases driving the real `library:addFolder` → `library:scan` → `device:add` → `sync:start` chain against a tmp library + tmp device mount: exclude mode with one artist selected syncs only the *other* artist's tracks (the excluded artist's files do not land on the device), exclude mode with empty selections syncs everything (no-op exclusion), and include mode with one artist selected syncs only that artist's tracks (regression coverage for the existing path).
+
+---
+
 ## [1.3.4] — 2026-05
 
 ### Bug fixes
