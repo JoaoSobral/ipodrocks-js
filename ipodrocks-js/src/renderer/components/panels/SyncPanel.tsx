@@ -16,7 +16,7 @@ import {
 } from "../../ipc/api";
 import { SyncProgressModal } from "../modals/SyncProgressModal";
 import type { Track, Playlist, ShadowLibrary } from "@shared/types";
-import type { CustomSelections, ExtraTrackPolicy, SyncOptions, SyncType } from "@shared/types";
+import type { CustomSelectionMode, CustomSelections, ExtraTrackPolicy, SyncOptions, SyncType } from "@shared/types";
 
 interface SyncPrefsState {
   syncType: SyncType;
@@ -27,6 +27,7 @@ interface SyncPrefsState {
   extraTrackPolicy: ExtraTrackPolicy;
   ignoreSpaceCheck: boolean;
   skipAlbumArtwork: boolean;
+  customMode: CustomSelectionMode;
   selectedItems: Record<string, Set<string>>;
 }
 
@@ -48,6 +49,7 @@ const INITIAL_PREFS: SyncPrefsState = {
   extraTrackPolicy: "keep",
   ignoreSpaceCheck: false,
   skipAlbumArtwork: false,
+  customMode: "include",
   selectedItems: EMPTY_SELECTIONS,
 };
 
@@ -62,6 +64,7 @@ type SyncPrefsAction =
   | { type: "setExtraTrackPolicy"; value: ExtraTrackPolicy }
   | { type: "setIgnoreSpaceCheck"; value: boolean }
   | { type: "setSkipAlbumArtwork"; value: boolean }
+  | { type: "setCustomMode"; value: CustomSelectionMode }
   | { type: "toggleSelection"; category: string; label: string; checked: boolean };
 
 function syncPrefsReducer(state: SyncPrefsState, action: SyncPrefsAction): SyncPrefsState {
@@ -78,6 +81,7 @@ function syncPrefsReducer(state: SyncPrefsState, action: SyncPrefsAction): SyncP
         extraTrackPolicy: action.prefs.extraTrackPolicy,
         ignoreSpaceCheck: action.prefs.ignoreSpaceCheck,
         skipAlbumArtwork: action.prefs.skipAlbumArtwork,
+        customMode: action.prefs.selections.mode === "exclude" ? "exclude" : "include",
         selectedItems: {
           albums: new Set(action.prefs.selections.albums),
           artists: new Set(action.prefs.selections.artists),
@@ -95,6 +99,7 @@ function syncPrefsReducer(state: SyncPrefsState, action: SyncPrefsAction): SyncP
     case "setExtraTrackPolicy": return { ...state, extraTrackPolicy: action.value };
     case "setIgnoreSpaceCheck": return { ...state, ignoreSpaceCheck: action.value };
     case "setSkipAlbumArtwork": return { ...state, skipAlbumArtwork: action.value };
+    case "setCustomMode": return { ...state, customMode: action.value };
     case "toggleSelection": {
       const next = { ...state.selectedItems, [action.category]: new Set(state.selectedItems[action.category]) };
       if (action.checked) next[action.category].add(action.label);
@@ -127,7 +132,7 @@ export function SyncPanel() {
   const [deviceId, setDeviceId] = useState<number | "">("");
   const [shadowLibs, setShadowLibs] = useState<ShadowLibrary[]>([]);
   const [prefs, dispatch] = useReducer(syncPrefsReducer, INITIAL_PREFS);
-  const { syncType, fullIncludeMusic, fullIncludePodcasts, fullIncludeAudiobooks, fullIncludePlaylists, extraTrackPolicy, ignoreSpaceCheck, skipAlbumArtwork, selectedItems } = prefs;
+  const { syncType, fullIncludeMusic, fullIncludePodcasts, fullIncludeAudiobooks, fullIncludePlaylists, extraTrackPolicy, ignoreSpaceCheck, skipAlbumArtwork, customMode, selectedItems } = prefs;
 
   const [tracks, setTracks] = useState<Track[]>([]);
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
@@ -456,6 +461,7 @@ export function SyncPanel() {
     const selections: CustomSelections | undefined =
       syncType === "custom"
         ? {
+            mode: customMode,
             albums: [...selectedItems.albums],
             artists: [...selectedItems.artists],
             genres: [...selectedItems.genres],
@@ -493,6 +499,7 @@ export function SyncPanel() {
     extraTrackPolicy,
     ignoreSpaceCheck,
     skipAlbumArtwork,
+    customMode,
     selectedItems,
     setResults,
   ]);
@@ -648,6 +655,26 @@ export function SyncPanel() {
       {/* Custom sync: grid of categories */}
       {syncType === "custom" && (
         <Card title="Choose what to sync">
+          <div className="mb-4 flex items-center gap-4">
+            <p className="text-xs font-medium text-muted-foreground flex items-center gap-1">
+              Mode
+              <InfoTooltip text="Include syncs only the items you tick. Exclude syncs everything except the items you tick — useful for 'sync the whole library minus a few albums'." />
+            </p>
+            <div className="flex gap-4">
+              {(["include", "exclude"] as const).map((mode) => (
+                <label key={mode} className="flex items-center gap-2 cursor-default">
+                  <input
+                    type="radio"
+                    name="customMode"
+                    checked={customMode === mode}
+                    onChange={() => dispatch({ type: "setCustomMode", value: mode })}
+                    className="accent-primary"
+                  />
+                  <span className="text-sm text-foreground capitalize">{mode}</span>
+                </label>
+              ))}
+            </div>
+          </div>
           <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
             {[
               { key: "albums", title: "Albums", items: albums },
@@ -670,9 +697,11 @@ export function SyncPanel() {
                       const isSelected = affectedItems.selected[key].has(label);
                       const isPartial = affectedItems.partial[key].has(label);
                       const checked = isSelected || isPartial;
-                      const bg =
-                        isSelected ? "bg-success/20 text-success" :
-                        isPartial ? "bg-warning/20 text-warning" : "";
+                      const bg = customMode === "exclude"
+                        ? (isSelected ? "bg-destructive/20 text-destructive" :
+                           isPartial ? "bg-orange-400/20 text-orange-500" : "")
+                        : (isSelected ? "bg-success/20 text-success" :
+                           isPartial ? "bg-warning/20 text-warning" : "");
                       const pl = key === "playlists" ? (Array.isArray(playlists) ? playlists : []).find((p) => (p?.name ?? "") === label) : null;
                       const typeLabel =
                         pl?.typeName === "genius" ? "Genius" : pl?.typeName === "smart" ? "Smart" : null;

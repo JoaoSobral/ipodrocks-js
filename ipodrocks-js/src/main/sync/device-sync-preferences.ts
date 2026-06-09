@@ -2,6 +2,7 @@ import type Database from "better-sqlite3";
 import type { CustomSelections, DeviceSyncPreferences } from "../../shared/types";
 
 export const emptySelections = (): CustomSelections => ({
+  mode: "include",
   albums: [],
   artists: [],
   genres: [],
@@ -15,6 +16,7 @@ function parseSelections(json: string | null | undefined): CustomSelections {
   try {
     const parsed = JSON.parse(json) as Partial<CustomSelections>;
     return {
+      mode: parsed.mode === "exclude" ? "exclude" : "include",
       albums: Array.isArray(parsed.albums) ? parsed.albums : [],
       artists: Array.isArray(parsed.artists) ? parsed.artists : [],
       genres: Array.isArray(parsed.genres) ? parsed.genres : [],

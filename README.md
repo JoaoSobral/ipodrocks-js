@@ -5,7 +5,7 @@
 📖 **[Full documentation →](https://ipodrocks.dev)**
 
 <p align="center">
-<img src="https://github.com/JoaoSobral/ipodrocks-js/blob/main/ipodrocks-js/assets/ipodRocks_transp.png?raw=true" width="20%">
+<img src="https://github.com/JoaoSobral/ipodrocks-js/blob/main/ipodrocks-js/assets/ipodRocks_transp.png?raw=true" width="25%">
 </p>
 
 ---
@@ -17,6 +17,16 @@ iPodRocks is a sync manager for [Rockbox devices](https://www.rockbox.org/) — 
 ### What is not!
 
 iPodRocks is NOT a library manager. I strongly advise you to use beets and beets-flask as proper library managers (there are other alternatives). Once you library is ready then iPodRocks can sync to multiple RockBox devices.
+
+---
+
+If you really like iPodRocks and want to keep it caffeinated, you can buy me a coffee — every cup helps keep the development going. Thank you! ☕
+
+<p align="center">
+  <a href="https://buymeacoffee.com/vador">
+    <img src="https://github.com/JoaoSobral/ipodrocks-js/blob/main/ipodrocks-js/assets/buy_me_a_coffee.png?raw=true" alt="Buy me a coffee" width="190">
+  </a>
+</p>
 
 ---
 
