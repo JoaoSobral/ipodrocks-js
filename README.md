@@ -22,9 +22,9 @@ iPodRocks is NOT a library manager. I strongly advise you to use beets and beets
 
 If you really like iPodRocks and want to keep it caffeinated, you can buy me a coffee — every cup helps keep the development going. Thank you! ☕
 
-<p align="left">
+<p align="center">
   <a href="https://buymeacoffee.com/vador">
-    <img src="https://github.com/JoaoSobral/ipodrocks-js/blob/main/ipodrocks-js/assets/buy_me_a_coffee.png?raw=true" alt="Buy me a coffee" width="120">
+    <img src="https://github.com/JoaoSobral/ipodrocks-js/blob/main/ipodrocks-js/assets/buy_me_a_coffee.png?raw=true" alt="Buy me a coffee" width="220">
   </a>
 </p>
 
