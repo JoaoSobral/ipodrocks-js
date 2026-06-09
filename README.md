@@ -236,6 +236,18 @@ Development happens on the **dev** branch. All PRs to **main** must pass CI (tes
 
 ---
 
+## Support
+
+If you really like iPodRocks and want to keep it caffeinated, you can buy me a coffee — every cup helps keep the development going. Thank you! ☕
+
+<p align="left">
+  <a href="https://buymeacoffee.com/vador">
+    <img src="https://github.com/JoaoSobral/ipodrocks-js/blob/main/ipodrocks-js/assets/buy_me_a_coffee.png?raw=true" alt="Buy me a coffee" width="220">
+  </a>
+</p>
+
+---
+
 ## License
 
 This project is licensed under the GNU General Public License v3.0 (GPL-3.0). See [LICENSE](LICENSE) for the full text.
