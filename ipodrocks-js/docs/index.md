@@ -44,3 +44,13 @@ iPodRocks is a **sync manager** for [Rockbox devices](https://www.rockbox.org/) 
 - [Architecture](/guide/architecture) — How the Electron main/renderer processes, IPC, and modules fit together
 - [App Reference](/app-reference/welcome) — Tab-by-tab documentation of every feature
 - [Troubleshooting](/guide/troubleshooting) — Common issues and fixes
+
+---
+
+If you really like iPodRocks and want to keep it caffeinated, you can buy me a coffee — every cup helps keep the development going. Thank you! ☕
+
+<p align="center">
+  <a href="https://buymeacoffee.com/vador">
+    <img src="/buy_me_a_coffee.png" alt="Buy me a coffee" width="190">
+  </a>
+</p>
