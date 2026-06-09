@@ -5,7 +5,7 @@
 📖 **[Full documentation →](https://ipodrocks.dev)**
 
 <p align="center">
-<img src="https://github.com/JoaoSobral/ipodrocks-js/blob/main/ipodrocks-js/assets/ipodRocks_transp.png?raw=true" width="40%">
+<img src="https://github.com/JoaoSobral/ipodrocks-js/blob/main/ipodrocks-js/assets/ipodRocks_transp.png?raw=true" width="25%">
 </p>
 
 ---
