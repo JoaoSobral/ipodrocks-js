@@ -46,6 +46,8 @@ export interface RunSyncOptions {
   preloadedMtimes?: Map<string, number>;
   /** Override profile codec extension for compare (e.g. shadow library codec when codecName is DIRECT COPY). */
   profileCodecExtOverride?: string | null;
+  /** Issue #82: mirror the source library folder structure 1:1 instead of rebuilding from tags. */
+  preserveFolderStructure?: boolean;
 }
 
 export interface ContentAnalysis {
@@ -92,15 +94,85 @@ export function sanitizeDevicePathComponent(
   return out.length > maxLen ? out.slice(0, maxLen) : out;
 }
 
+/**
+ * Build a device-relative path that mirrors the source library folder structure
+ * (relative to the library root), preserving album folder names exactly (incl.
+ * the year and parentheses). Returns null when the track does not resolve under
+ * a known library folder, so callers can fall back to a tag-based path.
+ */
+function folderRelativePath(
+  trackPath: string,
+  contentType: string,
+  libraryFolderPaths?: Map<number, string>,
+  folderId?: number
+): string | null {
+  if (folderId == null || !libraryFolderPaths) return null;
+  const basePath = libraryFolderPaths.get(folderId);
+  if (!basePath) return null;
+
+  const resolved = path.resolve(trackPath);
+  const baseResolved = path.resolve(basePath);
+  if (
+    !resolved.startsWith(baseResolved + path.sep) &&
+    !resolved.startsWith(baseResolved + "/")
+  ) {
+    return null;
+  }
+
+  const rel = resolved.slice(baseResolved.length + 1).replace(/\\/g, "/");
+  const filename = path.basename(trackPath);
+  const parts = rel.split("/");
+  const folderNames =
+    contentType === "music"
+      ? ["Music", "music", "MUSIC"]
+      : contentType === "audiobook"
+        ? ["Audiobooks", "audiobooks", "AUDIOBOOKS", "Audiobook", "audiobook"]
+        : ["Podcasts", "podcasts", "PODCASTS", "Podcast", "podcast"];
+
+  if (parts.length > 1 && folderNames.includes(parts[0])) {
+    const safeParts = parts.slice(1).map((p) => sanitizeDevicePathComponent(p));
+    return safeParts.join("/");
+  }
+  if (parts.length === 1 && folderNames.includes(parts[0])) {
+    return sanitizeDevicePathComponent(filename);
+  }
+
+  const relParts = rel.split("/");
+  if (relParts.length <= 2) {
+    const baseName = path.basename(basePath);
+    if (!folderNames.includes(baseName)) {
+      return path.posix.join(
+        sanitizeDevicePathComponent(baseName),
+        ...relParts.map((p) => sanitizeDevicePathComponent(p))
+      );
+    }
+  }
+  return relParts.map((p) => sanitizeDevicePathComponent(p)).join("/");
+}
+
 export function computeDeviceRelativePath(
   trackPath: string,
   trackInfo: Record<string, unknown>,
   contentType: string,
-  libraryFolderPaths?: Map<number, string>
+  libraryFolderPaths?: Map<number, string>,
+  preserveFolderStructure = false
 ): string {
   const artist = ((trackInfo.artist as string) ?? "").trim();
   const album = ((trackInfo.album as string) ?? "").trim();
   const filename = path.basename(trackPath);
+  const folderId = trackInfo.libraryFolderId as number | undefined;
+
+  // Issue #82: when mirroring is enabled, preserve the source folder layout 1:1
+  // (e.g. "Artist/Album (2011)/track.flac") instead of rebuilding from tags.
+  if (preserveFolderStructure) {
+    const mirrored = folderRelativePath(
+      trackPath,
+      contentType,
+      libraryFolderPaths,
+      folderId
+    );
+    if (mirrored) return mirrored;
+  }
 
   if (
     artist &&
@@ -114,41 +186,13 @@ export function computeDeviceRelativePath(
     return path.posix.join(safeArtist, safeAlbum, safeFilename);
   }
 
-  const folderId = trackInfo.libraryFolderId as number | undefined;
-  if (folderId != null && libraryFolderPaths) {
-    const basePath = libraryFolderPaths.get(folderId);
-    if (basePath) {
-      const resolved = path.resolve(trackPath);
-      const baseResolved = path.resolve(basePath);
-      if (resolved.startsWith(baseResolved + path.sep) || resolved.startsWith(baseResolved + "/")) {
-        let rel = resolved.slice(baseResolved.length + 1).replace(/\\/g, "/");
-        const parts = rel.split("/");
-        const folderNames =
-          contentType === "music"
-            ? ["Music", "music", "MUSIC"]
-            : contentType === "audiobook"
-              ? ["Audiobooks", "audiobooks", "AUDIOBOOKS", "Audiobook", "audiobook"]
-              : ["Podcasts", "podcasts", "PODCASTS", "Podcast", "podcast"];
-
-        if (parts.length > 1 && folderNames.includes(parts[0])) {
-          const safeParts = parts.slice(1).map((p) => sanitizeDevicePathComponent(p));
-          return safeParts.join("/");
-        }
-        if (parts.length === 1 && folderNames.includes(parts[0])) {
-          return sanitizeDevicePathComponent(filename);
-        }
-
-        const relParts = rel.split("/");
-        if (relParts.length <= 2) {
-          const baseName = path.basename(basePath);
-          if (!folderNames.includes(baseName)) {
-            return path.posix.join(sanitizeDevicePathComponent(baseName), ...relParts.map((p) => sanitizeDevicePathComponent(p)));
-          }
-        }
-        return relParts.map((p) => sanitizeDevicePathComponent(p)).join("/");
-      }
-    }
-  }
+  const mirrored = folderRelativePath(
+    trackPath,
+    contentType,
+    libraryFolderPaths,
+    folderId
+  );
+  if (mirrored) return mirrored;
 
   return sanitizeDevicePathComponent(filename);
 }
@@ -161,7 +205,9 @@ export function buildLibraryDestMap(
   cancelSignal?: AbortSignal,
   progressCallback?: ProgressCallback,
   /** F7: Pre-loaded path→mtime map from content_hashes. Falls back to fs.statSync on miss. */
-  preloadedMtimes?: Map<string, number>
+  preloadedMtimes?: Map<string, number>,
+  /** Issue #82: mirror the source library folder structure 1:1 instead of rebuilding from tags. */
+  preserveFolderStructure = false
 ): {
   destMap: Record<string, string>;
   expectedSizes: Record<string, number>;
@@ -191,7 +237,8 @@ export function buildLibraryDestMap(
       trackPath,
       trackInfo,
       contentType,
-      libraryFolderPaths
+      libraryFolderPaths,
+      preserveFolderStructure
     );
 
     if (needsConversion) {
@@ -302,7 +349,9 @@ export function analyzeContentType(
   /** F7: Pre-loaded path→mtime from content_hashes, passed through to buildLibraryDestMap. */
   preloadedMtimes?: Map<string, number>,
   /** Override profile codec extension for compare (e.g. shadow library codec when codecName is DIRECT COPY). */
-  profileCodecExtOverride?: string | null
+  profileCodecExtOverride?: string | null,
+  /** Issue #82: mirror the source library folder structure 1:1 instead of rebuilding from tags. */
+  preserveFolderStructure = false
 ): ContentAnalysis {
   if (cancelSignal?.aborted) throw new SyncCancelled();
 
@@ -313,7 +362,8 @@ export function analyzeContentType(
     libraryFolderPaths,
     cancelSignal,
     progressCallback,
-    preloadedMtimes
+    preloadedMtimes,
+    preserveFolderStructure
   );
 
   if (cancelSignal?.aborted) throw new SyncCancelled();
@@ -408,7 +458,8 @@ export async function copyMissingTracks(
   progressCallback?: ProgressCallback,
   cancelSignal?: AbortSignal,
   deviceProfile?: { codecConfigBitrate?: number | null; codecConfigQuality?: number | null },
-  codecMismatchMap?: Map<string, string>
+  codecMismatchMap?: Map<string, string>,
+  preserveFolderStructure = false
 ): Promise<{ synced: number; missingFiles: string[]; errors: number }> {
   if (!missingPaths.length) return { synced: 0, missingFiles: [], errors: 0 };
 
@@ -450,7 +501,8 @@ export async function copyMissingTracks(
         tp,
         trackInfo,
         contentType,
-        libraryFolderPaths
+        libraryFolderPaths,
+        preserveFolderStructure
       );
     }
 
@@ -547,7 +599,8 @@ export function copyAlbumArtworkToDevice(
   libraryTracks: Record<string, Record<string, unknown>>,
   libraryFolderPaths?: Map<number, string>,
   progressCallback?: ProgressCallback,
-  cancelSignal?: AbortSignal
+  cancelSignal?: AbortSignal,
+  preserveFolderStructure = false
 ): ArtworkSyncResult {
   if (Object.keys(libraryTracks).length === 0) {
     return { copied: 0, skipped: 0, errors: 0, totalCandidates: 0 };
@@ -564,7 +617,8 @@ export function copyAlbumArtworkToDevice(
       trackPath,
       trackInfo,
       contentType,
-      libraryFolderPaths
+      libraryFolderPaths,
+      preserveFolderStructure
     );
     const deviceRelAlbum = path.dirname(relPath).replace(/\\/g, "/");
     sourceToDeviceRel.set(sourceDir, deviceRelAlbum);
@@ -829,7 +883,7 @@ export async function runSync(
   missingFiles: string[];
   errors: number;
 }> {
-  const { extraTrackPolicy, progressCallback, cancelSignal, skipAlbumArtwork, preloadedMtimes, profileCodecExtOverride } =
+  const { extraTrackPolicy, progressCallback, cancelSignal, skipAlbumArtwork, preloadedMtimes, profileCodecExtOverride, preserveFolderStructure } =
     options;
 
   progressCallback?.({ event: "log", message: `Comparing library with device (${contentType})...` });
@@ -844,7 +898,8 @@ export async function runSync(
     cancelSignal,
     progressCallback,
     preloadedMtimes,
-    profileCodecExtOverride
+    profileCodecExtOverride,
+    preserveFolderStructure
   );
 
   progressCallback?.({
@@ -901,7 +956,8 @@ export async function runSync(
     progressCallback,
     cancelSignal,
     device.profile,
-    analysis.codecMismatchMap
+    analysis.codecMismatchMap,
+    preserveFolderStructure
   );
 
   if (skipAlbumArtwork !== true && Object.keys(libraryTracks).length > 0) {
@@ -911,7 +967,8 @@ export async function runSync(
       libraryTracks,
       libraryFolderPaths,
       progressCallback,
-      cancelSignal
+      cancelSignal,
+      preserveFolderStructure
     );
     errors += artworkResult.errors;
     if (

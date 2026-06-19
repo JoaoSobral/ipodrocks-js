@@ -38,6 +38,7 @@ type Row = {
   include_playlists: number;
   ignore_space_check: number;
   skip_album_artwork: number;
+  preserve_folder_structure: number;
   custom_selections_json: string | null;
 };
 
@@ -61,6 +62,7 @@ export function getDeviceSyncPreferences(
     includePlaylists: row.include_playlists === 1,
     ignoreSpaceCheck: row.ignore_space_check === 1,
     skipAlbumArtwork: row.skip_album_artwork === 1,
+    preserveFolderStructure: row.preserve_folder_structure !== 0,
     selections: parseSelections(row.custom_selections_json),
   };
 }
@@ -74,8 +76,8 @@ export function saveDeviceSyncPreferences(
     INSERT INTO device_sync_preferences
       (device_id, sync_type, extra_track_policy, include_music, include_podcasts,
        include_audiobooks, include_playlists, ignore_space_check, skip_album_artwork,
-       custom_selections_json, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+       preserve_folder_structure, custom_selections_json, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
     ON CONFLICT(device_id) DO UPDATE SET
       sync_type = excluded.sync_type,
       extra_track_policy = excluded.extra_track_policy,
@@ -85,6 +87,7 @@ export function saveDeviceSyncPreferences(
       include_playlists = excluded.include_playlists,
       ignore_space_check = excluded.ignore_space_check,
       skip_album_artwork = excluded.skip_album_artwork,
+      preserve_folder_structure = excluded.preserve_folder_structure,
       custom_selections_json = excluded.custom_selections_json,
       updated_at = CURRENT_TIMESTAMP
   `).run(
@@ -97,6 +100,7 @@ export function saveDeviceSyncPreferences(
     prefs.includePlaylists ? 1 : 0,
     prefs.ignoreSpaceCheck ? 1 : 0,
     prefs.skipAlbumArtwork ? 1 : 0,
+    prefs.preserveFolderStructure ? 1 : 0,
     JSON.stringify(prefs.selections)
   );
 }

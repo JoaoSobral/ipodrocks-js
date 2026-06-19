@@ -1,5 +1,6 @@
 import { ChildProcess, spawn } from "child_process";
 import * as fs from "fs";
+import * as os from "os";
 import * as path from "path";
 import { getEncoderEnv } from "../utils/encoder-env";
 import { getFfmpegPath } from "../utils/ffmpeg-path";
@@ -45,6 +46,45 @@ export function updateExtension(filePath: string, codec: string): string {
   const ext = CODEC_EXT_MAP[codec] ?? ".mp3";
   const parsed = path.parse(filePath);
   return path.join(parsed.dir, parsed.name + ext);
+}
+
+/**
+ * Build an ASCII-safe temp path in the OS temp dir for encoder output. External
+ * encoders (mpcenc) and some ffmpeg builds mishandle spaces/parentheses in output
+ * paths, which now occur because we mirror source folder names 1:1 (issue #82).
+ * We always encode here, then move to the real destination with Node's fs.
+ */
+export function makeSafeConversionTempPath(dest: string): string {
+  const ext = path.extname(dest);
+  const safeExt = /^\.[A-Za-z0-9]+$/.test(ext) ? ext : ".tmp";
+  const rand = Math.random().toString(36).slice(2);
+  return path.join(os.tmpdir(), `ipodrocks_conv_${Date.now()}_${rand}${safeExt}`);
+}
+
+/**
+ * Move a finished conversion from the temp path to its final destination.
+ * Falls back to copy+unlink when src and dest are on different filesystems
+ * (rename throws EXDEV, e.g. OS temp dir vs the device mount).
+ */
+export function moveConvertedFile(from: string, to: string): void {
+  try {
+    fs.renameSync(from, to);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "EXDEV") {
+      fs.copyFileSync(from, to);
+      fs.unlinkSync(from);
+    } else {
+      throw err;
+    }
+  }
+}
+
+function cleanupTemp(p: string): void {
+  try {
+    fs.unlinkSync(p);
+  } catch {
+    /* ignore */
+  }
 }
 
 function buildFfmpegCommand(
@@ -167,45 +207,52 @@ export async function convertWithCodec(
   const destDir = path.dirname(dest);
   fs.mkdirSync(destDir, { recursive: true });
 
+  // Encode to an ASCII-safe temp path, then move to the (possibly space/paren
+  // containing) final destination so encoders never see problem characters.
+  const tmpDest = makeSafeConversionTempPath(dest);
   const codec = settings.codec ?? "mp3";
-  if (codec === "mpc") {
-    logCallback?.(`Converting to MPC: ${path.basename(src)}`);
-    const quality = settings.quality ?? 7;
-    const metadata = settings.metadata;
-    try {
-      return await convertMusepack(
+
+  try {
+    let ok: boolean;
+    if (codec === "mpc") {
+      logCallback?.(`Converting to MPC: ${path.basename(src)}`);
+      ok = await convertMusepack(
         src,
-        dest,
-        quality,
-        metadata,
+        tmpDest,
+        settings.quality ?? 7,
+        settings.metadata,
         logCallback,
         signal
       );
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      if (msg.includes("ENOENT") || msg.includes("spawn mpcenc")) {
-        logCallback?.(
-          "mpcenc not found. Install mpc-tools (Arch) or musepack-tools and ensure mpcenc is in PATH."
-        );
+    } else {
+      logCallback?.(`Converting to ${codec.toUpperCase()}: ${path.basename(src)}`);
+      const cmd = buildFfmpegCommand(src, tmpDest, settings);
+      const code = await runLoggedSubprocess(cmd, logCallback, signal);
+      if (code !== 0) {
+        logCallback?.(`Conversion error: ffmpeg exit ${code}`);
+        ok = false;
+      } else {
+        ok = true;
       }
-      logCallback?.(`Conversion error: ${msg}`);
+    }
+
+    if (!ok) {
+      cleanupTemp(tmpDest);
       return false;
     }
-  }
 
-  logCallback?.(`Converting to ${codec.toUpperCase()}: ${path.basename(src)}`);
-
-  try {
-    const cmd = buildFfmpegCommand(src, dest, settings);
-    const code = await runLoggedSubprocess(cmd, logCallback, signal);
-    if (code !== 0) {
-      logCallback?.(`Conversion error: ffmpeg exit ${code}`);
-      return false;
-    }
+    moveConvertedFile(tmpDest, dest);
     logCallback?.(`Converted: ${path.basename(dest)}`);
     return true;
   } catch (err) {
-    logCallback?.(`Conversion error: ${err}`);
+    cleanupTemp(tmpDest);
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg.includes("ENOENT") || msg.includes("spawn mpcenc")) {
+      logCallback?.(
+        "mpcenc not found. Install mpc-tools (Arch) or musepack-tools and ensure mpcenc is in PATH."
+      );
+    }
+    logCallback?.(`Conversion error: ${msg}`);
     return false;
   }
 }
@@ -226,12 +273,21 @@ export async function convertWithFfmpeg(
 
   logCallback?.(`Converting (profile ${profile}): ${path.basename(src)}`);
 
-  const cmd = buildProfileCommand(src, dest, profile);
-  const code = await runLoggedSubprocess(cmd, logCallback, signal);
-  if (code !== 0) {
-    throw new Error(`ffmpeg failed for ${path.basename(src)} (exit ${code})`);
+  // Encode to an ASCII-safe temp path, then move to the final destination
+  // (see makeSafeConversionTempPath rationale).
+  const tmpDest = makeSafeConversionTempPath(dest);
+  try {
+    const cmd = buildProfileCommand(src, tmpDest, profile);
+    const code = await runLoggedSubprocess(cmd, logCallback, signal);
+    if (code !== 0) {
+      throw new Error(`ffmpeg failed for ${path.basename(src)} (exit ${code})`);
+    }
+    moveConvertedFile(tmpDest, dest);
+    logCallback?.(`Converted: ${path.basename(src)}`);
+  } catch (err) {
+    cleanupTemp(tmpDest);
+    throw err;
   }
-  logCallback?.(`Converted: ${path.basename(src)}`);
 }
 
 async function convertMusepack(

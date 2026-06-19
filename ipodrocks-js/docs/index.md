@@ -31,6 +31,7 @@ iPodRocks is a **sync manager** for [Rockbox devices](https://www.rockbox.org/) 
 ## Key features
 
 - **Multiple library folders** — Music, podcasts, audiobooks in one catalog
+- **Mirror library folder structure** — A per-device sync toggle (on by default) that copies your music to the device using the *exact* source folder layout — album folders keep their original names, year and all (`Avicii/Levels (2011)/…`). With it off, the device path is rebuilt from the artist/album tags (so `Levels (2011)` becomes `Levels`). Keep it on if you export M3U playlists from Plex, beets, or similar and need the device paths to match 1:1.
 - **Shadow libraries** — Pre-transcoded mirrors (e.g. FLAC → MPC) for fast sync
 - **Multiple devices** — iPods, Rockbox players, any FAT32/exFAT-mounted drive
 - **Auto Podcasts** — Subscribe, auto-download episodes, and sync to devices in the background

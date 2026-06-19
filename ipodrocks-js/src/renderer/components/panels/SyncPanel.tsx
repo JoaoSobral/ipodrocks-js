@@ -27,6 +27,7 @@ interface SyncPrefsState {
   extraTrackPolicy: ExtraTrackPolicy;
   ignoreSpaceCheck: boolean;
   skipAlbumArtwork: boolean;
+  preserveFolderStructure: boolean;
   customMode: CustomSelectionMode;
   selectedItems: Record<string, Set<string>>;
 }
@@ -49,6 +50,7 @@ const INITIAL_PREFS: SyncPrefsState = {
   extraTrackPolicy: "keep",
   ignoreSpaceCheck: false,
   skipAlbumArtwork: false,
+  preserveFolderStructure: true,
   customMode: "include",
   selectedItems: EMPTY_SELECTIONS,
 };
@@ -64,6 +66,7 @@ type SyncPrefsAction =
   | { type: "setExtraTrackPolicy"; value: ExtraTrackPolicy }
   | { type: "setIgnoreSpaceCheck"; value: boolean }
   | { type: "setSkipAlbumArtwork"; value: boolean }
+  | { type: "setPreserveFolderStructure"; value: boolean }
   | { type: "setCustomMode"; value: CustomSelectionMode }
   | { type: "toggleSelection"; category: string; label: string; checked: boolean };
 
@@ -81,6 +84,7 @@ function syncPrefsReducer(state: SyncPrefsState, action: SyncPrefsAction): SyncP
         extraTrackPolicy: action.prefs.extraTrackPolicy,
         ignoreSpaceCheck: action.prefs.ignoreSpaceCheck,
         skipAlbumArtwork: action.prefs.skipAlbumArtwork,
+        preserveFolderStructure: action.prefs.preserveFolderStructure,
         customMode: action.prefs.selections.mode === "exclude" ? "exclude" : "include",
         selectedItems: {
           albums: new Set(action.prefs.selections.albums),
@@ -99,6 +103,7 @@ function syncPrefsReducer(state: SyncPrefsState, action: SyncPrefsAction): SyncP
     case "setExtraTrackPolicy": return { ...state, extraTrackPolicy: action.value };
     case "setIgnoreSpaceCheck": return { ...state, ignoreSpaceCheck: action.value };
     case "setSkipAlbumArtwork": return { ...state, skipAlbumArtwork: action.value };
+    case "setPreserveFolderStructure": return { ...state, preserveFolderStructure: action.value };
     case "setCustomMode": return { ...state, customMode: action.value };
     case "toggleSelection": {
       const next = { ...state.selectedItems, [action.category]: new Set(state.selectedItems[action.category]) };
@@ -132,7 +137,7 @@ export function SyncPanel() {
   const [deviceId, setDeviceId] = useState<number | "">("");
   const [shadowLibs, setShadowLibs] = useState<ShadowLibrary[]>([]);
   const [prefs, dispatch] = useReducer(syncPrefsReducer, INITIAL_PREFS);
-  const { syncType, fullIncludeMusic, fullIncludePodcasts, fullIncludeAudiobooks, fullIncludePlaylists, extraTrackPolicy, ignoreSpaceCheck, skipAlbumArtwork, customMode, selectedItems } = prefs;
+  const { syncType, fullIncludeMusic, fullIncludePodcasts, fullIncludeAudiobooks, fullIncludePlaylists, extraTrackPolicy, ignoreSpaceCheck, skipAlbumArtwork, preserveFolderStructure, customMode, selectedItems } = prefs;
 
   const [tracks, setTracks] = useState<Track[]>([]);
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
@@ -477,6 +482,7 @@ export function SyncPanel() {
       extraTrackPolicy,
       ignoreSpaceCheck,
       skipAlbumArtwork,
+      preserveFolderStructure,
       selections,
       ...(syncType === "full" && {
         includeMusic: fullIncludeMusic,
@@ -499,6 +505,7 @@ export function SyncPanel() {
     extraTrackPolicy,
     ignoreSpaceCheck,
     skipAlbumArtwork,
+    preserveFolderStructure,
     customMode,
     selectedItems,
     setResults,
@@ -648,6 +655,18 @@ export function SyncPanel() {
               className="accent-primary rounded"
             />
             <span className="text-sm text-muted-foreground">Not syncing album artwork</span>
+          </label>
+          <label className="flex items-center gap-2 cursor-default">
+            <input
+              type="checkbox"
+              checked={preserveFolderStructure}
+              onChange={(e) => dispatch({ type: "setPreserveFolderStructure", value: e.target.checked })}
+              className="accent-primary rounded"
+            />
+            <span className="text-sm text-muted-foreground flex items-center gap-1">
+              Mirror library folder structure
+              <InfoTooltip text="Keep the device folder layout identical to your library, including album folder names with the year (e.g. 'Levels (2011)'). When off, paths are rebuilt from artist/album tags. Exported M3U playlists match the mirrored paths." />
+            </span>
           </label>
         </div>
       </Card>

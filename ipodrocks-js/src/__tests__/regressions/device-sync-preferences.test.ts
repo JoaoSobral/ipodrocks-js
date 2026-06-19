@@ -54,6 +54,7 @@ describe("device_sync_preferences — exclude mode persistence", () => {
       includePlaylists: true,
       ignoreSpaceCheck: false,
       skipAlbumArtwork: false,
+      preserveFolderStructure: true,
       selections: {
         mode: "exclude",
         albums: ["Album A"],
@@ -85,12 +86,62 @@ describe("device_sync_preferences — exclude mode persistence", () => {
       includePlaylists: true,
       ignoreSpaceCheck: false,
       skipAlbumArtwork: false,
+      preserveFolderStructure: true,
       selections: { ...emptySelections(), mode: "include", albums: ["X"] },
     });
 
     const loaded = getDeviceSyncPreferences(db, 2);
     expect(loaded!.selections.mode).toBe("include");
     expect(loaded!.selections.albums).toEqual(["X"]);
+  });
+
+  itDb("round-trips preserveFolderStructure through save → load (issue #82)", () => {
+    db = createTestDb();
+    seedDevice(db, 5);
+
+    saveDeviceSyncPreferences(db, 5, {
+      syncType: "full",
+      extraTrackPolicy: "keep",
+      includeMusic: true,
+      includePodcasts: true,
+      includeAudiobooks: true,
+      includePlaylists: true,
+      ignoreSpaceCheck: false,
+      skipAlbumArtwork: false,
+      preserveFolderStructure: false,
+      selections: emptySelections(),
+    });
+    expect(getDeviceSyncPreferences(db, 5)!.preserveFolderStructure).toBe(false);
+
+    saveDeviceSyncPreferences(db, 5, {
+      syncType: "full",
+      extraTrackPolicy: "keep",
+      includeMusic: true,
+      includePodcasts: true,
+      includeAudiobooks: true,
+      includePlaylists: true,
+      ignoreSpaceCheck: false,
+      skipAlbumArtwork: false,
+      preserveFolderStructure: true,
+      selections: emptySelections(),
+    });
+    expect(getDeviceSyncPreferences(db, 5)!.preserveFolderStructure).toBe(true);
+  });
+
+  itDb("defaults preserveFolderStructure to true for rows written before the column existed", () => {
+    db = createTestDb();
+    seedDevice(db, 6);
+
+    // Simulate a legacy row: omit preserve_folder_structure so the column DEFAULT applies.
+    db.prepare(
+      `INSERT INTO device_sync_preferences
+       (device_id, sync_type, extra_track_policy, include_music, include_podcasts,
+        include_audiobooks, include_playlists, ignore_space_check, skip_album_artwork,
+        custom_selections_json)
+       VALUES (?, 'full', 'keep', 1, 1, 1, 1, 0, 0, ?)`
+    ).run(6, JSON.stringify(emptySelections()));
+
+    expect(getDeviceSyncPreferences(db, 6)!.preserveFolderStructure).toBe(true);
   });
 
   itDb("parses rows written before mode existed as mode: 'include'", () => {

@@ -27,6 +27,33 @@ export class AppDatabase {
     this.migrateDeduplicateTracks();
     this.migrateRatings();
     this.migratePodcasts();
+    this.migrateDeviceSyncPreferences();
+  }
+
+  /**
+   * Add the preserve_folder_structure column to device_sync_preferences for
+   * existing databases (issue #82). Defaults to 1 (mirror library structure).
+   */
+  private migrateDeviceSyncPreferences(): void {
+    if (!this.db) return;
+    try {
+      const rows = this.db
+        .prepare("PRAGMA table_info(device_sync_preferences)")
+        .all() as { name: string }[];
+      const names = new Set(rows.map((r) => r.name));
+      if (!names.has("preserve_folder_structure")) {
+        this.db
+          .prepare(
+            "ALTER TABLE device_sync_preferences ADD COLUMN preserve_folder_structure INTEGER NOT NULL DEFAULT 1"
+          )
+          .run();
+      }
+    } catch (err) {
+      console.error(
+        "[db] migration failed (migrateDeviceSyncPreferences):",
+        err
+      );
+    }
   }
 
   /**
