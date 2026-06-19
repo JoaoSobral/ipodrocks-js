@@ -137,17 +137,16 @@ function folderRelativePath(
     return sanitizeDevicePathComponent(filename);
   }
 
-  const relParts = rel.split("/");
-  if (relParts.length <= 2) {
+  if (parts.length <= 2) {
     const baseName = path.basename(basePath);
     if (!folderNames.includes(baseName)) {
       return path.posix.join(
         sanitizeDevicePathComponent(baseName),
-        ...relParts.map((p) => sanitizeDevicePathComponent(p))
+        ...parts.map((p) => sanitizeDevicePathComponent(p))
       );
     }
   }
-  return relParts.map((p) => sanitizeDevicePathComponent(p)).join("/");
+  return parts.map((p) => sanitizeDevicePathComponent(p)).join("/");
 }
 
 export function computeDeviceRelativePath(
@@ -161,18 +160,16 @@ export function computeDeviceRelativePath(
   const album = ((trackInfo.album as string) ?? "").trim();
   const filename = path.basename(trackPath);
   const folderId = trackInfo.libraryFolderId as number | undefined;
+  const mirrored = folderRelativePath(
+    trackPath,
+    contentType,
+    libraryFolderPaths,
+    folderId
+  );
 
   // Issue #82: when mirroring is enabled, preserve the source folder layout 1:1
   // (e.g. "Artist/Album (2011)/track.flac") instead of rebuilding from tags.
-  if (preserveFolderStructure) {
-    const mirrored = folderRelativePath(
-      trackPath,
-      contentType,
-      libraryFolderPaths,
-      folderId
-    );
-    if (mirrored) return mirrored;
-  }
+  if (preserveFolderStructure && mirrored) return mirrored;
 
   if (
     artist &&
@@ -186,12 +183,6 @@ export function computeDeviceRelativePath(
     return path.posix.join(safeArtist, safeAlbum, safeFilename);
   }
 
-  const mirrored = folderRelativePath(
-    trackPath,
-    contentType,
-    libraryFolderPaths,
-    folderId
-  );
   if (mirrored) return mirrored;
 
   return sanitizeDevicePathComponent(filename);
