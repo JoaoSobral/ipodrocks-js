@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 
 vi.mock("@assets/device_icons/ipod_classic.png?url", () => ({ default: "classic.png" }));
 vi.mock("@assets/device_icons/ipod_mono.png?url", () => ({ default: "mono.png" }));
+vi.mock("@assets/device_icons/ipod_video.png?url", () => ({ default: "video.png" }));
 vi.mock("@assets/device_icons/ipod_nano.png?url", () => ({ default: "nano.png" }));
 vi.mock("@assets/device_icons/ipod_mini.png?url", () => ({ default: "mini.png" }));
 vi.mock("@assets/device_icons/rockbox_gen1.png?url", () => ({ default: "gen1.png" }));
@@ -43,6 +44,16 @@ describe("getDeviceIconSrc - specific iPods", () => {
     const d2 = dev(2, "ipod_nano_3g", "iPod Nano 3rd generation");
     expect(getDeviceIconSrc(d1, [d1, d2])).toBe("nano.png");
     expect(getDeviceIconSrc(d2, [d1, d2])).toBe("nano.png");
+  });
+
+  it("returns the video icon for iPod Video (by internal value)", () => {
+    const d = dev(1, "ipod_video", "iPod Video");
+    expect(getDeviceIconSrc(d, [d])).toBe("video.png");
+  });
+
+  it("returns the video icon when modelName contains 'video'", () => {
+    const d = dev(1, null, "iPod Video");
+    expect(getDeviceIconSrc(d, [d])).toBe("video.png");
   });
 
   it("returns the mini icon for iPod Mini", () => {

@@ -366,6 +366,7 @@ export function analyzeContentType(
     libraryExpectedMtimes: expectedMtimes,
     cancelCallback: () => cancelSignal?.aborted ?? false,
     profileCodecExt,
+    preserveFolderStructure,
     progressCallback: (current, total) => {
       progressCallback?.({
         event: "compare",

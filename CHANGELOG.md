@@ -1,5 +1,36 @@
 # Changelog
 
+## [1.3.6.1] — 2026-06
+
+### Bug fixes
+
+#### Mirror library folder structure — re-mirrors old year-less folders
+
+- **Tracks synced under the old tag-based layout are now re-mirrored** — With "Mirror library folder structure" enabled, a track that was previously synced under a folder name that dropped the year (e.g. `3 Doors Down/track.mp3`) is now correctly re-copied to its exact library path (`3 Doors Down (2002)/track.mp3`), and the old misplaced file is treated as an orphan (removed or kept according to the device's Orphan Policy). Previously the sync comparison fell back to a folder-agnostic basename match, so the old file was considered already-synced and the year-bearing path was never copied — the device was left untouched. The fix threads the per-device `preserveFolderStructure` flag into `compareLibraries` and skips the basename fallback in mirror mode, where the device path is deterministic from the library layout.
+
+### Features
+
+#### iPod Video device model
+
+- **iPod Video now shows its dedicated icon** — Devices set to the "iPod Video" model render the `ipod_video.png` icon instead of a generic Rockbox icon, matching the other recognised iPod models. The model was already available in the picker; only the icon mapping was missing.
+
+### UI
+
+- **Device name now visible and prominent in device cards** — The device name is displayed in bold at the top of each device card, next to the DEFAULT badge. Previously it was rendered in white text on a light background, making it invisible. The mount path moved from the card header into a labeled "Device Path" row in the info section, consistent with the other rows (Model, Transfer, Last sync date, etc.).
+
+### Dependencies
+
+- **vite 6.4.3 (docs build)** — Bumped the `vitepress`-pinned vite override from 6.4.2 to 6.4.3, clearing two Dependabot alerts (`server.fs.deny` bypass on Windows; launch-editor NTLMv2 hash disclosure).
+- **esbuild ≥ 0.28.1** — Raised the `esbuild` override floor from `>=0.25.0` to `>=0.28.1`, clearing the dev-server arbitrary file read alert. All three are dev/build-tooling, Windows-dev-only issues with no impact on the shipped app.
+
+### Testing
+
+- **`name-size-sync-mirror.test.ts`** — Verifies `compareLibraries` in mirror mode flags a wrong-folder basename match as an orphan and marks the mirrored path missing, while tag-based mode preserves the historical basename fallback.
+- **`preserve-folder-structure-sync.test.ts`** — New end-to-end case: a device pre-seeded with the year-less folder, synced with mirror on and Orphan Policy "remove", ends up with the year-bearing path and the old file removed.
+- **`device-icon.test.ts`** — New cases asserting the iPod Video model resolves to the `ipod_video.png` icon by internal value and by model name.
+
+---
+
 ## [1.3.6] — 2026-06
 
 ### Features

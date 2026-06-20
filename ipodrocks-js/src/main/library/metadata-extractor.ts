@@ -281,14 +281,16 @@ export class MetadataExtractor {
     try {
       const result = spawnSync(
         "ffprobe",
-        ["-v", "quiet", "-print_format", "json", "-show_format", filePath],
+        ["-v", "quiet", "-print_format", "json", "-show_format", "-show_streams", filePath],
         { encoding: "utf8", timeout: 5000, env: getEncoderEnv() }
       );
       if (result.status !== 0 || !result.stdout) return null;
       const probe = JSON.parse(result.stdout) as {
         format?: { tags?: Record<string, string> };
+        streams?: Array<{ tags?: Record<string, string> }>;
       };
-      const tags = probe.format?.tags ?? {};
+      const streamTags = probe.streams?.find((s) => s.tags)?.tags ?? {};
+      const tags = { ...streamTags, ...probe.format?.tags };
       const title = tags.title || tags.TITLE || stem;
       const artist = tags.artist || tags.ARTIST || "Unknown Artist";
       const album = tags.album || tags.ALBUM || "Unknown Album";
