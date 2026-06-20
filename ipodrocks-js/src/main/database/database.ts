@@ -32,7 +32,10 @@ export class AppDatabase {
 
   /**
    * Add the preserve_folder_structure column to device_sync_preferences for
-   * existing databases (issue #82). Defaults to 1 (mirror library structure).
+   * existing databases (issue #82). Backfills existing rows with 0 (mirroring
+   * OFF) so already-synced devices keep their current tag-based on-device
+   * layout and are not re-copied on upgrade. Fresh installs default to 1 via
+   * SCHEMA_SQL, and new devices are saved with the explicit UI value.
    */
   private migrateDeviceSyncPreferences(): void {
     if (!this.db) return;
@@ -44,7 +47,7 @@ export class AppDatabase {
       if (!names.has("preserve_folder_structure")) {
         this.db
           .prepare(
-            "ALTER TABLE device_sync_preferences ADD COLUMN preserve_folder_structure INTEGER NOT NULL DEFAULT 1"
+            "ALTER TABLE device_sync_preferences ADD COLUMN preserve_folder_structure INTEGER NOT NULL DEFAULT 0"
           )
           .run();
       }
