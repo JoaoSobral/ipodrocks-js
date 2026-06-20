@@ -738,7 +738,7 @@ export function registerIpcHandlers(): void {
     "device:getModels",
     safe("device:getModels", async () => {
       return getLibrary().getConnection()
-        .prepare("SELECT id, name, internal_value, description FROM device_models ORDER BY id")
+        .prepare("SELECT id, name, internal_value, description FROM device_models ORDER BY name")
         .all();
     })
   );

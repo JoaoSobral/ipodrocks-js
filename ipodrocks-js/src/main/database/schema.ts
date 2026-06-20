@@ -416,6 +416,7 @@ INSERT OR IGNORE INTO device_models (name, internal_value, description) VALUES (
 INSERT OR IGNORE INTO device_models (name, internal_value, description) VALUES ('iPod Original', 'ipod_touch_colour', 'iPod Original model');
 INSERT OR IGNORE INTO device_models (name, internal_value, description) VALUES ('iPod Shuffle', 'ipod_shuffle', 'iPod Shuffle model');
 INSERT OR IGNORE INTO device_models (name, internal_value, description) VALUES ('iPod Mini', 'ipod_mini', 'iPod Mini model');
+INSERT OR IGNORE INTO device_models (name, internal_value, description) VALUES ('iPod Classic Mono', 'ipod_classic_mono', 'iPod Classic with monochrome screen');
 INSERT OR IGNORE INTO device_models (name, internal_value, description) VALUES ('AIGO EROS Q', 'aigo_eros_q', 'AIGO EROS Q (native port)');
 INSERT OR IGNORE INTO device_models (name, internal_value, description) VALUES ('AIGO EROS K', 'aigo_eros_k', 'AIGO EROS K (native port)');
 INSERT OR IGNORE INTO device_models (name, internal_value, description) VALUES ('AGPTek H3', 'agptek_h3', 'AGPTek H3 (native port)');

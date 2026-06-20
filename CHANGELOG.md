@@ -4,6 +4,11 @@
 
 ### Features
 
+#### iPod Classic Mono device model
+
+- **New "iPod Classic Mono" device model** — Added to the device model selector alongside the existing iPod Classic, iPod Mini, and iPod Nano options. Devices set to this model display the dedicated monochrome iPod icon (`ipod_mono.png`) instead of the colour-screen Classic icon.
+- **Device model list sorted alphabetically** — The model picker now lists all device models in alphabetical order instead of insertion order, so iPod Classic, iPod Classic Mono, iPod Mini, iPod Nano, and iPod Video stay grouped together regardless of when a model was added to the database.
+
 #### Mirror library folder structure on sync
 
 - **New "Mirror library folder structure" toggle** ([#82](https://github.com/JoaoSobral/ipodrocks-js/issues/82)) — A per-device checkbox in the sync options that copies your music to the device using the exact same folder layout as your library, so album folders keep their original names including the year (e.g. `Avicii/Levels (2011)/…`). Previously the device path was rebuilt from the artist/album tags, which dropped the year (`Levels (2011)` became `Levels`). The toggle is **on by default for new devices**; turn it off to keep the old tag-based behaviour. Devices that were already synced before upgrading keep mirroring **off**, so their existing on-device layout is preserved and the library is not re-copied — flip the toggle on when you're ready to re-organise them. This keeps M3U playlists exported from Plex, beets, or similar working on the device without any manual path editing.
