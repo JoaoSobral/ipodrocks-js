@@ -174,6 +174,38 @@ describe("Sync — preserve folder structure (issue #82)", () => {
     expect(fs.statSync(deviceFile).mtimeMs).toBe(firstMtime);
   });
 
+  itDb("re-mirrors an old year-less folder: copies the year-bearing path and removes the orphan", async () => {
+    const srcPath = seedKnownTrack(libraryDir);
+    const deviceId = await scanAndAddDevice();
+
+    // Simulate a prior tag-based sync: the track already lives on the device
+    // under the year-less folder layout.
+    const oldDevicePath = path.join(
+      device.musicDir,
+      "Avicii/Levels/Avicii - Levels - 01 - Levels.flac"
+    );
+    fs.mkdirSync(path.dirname(oldDevicePath), { recursive: true });
+    fs.copyFileSync(srcPath, oldDevicePath);
+
+    await session.invoke("sync:start", {
+      deviceId,
+      syncType: "full",
+      extraTrackPolicy: "remove",
+      preserveFolderStructure: true,
+      includeMusic: true,
+      includePodcasts: false,
+      includeAudiobooks: false,
+      includePlaylists: false,
+    });
+
+    // The year-bearing mirrored path is now present...
+    const mirrored = path.join(device.musicDir, REL);
+    expect(fs.existsSync(mirrored)).toBe(true);
+    expect(fs.readFileSync(mirrored).equals(fs.readFileSync(srcPath))).toBe(true);
+    // ...and the old year-less file was treated as an orphan and removed.
+    expect(fs.existsSync(oldDevicePath)).toBe(false);
+  });
+
   itDb("with the toggle off, the device path is rebuilt from tags (year dropped)", async () => {
     seedKnownTrack(libraryDir);
     const deviceId = await scanAndAddDevice();

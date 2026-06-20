@@ -32,6 +32,13 @@ export interface CompareOptions {
   progressCallback?: (current: number, total: number) => void;
   /** Library path -> mtime in ms; skip if device mtime matches within MTIME_TOLERANCE_MS. */
   libraryExpectedMtimes?: Record<string, number>;
+  /**
+   * Issue #82: in mirror mode the device-relative path is deterministic from the
+   * library folder layout, so skip the folder-agnostic basename fallback (Rule 3).
+   * A basename match in a different folder then correctly means a misplaced file:
+   * the old path is treated as an orphan and the correct mirrored path is (re)copied.
+   */
+  preserveFolderStructure?: boolean;
 }
 
 /**
@@ -105,6 +112,7 @@ export function compareLibraries(
     profileCodecExt,
     progressCallback,
     libraryExpectedMtimes = {},
+    preserveFolderStructure = false,
   } = options;
 
   // Build device lookups
@@ -243,7 +251,10 @@ export function compareLibraries(
     // structure; e.g. device has Artist/Album/Track.mpc, library expects
     // different path but same Track.mpc). Runs even when profileCodecExt
     // is null (direct copy) so shadow-library sync correctly matches tracks.
-    if (!matched) {
+    // Skipped in mirror mode (issue #82): there the device path is deterministic,
+    // so a different-folder basename match means a misplaced file that must be
+    // re-copied to the mirrored path and the old one treated as an orphan.
+    if (!matched && !preserveFolderStructure) {
       const libBasename = path.posix.basename(relPath.replace(/\\/g, "/"));
       const basenameNorm = normalizeRelPathForMatch(libBasename);
       const basenameEntries = deviceByBasename.get(basenameNorm);

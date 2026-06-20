@@ -361,18 +361,21 @@ export function DevicePanel() {
                   />
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
-                      <h4 className="text-sm font-semibold text-white">{d?.name ?? "Unknown"}</h4>
+                      <h4 className="text-sm font-bold text-foreground">{d?.name ?? "Unknown"}</h4>
                       {isDefaultDev && (
                         <span className="px-1.5 py-0.5 text-[9px] font-medium rounded bg-primary/15 text-primary">
                           DEFAULT
                         </span>
                       )}
                     </div>
-                    <p className="text-[10px] text-muted-foreground truncate">{d?.mountPath ?? ""}</p>
                   </div>
                 </div>
 
                 <div className="space-y-2 text-xs mb-4">
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Device Path</span>
+                    <span className="text-muted-foreground truncate max-w-[60%] text-right">{d?.mountPath ?? ""}</span>
+                  </div>
                   {d.modelName && (
                     <div className="flex justify-between">
                       <span className="text-muted-foreground">Model</span>
