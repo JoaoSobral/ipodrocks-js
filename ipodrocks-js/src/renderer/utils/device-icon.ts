@@ -1,4 +1,5 @@
 import ipodClassicIcon from "@assets/device_icons/ipod_classic.png?url";
+import ipodMonoIcon from "@assets/device_icons/ipod_mono.png?url";
 import ipodNanoIcon from "@assets/device_icons/ipod_nano.png?url";
 import ipodMiniIcon from "@assets/device_icons/ipod_mini.png?url";
 import rockboxGen1 from "@assets/device_icons/rockbox_gen1.png?url";
@@ -27,10 +28,11 @@ export type DeviceIconInput = {
   modelName?: string | null;
 };
 
-type SpecificIpod = "classic" | "nano" | "mini";
+type SpecificIpod = "classic" | "mono" | "nano" | "mini";
 
 const SPECIFIC_ICONS: Record<SpecificIpod, string> = {
   classic: ipodClassicIcon,
+  mono: ipodMonoIcon,
   nano: ipodNanoIcon,
   mini: ipodMiniIcon,
 };
@@ -38,6 +40,7 @@ const SPECIFIC_ICONS: Record<SpecificIpod, string> = {
 function classifySpecific(device: DeviceIconInput): SpecificIpod | null {
   const internal = (device.modelInternalValue ?? "").toLowerCase();
   const name = (device.modelName ?? "").toLowerCase();
+  if (internal.includes("mono") || name.includes("mono")) return "mono";
   if (internal.includes("classic") || name.includes("classic")) return "classic";
   if (internal.includes("nano") || name.includes("nano")) return "nano";
   if (internal.includes("mini") || name.includes("mini")) return "mini";

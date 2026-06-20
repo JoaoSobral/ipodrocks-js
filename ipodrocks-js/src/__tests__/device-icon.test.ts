@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 
 vi.mock("@assets/device_icons/ipod_classic.png?url", () => ({ default: "classic.png" }));
+vi.mock("@assets/device_icons/ipod_mono.png?url", () => ({ default: "mono.png" }));
 vi.mock("@assets/device_icons/ipod_nano.png?url", () => ({ default: "nano.png" }));
 vi.mock("@assets/device_icons/ipod_mini.png?url", () => ({ default: "mini.png" }));
 vi.mock("@assets/device_icons/rockbox_gen1.png?url", () => ({ default: "gen1.png" }));
@@ -17,6 +18,21 @@ function dev(id: number, modelInternalValue: string | null, modelName: string | 
 }
 
 describe("getDeviceIconSrc - specific iPods", () => {
+  it("returns the mono icon for iPod Classic Mono (by internal value)", () => {
+    const d = dev(1, "ipod_classic_mono", "iPod Classic Mono");
+    expect(getDeviceIconSrc(d, [d])).toBe("mono.png");
+  });
+
+  it("returns the mono icon when modelName contains 'mono'", () => {
+    const d = dev(1, null, "iPod Monochrome 2-4 generation");
+    expect(getDeviceIconSrc(d, [d])).toBe("mono.png");
+  });
+
+  it("returns the mono icon even when name also contains 'classic'", () => {
+    const d = dev(1, "ipod_classic_mono", "iPod Classic Mono");
+    expect(getDeviceIconSrc(d, [d])).toBe("mono.png");
+  });
+
   it("returns the classic icon for iPod Classic", () => {
     const d = dev(1, "ipod_classic", "iPod Classic");
     expect(getDeviceIconSrc(d, [d])).toBe("classic.png");
