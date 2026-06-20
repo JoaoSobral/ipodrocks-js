@@ -9,6 +9,7 @@ export interface M3uOptions {
   musicFolder: string;
   codecName: string;
   libraryFolderPaths?: Map<number, string>;
+  preserveFolderStructure?: boolean;
 }
 
 export interface WritePlaylistsArgs {

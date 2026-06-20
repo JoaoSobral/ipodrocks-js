@@ -273,6 +273,7 @@ CREATE TABLE IF NOT EXISTS device_sync_preferences (
     include_playlists INTEGER NOT NULL DEFAULT 1,
     ignore_space_check INTEGER NOT NULL DEFAULT 0,
     skip_album_artwork INTEGER NOT NULL DEFAULT 0,
+    preserve_folder_structure INTEGER NOT NULL DEFAULT 1,
     custom_selections_json TEXT,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (device_id) REFERENCES devices (id) ON DELETE CASCADE

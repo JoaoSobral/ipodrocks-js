@@ -27,6 +27,36 @@ export class AppDatabase {
     this.migrateDeduplicateTracks();
     this.migrateRatings();
     this.migratePodcasts();
+    this.migrateDeviceSyncPreferences();
+  }
+
+  /**
+   * Add the preserve_folder_structure column to device_sync_preferences for
+   * existing databases (issue #82). Backfills existing rows with 0 (mirroring
+   * OFF) so already-synced devices keep their current tag-based on-device
+   * layout and are not re-copied on upgrade. Fresh installs default to 1 via
+   * SCHEMA_SQL, and new devices are saved with the explicit UI value.
+   */
+  private migrateDeviceSyncPreferences(): void {
+    if (!this.db) return;
+    try {
+      const rows = this.db
+        .prepare("PRAGMA table_info(device_sync_preferences)")
+        .all() as { name: string }[];
+      const names = new Set(rows.map((r) => r.name));
+      if (!names.has("preserve_folder_structure")) {
+        this.db
+          .prepare(
+            "ALTER TABLE device_sync_preferences ADD COLUMN preserve_folder_structure INTEGER NOT NULL DEFAULT 0"
+          )
+          .run();
+      }
+    } catch (err) {
+      console.error(
+        "[db] migration failed (migrateDeviceSyncPreferences):",
+        err
+      );
+    }
   }
 
   /**

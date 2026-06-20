@@ -563,6 +563,7 @@ export class PlaylistCore {
       musicFolder: string;
       codecName: string;
       libraryFolderPaths?: Map<number, string>;
+      preserveFolderStructure?: boolean;
     }
   ): string {
     const playlist = this.getPlaylistById(playlistId);
@@ -595,7 +596,8 @@ export class PlaylistCore {
         trackPath,
         trackInfo,
         "music",
-        options.libraryFolderPaths
+        options.libraryFolderPaths,
+        options.preserveFolderStructure ?? false
       );
       if (needsConversion) {
         relPath = updateExtension(relPath, codecLower);
@@ -623,6 +625,7 @@ export class PlaylistCore {
       musicFolder: string;
       codecName: string;
       libraryFolderPaths?: Map<number, string>;
+      preserveFolderStructure?: boolean;
     }
   ): string {
     const content = this.buildM3uContentForDevice(playlistId, options);

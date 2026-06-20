@@ -389,6 +389,10 @@ export interface DeviceSyncPreferences {
   includePlaylists: boolean;
   ignoreSpaceCheck: boolean;
   skipAlbumArtwork: boolean;
+  /** When true, mirror the source library folder structure 1:1 on the device
+   * (preserving album folder names incl. year) instead of rebuilding paths from
+   * artist/album tags. */
+  preserveFolderStructure: boolean;
   selections: CustomSelections;
 }
 
@@ -408,6 +412,9 @@ export interface SyncOptions {
   includePlaylists?: boolean;
   /** When true, do not copy album artwork (*.jpg, *.png) to device (default false). */
   skipAlbumArtwork?: boolean;
+  /** When true, mirror the source library folder structure 1:1 instead of
+   * rebuilding device paths from artist/album tags (default true). */
+  preserveFolderStructure?: boolean;
 }
 
 // ---------------------------------------------------------------------------

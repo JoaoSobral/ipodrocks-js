@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.3.6] — 2026-06
+
+### Features
+
+#### Mirror library folder structure on sync
+
+- **New "Mirror library folder structure" toggle** ([#82](https://github.com/JoaoSobral/ipodrocks-js/issues/82)) — A per-device checkbox in the sync options that copies your music to the device using the exact same folder layout as your library, so album folders keep their original names including the year (e.g. `Avicii/Levels (2011)/…`). Previously the device path was rebuilt from the artist/album tags, which dropped the year (`Levels (2011)` became `Levels`). The toggle is **on by default for new devices**; turn it off to keep the old tag-based behaviour. Devices that were already synced before upgrading keep mirroring **off**, so their existing on-device layout is preserved and the library is not re-copied — flip the toggle on when you're ready to re-organise them. This keeps M3U playlists exported from Plex, beets, or similar working on the device without any manual path editing.
+- **Playlists match the device** — Exported M3U playlists now use the same mirrored paths, so the files they reference line up 1:1 with what's on the device.
+- **Reliable conversion for folders with spaces and parentheses** — When a track is transcoded into a folder whose name contains spaces or parentheses, the encoder now writes to a temporary file first and the finished file is moved into place. This avoids failures with `mpcenc` and some ffmpeg builds that mishandle those characters.
+
+### Testing
+
+- **`preserve-folder-structure.test.ts`** — Verifies the path builder keeps the year/parentheses when the toggle is on and falls back to the tag-based path when it's off.
+- **`conversion-safe-temp.test.ts`** — Verifies transcoding into a folder with spaces/parentheses works via the temporary-file move, including the cross-filesystem fallback.
+- **`preserve-folder-structure-sync.test.ts`** — End-to-end sync test: with the toggle on, a track lands at the exact mirrored path with byte-identical content, and a second sync copies nothing (no needless re-copy).
+- **`device-sync-preferences.test.ts`** — Confirms the new toggle is saved per device, defaults to on for fresh installs, and backfills to off for devices that existed before the column was added (so upgrades don't trigger a full re-copy).
+
+---
+
 ## [1.3.5] — 2026-06
 
 ### Features

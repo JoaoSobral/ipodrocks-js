@@ -54,6 +54,7 @@ describe("device_sync_preferences — exclude mode persistence", () => {
       includePlaylists: true,
       ignoreSpaceCheck: false,
       skipAlbumArtwork: false,
+      preserveFolderStructure: true,
       selections: {
         mode: "exclude",
         albums: ["Album A"],
@@ -85,12 +86,89 @@ describe("device_sync_preferences — exclude mode persistence", () => {
       includePlaylists: true,
       ignoreSpaceCheck: false,
       skipAlbumArtwork: false,
+      preserveFolderStructure: true,
       selections: { ...emptySelections(), mode: "include", albums: ["X"] },
     });
 
     const loaded = getDeviceSyncPreferences(db, 2);
     expect(loaded!.selections.mode).toBe("include");
     expect(loaded!.selections.albums).toEqual(["X"]);
+  });
+
+  itDb("round-trips preserveFolderStructure through save → load (issue #82)", () => {
+    db = createTestDb();
+    seedDevice(db, 5);
+
+    saveDeviceSyncPreferences(db, 5, {
+      syncType: "full",
+      extraTrackPolicy: "keep",
+      includeMusic: true,
+      includePodcasts: true,
+      includeAudiobooks: true,
+      includePlaylists: true,
+      ignoreSpaceCheck: false,
+      skipAlbumArtwork: false,
+      preserveFolderStructure: false,
+      selections: emptySelections(),
+    });
+    expect(getDeviceSyncPreferences(db, 5)!.preserveFolderStructure).toBe(false);
+
+    saveDeviceSyncPreferences(db, 5, {
+      syncType: "full",
+      extraTrackPolicy: "keep",
+      includeMusic: true,
+      includePodcasts: true,
+      includeAudiobooks: true,
+      includePlaylists: true,
+      ignoreSpaceCheck: false,
+      skipAlbumArtwork: false,
+      preserveFolderStructure: true,
+      selections: emptySelections(),
+    });
+    expect(getDeviceSyncPreferences(db, 5)!.preserveFolderStructure).toBe(true);
+  });
+
+  itDb("defaults preserveFolderStructure to true for fresh installs (issue #82)", () => {
+    db = createTestDb();
+    seedDevice(db, 6);
+
+    // A row written by a fresh install omitting the column gets the SCHEMA_SQL
+    // default (1 = mirror ON), the intended default for new devices.
+    db.prepare(
+      `INSERT INTO device_sync_preferences
+       (device_id, sync_type, extra_track_policy, include_music, include_podcasts,
+        include_audiobooks, include_playlists, ignore_space_check, skip_album_artwork,
+        custom_selections_json)
+       VALUES (?, 'full', 'keep', 1, 1, 1, 1, 0, 0, ?)`
+    ).run(6, JSON.stringify(emptySelections()));
+
+    expect(getDeviceSyncPreferences(db, 6)!.preserveFolderStructure).toBe(true);
+  });
+
+  itDb("backfills preserveFolderStructure to false for devices that existed before the column (issue #82)", () => {
+    db = createTestDb();
+    seedDevice(db, 6);
+
+    // Simulate a pre-#82 database: drop the column, then write a legacy row
+    // that already has files on the device in the old tag-based layout.
+    db.prepare(
+      "ALTER TABLE device_sync_preferences DROP COLUMN preserve_folder_structure"
+    ).run();
+    db.prepare(
+      `INSERT INTO device_sync_preferences
+       (device_id, sync_type, extra_track_policy, include_music, include_podcasts,
+        include_audiobooks, include_playlists, ignore_space_check, skip_album_artwork,
+        custom_selections_json)
+       VALUES (?, 'full', 'keep', 1, 1, 1, 1, 0, 0, ?)`
+    ).run(6, JSON.stringify(emptySelections()));
+
+    // Replay the migration: existing rows must backfill to 0 (mirroring OFF) so
+    // the device is not fully re-copied on upgrade.
+    db.prepare(
+      "ALTER TABLE device_sync_preferences ADD COLUMN preserve_folder_structure INTEGER NOT NULL DEFAULT 0"
+    ).run();
+
+    expect(getDeviceSyncPreferences(db, 6)!.preserveFolderStructure).toBe(false);
   });
 
   itDb("parses rows written before mode existed as mode: 'include'", () => {

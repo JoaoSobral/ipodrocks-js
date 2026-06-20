@@ -863,6 +863,9 @@ export function registerIpcHandlers(): void {
         libraryFolderPaths.set(f.id, f.path);
       }
 
+      const checkPrefs = getDeviceSyncPreferences(lib.getConnection(), deviceId);
+      const preserveFolderStructure = checkPrefs?.preserveFolderStructure !== false;
+
       if (
         device.profile.sourceLibraryType === "shadow" &&
         device.profile.shadowLibraryId != null
@@ -936,7 +939,11 @@ export function registerIpcHandlers(): void {
         libraryMusicMap,
         "music",
         codecName,
-        libraryFolderPaths
+        libraryFolderPaths,
+        undefined,
+        undefined,
+        undefined,
+        preserveFolderStructure
       );
       const musicCompare = compareLibraries(
         musicDest.destMap,
@@ -953,7 +960,11 @@ export function registerIpcHandlers(): void {
         libraryPodcastMap,
         "podcast",
         codecName,
-        libraryFolderPaths
+        libraryFolderPaths,
+        undefined,
+        undefined,
+        undefined,
+        preserveFolderStructure
       );
       const podcastCompare = compareLibraries(
         podcastDest.destMap,
@@ -970,7 +981,11 @@ export function registerIpcHandlers(): void {
         libraryAudiobookMap,
         "audiobook",
         codecName,
-        libraryFolderPaths
+        libraryFolderPaths,
+        undefined,
+        undefined,
+        undefined,
+        preserveFolderStructure
       );
       const audiobookCompare = compareLibraries(
         audiobookDest.destMap,
@@ -1118,8 +1133,11 @@ export function registerIpcHandlers(): void {
         includePlaylists: opts.includePlaylists !== false,
         ignoreSpaceCheck: opts.ignoreSpaceCheck,
         skipAlbumArtwork: opts.skipAlbumArtwork === true,
+        preserveFolderStructure: opts.preserveFolderStructure !== false,
         selections: opts.selections ?? emptySelections(),
       } satisfies DeviceSyncPreferences);
+
+      const preserveFolderStructure = opts.preserveFolderStructure !== false;
 
       activeSyncAbort = new AbortController();
       const syncSignal = activeSyncAbort.signal;
@@ -1267,6 +1285,7 @@ export function registerIpcHandlers(): void {
         cancelSignal: syncSignal,
         ignoreSpaceCheck: opts.ignoreSpaceCheck,
         skipAlbumArtwork: opts.skipAlbumArtwork,
+        preserveFolderStructure,
         preloadedMtimes,
         profileCodecExtOverride: profileCodecExtOverride ?? undefined,
         progressCallback: (progressEvent) => {
@@ -1491,6 +1510,7 @@ export function registerIpcHandlers(): void {
               musicFolder,
               codecName,
               libraryFolderPaths,
+              preserveFolderStructure,
             };
             const writeResult = await writePlaylistsToDevice({
               playlistFolder,
@@ -1742,6 +1762,7 @@ export function registerIpcHandlers(): void {
 
       let musicFolder = "Music";
       let codecName = "COPY";
+      let preserveFolderStructure = true;
       if (deviceId != null) {
         const dc = getDevicesCore();
         const device = dc.getDeviceById(deviceId);
@@ -1749,12 +1770,15 @@ export function registerIpcHandlers(): void {
           musicFolder = device.profile.musicFolder ?? "Music";
           codecName = device.profile.codecName ?? "COPY";
         }
+        const prefs = getDeviceSyncPreferences(lib.getConnection(), deviceId);
+        preserveFolderStructure = prefs?.preserveFolderStructure !== false;
       }
 
       return core.exportPlaylistM3u(playlistId, filePath, {
         musicFolder,
         codecName,
         libraryFolderPaths,
+        preserveFolderStructure,
       });
     })
   );
