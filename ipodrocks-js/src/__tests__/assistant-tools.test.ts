@@ -54,6 +54,8 @@ function makeCtx(overrides: Partial<AiToolContext> = {}): AiToolContext {
     createSmartPlaylist: vi.fn(),
     createGeniusPlaylist: vi.fn(),
     deletePlaylist: vi.fn(),
+    getBrokenPlaylists: vi.fn().mockReturnValue([]),
+    repairPlaylist: vi.fn(),
   } as unknown as ReturnType<AiToolContext["getPlaylistCore"]>;
 
   return {
@@ -384,5 +386,53 @@ describe("playlist_delete (write-destructive)", () => {
     await expect(
       getToolByName("playlist_delete")!.run({ playlist_id: -1 }, ctx)
     ).rejects.toThrow("Invalid playlist_id");
+  });
+});
+
+describe("playlist_list_broken (read)", () => {
+  it("is classified as read", () => {
+    expect(getToolByName("playlist_list_broken")!.kind).toBe("read");
+  });
+
+  it("calls getBrokenPlaylists and returns results", async () => {
+    const broken = [{ id: 3, name: "Road Trip", typeName: "custom", missingCount: 2, totalCount: 10 }];
+    const ctx = makeCtx({
+      getPlaylistCore: () => ({
+        ...makeCtx().getPlaylistCore(),
+        getBrokenPlaylists: vi.fn().mockReturnValue(broken),
+      } as unknown as ReturnType<AiToolContext["getPlaylistCore"]>),
+    });
+    const result = await getToolByName("playlist_list_broken")!.run({}, ctx);
+    expect(result).toEqual(broken);
+  });
+});
+
+describe("playlist_repair (write-safe)", () => {
+  it("is classified as write-safe", () => {
+    expect(getToolByName("playlist_repair")!.kind).toBe("write-safe");
+  });
+
+  it("calls repairPlaylist with the given id", async () => {
+    const repairPlaylist = vi.fn();
+    const ctx = makeCtx({
+      getPlaylistCore: () => ({
+        ...makeCtx().getPlaylistCore(),
+        repairPlaylist,
+      } as unknown as ReturnType<AiToolContext["getPlaylistCore"]>),
+    });
+    const result = await getToolByName("playlist_repair")!.run({ playlist_id: 7 }, ctx);
+    expect(repairPlaylist).toHaveBeenCalledWith(7);
+    expect(result).toMatchObject({ repaired: true });
+  });
+
+  it("throws for invalid playlist_id", async () => {
+    const ctx = makeCtx();
+    await expect(
+      getToolByName("playlist_repair")!.run({ playlist_id: 0 }, ctx)
+    ).rejects.toThrow("Invalid playlist_id");
+  });
+
+  it("summarize mentions the playlist id", () => {
+    expect(getToolByName("playlist_repair")!.summarize({ playlist_id: 9 })).toContain("9");
   });
 });

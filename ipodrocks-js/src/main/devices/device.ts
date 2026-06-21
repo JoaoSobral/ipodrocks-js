@@ -6,7 +6,6 @@ import {
   DeviceProfile,
   DeviceTrackInfo,
   DiskSpace,
-  FitCheck,
 } from "../../shared/types";
 import { AUDIO_EXTENSIONS, isMacosMetadataFile } from "../utils/audio-extensions";
 
@@ -201,21 +200,4 @@ export class Device {
     return { fileCount, totalGb: totalSize / 1024 ** 3 };
   }
 
-  canFitContent(
-    requiredBytes: number,
-    contentType: ContentType = "music"
-  ): FitCheck {
-    void contentType;
-    const space = this.getAvailableSpace();
-    const requiredGb = requiredBytes / 1024 ** 3;
-    const availableGb = space.freeGb;
-    const canFit = requiredGb <= availableGb;
-
-    return {
-      canFit,
-      requiredGb,
-      availableGb,
-      remainingGb: canFit ? availableGb - requiredGb : 0,
-    };
-  }
 }

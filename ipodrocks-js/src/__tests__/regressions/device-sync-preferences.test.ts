@@ -52,8 +52,6 @@ describe("device_sync_preferences — exclude mode persistence", () => {
       includePodcasts: true,
       includeAudiobooks: true,
       includePlaylists: true,
-      ignoreSpaceCheck: false,
-      skipAlbumArtwork: false,
       preserveFolderStructure: true,
       selections: {
         mode: "exclude",
@@ -84,8 +82,6 @@ describe("device_sync_preferences — exclude mode persistence", () => {
       includePodcasts: true,
       includeAudiobooks: true,
       includePlaylists: true,
-      ignoreSpaceCheck: false,
-      skipAlbumArtwork: false,
       preserveFolderStructure: true,
       selections: { ...emptySelections(), mode: "include", albums: ["X"] },
     });
@@ -106,8 +102,6 @@ describe("device_sync_preferences — exclude mode persistence", () => {
       includePodcasts: true,
       includeAudiobooks: true,
       includePlaylists: true,
-      ignoreSpaceCheck: false,
-      skipAlbumArtwork: false,
       preserveFolderStructure: false,
       selections: emptySelections(),
     });
@@ -120,8 +114,6 @@ describe("device_sync_preferences — exclude mode persistence", () => {
       includePodcasts: true,
       includeAudiobooks: true,
       includePlaylists: true,
-      ignoreSpaceCheck: false,
-      skipAlbumArtwork: false,
       preserveFolderStructure: true,
       selections: emptySelections(),
     });
@@ -137,9 +129,8 @@ describe("device_sync_preferences — exclude mode persistence", () => {
     db.prepare(
       `INSERT INTO device_sync_preferences
        (device_id, sync_type, extra_track_policy, include_music, include_podcasts,
-        include_audiobooks, include_playlists, ignore_space_check, skip_album_artwork,
-        custom_selections_json)
-       VALUES (?, 'full', 'keep', 1, 1, 1, 1, 0, 0, ?)`
+        include_audiobooks, include_playlists, custom_selections_json)
+       VALUES (?, 'full', 'keep', 1, 1, 1, 1, ?)`
     ).run(6, JSON.stringify(emptySelections()));
 
     expect(getDeviceSyncPreferences(db, 6)!.preserveFolderStructure).toBe(true);
@@ -157,9 +148,8 @@ describe("device_sync_preferences — exclude mode persistence", () => {
     db.prepare(
       `INSERT INTO device_sync_preferences
        (device_id, sync_type, extra_track_policy, include_music, include_podcasts,
-        include_audiobooks, include_playlists, ignore_space_check, skip_album_artwork,
-        custom_selections_json)
-       VALUES (?, 'full', 'keep', 1, 1, 1, 1, 0, 0, ?)`
+        include_audiobooks, include_playlists, custom_selections_json)
+       VALUES (?, 'full', 'keep', 1, 1, 1, 1, ?)`
     ).run(6, JSON.stringify(emptySelections()));
 
     // Replay the migration: existing rows must backfill to 0 (mirroring OFF) so
@@ -187,9 +177,8 @@ describe("device_sync_preferences — exclude mode persistence", () => {
     db.prepare(
       `INSERT INTO device_sync_preferences
        (device_id, sync_type, extra_track_policy, include_music, include_podcasts,
-        include_audiobooks, include_playlists, ignore_space_check, skip_album_artwork,
-        custom_selections_json)
-       VALUES (?, 'custom', 'keep', 1, 1, 1, 1, 0, 0, ?)`
+        include_audiobooks, include_playlists, custom_selections_json)
+       VALUES (?, 'custom', 'keep', 1, 1, 1, 1, ?)`
     ).run(3, legacyJson);
 
     const loaded = getDeviceSyncPreferences(db, 3);
@@ -214,9 +203,8 @@ describe("device_sync_preferences — exclude mode persistence", () => {
     db.prepare(
       `INSERT INTO device_sync_preferences
        (device_id, sync_type, extra_track_policy, include_music, include_podcasts,
-        include_audiobooks, include_playlists, ignore_space_check, skip_album_artwork,
-        custom_selections_json)
-       VALUES (?, 'custom', 'keep', 1, 1, 1, 1, 0, 0, ?)`
+        include_audiobooks, include_playlists, custom_selections_json)
+       VALUES (?, 'custom', 'keep', 1, 1, 1, 1, ?)`
     ).run(4, garbageJson);
 
     const loaded = getDeviceSyncPreferences(db, 4);

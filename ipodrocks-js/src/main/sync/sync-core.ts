@@ -39,7 +39,6 @@ export interface RunSyncOptions {
   includePlaylists?: boolean;
   progressCallback?: ProgressCallback;
   cancelSignal?: AbortSignal;
-  ignoreSpaceCheck?: boolean;
   /** When true, do not copy album artwork (*.jpg, *.png) to device. */
   skipAlbumArtwork?: boolean;
   /** F7: Pre-loaded path→mtime from content_hashes to avoid per-track fs.statSync. */

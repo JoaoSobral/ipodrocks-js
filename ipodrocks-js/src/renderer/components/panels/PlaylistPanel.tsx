@@ -37,6 +37,9 @@ import {
   checkSavantKeyData,
   getOpenRouterConfig,
   getHarmonicPrefs,
+  getBrokenPlaylists,
+  repairPlaylist,
+  rebuildPlaylist,
 } from "../../ipc/api";
 import type {
   Playlist,
@@ -170,12 +173,15 @@ export function PlaylistPanel() {
   >(null);
   const [showBackfillModal, setShowBackfillModal] = useState(false);
 
+  const [brokenPlaylists, setBrokenPlaylists] = useState<{ id: number; name: string; typeName: string; missingCount: number; totalCount: number }[]>([]);
+
   // -- fetch playlists ----------------------------------------------------
   const fetchAll = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await getPlaylists();
+      const [data, broken] = await Promise.all([getPlaylists(), getBrokenPlaylists()]);
       setPlaylists(data);
+      setBrokenPlaylists(broken);
     } finally {
       setLoading(false);
     }
@@ -1483,50 +1489,78 @@ export function PlaylistPanel() {
         />
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          {filtered.map((p) => (
-            <Card key={p.id}>
-              <div className="flex items-start gap-3 mb-3">
-                <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center text-lg text-primary">
-                  {p.typeName === "genius"
-                    ? "✨"
-                    : p.typeName === "savant"
-                      ? "🎯"
-                      : "≡"}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <h4 className="text-sm font-semibold text-foreground truncate">
-                      {p.name}
-                    </h4>
-                    <Badge variant="primary" className="shrink-0">
-                      {p.typeName}
-                    </Badge>
+          {filtered.map((p) => {
+            const broken = brokenPlaylists.find((b) => b.id === p.id);
+            return (
+              <Card key={p.id}>
+                <div className="flex items-start gap-3 mb-3">
+                  <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center text-lg text-primary">
+                    {p.typeName === "genius"
+                      ? "✨"
+                      : p.typeName === "savant"
+                        ? "🎯"
+                        : "≡"}
                   </div>
-                  <p className="text-[10px] text-muted-foreground mt-0.5">
-                    {p.trackCount} tracks &middot; Updated{" "}
-                    {new Date(p.updatedAt).toLocaleDateString()}
-                  </p>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <h4 className="text-sm font-semibold text-foreground truncate">
+                        {p.name}
+                      </h4>
+                      <Badge variant="primary" className="shrink-0">
+                        {p.typeName}
+                      </Badge>
+                      {broken && (
+                        <Badge variant="warning" className="shrink-0 !text-[9px]">
+                          ⚠ {broken.missingCount} missing
+                        </Badge>
+                      )}
+                    </div>
+                    <p className="text-[10px] text-muted-foreground mt-0.5">
+                      {p.trackCount} tracks &middot; Updated{" "}
+                      {new Date(p.updatedAt).toLocaleDateString()}
+                    </p>
+                  </div>
                 </div>
-              </div>
-              {p.description && (
-                <p className="text-xs text-muted-foreground mb-3 line-clamp-2">
-                  {p.description}
-                </p>
-              )}
-              <div className="flex gap-2">
-                <Button size="sm" onClick={() => handleSelect(p.id)}>
-                  View
-                </Button>
-                <Button
-                  variant="danger"
-                  size="sm"
-                  onClick={() => handleDelete(p.id)}
-                >
-                  Delete
-                </Button>
-              </div>
-            </Card>
-          ))}
+                {p.description && (
+                  <p className="text-xs text-muted-foreground mb-3 line-clamp-2">
+                    {p.description}
+                  </p>
+                )}
+                <div className="flex gap-2 flex-wrap">
+                  <Button size="sm" onClick={() => handleSelect(p.id)}>
+                    View
+                  </Button>
+                  {broken && (
+                    <Button
+                      size="sm"
+                      onClick={() => {
+                        repairPlaylist(p.id).then(() => fetchAll()).catch(console.error);
+                      }}
+                    >
+                      Repair
+                    </Button>
+                  )}
+                  {broken && p.typeName === "smart" && (
+                    <Button
+                      size="sm"
+                      onClick={() => {
+                        rebuildPlaylist(p.id).then(() => fetchAll()).catch(console.error);
+                      }}
+                    >
+                      Rebuild
+                    </Button>
+                  )}
+                  <Button
+                    variant="danger"
+                    size="sm"
+                    onClick={() => handleDelete(p.id)}
+                  >
+                    Delete
+                  </Button>
+                </div>
+              </Card>
+            );
+          })}
         </div>
       )}
 

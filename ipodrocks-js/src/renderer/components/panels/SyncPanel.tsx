@@ -4,6 +4,7 @@ import { Button } from "../common/Button";
 import { ErrorBox } from "../common/ErrorBox";
 import { Select } from "../common/Select";
 import { InfoTooltip } from "../common/InfoTooltip";
+import { Modal } from "../common/Modal";
 import { useDeviceStore } from "../../stores/device-store";
 import { useSyncStore } from "../../stores/sync-store";
 import { useUIStore } from "../../stores/ui-store";
@@ -14,6 +15,8 @@ import {
   getShadowLibraries,
   getLibraryStats,
   getDeviceSyncPreferences,
+  getBrokenPlaylists,
+  repairPlaylist,
 } from "../../ipc/api";
 import { SyncProgressModal } from "../modals/SyncProgressModal";
 import type { Track, Playlist, ShadowLibrary } from "@shared/types";
@@ -26,8 +29,6 @@ interface SyncPrefsState {
   fullIncludeAudiobooks: boolean;
   fullIncludePlaylists: boolean;
   extraTrackPolicy: ExtraTrackPolicy;
-  ignoreSpaceCheck: boolean;
-  skipAlbumArtwork: boolean;
   preserveFolderStructure: boolean;
   customMode: CustomSelectionMode;
   selectedItems: Record<string, Set<string>>;
@@ -49,8 +50,6 @@ const INITIAL_PREFS: SyncPrefsState = {
   fullIncludeAudiobooks: true,
   fullIncludePlaylists: true,
   extraTrackPolicy: "keep",
-  ignoreSpaceCheck: false,
-  skipAlbumArtwork: false,
   preserveFolderStructure: true,
   customMode: "include",
   selectedItems: EMPTY_SELECTIONS,
@@ -65,8 +64,6 @@ type SyncPrefsAction =
   | { type: "setFullIncludeAudiobooks"; value: boolean }
   | { type: "setFullIncludePlaylists"; value: boolean }
   | { type: "setExtraTrackPolicy"; value: ExtraTrackPolicy }
-  | { type: "setIgnoreSpaceCheck"; value: boolean }
-  | { type: "setSkipAlbumArtwork"; value: boolean }
   | { type: "setPreserveFolderStructure"; value: boolean }
   | { type: "setCustomMode"; value: CustomSelectionMode }
   | { type: "toggleSelection"; category: string; label: string; checked: boolean };
@@ -83,8 +80,6 @@ function syncPrefsReducer(state: SyncPrefsState, action: SyncPrefsAction): SyncP
         fullIncludeAudiobooks: action.prefs.includeAudiobooks,
         fullIncludePlaylists: action.prefs.includePlaylists,
         extraTrackPolicy: action.prefs.extraTrackPolicy,
-        ignoreSpaceCheck: action.prefs.ignoreSpaceCheck,
-        skipAlbumArtwork: action.prefs.skipAlbumArtwork,
         preserveFolderStructure: action.prefs.preserveFolderStructure,
         customMode: action.prefs.selections.mode === "exclude" ? "exclude" : "include",
         selectedItems: {
@@ -102,8 +97,6 @@ function syncPrefsReducer(state: SyncPrefsState, action: SyncPrefsAction): SyncP
     case "setFullIncludeAudiobooks": return { ...state, fullIncludeAudiobooks: action.value };
     case "setFullIncludePlaylists": return { ...state, fullIncludePlaylists: action.value };
     case "setExtraTrackPolicy": return { ...state, extraTrackPolicy: action.value };
-    case "setIgnoreSpaceCheck": return { ...state, ignoreSpaceCheck: action.value };
-    case "setSkipAlbumArtwork": return { ...state, skipAlbumArtwork: action.value };
     case "setPreserveFolderStructure": return { ...state, preserveFolderStructure: action.value };
     case "setCustomMode": return { ...state, customMode: action.value };
     case "toggleSelection": {
@@ -134,13 +127,15 @@ export function SyncPanel() {
   const [showSyncModal, setShowSyncModal] = useState(false);
   const [syncOptionsForModal, setSyncOptionsForModal] = useState<SyncOptions | null>(null);
   const [precheckError, setPrecheckError] = useState<string | null>(null);
+  const [brokenGateModal, setBrokenGateModal] = useState<{ broken: { id: number; name: string; typeName: string; missingCount: number; totalCount: number }[]; pendingOptions: SyncOptions } | null>(null);
+  const [repairing, setRepairing] = useState(false);
 
   const [deviceId, setDeviceId] = useState<number | "">("");
   const pendingSyncDeviceId = useUIStore((s) => s.pendingSyncDeviceId);
   const setPendingSyncDeviceId = useUIStore((s) => s.setPendingSyncDeviceId);
   const [shadowLibs, setShadowLibs] = useState<ShadowLibrary[]>([]);
   const [prefs, dispatch] = useReducer(syncPrefsReducer, INITIAL_PREFS);
-  const { syncType, fullIncludeMusic, fullIncludePodcasts, fullIncludeAudiobooks, fullIncludePlaylists, extraTrackPolicy, ignoreSpaceCheck, skipAlbumArtwork, preserveFolderStructure, customMode, selectedItems } = prefs;
+  const { syncType, fullIncludeMusic, fullIncludePodcasts, fullIncludeAudiobooks, fullIncludePlaylists, extraTrackPolicy, preserveFolderStructure, customMode, selectedItems } = prefs;
 
   const [tracks, setTracks] = useState<Track[]>([]);
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
@@ -486,12 +481,10 @@ export function SyncPanel() {
           }
         : undefined;
     setResults(null);
-    setSyncOptionsForModal({
+    const syncOpts: SyncOptions = {
       deviceId: deviceId as number,
       syncType,
       extraTrackPolicy,
-      ignoreSpaceCheck,
-      skipAlbumArtwork,
       preserveFolderStructure,
       selections,
       ...(syncType === "full" && {
@@ -500,7 +493,21 @@ export function SyncPanel() {
         includeAudiobooks: fullIncludeAudiobooks,
         includePlaylists: fullIncludePlaylists,
       }),
-    });
+    };
+
+    // Broken-playlist gate: check if any in-scope playlists have missing tracks
+    const allBroken = await getBrokenPlaylists().catch(() => []);
+    if (allBroken.length > 0) {
+      const inScopePlaylists = syncType === "full" && fullIncludePlaylists
+        ? allBroken
+        : allBroken.filter((b) => selections?.playlists?.includes(b.name));
+      if (inScopePlaylists.length > 0) {
+        setBrokenGateModal({ broken: inScopePlaylists, pendingOptions: syncOpts });
+        return;
+      }
+    }
+
+    setSyncOptionsForModal(syncOpts);
     setShowSyncModal(true);
     })();
   }, [
@@ -513,8 +520,6 @@ export function SyncPanel() {
     fullIncludeAudiobooks,
     fullIncludePlaylists,
     extraTrackPolicy,
-    ignoreSpaceCheck,
-    skipAlbumArtwork,
     preserveFolderStructure,
     customMode,
     selectedItems,
@@ -651,24 +656,6 @@ export function SyncPanel() {
           <label className="flex items-center gap-2 cursor-default">
             <input
               type="checkbox"
-              checked={ignoreSpaceCheck}
-              onChange={(e) => dispatch({ type: "setIgnoreSpaceCheck", value: e.target.checked })}
-              className="accent-primary rounded"
-            />
-            <span className="text-sm text-muted-foreground">Ignore space check</span>
-          </label>
-          <label className="flex items-center gap-2 cursor-default">
-            <input
-              type="checkbox"
-              checked={skipAlbumArtwork}
-              onChange={(e) => dispatch({ type: "setSkipAlbumArtwork", value: e.target.checked })}
-              className="accent-primary rounded"
-            />
-            <span className="text-sm text-muted-foreground">Not syncing album artwork</span>
-          </label>
-          <label className="flex items-center gap-2 cursor-default">
-            <input
-              type="checkbox"
               checked={preserveFolderStructure}
               onChange={(e) => dispatch({ type: "setPreserveFolderStructure", value: e.target.checked })}
               className="accent-primary rounded"
@@ -780,6 +767,55 @@ export function SyncPanel() {
       >
         Start Sync
       </Button>
+
+      {/* Broken-playlist gate modal */}
+      <Modal
+        open={brokenGateModal !== null}
+        onClose={() => setBrokenGateModal(null)}
+        title="Playlists have missing tracks"
+        className="max-w-md"
+      >
+        {brokenGateModal && (
+          <div className="flex flex-col gap-4">
+            <p className="text-xs text-muted-foreground">
+              The following playlists in this sync contain tracks that no longer exist in your library. Repair them before syncing, or cancel and fix them in the Library tab.
+            </p>
+            <div className="space-y-1 max-h-48 overflow-y-auto">
+              {brokenGateModal.broken.map((pl) => (
+                <div key={pl.id} className="flex items-center gap-2 px-2 py-1.5 rounded-md border border-border bg-muted/20 text-xs">
+                  <span className="flex-1 truncate font-medium">{pl.name}</span>
+                  <span className="text-warning shrink-0">{pl.missingCount} missing</span>
+                </div>
+              ))}
+            </div>
+            <div className="flex gap-2 justify-end pt-1">
+              <Button variant="ghost" onClick={() => setBrokenGateModal(null)}>
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                disabled={repairing}
+                onClick={async () => {
+                  setRepairing(true);
+                  try {
+                    await Promise.all(brokenGateModal.broken.map((pl) => repairPlaylist(pl.id)));
+                    const opts = brokenGateModal.pendingOptions;
+                    setBrokenGateModal(null);
+                    setSyncOptionsForModal(opts);
+                    setShowSyncModal(true);
+                  } catch (e) {
+                    console.error("Repair failed:", e);
+                  } finally {
+                    setRepairing(false);
+                  }
+                }}
+              >
+                {repairing ? "Repairing…" : "Repair all & continue"}
+              </Button>
+            </div>
+          </div>
+        )}
+      </Modal>
 
       {/* Sync progress modal */}
       {showSyncModal && syncOptionsForModal && (

@@ -38,6 +38,7 @@ interface DeviceRow {
   model_name: string | null;
   model_internal_value: string | null;
   skip_playback_log: number;
+  skip_album_artwork: number;
   rockbox_smart_playlists: number;
   dev_mode: number;
   auto_podcasts_enabled: number;
@@ -48,7 +49,7 @@ const DEVICES_QUERY = `
          d.audiobook_folder, d.playlist_folder, d.description, d.last_sync_date, d.total_synced_items, d.last_sync_count,
          d.default_transfer_mode_id, d.default_codec_config_id, d.model_id,
          d.override_bitrate, d.override_quality, d.override_bits,
-         d.partial_sync_enabled, d.skip_playback_log, d.rockbox_smart_playlists, d.dev_mode,
+         d.partial_sync_enabled, d.skip_playback_log, d.skip_album_artwork, d.rockbox_smart_playlists, d.dev_mode,
          d.auto_podcasts_enabled, d.source_library_type, d.shadow_library_id,
          dtm.name as transfer_mode_name,
          cc.name as codec_config_name, cc.bitrate_value, cc.quality_value,
@@ -81,6 +82,7 @@ const ALLOWED_UPDATE_FIELDS = new Set([
   "source_library_type",
   "shadow_library_id",
   "skip_playback_log",
+  "skip_album_artwork",
   "rockbox_smart_playlists",
   "dev_mode",
   "auto_podcasts_enabled",
@@ -106,6 +108,7 @@ const FIELD_MAP: Record<string, string> = {
   sourceLibraryType: "source_library_type",
   shadowLibraryId: "shadow_library_id",
   skipPlaybackLog: "skip_playback_log",
+  skipAlbumArtwork: "skip_album_artwork",
   rockboxSmartPlaylists: "rockbox_smart_playlists",
   devMode: "dev_mode",
   autoPodcastsEnabled: "auto_podcasts_enabled",
@@ -206,7 +209,7 @@ export class DevicesCore {
       if (!dbField || !ALLOWED_UPDATE_FIELDS.has(dbField)) continue;
       fields.push(`${dbField} = ?`);
       const normalized =
-        dbField === "partial_sync_enabled" || dbField === "skip_playback_log" || dbField === "rockbox_smart_playlists" || dbField === "dev_mode" || dbField === "auto_podcasts_enabled"
+        dbField === "partial_sync_enabled" || dbField === "skip_playback_log" || dbField === "skip_album_artwork" || dbField === "rockbox_smart_playlists" || dbField === "dev_mode" || dbField === "auto_podcasts_enabled"
           ? (value ? 1 : 0)
           : value;
       values.push(normalized);
@@ -352,6 +355,7 @@ export class DevicesCore {
       modelName: row.model_name,
       modelInternalValue: row.model_internal_value,
       skipPlaybackLog: !!(row.skip_playback_log ?? 0),
+      skipAlbumArtwork: !!(row.skip_album_artwork ?? 0),
       rockboxSmartPlaylists: !!(row.rockbox_smart_playlists ?? 0),
       devMode: !!(row.dev_mode ?? 0),
       autoPodcastsEnabled: !!(row.auto_podcasts_enabled ?? 0),

@@ -1134,8 +1134,6 @@ export function registerIpcHandlers(): void {
         includePodcasts: opts.includePodcasts !== false,
         includeAudiobooks: opts.includeAudiobooks !== false,
         includePlaylists: opts.includePlaylists !== false,
-        ignoreSpaceCheck: opts.ignoreSpaceCheck,
-        skipAlbumArtwork: opts.skipAlbumArtwork === true,
         preserveFolderStructure: opts.preserveFolderStructure !== false,
         selections: opts.selections ?? emptySelections(),
       } satisfies DeviceSyncPreferences);
@@ -1286,8 +1284,7 @@ export function registerIpcHandlers(): void {
         syncType: opts.syncType,
         extraTrackPolicy: opts.extraTrackPolicy,
         cancelSignal: syncSignal,
-        ignoreSpaceCheck: opts.ignoreSpaceCheck,
-        skipAlbumArtwork: opts.skipAlbumArtwork,
+        skipAlbumArtwork: device.profile.skipAlbumArtwork === true,
         preserveFolderStructure,
         preloadedMtimes,
         profileCodecExtOverride: profileCodecExtOverride ?? undefined,

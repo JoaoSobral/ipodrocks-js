@@ -109,3 +109,97 @@ describe("Playlists — smart playlist journey", () => {
     expect(rules.n).toBe(0);
   });
 });
+
+describe("Playlists — broken-playlist detection & repair", () => {
+  let db: TestDb;
+  let core: PlaylistCore;
+  let folderId: number;
+
+  beforeEach(() => {
+    if (!canRunDbTests) return;
+    db = createTestDb();
+    core = new PlaylistCore(db);
+    folderId = seedLibraryFolder(db, { name: "Music", path: "/music", contentType: "music" });
+  });
+
+  afterEach(() => {
+    closeDb(db);
+  });
+
+  itDb("getBrokenPlaylists returns empty when all tracks exist", () => {
+    seedTrack(db, { path: "/music/a.flac", genre: "Rock", libraryFolderId: folderId });
+    const rockId = (db.prepare("SELECT id FROM genres WHERE name = ?").get("Rock") as { id: number }).id;
+    core.createSmartPlaylist("Healthy", [{ id: 0, ruleType: "genre", targetId: rockId, targetLabel: "Rock" }]);
+
+    expect(core.getBrokenPlaylists()).toHaveLength(0);
+  });
+
+  itDb("getBrokenPlaylists detects a playlist with a dangling item (simulating deleteRemovedTracks scan path)", () => {
+    const trackId = seedTrack(db, { path: "/music/a.flac", title: "Gone", genre: "Rock", libraryFolderId: folderId });
+    const keepId  = seedTrack(db, { path: "/music/b.flac", title: "Stay", genre: "Rock", libraryFolderId: folderId });
+    const rockId  = (db.prepare("SELECT id FROM genres WHERE name = ?").get("Rock") as { id: number }).id;
+    const playlistId = core.createSmartPlaylist("Mixed", [{ id: 0, ruleType: "genre", targetId: rockId, targetLabel: "Rock" }]);
+
+    // Simulate the scanner's FK-off deletion — dangling playlist_items row remains
+    db.pragma("foreign_keys = OFF");
+    db.prepare("DELETE FROM tracks WHERE id = ?").run(trackId);
+    db.pragma("foreign_keys = ON");
+
+    const broken = core.getBrokenPlaylists();
+    expect(broken).toHaveLength(1);
+    expect(broken[0].id).toBe(playlistId);
+    expect(broken[0].missingCount).toBe(1);
+    expect(broken[0].totalCount).toBe(2);
+
+    // trackCount in the playlist listing must already exclude the dangling row
+    const listed = core.getPlaylists();
+    const p = listed.find((x) => x.id === playlistId)!;
+    expect(p.trackCount).toBe(1);
+
+    // getPlaylistTracks must not return the dangling track
+    const tracks = core.getPlaylistTracks(playlistId);
+    expect(tracks.map((t) => t.id)).not.toContain(trackId);
+    expect(tracks.map((t) => t.id)).toContain(keepId);
+  });
+
+  itDb("repairPlaylist removes dangling items and accurate count is restored", () => {
+    const trackId = seedTrack(db, { path: "/music/a.flac", title: "Gone", genre: "Rock", libraryFolderId: folderId });
+    seedTrack(db, { path: "/music/b.flac", title: "Stay", genre: "Rock", libraryFolderId: folderId });
+    const rockId = (db.prepare("SELECT id FROM genres WHERE name = ?").get("Rock") as { id: number }).id;
+    const playlistId = core.createSmartPlaylist("Repairable", [{ id: 0, ruleType: "genre", targetId: rockId, targetLabel: "Rock" }]);
+
+    db.pragma("foreign_keys = OFF");
+    db.prepare("DELETE FROM tracks WHERE id = ?").run(trackId);
+    db.pragma("foreign_keys = ON");
+
+    expect(core.getBrokenPlaylists()).toHaveLength(1);
+
+    const result = core.repairPlaylist(playlistId);
+    expect(result.removed).toBe(1);
+    expect(result.remaining).toBe(1);
+
+    expect(core.getBrokenPlaylists()).toHaveLength(0);
+
+    const items = db.prepare("SELECT * FROM playlist_items WHERE playlist_id = ? ORDER BY position").all(playlistId) as Array<{ position: number }>;
+    expect(items).toHaveLength(1);
+    expect(items[0].position).toBe(1);
+  });
+
+  itDb("repairPlaylist with all tracks missing leaves an empty playlist (not deleted)", () => {
+    const t1 = seedTrack(db, { path: "/music/a.flac", genre: "Rock", libraryFolderId: folderId });
+    const t2 = seedTrack(db, { path: "/music/b.flac", genre: "Rock", libraryFolderId: folderId });
+    const rockId = (db.prepare("SELECT id FROM genres WHERE name = ?").get("Rock") as { id: number }).id;
+    const playlistId = core.createSmartPlaylist("Empty After Repair", [{ id: 0, ruleType: "genre", targetId: rockId, targetLabel: "Rock" }]);
+
+    db.pragma("foreign_keys = OFF");
+    db.prepare("DELETE FROM tracks WHERE id IN (?, ?)").run(t1, t2);
+    db.pragma("foreign_keys = ON");
+
+    const result = core.repairPlaylist(playlistId);
+    expect(result.removed).toBe(2);
+    expect(result.remaining).toBe(0);
+
+    expect(core.getPlaylistById(playlistId)).toBeDefined();
+    expect(core.getBrokenPlaylists()).toHaveLength(0);
+  });
+});

@@ -28,6 +28,7 @@ export class AppDatabase {
     this.migrateRatings();
     this.migratePodcasts();
     this.migrateDeviceSyncPreferences();
+    this.migrateDeviceSkipAlbumArtwork();
   }
 
   /**
@@ -56,6 +57,22 @@ export class AppDatabase {
         "[db] migration failed (migrateDeviceSyncPreferences):",
         err
       );
+    }
+  }
+
+  private migrateDeviceSkipAlbumArtwork(): void {
+    if (!this.db) return;
+    try {
+      const rows = this.db
+        .prepare("PRAGMA table_info(devices)")
+        .all() as { name: string }[];
+      if (!new Set(rows.map((r) => r.name)).has("skip_album_artwork")) {
+        this.db
+          .prepare("ALTER TABLE devices ADD COLUMN skip_album_artwork BOOLEAN NOT NULL DEFAULT 0")
+          .run();
+      }
+    } catch (err) {
+      console.error("[db] migration failed (migrateDeviceSkipAlbumArtwork):", err);
     }
   }
 

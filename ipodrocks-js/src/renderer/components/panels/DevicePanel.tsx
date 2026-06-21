@@ -88,6 +88,7 @@ export function DevicePanel() {
   const [playbackLogEnabled, setPlaybackLogEnabled] = useState(true);
   const [rockboxSmartPlaylists, setRockboxSmartPlaylists] = useState(false);
   const [autoPodcastsEnabled, setAutoPodcastsEnabled] = useState(false);
+  const [skipAlbumArtwork, setSkipAlbumArtwork] = useState(false);
   const [devMode, setDevMode] = useState(false);
   const [musicFolder, setMusicFolder] = useState("Music");
   const [podcastFolder, setPodcastFolder] = useState("Podcasts");
@@ -193,6 +194,7 @@ export function DevicePanel() {
     }
 
     setPlaybackLogEnabled(!(device.skipPlaybackLog ?? false));
+    setSkipAlbumArtwork(device.skipAlbumArtwork ?? false);
     setRockboxSmartPlaylists(device.rockboxSmartPlaylists ?? false);
     setAutoPodcastsEnabled(device.autoPodcastsEnabled ?? false);
     setDevMode(device.devMode ?? false);
@@ -249,6 +251,7 @@ export function DevicePanel() {
       sourceLibraryType: resolvedSourceType,
       shadowLibraryId: resolvedShadowId,
       skipPlaybackLog: !playbackLogEnabled,
+      skipAlbumArtwork,
       rockboxSmartPlaylists,
       devMode,
     };
@@ -784,6 +787,18 @@ export function DevicePanel() {
               <span className="text-sm text-foreground flex items-center gap-1">
                 Auto Podcasts
                 <InfoTooltip text="When enabled, new podcast episodes are automatically copied to this device in the background as they are downloaded, independently of any manual sync." />
+              </span>
+            </label>
+            <label className="flex items-center gap-2.5 cursor-pointer">
+              <input
+                type="checkbox"
+                className={checkboxClass}
+                checked={skipAlbumArtwork}
+                onChange={(e) => setSkipAlbumArtwork(e.target.checked)}
+              />
+              <span className="text-sm text-foreground flex items-center gap-1">
+                Skip album artwork
+                <InfoTooltip text="When enabled, album artwork files (cover.jpg, folder.jpg, etc.) are not copied to this device during sync. Useful for devices with limited storage." />
               </span>
             </label>
             <label className="flex items-center gap-2.5 cursor-pointer opacity-60">

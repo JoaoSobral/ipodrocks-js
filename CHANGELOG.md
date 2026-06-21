@@ -1,6 +1,6 @@
 # Changelog
 
-## [1.4.0] — 2026-06
+## [2.0.0] — 2026-06
 
 ### Features
 
@@ -14,9 +14,38 @@
 - **`assistant:confirmAction` IPC channel** — A new channel executes a previously proposed destructive tool after the user confirms it in the renderer, and returns a human-readable result message that is appended to the chat history.
 - **Expanded `ActivityOperation` type** — Added `remove_folder`, `playlist_deleted`, `podcast_subscribed`, `podcast_downloaded`, `podcast_episodes_deleted` to the activity log's operation union so all AI-initiated writes are recorded in Recent Activity.
 
+#### Playlists as a library filter (tab removed)
+
+- **Playlists are now a filter on the library track list** — Instead of a read-only Playlists tab that duplicated PlaylistPanel, there is now a Playlist `<select>` in the Library panel's filter row. Selecting a playlist narrows the track list to that playlist's members. The redundant Playlists tab in LibraryPanel has been removed; full playlist management stays in PlaylistPanel.
+
+#### Broken-playlist detection & repair
+
+- **Playlists referencing deleted tracks are now detected and flagged** — When tracks are removed during a library re-scan, any playlists that still reference those tracks are marked broken. Broken playlists are surfaced in three places: a warning banner in the Library panel, warning badges on affected playlist cards in PlaylistPanel, and a gate modal that blocks sync until the issue is resolved.
+- **Accurate track count** — The playlist `trackCount` now only counts items whose track exists in the library, so the displayed count is always accurate even before repair.
+- **Repair / Delete actions** — Each broken playlist can be Repaired (dangling items removed, positions renumbered) or Deleted outright. Smart playlists also offer Rebuild (re-resolves tracks from the stored rules).
+- **Sync gate with "Repair all & continue"** — If a sync would include broken playlists, the sync is blocked and a modal offers one-click "Repair all & continue" to fix them in place before proceeding.
+
+#### Skip album artwork moved to device profile
+
+- **"Skip album artwork" is now a per-device setting** — Moved from the per-sync Sync panel into the Device panel alongside "Skip playback log" and "Auto podcasts". The setting is persisted in the `devices` table (migrated idempotently) and read at sync time from the device profile.
+
+#### Dead "Ignore space check" removed
+
+- **Removed the unused "Ignore space check" toggle** — The `ignoreSpaceCheck` flag and the underlying `canFitContent()` method had zero callers and were never consulted during sync. The toggle, its prefs field, IPC plumbing, schema column, and type definitions have all been removed.
+
+### AI Assistant (Rocksy)
+
+- **`playlist_list_broken` tool (read)** — Rocksy can now check which playlists have missing tracks and report them to the user.
+- **`playlist_repair` tool (write-safe)** — Rocksy can repair broken playlists on the user's behalf (removes dangling items). Pairs with `playlist_delete` for full triage from the chat.
+- **System prompt directive** — When the user mentions playlists with missing songs or asks to fix a playlist, Rocksy now calls `playlist_list_broken` first, then `playlist_repair` or `playlist_delete`, instead of saying it can't help.
+
 ### Testing
 
 - **`assistant-tools.test.ts`** — 31 new cases covering the tool registry: no duplicate names, every tool has required fields, `getToolByName` lookups, `buildToolDefinitions` produces valid OpenAI-compatible schemas; read tools return correct data; write-safe tools (`playlist_create_smart`) reject empty names, empty rules, and invalid IDs; every write-destructive tool is correctly classified; `library_remove_folder` and `playlist_delete` happy-path and invalid-arg cases; `podcast_delete_episodes` summarize shows episode count.
+- **`assistant-tools.test.ts` (v2.0 additions)** — New cases for `playlist_list_broken` (read tier, returns broken list), `playlist_repair` (write-safe tier, calls `repairPlaylist`, throws on invalid ID, summarize includes ID) and their mock setup.
+- **`behaviors/playlists.test.ts`** — New `getBrokenPlaylists` / `repairPlaylist` behavior tests: healthy playlist returns no broken entries; deleting a track with FKs off produces a broken entry with correct `missingCount`/`totalCount`; accurate `trackCount` before repair; `repairPlaylist` removes only the dangling item, renumbers positions, and the playlist is no longer broken; all-missing case leaves an empty (not deleted) playlist.
+- **`tests/e2e/library-playlist-filter.test.ts`** — Playwright E2E test asserting the old tracks/playlists toggle is absent and a playlist filter `<select>` is visible in the Library panel.
+- **`regressions/device-sync-preferences.test.ts`** — Updated to remove `ignoreSpaceCheck` and `skipAlbumArtwork` from `DeviceSyncPreferences` object literals and raw SQL inserts (both columns removed from the `device_sync_preferences` table).
 
 ---
 

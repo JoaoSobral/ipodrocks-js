@@ -36,8 +36,6 @@ type Row = {
   include_podcasts: number;
   include_audiobooks: number;
   include_playlists: number;
-  ignore_space_check: number;
-  skip_album_artwork: number;
   preserve_folder_structure: number;
   custom_selections_json: string | null;
 };
@@ -60,8 +58,6 @@ export function getDeviceSyncPreferences(
     includePodcasts: row.include_podcasts === 1,
     includeAudiobooks: row.include_audiobooks === 1,
     includePlaylists: row.include_playlists === 1,
-    ignoreSpaceCheck: row.ignore_space_check === 1,
-    skipAlbumArtwork: row.skip_album_artwork === 1,
     preserveFolderStructure: row.preserve_folder_structure !== 0,
     selections: parseSelections(row.custom_selections_json),
   };
@@ -75,9 +71,9 @@ export function saveDeviceSyncPreferences(
   db.prepare(`
     INSERT INTO device_sync_preferences
       (device_id, sync_type, extra_track_policy, include_music, include_podcasts,
-       include_audiobooks, include_playlists, ignore_space_check, skip_album_artwork,
+       include_audiobooks, include_playlists,
        preserve_folder_structure, custom_selections_json, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
     ON CONFLICT(device_id) DO UPDATE SET
       sync_type = excluded.sync_type,
       extra_track_policy = excluded.extra_track_policy,
@@ -85,8 +81,6 @@ export function saveDeviceSyncPreferences(
       include_podcasts = excluded.include_podcasts,
       include_audiobooks = excluded.include_audiobooks,
       include_playlists = excluded.include_playlists,
-      ignore_space_check = excluded.ignore_space_check,
-      skip_album_artwork = excluded.skip_album_artwork,
       preserve_folder_structure = excluded.preserve_folder_structure,
       custom_selections_json = excluded.custom_selections_json,
       updated_at = CURRENT_TIMESTAMP
@@ -98,8 +92,6 @@ export function saveDeviceSyncPreferences(
     prefs.includePodcasts ? 1 : 0,
     prefs.includeAudiobooks ? 1 : 0,
     prefs.includePlaylists ? 1 : 0,
-    prefs.ignoreSpaceCheck ? 1 : 0,
-    prefs.skipAlbumArtwork ? 1 : 0,
     prefs.preserveFolderStructure ? 1 : 0,
     JSON.stringify(prefs.selections)
   );

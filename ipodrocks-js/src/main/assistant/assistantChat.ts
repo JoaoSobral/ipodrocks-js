@@ -279,9 +279,11 @@ function buildDevicesContext(db: Database.Database): string {
   }>;
 
   const getSyncPrefs = db.prepare(
-    `SELECT sync_type, extra_track_policy, include_music, include_podcasts,
-            include_audiobooks, include_playlists, skip_album_artwork
-     FROM device_sync_preferences WHERE device_id = ?`
+    `SELECT dsp.sync_type, dsp.extra_track_policy, dsp.include_music, dsp.include_podcasts,
+            dsp.include_audiobooks, dsp.include_playlists, d.skip_album_artwork
+     FROM device_sync_preferences dsp
+     JOIN devices d ON dsp.device_id = d.id
+     WHERE dsp.device_id = ?`
   );
 
   if (devices.length === 0) return "## Devices\nNo devices configured.";
@@ -513,9 +515,11 @@ Tool usage rules (CRITICAL):
 - User asks to sync a device / "sync my iPod" → call \`device_list\` first to get the device ID, then call \`device_sync\`.
 - User asks to remove or delete a device → call \`device_list\` first, then call \`device_remove\`.
 - User asks to scan the library / "scan for new music" / "rescan" → call \`library_scan\`.
+- User asks about playlists with missing/broken songs, or "why does my playlist show wrong count", or "fix my playlist" → call \`playlist_list_broken\` first to see which playlists are affected, then call \`playlist_repair\` on the ones the user confirms (or all if they say "fix all"). Only smart playlists can be rebuilt from rules; for others, Repair removes the missing tracks.
 - NEVER say "I can't search for podcasts" or "I can't browse the internet" — you have \`podcast_search\` for exactly this purpose.
 - NEVER say "I can't sync devices" or "I don't have a sync tool" — you have \`device_sync\`.
 - NEVER say "I can't delete or remove a device" — you have \`device_remove\`.
+- NEVER say "I can't fix or repair playlists" — you have \`playlist_list_broken\` and \`playlist_repair\`.
 - NEVER say "I can't scan the library" — you have \`library_scan\`.
 - NEVER tell the user to manually find an RSS feed — use \`podcast_search\` instead.
 - Actions that require confirmation (device sync, device removal, library scan, downloads, deletes, folder changes) will prompt the user before running.

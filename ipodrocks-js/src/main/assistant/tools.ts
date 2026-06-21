@@ -469,6 +469,39 @@ const library_remove_folder: AiTool = {
   },
 };
 
+const playlist_list_broken: AiTool = {
+  name: "playlist_list_broken",
+  description: "List all playlists that reference tracks which no longer exist in the library (broken playlists). Returns each broken playlist's ID, name, type, missing track count, and total item count.",
+  parameters: { type: "object", properties: {} },
+  kind: "read",
+  summarize: () => "List broken playlists with missing tracks",
+  async run(_args, ctx) {
+    return ctx.getPlaylistCore().getBrokenPlaylists();
+  },
+};
+
+const playlist_repair: AiTool = {
+  name: "playlist_repair",
+  description: "Repair a broken playlist by removing all items that reference tracks no longer in the library. Positions are renumbered. Use playlist_list_broken first to get playlist IDs.",
+  parameters: {
+    type: "object",
+    properties: {
+      playlist_id: { type: "number", description: "ID of the broken playlist to repair" },
+    },
+    required: ["playlist_id"],
+  },
+  kind: "write-safe",
+  summarize: (a) => `Repair playlist #${a.playlist_id} by removing missing tracks`,
+  async run(args, ctx) {
+    const id = Number(args.playlist_id);
+    if (!Number.isInteger(id) || id <= 0) throw new Error("Invalid playlist_id");
+    ctx.getPlaylistCore().repairPlaylist(id);
+    invalidateAssistantCache();
+    logActivity(ctx.db, "playlist_repaired", `AI repaired playlist #${id}`);
+    return { repaired: true };
+  },
+};
+
 const playlist_delete: AiTool = {
   name: "playlist_delete",
   description: "Delete a playlist by its ID.",
@@ -583,6 +616,8 @@ export const AI_TOOLS: AiTool[] = [
   podcast_delete_episodes,
   library_add_folder,
   library_remove_folder,
+  playlist_list_broken,
+  playlist_repair,
   playlist_delete,
 ];
 
