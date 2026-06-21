@@ -33,6 +33,11 @@
 
 - **Removed the unused "Ignore space check" toggle** — The `ignoreSpaceCheck` flag and the underlying `canFitContent()` method had zero callers and were never consulted during sync. The toggle, its prefs field, IPC plumbing, schema column, and type definitions have all been removed.
 
+#### Text selection & right-click clipboard menu
+
+- **Text is now selectable throughout the app** — Removed the global `select-none` that blocked text selection on the entire UI. You can now click-drag with the left mouse button to select text anywhere in the content area. The sidebar navigation and title-bar header remain non-selectable so they keep behaving like app chrome.
+- **Native right-click context menu** — Right-clicking anywhere now shows a Cut / Copy / Paste / Select All menu. Each item is enabled only when applicable: Copy when text is selected, and Cut / Paste / Select All inside editable fields (driven by the web contents' `editFlags`). Implemented in the main process via the `context-menu` event on the window's `webContents`.
+
 ### AI Assistant (Rocksy)
 
 - **`playlist_list_broken` tool (read)** — Rocksy can now check which playlists have missing tracks and report them to the user.

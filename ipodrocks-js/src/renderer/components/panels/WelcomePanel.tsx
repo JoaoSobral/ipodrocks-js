@@ -9,10 +9,11 @@ import logoSrcBlack from "@assets/ipodRocks_black.png?url";
 
 const FEATURES: { icon: string; label: string; description: string }[] = [
   { icon: "📤", label: "Sync", description: "Full or custom sync by album, artist, genre, or playlist." },
-  { icon: "📱", label: "Multiple devices", description: "Each device has its own codec and folder layout." },
+  { icon: "📱", label: "Multiple devices", description: "Each device has its own codec, folder layout, and artwork settings." },
   { icon: "📚", label: "Library & shadows", description: "Music, podcasts, audiobooks; FLAC→MPC mirrors." },
-  { icon: "📋", label: "Playlists", description: "Smart, Genius, Savant (AI), voice via Assistant." },
-  { icon: "💬", label: "Rocksy", description: "Chat that knows your library; create playlists by voice." },
+  { icon: "📋", label: "Playlists", description: "Smart, Genius, Savant (AI), and broken-playlist detection & repair." },
+  { icon: "🎙️", label: "Podcasts", description: "Search via Podcast Index, paste any RSS feed URL, or auto-subscribe with scheduled downloads." },
+  { icon: "💬", label: "Rocksy", description: "AI assistant that can search your library, create playlists, subscribe to podcasts, trigger syncs, scan folders, and more — all from chat." },
   { icon: "🎹", label: "Harmonic mixing", description: "Key/BPM detection and Camelot wheel." },
   { icon: "🔄", label: "Conversion & codecs", description: "MP3, AAC, Musepack, Opus via FFmpeg." },
   { icon: "⭐", label: "Star ratings", description: "5-star (half-star), synced from Rockbox with 3-way merge." },
