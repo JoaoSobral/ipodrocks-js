@@ -10,7 +10,11 @@ import {
   podcastSetManualSelection,
   podcastDownloadNow,
   podcastSearch,
+  podcastDiscoverFeeds,
+  podcastPreviewFeed,
+  podcastSubscribeByUrl,
 } from "../ipc/api";
+import type { FeedCandidate, PodcastFeedPreview } from "../ipc/api";
 
 interface PodcastsState {
   subscriptions: PodcastSubscription[];
@@ -32,6 +36,7 @@ interface PodcastsState {
   downloadNow: (subId: number) => Promise<{ ok?: boolean; error?: string }>;
   search: (term: string) => Promise<void>;
   clearSearch: () => void;
+  subscribeByUrl: (feedUrl: string) => Promise<void>;
 }
 
 export const usePodcastsStore = create<PodcastsState>((set, get) => ({
@@ -150,4 +155,17 @@ export const usePodcastsStore = create<PodcastsState>((set, get) => ({
   },
 
   clearSearch: () => set({ searchResults: [], searching: false, searchError: null }),
+
+  subscribeByUrl: async (feedUrl) => {
+    const sub = await podcastSubscribeByUrl(feedUrl);
+    set((state) => ({
+      subscriptions: state.subscriptions.some((s) => s.id === sub.id)
+        ? state.subscriptions
+        : [...state.subscriptions, sub],
+      subscribedFeedIds: new Set([...state.subscribedFeedIds, sub.feedId]),
+    }));
+  },
 }));
+
+export { podcastDiscoverFeeds, podcastPreviewFeed };
+export type { FeedCandidate, PodcastFeedPreview };

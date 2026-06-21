@@ -21,6 +21,7 @@ import {
   listEpisodes,
 } from "../podcasts/podcast-subscriptions";
 import { searchPodcasts } from "../podcasts/podcast-index-client";
+import { importFeed } from "../podcasts/podcast-feed-import";
 import { logActivity } from "../activity/activity-logger";
 import { invalidateAssistantCache } from "./assistantChat";
 import {
@@ -592,6 +593,26 @@ const library_scan: AiTool = {
   },
 };
 
+const podcast_add_by_url: AiTool = {
+  name: "podcast_add_by_url",
+  description: "Subscribe to a podcast using an RSS feed URL or a podcast website URL. No API key required. Works for any public podcast feed.",
+  parameters: {
+    type: "object",
+    properties: {
+      url: { type: "string", description: "The RSS feed URL or podcast website URL to subscribe to" },
+    },
+    required: ["url"],
+  },
+  kind: "write-safe",
+  summarize: (a) => `Add podcast from URL: ${a.url}`,
+  async run(args, ctx) {
+    const result = await importFeed(ctx.db, String(args.url));
+    invalidateAssistantCache();
+    logActivity(ctx.db, "podcast_subscribed", `AI subscribed to: ${result.title}`);
+    return result;
+  },
+};
+
 // ---------------------------------------------------------------------------
 // Registry
 // ---------------------------------------------------------------------------
@@ -608,6 +629,7 @@ export const AI_TOOLS: AiTool[] = [
   playlist_create_smart,
   playlist_create_genius,
   podcast_subscribe,
+  podcast_add_by_url,
   device_check,
   device_remove,
   device_sync,

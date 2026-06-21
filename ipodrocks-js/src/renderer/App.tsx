@@ -202,9 +202,9 @@ export function App() {
   }, [theme]);
 
   return (
-    <div className="flex h-screen text-foreground select-none overflow-hidden bg-background">
+    <div className="flex h-screen text-foreground overflow-hidden bg-background">
       {/* Sidebar */}
-      <nav className="flex flex-col w-56 shrink-0 border-r border-sidebar-border bg-sidebar">
+      <nav className="flex flex-col w-56 shrink-0 border-r border-sidebar-border bg-sidebar select-none">
         {/* macOS traffic lights spacer */}
         <div className="h-8 shrink-0 [-webkit-app-region:drag]" />
 
@@ -250,7 +250,7 @@ export function App() {
 
       {/* Main content */}
       <main className="flex-1 min-w-0 flex flex-col overflow-hidden bg-background">
-        <header className="border-b border-border bg-card px-8 py-4 shrink-0 [-webkit-app-region:drag] flex items-center justify-between">
+        <header className="border-b border-border bg-card px-8 py-4 shrink-0 [-webkit-app-region:drag] flex items-center justify-between select-none">
           <h2 className="text-xl font-semibold text-foreground flex items-center gap-2">
             <span>{current.icon}</span>
             {current.label}

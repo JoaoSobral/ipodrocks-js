@@ -150,6 +150,7 @@ import {
   setManualSelection,
 } from "./podcasts/podcast-subscriptions";
 import { refreshSubscription, refreshAll, refreshAllForNewFolder } from "./podcasts/podcast-refresh";
+import { discoverFeeds, fetchAndParseFeed, feedPreview, importFeed } from "./podcasts/podcast-feed-import";
 import { syncPodcastsToDevice } from "./podcasts/podcast-device-sync";
 import { startPodcastScheduler, stopPodcastScheduler } from "./podcasts/podcast-scheduler";
 import { downloadEpisode } from "./podcasts/podcast-downloader";
@@ -2413,8 +2414,7 @@ export function registerIpcHandlers(): void {
     safe("podcast:downloadNow", async (_event, subId: number) => {
       const db = getLibrary().getConnection();
       const config = getPodcastIndexConfig();
-      if (!config) return { error: "NO_CREDS" };
-      await refreshSubscription(db, subId, config.apiKey, config.apiSecret);
+      await refreshSubscription(db, subId, config?.apiKey ?? "", config?.apiSecret ?? "");
       return { ok: true };
     })
   );
@@ -2424,9 +2424,33 @@ export function registerIpcHandlers(): void {
     safe("podcast:refreshAllForNewFolder", async () => {
       const db = getLibrary().getConnection();
       const config = getPodcastIndexConfig();
-      if (!config) return { error: "NO_CREDS" };
-      await refreshAllForNewFolder(db, config.apiKey, config.apiSecret);
+      await refreshAllForNewFolder(db, config?.apiKey ?? "", config?.apiSecret ?? "");
       return { ok: true };
+    })
+  );
+
+  ipcMain.handle(
+    "podcast:discoverFeeds",
+    safe("podcast:discoverFeeds", async (_event, input: string) => {
+      return discoverFeeds(input);
+    })
+  );
+
+  ipcMain.handle(
+    "podcast:previewFeed",
+    safe("podcast:previewFeed", async (_event, feedUrl: string) => {
+      const parsed = await fetchAndParseFeed(feedUrl);
+      return feedPreview(parsed);
+    })
+  );
+
+  ipcMain.handle(
+    "podcast:subscribeByUrl",
+    safe("podcast:subscribeByUrl", async (_event, feedUrl: string) => {
+      const db = getLibrary().getConnection();
+      const result = await importFeed(db, feedUrl);
+      invalidateAssistantCache();
+      return result;
     })
   );
 

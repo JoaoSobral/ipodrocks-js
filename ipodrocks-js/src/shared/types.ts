@@ -459,6 +459,20 @@ export interface PodcastIndexConfig {
   apiSecret: string;
 }
 
+export interface FeedCandidate {
+  feedUrl: string;
+  title: string | null;
+}
+
+export interface PodcastFeedPreview {
+  feedUrl: string;
+  title: string;
+  author: string | null;
+  description: string | null;
+  imageUrl: string | null;
+  episodeCount: number;
+}
+
 export interface AutoPodcastSettings {
   enabled: boolean;
   refreshIntervalMinutes: number;

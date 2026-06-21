@@ -665,6 +665,7 @@ CREATE TABLE IF NOT EXISTS podcast_subscriptions (
     description TEXT,
     image_url TEXT,
     feed_url TEXT NOT NULL,
+    source TEXT NOT NULL DEFAULT 'podcastindex' CHECK(source IN ('podcastindex','rss')),
     auto_count INTEGER NOT NULL DEFAULT 1 CHECK(auto_count BETWEEN 0 AND 5),
     last_refreshed_at TIMESTAMP,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP

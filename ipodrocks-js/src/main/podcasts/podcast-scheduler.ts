@@ -20,9 +20,7 @@ function getDeviceInfo(db: Database.Database, deviceId: number): DeviceRow | nul
 
 async function runRefreshAndSync(db: Database.Database): Promise<void> {
   const config = getPodcastIndexConfig();
-  if (!config) return;
-
-  await refreshAll(db, config.apiKey, config.apiSecret);
+  await refreshAll(db, config?.apiKey ?? "", config?.apiSecret ?? "");
 
   for (const deviceId of getAutoPodcastDeviceIds(db)) {
     const info = getDeviceInfo(db, deviceId);
@@ -62,8 +60,6 @@ export function startPodcastScheduler(db: Database.Database): void {
   // 1-minute device connection poller — fills gaps when a device reconnects.
   if (!pollerTimer) {
     pollerTimer = setInterval(() => {
-      if (!getPodcastIndexConfig()) return;
-
       for (const deviceId of getAutoPodcastDeviceIds(db)) {
         const info = getDeviceInfo(db, deviceId);
         const mountPath = info?.mount_path ?? null;

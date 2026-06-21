@@ -1,11 +1,29 @@
 import * as fs from "fs";
 import * as path from "path";
+import * as crypto from "crypto";
 import type Database from "better-sqlite3";
 import type {
   PodcastSubscription,
   PodcastEpisode,
   PodcastSearchResult,
 } from "../../shared/types";
+
+interface RssFeedData {
+  feedUrl: string;
+  title: string;
+  author: string | null;
+  description: string | null;
+  imageUrl: string | null;
+  episodes: Array<{
+    guid: string;
+    title: string;
+    description: string;
+    enclosureUrl: string;
+    enclosureLength: number;
+    durationSeconds: number;
+    publishedAt: number;
+  }>;
+}
 
 interface SubRow {
   id: number;
@@ -146,8 +164,8 @@ export function subscribe(
 
   const info = db
     .prepare(
-      `INSERT INTO podcast_subscriptions (feed_id, title, author, description, image_url, feed_url, auto_count)
-       VALUES (?, ?, ?, ?, ?, ?, 1)`
+      `INSERT INTO podcast_subscriptions (feed_id, title, author, description, image_url, feed_url, source, auto_count)
+       VALUES (?, ?, ?, ?, ?, ?, 'podcastindex', 1)`
     )
     .run(
       result.feedId,
@@ -159,6 +177,52 @@ export function subscribe(
     );
 
   return getSubscriptionById(db, Number(info.lastInsertRowid))!;
+}
+
+/** Deterministic negative 31-bit feed id for an RSS feed URL. Never collides with positive Podcast Index IDs. */
+export function stableRssFeedId(feedUrl: string): number {
+  const hash = crypto.createHash("md5").update(feedUrl).digest("hex");
+  const n = parseInt(hash.slice(0, 8), 16) % 0x7fffffff;
+  return -(n === 0 ? 1 : n);
+}
+
+export function subscribeRssFeed(
+  db: Database.Database,
+  feed: RssFeedData
+): PodcastSubscription {
+  const feedId = stableRssFeedId(feed.feedUrl);
+
+  const existing = db
+    .prepare("SELECT id FROM podcast_subscriptions WHERE feed_id = ?")
+    .get(feedId) as { id: number } | undefined;
+
+  let subId: number;
+  if (existing) {
+    subId = existing.id;
+  } else {
+    const info = db
+      .prepare(
+        `INSERT INTO podcast_subscriptions (feed_id, title, author, description, image_url, feed_url, source, auto_count)
+         VALUES (?, ?, ?, ?, ?, ?, 'rss', 1)`
+      )
+      .run(feedId, feed.title, feed.author, feed.description, feed.imageUrl, feed.feedUrl);
+    subId = Number(info.lastInsertRowid);
+  }
+
+  for (const ep of feed.episodes) {
+    if (!ep.enclosureUrl) continue;
+    upsertEpisode(db, subId, {
+      guid: ep.guid,
+      title: ep.title,
+      description: ep.description,
+      enclosureUrl: ep.enclosureUrl,
+      durationSeconds: ep.durationSeconds,
+      publishedAt: ep.publishedAt,
+      fileSize: ep.enclosureLength,
+    });
+  }
+
+  return getSubscriptionById(db, subId)!;
 }
 
 /** Delete local files and device copies for a set of episodes. DB records are untouched. */

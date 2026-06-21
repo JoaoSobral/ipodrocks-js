@@ -1,4 +1,4 @@
-import { app, BrowserWindow } from "electron";
+import { app, BrowserWindow, Menu, MenuItem } from "electron";
 import * as fs from "fs";
 import * as path from "path";
 import { registerIpcHandlers } from "./ipc";
@@ -48,6 +48,37 @@ function getIconPath(): string {
   return path.join(baseDirs[0], names[0]);
 }
 
+function attachContextMenu(win: BrowserWindow): void {
+  win.webContents.on("context-menu", (_event, params) => {
+    const hasSelection = params.selectionText.trim().length > 0;
+    const items: MenuItem[] = [
+      new MenuItem({
+        label: "Cut",
+        role: "cut",
+        enabled: params.isEditable && hasSelection,
+      }),
+      new MenuItem({
+        label: "Copy",
+        role: "copy",
+        enabled: hasSelection,
+      }),
+      new MenuItem({
+        label: "Paste",
+        role: "paste",
+        enabled: params.isEditable && params.editFlags.canPaste,
+      }),
+      new MenuItem({ type: "separator" }),
+      new MenuItem({
+        label: "Select All",
+        role: "selectAll",
+        enabled: params.editFlags.canSelectAll,
+      }),
+    ];
+
+    Menu.buildFromTemplate(items).popup({ window: win });
+  });
+}
+
 function createWindow(): BrowserWindow {
   const preloadPath = path.join(__dirname, "preload.js");
   const iconPath = getIconPath();
@@ -82,11 +113,13 @@ app.whenReady().then(() => {
   cleanupPlayerTemp();
   registerMediaProtocol();
   registerIpcHandlers();
-  createWindow();
+  const win = createWindow();
+  attachContextMenu(win);
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {
-      createWindow();
+      const w = createWindow();
+      attachContextMenu(w);
     }
   });
 });

@@ -27,6 +27,7 @@ export class AppDatabase {
     this.migrateDeduplicateTracks();
     this.migrateRatings();
     this.migratePodcasts();
+    this.migratePodcastSource();
     this.migrateDeviceSyncPreferences();
     this.migrateDeviceSkipAlbumArtwork();
   }
@@ -57,6 +58,22 @@ export class AppDatabase {
         "[db] migration failed (migrateDeviceSyncPreferences):",
         err
       );
+    }
+  }
+
+  private migratePodcastSource(): void {
+    if (!this.db) return;
+    try {
+      const rows = this.db
+        .prepare("PRAGMA table_info(podcast_subscriptions)")
+        .all() as { name: string }[];
+      if (!new Set(rows.map((r) => r.name)).has("source")) {
+        this.db
+          .prepare("ALTER TABLE podcast_subscriptions ADD COLUMN source TEXT NOT NULL DEFAULT 'podcastindex'")
+          .run();
+      }
+    } catch (err) {
+      console.error("[db] migration failed (migratePodcastSource):", err);
     }
   }
 

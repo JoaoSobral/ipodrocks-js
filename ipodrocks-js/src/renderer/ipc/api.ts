@@ -30,6 +30,8 @@ import type {
   PodcastSubscription,
   PodcastEpisode,
   PodcastSearchResult,
+  FeedCandidate,
+  PodcastFeedPreview,
 } from "@shared/types";
 
 export type {
@@ -41,6 +43,8 @@ export type {
   PodcastSubscription,
   PodcastEpisode,
   PodcastSearchResult,
+  FeedCandidate,
+  PodcastFeedPreview,
   AddDeviceConfig,
   ScanResult,
   SyncOptions,
@@ -867,4 +871,16 @@ export async function podcastSetDeviceAutoPodcasts(
   enabled: boolean
 ): Promise<void> {
   await window.api.invoke("podcast:setDeviceAutoPodcasts", deviceId, enabled);
+}
+
+export async function podcastDiscoverFeeds(input: string): Promise<FeedCandidate[]> {
+  return window.api.invoke("podcast:discoverFeeds", input) as Promise<FeedCandidate[]>;
+}
+
+export async function podcastPreviewFeed(feedUrl: string): Promise<PodcastFeedPreview | { error: string }> {
+  return window.api.invoke("podcast:previewFeed", feedUrl) as Promise<PodcastFeedPreview | { error: string }>;
+}
+
+export async function podcastSubscribeByUrl(feedUrl: string): Promise<PodcastSubscription> {
+  return window.api.invoke("podcast:subscribeByUrl", feedUrl) as Promise<PodcastSubscription>;
 }
