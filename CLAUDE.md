@@ -2,7 +2,16 @@
 
 ## Testing Policy
 
-Every time a feature or functionality is added or changed, the corresponding tests **must** be created or updated in the same change. No feature work ships without test coverage for the new/modified behavior.
+Every time a feature or functionality is added or changed, the corresponding end-to-end tests **must** be created or updated in the same change. No feature work ships without end-to-end coverage of the new/modified behavior. Prefer E2E tests (Playwright, `npm run test:e2e`) over unit/integration tests.
+
+## AI Assistant (Rocksy) Tool Policy
+
+Every new user-facing action or feature **must** have a corresponding tool in `src/main/assistant/tools.ts` so Rocksy can perform it on the user's behalf. Tool tiers:
+- `read` — safe reads, run inline
+- `write-safe` — non-destructive mutations, run inline
+- `write-destructive` — deletions, syncs, scans, folder changes; always require a confirm gate
+
+Also update the system prompt rules in `assistantChat.ts` (`ASSISTANT_SYSTEM_PROMPT`) with an explicit directive so Rocksy calls the new tool instead of saying it can't do something.
 
 ## Known Technical Debt (from simplify/security review, 2026-04-21)
 

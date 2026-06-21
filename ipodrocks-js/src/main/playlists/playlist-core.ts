@@ -54,6 +54,7 @@ const PLAYLIST_SELECT = `
   SELECT p.id, p.name, p.description, pt.name AS type_name,
          p.created_at, p.updated_at,
          (SELECT COUNT(*) FROM playlist_items pi
+          JOIN tracks t ON pi.track_id = t.id
           WHERE pi.playlist_id = p.id) AS track_count
   FROM playlists p
   JOIN playlist_types pt ON p.playlist_type_id = pt.id
@@ -223,6 +224,57 @@ export class PlaylistCore {
   getPlaylistById(playlistId: number): Playlist | undefined {
     const row = this.stmtGetById.get(playlistId) as PlaylistRow | undefined;
     return row ? this._rowToPlaylist(row) : undefined;
+  }
+
+  // -- integrity ----------------------------------------------------------
+
+  getBrokenPlaylists(): { id: number; name: string; typeName: string; missingCount: number; totalCount: number }[] {
+    const rows = this.db.prepare(`
+      SELECT p.id, p.name, pt.name AS type_name,
+             COUNT(pi.id) AS total,
+             SUM(CASE WHEN t.id IS NULL THEN 1 ELSE 0 END) AS missing
+      FROM playlists p
+      JOIN playlist_types pt ON p.playlist_type_id = pt.id
+      JOIN playlist_items pi ON pi.playlist_id = p.id
+      LEFT JOIN tracks t ON pi.track_id = t.id
+      GROUP BY p.id HAVING missing > 0
+      ORDER BY p.name
+    `).all() as { id: number; name: string; type_name: string; total: number; missing: number }[];
+    return rows.map((r) => ({
+      id: r.id,
+      name: r.name,
+      typeName: r.type_name,
+      missingCount: r.missing,
+      totalCount: r.total,
+    }));
+  }
+
+  repairPlaylist(playlistId: number): { removed: number; remaining: number } {
+    const now = new Date().toISOString();
+    const run = this.db.transaction(() => {
+      const info = this.db.prepare(`
+        DELETE FROM playlist_items
+        WHERE playlist_id = ? AND track_id NOT IN (SELECT id FROM tracks)
+      `).run(playlistId);
+      // Compact positions
+      const remaining = this.db.prepare(
+        "SELECT id FROM playlist_items WHERE playlist_id = ? ORDER BY position"
+      ).all(playlistId) as { id: number }[];
+      const renum = this.db.prepare("UPDATE playlist_items SET position = ? WHERE id = ?");
+      const tx = this.db.transaction(() => {
+        remaining.forEach((row, i) => renum.run(i + 1, row.id));
+      });
+      tx();
+      this.db.prepare("UPDATE playlists SET updated_at = ? WHERE id = ?").run(now, playlistId);
+      return { removed: info.changes, remaining: remaining.length };
+    });
+    return run();
+  }
+
+  rebuildSmartPlaylist(playlistId: number): boolean {
+    const rules = this.getSmartRules(playlistId);
+    if (rules.length === 0) return false;
+    return this.updateSmartPlaylist(playlistId, this.getPlaylistById(playlistId)?.name ?? "", rules);
   }
 
   // -- smart playlist CRUD ------------------------------------------------

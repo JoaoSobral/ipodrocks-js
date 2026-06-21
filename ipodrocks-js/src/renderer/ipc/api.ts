@@ -424,6 +424,18 @@ export async function deletePlaylist(id: number): Promise<void> {
   await window.api.invoke("playlist:delete", id);
 }
 
+export async function getBrokenPlaylists(): Promise<{ id: number; name: string; typeName: string; missingCount: number; totalCount: number }[]> {
+  return window.api.invoke("playlist:getBroken") as Promise<{ id: number; name: string; typeName: string; missingCount: number; totalCount: number }[]>;
+}
+
+export async function repairPlaylist(id: number): Promise<{ removed: number; remaining: number }> {
+  return window.api.invoke("playlist:repair", id) as Promise<{ removed: number; remaining: number }>;
+}
+
+export async function rebuildPlaylist(id: number): Promise<{ rebuilt: boolean }> {
+  return window.api.invoke("playlist:rebuild", id) as Promise<{ rebuilt: boolean }>;
+}
+
 export async function exportPlaylist(id: number, deviceId?: number): Promise<string> {
   return window.api.invoke("playlist:export", id, deviceId) as Promise<string>;
 }
@@ -615,13 +627,28 @@ export async function skipSavantPlaylistChat(sessionId: string): Promise<void> {
   return window.api.invoke("savant:playlistChat:skip", sessionId) as Promise<void>;
 }
 
+export interface AssistantPendingAction {
+  toolCallId: string;
+  tool: string;
+  args: Record<string, unknown>;
+  summary: string;
+}
+
 export async function sendAssistantChat(
   userMessage: string
 ): Promise<
-  { reply: string; playlistCreated?: string } | { error: string }
+  { reply: string; playlistCreated?: string; pendingAction?: AssistantPendingAction } | { error: string }
 > {
   return window.api.invoke("assistant:chat", userMessage) as Promise<
-    { reply: string; playlistCreated?: string } | { error: string }
+    { reply: string; playlistCreated?: string; pendingAction?: AssistantPendingAction } | { error: string }
+  >;
+}
+
+export async function confirmAssistantAction(
+  action: AssistantPendingAction
+): Promise<{ reply: string } | { error: string }> {
+  return window.api.invoke("assistant:confirmAction", action) as Promise<
+    { reply: string } | { error: string }
   >;
 }
 

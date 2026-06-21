@@ -174,6 +174,7 @@ import {
 } from "./savant/savantPlaylistChat";
 import {
   sendAssistantMessage,
+  executeConfirmedAction,
   loadAssistantHistory,
   loadNonPinnedHistory,
   saveAssistantMessages,
@@ -185,7 +186,9 @@ import {
   MAX_PINNED_MEMORIES,
   invalidateAssistantCache,
   type AppPaths,
+  type PendingAction,
 } from "./assistant/assistantChat";
+import type { AiToolContext } from "./assistant/tools";
 import { randomUUID } from "crypto";
 import { logActivity, getRecentActivity } from "./activity/activity-logger";
 import { checkRateLimit } from "./llm/openRouterClient";
@@ -1784,6 +1787,30 @@ export function registerIpcHandlers(): void {
   );
 
   ipcMain.handle(
+    "playlist:getBroken",
+    safe("playlist:getBroken", async () => getPlaylistCore().getBrokenPlaylists())
+  );
+
+  ipcMain.handle(
+    "playlist:repair",
+    safe("playlist:repair", async (_event, playlistId: number) => {
+      const result = getPlaylistCore().repairPlaylist(playlistId);
+      logActivity(getLibrary().getConnection(), "playlist_repaired", `Repaired playlist #${playlistId}: removed ${result.removed} missing tracks`);
+      invalidateAssistantCache();
+      return result;
+    })
+  );
+
+  ipcMain.handle(
+    "playlist:rebuild",
+    safe("playlist:rebuild", async (_event, playlistId: number) => {
+      const ok = getPlaylistCore().rebuildSmartPlaylist(playlistId);
+      if (ok) invalidateAssistantCache();
+      return { rebuilt: ok };
+    })
+  );
+
+  ipcMain.handle(
     "playlist:getGenres",
     safe("playlist:getGenres", async () => getPlaylistCore().getGenres())
   );
@@ -2041,85 +2068,24 @@ export function registerIpcHandlers(): void {
         autoPodcastEnabled: autoPodcastSettings.enabled,
         autoPodcastIntervalMin: autoPodcastSettings.refreshIntervalMinutes,
       };
-      const rawReply = await sendAssistantMessage(fullHistory, db, config, appPaths);
-      const {
-        cleanReply,
-        pin,
-        unpinIds,
-        replaceId,
-        smartPlaylist,
-        geniusPlaylist,
-      } = parseActionTags(rawReply);
-
-      let playlistCreated: string | undefined;
-
-      try {
-        if (smartPlaylist) {
-          // F3: Validate rule IDs against DB before trusting LLM output
-          const stmtForType: Record<string, ReturnType<typeof db.prepare>> = {
-            genre: db.prepare("SELECT 1 FROM genres WHERE id = ?"),
-            artist: db.prepare("SELECT 1 FROM artists WHERE id = ?"),
-            album: db.prepare("SELECT 1 FROM albums WHERE id = ?"),
-          };
-          const validatedRules = smartPlaylist.rules.filter((r) => {
-            if (r.targetId == null) return true; // "all" rules have no ID
-            const stmt = stmtForType[r.ruleType];
-            if (!stmt) return false;
-            return stmt.get(r.targetId) != null;
-          });
-          if (validatedRules.length > 0) {
-            const core = getPlaylistCore();
-            core.createSmartPlaylist(
-              smartPlaylist.name,
-              validatedRules,
-              "",
-              smartPlaylist.trackLimit
-            );
-            logActivity(db, "playlist_generated", `Smart: ${smartPlaylist.name}`);
-            playlistCreated = smartPlaylist.name;
-          }
-        } else if (geniusPlaylist) {
-          // F3: Validate geniusType against known types
-          const validTypes = getAvailableGeniusTypes(db).map((t) => t.value);
-          if (!validTypes.includes(geniusPlaylist.geniusType)) {
-            console.warn(`[assistant] Invalid geniusType from LLM: ${geniusPlaylist.geniusType}`);
-          } else {
-            const result = generateGeniusPlaylistFromDb(
-              geniusPlaylist.geniusType,
-              db,
-              geniusPlaylist.opts
-            );
-            const trackIds = result.tracks.map((t) => t.id);
-            const maxTracks = geniusPlaylist.opts.maxTracks ?? 25;
-            if (trackIds.length > 0) {
-              const core = getPlaylistCore();
-              core.createGeniusPlaylist(
-                geniusPlaylist.geniusType,
-                trackIds,
-                null,
-                maxTracks,
-                geniusPlaylist.name
-              );
-              logActivity(
-                db,
-                "playlist_generated",
-                `Genius: ${geniusPlaylist.name} (${trackIds.length} tracks)`
-              );
-              playlistCreated = geniusPlaylist.name;
-            }
-          }
-        }
-      } catch (err) {
-        console.error("[assistant] playlist creation failed:", err);
-      }
-
-      const { userMsgId, assistantMsgId } = saveAssistantMessages(
+      const toolCtx: AiToolContext = {
         db,
-        userMessage,
-        cleanReply
-      );
+        getLibrary,
+        getPlaylistCore,
+        getDevicesCore,
+        getPodcastIndexConfig,
+      };
+      const result = await sendAssistantMessage(fullHistory, db, config, appPaths, toolCtx);
 
-      for (const uid of unpinIds) unpinMessages(db, uid);
+      const { reply, playlistCreated, pendingAction, pin, unpinIds, replaceId } = result;
+
+      // When there's a pending action, save an empty placeholder reply (the confirm UI
+      // is shown in the renderer; the real reply is stored after confirmation).
+      const replyToSave = reply || (pendingAction ? `[Pending: ${pendingAction.summary}]` : "");
+
+      const { userMsgId, assistantMsgId } = saveAssistantMessages(db, userMessage, replyToSave);
+
+      for (const uid of unpinIds ?? []) unpinMessages(db, uid);
       if (replaceId) unpinMessages(db, replaceId);
 
       if (pin || replaceId) {
@@ -2128,7 +2094,38 @@ export function registerIpcHandlers(): void {
         }
       }
 
-      return { reply: cleanReply, playlistCreated };
+      return { reply, playlistCreated, pendingAction };
+    })
+  );
+
+  ipcMain.handle(
+    "assistant:confirmAction",
+    safe("assistant:confirmAction", async (_event, action: PendingAction) => {
+      if (!checkRateLimit("assistant:chat"))
+        return { error: "Rate limit exceeded. Please wait before sending another message." };
+      const db = getLibrary().getConnection();
+      const toolCtx: AiToolContext = {
+        db,
+        getLibrary,
+        getPlaylistCore,
+        getDevicesCore,
+        getPodcastIndexConfig,
+      };
+      const rawResult = await executeConfirmedAction(action, toolCtx);
+      let resultText: string;
+      try {
+        const parsed = JSON.parse(rawResult) as Record<string, unknown>;
+        if (parsed.error) {
+          resultText = `Action failed: ${String(parsed.error)}`;
+        } else if (parsed.ok || parsed.created || parsed.deleted || parsed.removed) {
+          resultText = `Done! ${action.summary} completed successfully.`;
+        } else {
+          resultText = `Done! ${action.summary}`;
+        }
+      } catch {
+        resultText = `Done! ${action.summary}`;
+      }
+      return { reply: resultText };
     })
   );
 

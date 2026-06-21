@@ -6,6 +6,7 @@ import { Select } from "../common/Select";
 import { InfoTooltip } from "../common/InfoTooltip";
 import { useDeviceStore } from "../../stores/device-store";
 import { useSyncStore } from "../../stores/sync-store";
+import { useUIStore } from "../../stores/ui-store";
 import {
   getTracks,
   getPlaylists,
@@ -135,6 +136,8 @@ export function SyncPanel() {
   const [precheckError, setPrecheckError] = useState<string | null>(null);
 
   const [deviceId, setDeviceId] = useState<number | "">("");
+  const pendingSyncDeviceId = useUIStore((s) => s.pendingSyncDeviceId);
+  const setPendingSyncDeviceId = useUIStore((s) => s.setPendingSyncDeviceId);
   const [shadowLibs, setShadowLibs] = useState<ShadowLibrary[]>([]);
   const [prefs, dispatch] = useReducer(syncPrefsReducer, INITIAL_PREFS);
   const { syncType, fullIncludeMusic, fullIncludePodcasts, fullIncludeAudiobooks, fullIncludePlaylists, extraTrackPolicy, ignoreSpaceCheck, skipAlbumArtwork, preserveFolderStructure, customMode, selectedItems } = prefs;
@@ -386,6 +389,13 @@ export function SyncPanel() {
       setDeviceId(deviceList[0]?.id ?? "");
     }
   }, [deviceList, deviceId]);
+
+  useEffect(() => {
+    if (pendingSyncDeviceId != null) {
+      setDeviceId(pendingSyncDeviceId);
+      setPendingSyncDeviceId(null);
+    }
+  }, [pendingSyncDeviceId, setPendingSyncDeviceId]);
 
   useEffect(() => {
     if (!deviceId) return;

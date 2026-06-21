@@ -1,5 +1,25 @@
 # Changelog
 
+## [1.4.0] — 2026-06
+
+### Features
+
+#### Rocksy — Full AI agency via tool calling
+
+- **Rocksy can now act, not just answer** — The floating chat panel is backed by a real tool-calling loop (OpenAI-compatible `tools` + `tool_choice`). Instead of receiving a static dump of your library on every message, Rocksy calls structured tools to fetch data on demand and execute operations on your behalf.
+- **17 tools across four domains** — Read tools (`library_search_tracks`, `library_list_albums/artists/genres`, `podcast_search`, `podcast_list_subscriptions/episodes`, `device_list`) run inline and return live data. Write-safe tools (`playlist_create_smart`, `playlist_create_genius`, `podcast_subscribe`) execute immediately without confirmation. Write-destructive tools (`device_check`, `podcast_download_now`, `podcast_delete_episodes`, `library_add_folder`, `library_remove_folder`, `playlist_delete`) require explicit user confirmation before running.
+- **Confirm gate for destructive actions** — When Rocksy proposes a destructive action (e.g. "Download latest episodes for Syntax?"), it pauses and renders **Confirm / Cancel** buttons in the chat. The action only executes after the user clicks Confirm. The text input is locked while a confirmation is pending.
+- **Tool-call loop with iteration cap** — `sendAssistantMessage` runs up to 5 tool-call rounds per user message, feeding each tool result back to the model before it produces a final reply. This lets Rocksy do multi-step work (search → subscribe, list → create) in a single turn.
+- **Playlist creation migrated to tool calls** — Smart and Genius playlists are now created via `playlist_create_smart` / `playlist_create_genius` tools (with full DB-ID validation) instead of the old `<SMART_PLAYLIST>` / `<GENIUS_PLAYLIST>` action-tag scheme. The legacy tags remain supported as a fallback.
+- **`assistant:confirmAction` IPC channel** — A new channel executes a previously proposed destructive tool after the user confirms it in the renderer, and returns a human-readable result message that is appended to the chat history.
+- **Expanded `ActivityOperation` type** — Added `remove_folder`, `playlist_deleted`, `podcast_subscribed`, `podcast_downloaded`, `podcast_episodes_deleted` to the activity log's operation union so all AI-initiated writes are recorded in Recent Activity.
+
+### Testing
+
+- **`assistant-tools.test.ts`** — 31 new cases covering the tool registry: no duplicate names, every tool has required fields, `getToolByName` lookups, `buildToolDefinitions` produces valid OpenAI-compatible schemas; read tools return correct data; write-safe tools (`playlist_create_smart`) reject empty names, empty rules, and invalid IDs; every write-destructive tool is correctly classified; `library_remove_folder` and `playlist_delete` happy-path and invalid-arg cases; `podcast_delete_episodes` summarize shows episode count.
+
+---
+
 ## [1.3.7] — 2026-06
 
 ### Bug fixes

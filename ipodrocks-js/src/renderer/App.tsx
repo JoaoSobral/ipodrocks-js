@@ -164,11 +164,27 @@ export function App() {
   const [appVersion, setAppVersion] = useState("");
   const { theme } = useThemeStore();
   const setOpenSettings = useUIStore((s) => s.setOpenSettings);
+  const setNavigateTo = useUIStore((s) => s.setNavigateTo);
+  const pendingSyncDeviceId = useUIStore((s) => s.pendingSyncDeviceId);
+  const pendingLibraryScan = useUIStore((s) => s.pendingLibraryScan);
 
   useEffect(() => {
     setOpenSettings(() => setSettingsOpen(true));
     return () => setOpenSettings(null);
   }, [setOpenSettings]);
+
+  useEffect(() => {
+    setNavigateTo((panel: string) => setActive(panel as Panel));
+    return () => setNavigateTo(null);
+  }, [setNavigateTo]);
+
+  useEffect(() => {
+    if (pendingSyncDeviceId != null) setActive("sync");
+  }, [pendingSyncDeviceId]);
+
+  useEffect(() => {
+    if (pendingLibraryScan) setActive("library");
+  }, [pendingLibraryScan]);
 
   useEffect(() => {
     getAppVersion().then(({ version }) => setAppVersion(version));
