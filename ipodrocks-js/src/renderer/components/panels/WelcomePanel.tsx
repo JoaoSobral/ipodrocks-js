@@ -132,6 +132,7 @@ export function WelcomePanel() {
           <li><strong className="text-foreground">Dashboard</strong> — overview of your library and devices</li>
           <li><strong className="text-foreground">Library</strong> — add folders and scan your music</li>
           <li><strong className="text-foreground">Playlists</strong> — create smart, Genius, or Savant playlists</li>
+          <li><strong className="text-foreground">Auto Podcasts</strong> — subscribe and schedule episode downloads</li>
           <li><strong className="text-foreground">Devices</strong> — add and configure each Rockbox or mountable device</li>
           <li><strong className="text-foreground">Sync</strong> — copy music and podcasts to the device</li>
           <li><strong className="text-foreground">Settings</strong> (gear icon) — add your OpenRouter API key for Savant and Rocksy</li>
