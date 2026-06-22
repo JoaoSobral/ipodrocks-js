@@ -874,7 +874,11 @@ export async function podcastSetDeviceAutoPodcasts(
 }
 
 export async function podcastDiscoverFeeds(input: string): Promise<FeedCandidate[]> {
-  return window.api.invoke("podcast:discoverFeeds", input) as Promise<FeedCandidate[]>;
+  const result = await window.api.invoke("podcast:discoverFeeds", input) as FeedCandidate[] | { error: string };
+  if (result && typeof result === "object" && "error" in result) {
+    throw new Error((result as { error: string }).error);
+  }
+  return result as FeedCandidate[];
 }
 
 export async function podcastPreviewFeed(feedUrl: string): Promise<PodcastFeedPreview | { error: string }> {

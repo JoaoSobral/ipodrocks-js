@@ -121,7 +121,7 @@ test("pasting an RSS feed URL shows a preview and subscribes", async () => {
   await expect(window.locator("text=Test Podcast").first()).toBeVisible({ timeout: 15_000 });
 
   // Click Subscribe
-  await window.locator('button:has-text("Subscribe")').click();
+  await window.locator('button:text-is("+ Subscribe")').click();
 
   // Success state
   await expect(window.locator("text=Subscribed to").first()).toBeVisible({ timeout: 10_000 });
@@ -140,7 +140,7 @@ test("pasting a podcast website URL discovers the feed and subscribes", async ()
   // Should discover and preview
   await expect(window.locator("text=Test Podcast").first()).toBeVisible({ timeout: 15_000 });
 
-  await window.locator('button:has-text("Subscribe")').click();
+  await window.locator('button:text-is("+ Subscribe")').click();
   await expect(window.locator("text=Subscribed to").first()).toBeVisible({ timeout: 10_000 });
 });
 

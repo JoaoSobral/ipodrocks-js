@@ -34,8 +34,8 @@ test("Library panel has a Playlist filter select and no tracks/playlists tab tog
   await window.waitForTimeout(500);
 
   // The old tab buttons ("Tracks" / "Playlists" toggle) must not exist
-  const tracksTab = window.locator('button:has-text("Tracks"), [role="tab"]:has-text("Tracks")');
-  const playlistsTab = window.locator('button:has-text("Playlists"), [role="tab"]:has-text("Playlists")');
+  const tracksTab = window.locator('[role="tab"]:has-text("Tracks")');
+  const playlistsTab = window.locator('[role="tab"]:has-text("Playlists")');
   await expect(tracksTab).toHaveCount(0);
   await expect(playlistsTab).toHaveCount(0);
 

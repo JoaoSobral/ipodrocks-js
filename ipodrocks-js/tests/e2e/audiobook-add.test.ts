@@ -103,7 +103,7 @@ type Window = Awaited<ReturnType<LaunchedApp["app"]["firstWindow"]>>;
 async function openAudiobooksPanel(window: Window) {
   await window.waitForLoadState("domcontentloaded");
   const link = window
-    .locator('button:has-text("Auto Audiobooks"), [data-testid="nav-autoaudiobooks"]')
+    .locator('button:has-text("Extra Audiobooks"), [data-testid="nav-autoaudiobooks"]')
     .first();
   await link.waitFor({ state: "visible", timeout: 10_000 });
   await link.click();
