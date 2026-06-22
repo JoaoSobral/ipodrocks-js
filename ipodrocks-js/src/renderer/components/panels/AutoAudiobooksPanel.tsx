@@ -17,7 +17,7 @@ function formatDuration(totalSeconds: number): string {
 }
 
 export function AutoAudiobooksPanel() {
-  const { subscriptions, loading, error, fetchSubs } = useAudiobooksStore();
+  const { subscriptions, loading, error, fetchSubs, applyCoverUpdate } = useAudiobooksStore();
   const [searchOpen, setSearchOpen] = useState(false);
   const [selectedSubId, setSelectedSubId] = useState<number | null>(null);
   const selectedSub: AudiobookSubscription | null =
@@ -27,6 +27,15 @@ export function AutoAudiobooksPanel() {
   useEffect(() => {
     fetchSubs();
   }, [fetchSubs]);
+
+  // Covers download asynchronously after a book is added; swap the placeholder
+  // for the real cover live when the main process reports it's ready.
+  useEffect(() => {
+    const off = window.api.on("audiobook:coverUpdated", (sub) => {
+      applyCoverUpdate(sub as AudiobookSubscription);
+    });
+    return off;
+  }, [applyCoverUpdate]);
 
   const totalPages = Math.ceil(subscriptions.length / PAGE_SIZE);
   const paginated = subscriptions.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);

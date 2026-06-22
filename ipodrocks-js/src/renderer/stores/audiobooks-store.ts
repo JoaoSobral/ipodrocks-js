@@ -21,6 +21,7 @@ interface AudiobooksState {
   error: string | null;
 
   fetchSubs: () => Promise<void>;
+  applyCoverUpdate: (sub: AudiobookSubscription) => void;
   subscribe: (result: LibrivoxSearchResult) => Promise<void>;
   unsubscribe: (subId: number) => Promise<void>;
   fetchChapters: (subId: number) => Promise<void>;
@@ -53,6 +54,11 @@ export const useAudiobooksStore = create<AudiobooksState>((set, get) => ({
       set({ error: (e as Error).message, loading: false });
     }
   },
+
+  applyCoverUpdate: (sub) =>
+    set((state) => ({
+      subscriptions: state.subscriptions.map((s) => (s.id === sub.id ? sub : s)),
+    })),
 
   subscribe: async (result) => {
     const sub = await audiobookSubscribe(result);

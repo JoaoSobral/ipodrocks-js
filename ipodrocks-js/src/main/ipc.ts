@@ -2634,9 +2634,12 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(
     "audiobook:subscribe",
-    safe("audiobook:subscribe", async (_event, result: import("../shared/types").LibrivoxSearchResult) => {
+    safe("audiobook:subscribe", async (event, result: import("../shared/types").LibrivoxSearchResult) => {
       const db = getLibrary().getConnection();
-      const sub = await audiobookSubscribeFn(db, result);
+      const sub = await audiobookSubscribeFn(db, result, (updated) => {
+        // Cover finished downloading after we returned — push it to the renderer.
+        if (!event.sender.isDestroyed()) event.sender.send("audiobook:coverUpdated", updated);
+      });
       invalidateAssistantCache();
       logActivity(db, "audiobook_subscribed", `Added audiobook: ${result.title}`);
       return sub;

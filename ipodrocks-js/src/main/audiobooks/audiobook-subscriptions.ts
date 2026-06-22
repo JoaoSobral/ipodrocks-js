@@ -85,7 +85,8 @@ export function listSubscriptions(db: Database.Database): AudiobookSubscription[
 
 export async function subscribe(
   db: Database.Database,
-  result: LibrivoxSearchResult
+  result: LibrivoxSearchResult,
+  onCoverReady?: (sub: AudiobookSubscription) => void
 ): Promise<AudiobookSubscription> {
   const existing = db
     .prepare("SELECT * FROM audiobook_subscriptions WHERE librivox_id = ?")
@@ -136,8 +137,18 @@ export async function subscribe(
     console.warn("[audiobooks] failed to fetch chapters for", result.rssUrl, err);
   }
 
-  // Fire-and-forget cover fetch — never blocks or fails the subscription
-  void downloadCover(db, subId).catch(() => {});
+  // Fire-and-forget cover fetch — never blocks or fails the subscription.
+  // Notify the caller once it lands so the UI can swap the placeholder for the
+  // real cover without a manual refresh.
+  void downloadCover(db, subId)
+    .then((localPath) => {
+      if (!localPath || !onCoverReady) return;
+      const updated = db
+        .prepare("SELECT * FROM audiobook_subscriptions WHERE id = ?")
+        .get(subId) as SubRow | undefined;
+      if (updated) onCoverReady(rowToSub(updated));
+    })
+    .catch(() => {});
 
   const row = db
     .prepare("SELECT * FROM audiobook_subscriptions WHERE id = ?")

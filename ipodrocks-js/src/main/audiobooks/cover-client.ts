@@ -12,6 +12,22 @@ export function setCoverApiBaseUrls(opts: {
   if (opts.openLibraryCovers !== undefined) _openLibraryCoversBase = opts.openLibraryCovers;
 }
 
+/**
+ * Upgrades Google's `http:` cover links to `https:`, but leaves loopback hosts
+ * untouched so local stub servers (used in E2E tests) keep working over http.
+ */
+function preferHttps(url: string): string {
+  try {
+    const host = new URL(url).hostname;
+    if (host === "127.0.0.1" || host === "localhost" || host === "::1" || host === "[::1]") {
+      return url;
+    }
+  } catch {
+    /* not a parseable URL — fall through to the upgrade */
+  }
+  return url.replace(/^http:/, "https:");
+}
+
 async function tryGoogleBooks(title: string, author: string | null): Promise<string | null> {
   try {
     const q = author
@@ -30,7 +46,7 @@ async function tryGoogleBooks(title: string, author: string | null): Promise<str
     if (!links) return null;
     for (const key of ["extraLarge", "large", "medium", "small", "thumbnail", "smallThumbnail"]) {
       if (links[key]) {
-        return links[key].replace(/^http:/, "https:").replace("&edge=curl", "");
+        return preferHttps(links[key]).replace("&edge=curl", "");
       }
     }
     return null;
@@ -93,8 +109,8 @@ async function googleBooksCandidates(title: string, author: string | null): Prom
         links.extraLarge ?? links.large ?? links.medium ?? links.small ?? thumb ?? null;
       if (!thumb || !large) continue;
       candidates.push({
-        thumbnailUrl: thumb.replace(/^http:/, "https:").replace("&edge=curl", ""),
-        largeUrl: large.replace(/^http:/, "https:").replace("&edge=curl", ""),
+        thumbnailUrl: preferHttps(thumb).replace("&edge=curl", ""),
+        largeUrl: preferHttps(large).replace("&edge=curl", ""),
         bookTitle: item.volumeInfo.title ?? title,
         source: "google-books",
       });

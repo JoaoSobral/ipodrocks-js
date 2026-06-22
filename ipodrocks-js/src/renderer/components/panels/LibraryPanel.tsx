@@ -735,6 +735,7 @@ export function LibraryPanel() {
                 onChange={(v) => setSelectedPlaylistId(v ? Number(v) : null)}
                 placeholder="All"
                 className="w-40"
+                testId="playlist-filter"
               />
             </div>
           </div>

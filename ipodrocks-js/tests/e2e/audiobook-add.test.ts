@@ -50,7 +50,7 @@ function makeStubServer(): Promise<{ url: string; server: http.Server }> {
     const server = http.createServer((req, res) => {
       const port = (server.address() as net.AddressInfo).port;
 
-      if (req.url?.startsWith("/api/feed/audiobooks/")) {
+      if (req.url?.startsWith("/api/feed/audiobooks")) {
         // Stub LibriVox search API
         const body = JSON.stringify({
           books: [
@@ -154,11 +154,11 @@ test("searching and adding a LibriVox book shows it in the panel", async () => {
   await expect(window.locator("text=Pride and Prejudice").first()).toBeVisible({ timeout: 15_000 });
 
   // Click Add
-  const addBtn = window.locator('button:has-text("Add")').first();
+  const addBtn = window.locator('button:text-is("Add")').first();
   await addBtn.click();
 
   // Button should change to "Added"
-  await expect(window.locator('button:has-text("Added")').first()).toBeVisible({ timeout: 8_000 });
+  await expect(window.locator('button:text-is("Added")').first()).toBeVisible({ timeout: 8_000 });
 
   // Close modal
   const closeBtn = window.locator('[aria-label="Close"], button:has-text("Close"), [data-testid="modal-close"]').first();
@@ -181,8 +181,11 @@ test("added audiobook appears in Sync panel Audiobooks list with Auto badge", as
   await input.waitFor({ state: "visible", timeout: 5_000 });
   await input.fill("Pride");
   await expect(window.locator("text=Pride and Prejudice").first()).toBeVisible({ timeout: 15_000 });
-  await window.locator('button:has-text("Add")').first().click();
-  await expect(window.locator('button:has-text("Added")').first()).toBeVisible({ timeout: 8_000 });
+  await window.locator('button:text-is("Add")').first().click();
+  await expect(window.locator('button:text-is("Added")').first()).toBeVisible({ timeout: 8_000 });
+
+  // Close the search modal so its backdrop doesn't block nav clicks
+  await window.keyboard.press("Escape");
 
   // Navigate to Sync panel
   const syncLink = window.locator('button:has-text("Sync")').first();
@@ -208,8 +211,8 @@ test("removing an auto-audiobook removes it from the panel", async () => {
   await input.waitFor({ state: "visible", timeout: 5_000 });
   await input.fill("Pride");
   await expect(window.locator("text=Pride and Prejudice").first()).toBeVisible({ timeout: 15_000 });
-  await window.locator('button:has-text("Add")').first().click();
-  await expect(window.locator('button:has-text("Added")').first()).toBeVisible({ timeout: 8_000 });
+  await window.locator('button:text-is("Add")').first().click();
+  await expect(window.locator('button:text-is("Added")').first()).toBeVisible({ timeout: 8_000 });
   await window.keyboard.press("Escape");
 
   // Open the detail modal
@@ -231,8 +234,8 @@ test("added audiobook shows a cover image in the panel", async () => {
   await input.waitFor({ state: "visible", timeout: 5_000 });
   await input.fill("Pride");
   await expect(window.locator("text=Pride and Prejudice").first()).toBeVisible({ timeout: 15_000 });
-  await window.locator('button:has-text("Add")').first().click();
-  await expect(window.locator('button:has-text("Added")').first()).toBeVisible({ timeout: 8_000 });
+  await window.locator('button:text-is("Add")').first().click();
+  await expect(window.locator('button:text-is("Added")').first()).toBeVisible({ timeout: 8_000 });
   await window.keyboard.press("Escape");
 
   // Wait for cover download (async after subscribe) and check <img> is rendered

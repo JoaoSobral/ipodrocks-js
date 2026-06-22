@@ -18,6 +18,7 @@ interface SelectProps {
   className?: string;
   disabled?: boolean;
   hint?: string;
+  testId?: string;
 }
 
 export function Select({
@@ -30,6 +31,7 @@ export function Select({
   className = "",
   disabled = false,
   hint,
+  testId,
 }: SelectProps) {
   const options = Array.isArray(optionsProp) ? optionsProp : [];
   const [open, setOpen] = useState(false);
@@ -102,7 +104,7 @@ export function Select({
   );
 
   return (
-    <div ref={containerRef} className={`relative ${className}`}>
+    <div ref={containerRef} className={`relative ${className}`} data-testid={testId}>
       {label && (
         <Label>
           <span className="inline-flex items-center gap-1">
