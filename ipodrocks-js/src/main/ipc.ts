@@ -152,6 +152,20 @@ import {
 import { refreshSubscription, refreshAll, refreshAllForNewFolder } from "./podcasts/podcast-refresh";
 import { discoverFeeds, fetchAndParseFeed, feedPreview, importFeed } from "./podcasts/podcast-feed-import";
 import { syncPodcastsToDevice } from "./podcasts/podcast-device-sync";
+import { searchAudiobooks } from "./audiobooks/librivox-client";
+import {
+  listSubscriptions as listAudiobookSubs,
+  subscribe as audiobookSubscribeFn,
+  unsubscribe as audiobookUnsubscribeFn,
+  listChapters,
+  subLabel as audiobookSubLabel,
+} from "./audiobooks/audiobook-subscriptions";
+import { syncAutoAudiobooksToDevice } from "./audiobooks/audiobook-device-sync";
+import {
+  downloadCover as downloadAudiobookCover,
+  downloadCoverFromUrl as downloadAudiobookCoverFromUrl,
+} from "./audiobooks/audiobook-cover";
+import { searchCoverCandidates } from "./audiobooks/cover-client";
 import { startPodcastScheduler, stopPodcastScheduler } from "./podcasts/podcast-scheduler";
 import { downloadEpisode } from "./podcasts/podcast-downloader";
 import { getPodcastsRoot, getDefaultPodcastsRoot } from "./podcasts/podcast-storage";
@@ -259,6 +273,10 @@ function getLibrary(): Library {
     devicesCore = new DevicesCore(library.getConnection());
   }
   return library;
+}
+
+export function getLibraryDb(): import("better-sqlite3").Database {
+  return getLibrary().getConnection();
 }
 
 function getPlaylistCore(): PlaylistCore {
@@ -1309,9 +1327,10 @@ export function registerIpcHandlers(): void {
       const willRunPodcast = Object.keys(podcastLibraryTracks).length > 0;
       const willRunAudiobook = Object.keys(audiobookLibraryTracks).length > 0;
       const hasAutoPodcasts = device.profile.autoPodcastsEnabled === true;
+      const hasAutoAudiobooks = listAudiobookSubs(lib.getConnection()).length > 0;
       const isEmptyLibrary = !willRunMusic && !willRunPodcast && !willRunAudiobook;
 
-      if (isEmptyLibrary && !hasAutoPodcasts) {
+      if (isEmptyLibrary && !hasAutoPodcasts && !hasAutoAudiobooks) {
         const isShadow = device.profile.sourceLibraryType === "shadow" && device.profile.shadowLibraryId != null;
         const emptyMessage = isShadow
           ? "Shadow library contains no files to sync. Build or select a shadow library that has tracks."
@@ -1486,6 +1505,62 @@ export function registerIpcHandlers(): void {
         }
       }
 
+      // Auto Audiobooks: download-on-sync for books in scope
+      try {
+        const autoAbResult = await syncAutoAudiobooksToDevice(
+          lib.getConnection(),
+          opts.deviceId,
+          {
+            syncType: opts.syncType,
+            includeAudiobooks: opts.includeAudiobooks !== false,
+            selectedLabels: opts.selections?.audiobooks ?? [],
+            mode: opts.selections?.mode ?? "include",
+          },
+          syncOpts.progressCallback
+        );
+        result.synced += autoAbResult.synced;
+        result.errors += autoAbResult.errors;
+      } catch (err) {
+        console.error("[ipc] Auto audiobook sync to device failed:", err);
+      }
+
+      // "Remove all" — wipe auto podcasts and extra audiobooks off the device
+      if (opts.extraTrackPolicy === "remove-all") {
+        const db = lib.getConnection();
+        try {
+          const podcastRows = db
+            .prepare("SELECT device_relative_path FROM device_podcast_synced WHERE device_id = ?")
+            .all(opts.deviceId) as { device_relative_path: string }[];
+          for (const row of podcastRows) {
+            const abs = path.join(device.profile.mountPath, row.device_relative_path);
+            try { fs.unlinkSync(abs); } catch { /* ignore */ }
+          }
+          db.prepare("DELETE FROM device_podcast_synced WHERE device_id = ?").run(opts.deviceId);
+          if (podcastRows.length > 0) {
+            syncOpts.progressCallback?.({ event: "log", message: `Remove all: removed ${podcastRows.length} auto-podcast file(s) from device.` });
+            result.removed += podcastRows.length;
+          }
+        } catch (err) {
+          console.error("[ipc] remove-all: podcast cleanup failed:", err);
+        }
+        try {
+          const abRows = db
+            .prepare("SELECT device_relative_path FROM device_audiobook_synced WHERE device_id = ?")
+            .all(opts.deviceId) as { device_relative_path: string }[];
+          for (const row of abRows) {
+            const abs = path.join(device.profile.mountPath, row.device_relative_path);
+            try { fs.unlinkSync(abs); } catch { /* ignore */ }
+          }
+          db.prepare("DELETE FROM device_audiobook_synced WHERE device_id = ?").run(opts.deviceId);
+          if (abRows.length > 0) {
+            syncOpts.progressCallback?.({ event: "log", message: `Remove all: removed ${abRows.length} extra-audiobook file(s) from device.` });
+            result.removed += abRows.length;
+          }
+        } catch (err) {
+          console.error("[ipc] remove-all: extra audiobook cleanup failed:", err);
+        }
+      }
+
       if (result.errors > 0) result.status = "error";
 
       const shouldWritePlaylists =
@@ -1570,7 +1645,7 @@ export function registerIpcHandlers(): void {
               event: "log",
               message: `${orphanPaths.length} orphan playlist(s) on device.`,
             });
-            if (opts.extraTrackPolicy === "remove") {
+            if (opts.extraTrackPolicy === "remove" || opts.extraTrackPolicy === "remove-all") {
               const { removed } = removeExtraTracks(
                 orphanPaths,
                 syncOpts.progressCallback,
@@ -2540,4 +2615,78 @@ export function registerIpcHandlers(): void {
 
   // Start the podcast background scheduler
   startPodcastScheduler(getLibrary().getConnection());
+
+  // ---- Auto Audiobooks ----
+  ipcMain.handle(
+    "audiobook:search",
+    safe("audiobook:search", async (_event, term: string) => {
+      return searchAudiobooks(term);
+    })
+  );
+
+  ipcMain.handle(
+    "audiobook:listSubs",
+    safe("audiobook:listSubs", async () => {
+      const db = getLibrary().getConnection();
+      return listAudiobookSubs(db);
+    })
+  );
+
+  ipcMain.handle(
+    "audiobook:subscribe",
+    safe("audiobook:subscribe", async (_event, result: import("../shared/types").LibrivoxSearchResult) => {
+      const db = getLibrary().getConnection();
+      const sub = await audiobookSubscribeFn(db, result);
+      invalidateAssistantCache();
+      logActivity(db, "audiobook_subscribed", `Added audiobook: ${result.title}`);
+      return sub;
+    })
+  );
+
+  ipcMain.handle(
+    "audiobook:unsubscribe",
+    safe("audiobook:unsubscribe", async (_event, subId: number) => {
+      const db = getLibrary().getConnection();
+      audiobookUnsubscribeFn(db, subId);
+      invalidateAssistantCache();
+      return undefined;
+    })
+  );
+
+  ipcMain.handle(
+    "audiobook:listChapters",
+    safe("audiobook:listChapters", async (_event, subId: number) => {
+      const db = getLibrary().getConnection();
+      return listChapters(db, subId);
+    })
+  );
+
+  ipcMain.handle(
+    "audiobook:refreshCover",
+    safe("audiobook:refreshCover", async (_event, subId: number) => {
+      const db = getLibrary().getConnection();
+      await downloadAudiobookCover(db, subId);
+      return listAudiobookSubs(db).find((s) => s.id === subId) ?? null;
+    })
+  );
+
+  ipcMain.handle(
+    "audiobook:searchCoverCandidates",
+    safe("audiobook:searchCoverCandidates", async (_event, subId: number) => {
+      const db = getLibrary().getConnection();
+      const sub = listAudiobookSubs(db).find((s) => s.id === subId);
+      if (!sub) return [];
+      return searchCoverCandidates(sub.title, sub.author);
+    })
+  );
+
+  ipcMain.handle(
+    "audiobook:setCoverFromUrl",
+    safe("audiobook:setCoverFromUrl", async (_event, subId: number, url: string) => {
+      const db = getLibrary().getConnection();
+      const localPath = await downloadAudiobookCoverFromUrl(db, subId, url);
+      if (!localPath) return null;
+      return listAudiobookSubs(db).find((s) => s.id === subId) ?? null;
+    })
+  );
 }

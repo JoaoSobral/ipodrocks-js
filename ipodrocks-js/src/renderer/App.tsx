@@ -7,6 +7,7 @@ import { DevicePanel } from "./components/panels/DevicePanel";
 import { SyncPanel } from "./components/panels/SyncPanel";
 import { PlaylistPanel } from "./components/panels/PlaylistPanel";
 import { AutoPodcastsPanel } from "./components/panels/AutoPodcastsPanel";
+import { AutoAudiobooksPanel } from "./components/panels/AutoAudiobooksPanel";
 import { SettingsPanel } from "./components/panels/SettingsPanel";
 import { FloatChat } from "./components/assistant/FloatChat";
 import { ThemeToggle } from "./components/common/ThemeToggle";
@@ -14,6 +15,7 @@ import { BuyMeACoffeeButton } from "./components/common/BuyMeACoffeeButton";
 import { PlayerBar } from "./components/player/PlayerBar";
 import { useThemeStore } from "./stores/theme-store";
 import { useUIStore } from "./stores/ui-store";
+import { Toaster } from "sonner";
 
 type Panel =
   | "welcome"
@@ -22,7 +24,8 @@ type Panel =
   | "devices"
   | "sync"
   | "playlists"
-  | "autopodcasts";
+  | "autopodcasts"
+  | "autoaudiobooks";
 
 interface NavItem {
   id: Panel;
@@ -107,6 +110,21 @@ const navItems: NavItem[] = [
     ),
   },
   {
+    id: "autoaudiobooks",
+    label: "Extra Audiobooks",
+    icon: (
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        width="20"
+        height="20"
+        viewBox="0 0 24 24"
+        fill="currentColor"
+      >
+        <path d="M19 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h13a1 1 0 0 0 1-1V3a1 1 0 0 0-1-1M6 4h1v16H6zm13 16H9V4h10z" />
+      </svg>
+    ),
+  },
+  {
     id: "devices",
     label: "Devices",
     icon: (
@@ -146,6 +164,7 @@ const panels: Record<Panel, () => JSX.Element> = {
   sync: SyncPanel,
   playlists: PlaylistPanel,
   autopodcasts: AutoPodcastsPanel,
+  autoaudiobooks: AutoAudiobooksPanel,
 };
 
 const SHOW_THEME_TOGGLE: Panel[] = [
@@ -156,6 +175,7 @@ const SHOW_THEME_TOGGLE: Panel[] = [
   "sync",
   "playlists",
   "autopodcasts",
+  "autoaudiobooks",
 ];
 
 export function App() {
@@ -299,6 +319,8 @@ export function App() {
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
       />
+
+      <Toaster theme={theme === "dark" ? "dark" : "light"} richColors />
     </div>
   );
 }

@@ -51,8 +51,8 @@ export function getDeviceSyncPreferences(
   return {
     syncType: row.sync_type === "custom" ? "custom" : "full",
     extraTrackPolicy:
-      row.extra_track_policy === "remove" || row.extra_track_policy === "prompt"
-        ? row.extra_track_policy
+      row.extra_track_policy === "remove" || row.extra_track_policy === "remove-all" || row.extra_track_policy === "prompt"
+        ? (row.extra_track_policy as import("../../shared/types").ExtraTrackPolicy)
         : "keep",
     includeMusic: row.include_music === 1,
     includePodcasts: row.include_podcasts === 1,

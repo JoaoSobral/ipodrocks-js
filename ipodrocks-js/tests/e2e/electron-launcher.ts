@@ -18,7 +18,7 @@ export interface LaunchedApp {
   cleanup: () => Promise<void>;
 }
 
-export async function launchApp(): Promise<LaunchedApp> {
+export async function launchApp(extraEnv?: Record<string, string>): Promise<LaunchedApp> {
   if (!fs.existsSync(APP_ENTRY)) {
     throw new Error(
       `Built app not found at ${APP_ENTRY}. Run "npm run build" before "npx playwright test".`
@@ -31,6 +31,7 @@ export async function launchApp(): Promise<LaunchedApp> {
       ...process.env,
       // Avoid auto-update checks while running tests
       IPODROCKS_DISABLE_UPDATE_CHECK: "1",
+      ...extraEnv,
     },
   });
   return {

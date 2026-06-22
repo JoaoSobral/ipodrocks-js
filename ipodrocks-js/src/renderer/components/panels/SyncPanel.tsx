@@ -19,6 +19,7 @@ import {
   repairPlaylist,
 } from "../../ipc/api";
 import { SyncProgressModal } from "../modals/SyncProgressModal";
+import { useAudiobooksStore } from "../../stores/audiobooks-store";
 import type { Track, Playlist, ShadowLibrary } from "@shared/types";
 import type { CustomSelectionMode, CustomSelections, ExtraTrackPolicy, SyncOptions, SyncType } from "@shared/types";
 
@@ -143,6 +144,12 @@ export function SyncPanel() {
   const [playlistAffectedArtists, setPlaylistAffectedArtists] = useState<Set<string>>(new Set());
   const [playlistAffectedGenres, setPlaylistAffectedGenres] = useState<Set<string>>(new Set());
 
+  const { subscriptions: audiobookSubs, fetchSubs: fetchAudiobookSubs } = useAudiobooksStore();
+  useEffect(() => { fetchAudiobookSubs(); }, [fetchAudiobookSubs]);
+  const autoAudiobookLabels = useMemo(() => {
+    return new Set(audiobookSubs.map((s) => s.author ? `${s.title} — ${s.author}` : s.title));
+  }, [audiobookSubs]);
+
   const albums = useMemo(() => {
     const list = Array.isArray(tracks) ? tracks : [];
     const seen = new Set<string>();
@@ -197,8 +204,10 @@ export function SyncPanel() {
         const artist = (t?.artist ?? "").trim();
         seen.add(artist ? `${title} — ${artist}` : title);
       });
+    // Merge auto-audiobook labels from LibriVox subscriptions
+    autoAudiobookLabels.forEach((label) => seen.add(label));
     return [...seen].sort();
-  }, [tracks]);
+  }, [tracks, autoAudiobookLabels]);
 
   const playlistNames = useMemo(
     () => [...new Set((Array.isArray(playlists) ? playlists : []).map((p) => p?.name ?? ""))].sort(),
@@ -342,6 +351,10 @@ export function SyncPanel() {
       if (selectedItems.audiobooks.has(label)) selected.audiobooks.add(label);
       else partial.audiobooks.add(label);
     });
+    // Auto-audiobooks have no library tracks — reflect their selection state directly
+    autoAudiobookLabels.forEach((label) => {
+      if (selectedItems.audiobooks.has(label)) selected.audiobooks.add(label);
+    });
     selectedItems.playlists.forEach((name) => selected.playlists.add(name));
 
     playlistAffectedAlbums.forEach((label) => {
@@ -358,6 +371,7 @@ export function SyncPanel() {
   }, [
     tracks,
     selectedItems,
+    autoAudiobookLabels,
     playlistAffectedAlbums,
     playlistAffectedArtists,
     playlistAffectedGenres,
@@ -642,12 +656,13 @@ export function SyncPanel() {
           </div>
           <Select
             label="Orphan Policy"
-            tooltip="What to do with tracks already on the device that are not in the current sync selection or part of the main library. Remove deletes them, Keep leaves them untouched, Prompt asks you before making changes."
+            tooltip="What to do with files already on the device that are no longer part of the sync. Keep leaves them untouched. Remove orphans deletes library tracks that are no longer in the sync selection. Remove all does the same plus wipes every auto-podcast and extra audiobook off the device. Prompt asks you before making changes."
             value={extraTrackPolicy}
             onChange={(v) => dispatch({ type: "setExtraTrackPolicy", value: v as ExtraTrackPolicy })}
             options={[
-              { value: "remove", label: "Remove" },
               { value: "keep", label: "Keep" },
+              { value: "remove", label: "Remove orphans" },
+              { value: "remove-all", label: "Remove all" },
               { value: "prompt", label: "Prompt" },
             ]}
           />
@@ -721,6 +736,7 @@ export function SyncPanel() {
                       const pl = key === "playlists" ? (Array.isArray(playlists) ? playlists : []).find((p) => (p?.name ?? "") === label) : null;
                       const typeLabel =
                         pl?.typeName === "genius" ? "Genius" : pl?.typeName === "smart" ? "Smart" : null;
+                      const isAutoAudiobook = key === "audiobooks" && autoAudiobookLabels.has(label);
                       return (
                         <label
                           key={label}
@@ -733,6 +749,14 @@ export function SyncPanel() {
                             className="accent-primary rounded"
                           />
                           <span className="truncate min-w-0">{label}</span>
+                          {isAutoAudiobook && (
+                            <span
+                              className="shrink-0 text-[10px] font-medium px-1 py-0.5 rounded bg-primary/10 text-primary"
+                              title="LibriVox extra audiobook — downloads on sync"
+                            >
+                              Extra
+                            </span>
+                          )}
                           {typeLabel && (
                             <span
                               className="shrink-0 text-[10px] font-medium opacity-90"

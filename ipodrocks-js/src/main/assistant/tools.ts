@@ -22,6 +22,13 @@ import {
 } from "../podcasts/podcast-subscriptions";
 import { searchPodcasts } from "../podcasts/podcast-index-client";
 import { importFeed } from "../podcasts/podcast-feed-import";
+import { searchAudiobooks } from "../audiobooks/librivox-client";
+import {
+  listSubscriptions as listAudiobookSubscriptions,
+  subscribe as audiobookSubscribeFn,
+  unsubscribe as audiobookUnsubscribeFn,
+} from "../audiobooks/audiobook-subscriptions";
+import { downloadCover as downloadAudiobookCover } from "../audiobooks/audiobook-cover";
 import { logActivity } from "../activity/activity-logger";
 import { invalidateAssistantCache } from "./assistantChat";
 import {
@@ -614,6 +621,118 @@ const podcast_add_by_url: AiTool = {
 };
 
 // ---------------------------------------------------------------------------
+// Audiobook tools (LibriVox)
+// ---------------------------------------------------------------------------
+
+const audiobook_search: AiTool = {
+  name: "audiobook_search",
+  description: "Search LibriVox for free public-domain audiobooks. Returns title, author, chapter count, duration, and other details. No API key required.",
+  parameters: {
+    type: "object",
+    properties: {
+      query: { type: "string", description: "Search term (book title or author name)" },
+    },
+    required: ["query"],
+  },
+  kind: "read",
+  summarize: (a) => `Search LibriVox for "${a.query}"`,
+  async run(args) {
+    return searchAudiobooks(String(args.query));
+  },
+};
+
+const audiobook_list_subscriptions: AiTool = {
+  name: "audiobook_list_subscriptions",
+  description: "List all extra audiobooks the user has added from LibriVox.",
+  parameters: { type: "object", properties: {} },
+  kind: "read",
+  summarize: () => "List extra audiobook subscriptions",
+  async run(_args, ctx) {
+    return listAudiobookSubscriptions(ctx.db);
+  },
+};
+
+const audiobook_subscribe: AiTool = {
+  name: "audiobook_subscribe",
+  description: "Add a LibriVox audiobook so it appears in the Sync panel's Audiobooks list. Chapters download automatically when the user syncs their device.",
+  parameters: {
+    type: "object",
+    properties: {
+      librivox_id: { type: "number", description: "The LibriVox book ID (from audiobook_search results)" },
+      title: { type: "string", description: "Book title" },
+      author: { type: "string", description: "Author name (optional)" },
+      rss_url: { type: "string", description: "The book's RSS/chapter feed URL" },
+      description: { type: "string", description: "Book description (optional)" },
+      language: { type: "string", description: "Language (optional)" },
+      num_sections: { type: "number", description: "Number of chapters" },
+      total_seconds: { type: "number", description: "Total duration in seconds" },
+    },
+    required: ["librivox_id", "title", "rss_url"],
+  },
+  kind: "write-safe",
+  summarize: (a) => `Add audiobook: ${a.title}`,
+  async run(args, ctx) {
+    const result = {
+      librivoxId: Number(args.librivox_id),
+      title: String(args.title),
+      author: args.author != null ? String(args.author) : null,
+      rssUrl: String(args.rss_url),
+      description: args.description != null ? String(args.description) : null,
+      imageUrl: null,
+      language: args.language != null ? String(args.language) : null,
+      numSections: Number(args.num_sections ?? 0),
+      totalSeconds: Number(args.total_seconds ?? 0),
+    };
+    const sub = await audiobookSubscribeFn(ctx.db, result);
+    invalidateAssistantCache();
+    logActivity(ctx.db, "audiobook_subscribed", `AI added audiobook: ${result.title}`);
+    return sub;
+  },
+};
+
+const audiobook_refresh_cover: AiTool = {
+  name: "audiobook_refresh_cover",
+  description: "Fetch or re-fetch the cover image for an extra audiobook. Use this if a book's cover is missing or wrong.",
+  parameters: {
+    type: "object",
+    properties: {
+      subscription_id: { type: "number", description: "The subscription ID (from audiobook_list_subscriptions)" },
+    },
+    required: ["subscription_id"],
+  },
+  kind: "write-safe",
+  summarize: (a) => `Refresh cover for audiobook subscription #${a.subscription_id}`,
+  async run(args, ctx) {
+    const subId = Number(args.subscription_id);
+    if (!Number.isInteger(subId) || subId <= 0) throw new Error("Invalid subscription_id");
+    await downloadAudiobookCover(ctx.db, subId);
+    return { ok: true };
+  },
+};
+
+const audiobook_unsubscribe: AiTool = {
+  name: "audiobook_unsubscribe",
+  description: "Remove an extra audiobook. This deletes all locally downloaded chapter files and removes the book from the Sync panel.",
+  parameters: {
+    type: "object",
+    properties: {
+      subscription_id: { type: "number", description: "The subscription ID (from audiobook_list_subscriptions)" },
+    },
+    required: ["subscription_id"],
+  },
+  kind: "write-destructive",
+  summarize: (a) => `Remove extra audiobook subscription #${a.subscription_id}`,
+  async run(args, ctx) {
+    const subId = Number(args.subscription_id);
+    if (!Number.isInteger(subId) || subId <= 0) throw new Error("Invalid subscription_id");
+    audiobookUnsubscribeFn(ctx.db, subId);
+    invalidateAssistantCache();
+    logActivity(ctx.db, "audiobook_unsubscribed", `AI removed audiobook subscription #${subId}`);
+    return { ok: true };
+  },
+};
+
+// ---------------------------------------------------------------------------
 // Registry
 // ---------------------------------------------------------------------------
 
@@ -636,6 +755,11 @@ export const AI_TOOLS: AiTool[] = [
   library_scan,
   podcast_download_now,
   podcast_delete_episodes,
+  audiobook_search,
+  audiobook_list_subscriptions,
+  audiobook_subscribe,
+  audiobook_refresh_cover,
+  audiobook_unsubscribe,
   library_add_folder,
   library_remove_folder,
   playlist_list_broken,

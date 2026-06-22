@@ -1,10 +1,13 @@
 import { app, BrowserWindow, Menu, MenuItem } from "electron";
 import * as fs from "fs";
 import * as path from "path";
-import { registerIpcHandlers } from "./ipc";
+import { registerIpcHandlers, getLibraryDb } from "./ipc";
 import { registerMediaScheme, registerMediaProtocol } from "./player/media-protocol";
 import { cleanupPlayerTemp } from "./player/player-source";
 import { stopPodcastScheduler } from "./podcasts/podcast-scheduler";
+import { setLibrivoxBaseUrl } from "./audiobooks/librivox-client";
+import { setCoverApiBaseUrls } from "./audiobooks/cover-client";
+import { backfillMissingCovers } from "./audiobooks/audiobook-cover";
 
 // Prevent SharedImageManager/mailbox GPU overlay errors on macOS
 if (process.platform === "darwin") {
@@ -12,6 +15,14 @@ if (process.platform === "darwin") {
 }
 
 registerMediaScheme();
+
+// Allow test env to redirect external API calls to local stubs
+if (process.env.LIBRIVOX_BASE_URL) setLibrivoxBaseUrl(process.env.LIBRIVOX_BASE_URL);
+setCoverApiBaseUrls({
+  googleBooks: process.env.GOOGLE_BOOKS_BASE_URL,
+  openLibrary: process.env.OPENLIBRARY_BASE_URL,
+  openLibraryCovers: process.env.OPENLIBRARY_COVERS_BASE_URL,
+});
 
 const devServerUrl = process.env.VITE_DEV_SERVER_URL;
 
@@ -113,6 +124,8 @@ app.whenReady().then(() => {
   cleanupPlayerTemp();
   registerMediaProtocol();
   registerIpcHandlers();
+  // Non-blocking startup backfill for books added before cover support
+  backfillMissingCovers(getLibraryDb()).catch(() => {});
   const win = createWindow();
   attachContextMenu(win);
 

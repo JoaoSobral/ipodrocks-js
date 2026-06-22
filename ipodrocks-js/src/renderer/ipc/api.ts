@@ -884,3 +884,58 @@ export async function podcastPreviewFeed(feedUrl: string): Promise<PodcastFeedPr
 export async function podcastSubscribeByUrl(feedUrl: string): Promise<PodcastSubscription> {
   return window.api.invoke("podcast:subscribeByUrl", feedUrl) as Promise<PodcastSubscription>;
 }
+
+// ---------------------------------------------------------------------------
+// Auto Audiobooks (LibriVox)
+// ---------------------------------------------------------------------------
+
+export type {
+  LibrivoxSearchResult,
+  AudiobookSubscription,
+  AudiobookChapter,
+} from "@shared/types";
+
+export async function audiobookSearch(
+  term: string
+): Promise<import("@shared/types").LibrivoxSearchResult[]> {
+  return window.api.invoke("audiobook:search", term) as Promise<import("@shared/types").LibrivoxSearchResult[]>;
+}
+
+export async function audiobookListSubs(): Promise<import("@shared/types").AudiobookSubscription[]> {
+  return window.api.invoke("audiobook:listSubs") as Promise<import("@shared/types").AudiobookSubscription[]>;
+}
+
+export async function audiobookSubscribe(
+  result: import("@shared/types").LibrivoxSearchResult
+): Promise<import("@shared/types").AudiobookSubscription> {
+  return window.api.invoke("audiobook:subscribe", result) as Promise<import("@shared/types").AudiobookSubscription>;
+}
+
+export async function audiobookUnsubscribe(subId: number): Promise<void> {
+  await window.api.invoke("audiobook:unsubscribe", subId);
+}
+
+export async function audiobookListChapters(
+  subId: number
+): Promise<import("@shared/types").AudiobookChapter[]> {
+  return window.api.invoke("audiobook:listChapters", subId) as Promise<import("@shared/types").AudiobookChapter[]>;
+}
+
+export async function audiobookRefreshCover(
+  subId: number
+): Promise<import("@shared/types").AudiobookSubscription | null> {
+  return window.api.invoke("audiobook:refreshCover", subId) as Promise<import("@shared/types").AudiobookSubscription | null>;
+}
+
+export async function audiobookSearchCoverCandidates(
+  subId: number
+): Promise<import("@shared/types").CoverCandidate[]> {
+  return window.api.invoke("audiobook:searchCoverCandidates", subId) as Promise<import("@shared/types").CoverCandidate[]>;
+}
+
+export async function audiobookSetCoverFromUrl(
+  subId: number,
+  url: string
+): Promise<import("@shared/types").AudiobookSubscription | null> {
+  return window.api.invoke("audiobook:setCoverFromUrl", subId, url) as Promise<import("@shared/types").AudiobookSubscription | null>;
+}

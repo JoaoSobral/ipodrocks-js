@@ -913,7 +913,7 @@ export async function runSync(
   });
 
   let removedCount = 0;
-  if (extraTrackPolicy === "remove" && analysis.extras.length > 0) {
+  if ((extraTrackPolicy === "remove" || extraTrackPolicy === "remove-all") && analysis.extras.length > 0) {
     const { removed } = removeExtraTracks(analysis.extras, progressCallback, cancelSignal);
     removedCount = removed;
   }

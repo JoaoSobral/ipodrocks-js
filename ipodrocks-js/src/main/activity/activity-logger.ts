@@ -20,7 +20,9 @@ export type ActivityOperation =
   | "playlist_repaired"
   | "podcast_subscribed"
   | "podcast_downloaded"
-  | "podcast_episodes_deleted";
+  | "podcast_episodes_deleted"
+  | "audiobook_subscribed"
+  | "audiobook_unsubscribed";
 
 export interface ActivityEntry {
   id: number;

@@ -371,7 +371,7 @@ export interface CustomSelections {
 }
 
 export type SyncType = "full" | "custom";
-export type ExtraTrackPolicy = "keep" | "remove" | "prompt";
+export type ExtraTrackPolicy = "keep" | "remove" | "remove-all" | "prompt";
 export type PlaybackStrategy = "native" | "transcode";
 
 export interface DeviceSyncPreferences {
@@ -476,6 +476,61 @@ export interface PodcastFeedPreview {
 export interface AutoPodcastSettings {
   enabled: boolean;
   refreshIntervalMinutes: number;
+}
+
+// ---------------------------------------------------------------------------
+// Auto Audiobooks (LibriVox)
+// ---------------------------------------------------------------------------
+
+export interface LibrivoxSearchResult {
+  librivoxId: number;
+  title: string;
+  author: string | null;
+  description: string | null;
+  imageUrl: string | null;
+  rssUrl: string;
+  language: string | null;
+  numSections: number;
+  totalSeconds: number;
+}
+
+export interface AudiobookSubscription {
+  id: number;
+  librivoxId: number;
+  title: string;
+  author: string | null;
+  description: string | null;
+  imageUrl: string | null;
+  rssUrl: string;
+  language: string | null;
+  numSections: number;
+  totalSeconds: number;
+  lastRefreshedAt: string | null;
+  createdAt: string;
+}
+
+export interface CoverCandidate {
+  thumbnailUrl: string;
+  largeUrl: string;
+  bookTitle: string;
+  source: "google-books" | "open-library";
+}
+
+export type ChapterDownloadState = "pending" | "downloading" | "ready" | "failed" | "skipped";
+
+export interface AudiobookChapter {
+  id: number;
+  subscriptionId: number;
+  guid: string;
+  chapterNumber: number | null;
+  title: string;
+  enclosureUrl: string;
+  durationSeconds: number | null;
+  fileSize: number | null;
+  localPath: string | null;
+  downloadState: ChapterDownloadState;
+  downloadError: string | null;
+  createdAt: string;
 }
 
 export interface ScanResult {
