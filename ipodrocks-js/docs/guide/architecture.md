@@ -68,22 +68,39 @@ Two LLM-powered surfaces share one OpenRouter client. Savant generates playlists
 | **MoodChat** | Conversational mood capture for Savant playlists. |
 | **SavantPlaylistChat** | Multi-turn playlist refinement loop. |
 | **HarmonicSequencer** | Reorders Savant playlists along the Camelot wheel for harmonic mixing. |
-| **AssistantChat** | LLM orchestration for Rocksy, including library-aware tool calls. |
+| **AssistantChat** | LLM orchestration for Rocksy. Runs an OpenAI-compatible tool-calling loop (up to 5 rounds per message), feeding each tool result back to the model before the final reply. |
+| **AssistantTools** (`tools.ts`) | The tool registry Rocksy calls. Each tool declares a tier — `read` (run inline), `write-safe` (mutations, run inline), or `write-destructive` (deletes/syncs/scans/folder changes, gated behind a renderer confirm). Covers library, playlists, podcasts (incl. add-by-URL), audiobooks, and devices. |
+
+Destructive tools are not executed inline: Rocksy proposes the action and the renderer shows a Confirm / Cancel gate. The `assistant:confirmAction` IPC channel executes the proposed tool only after the user confirms.
 
 ### Podcasts
 
-A full subscribe-and-sync pipeline backed by the [Podcast Index API](https://podcastindex.org/).
+A full subscribe-and-sync pipeline backed by the [Podcast Index API](https://podcastindex.org/), plus a direct add-by-URL path that needs no API key.
 
 | Module | Responsibility |
 |---|---|
 | **PodcastSubscriptions** | Manages subscribed shows in the database. |
 | **PodcastIndexClient** | Talks to the Podcast Index API for search and feed lookup. |
+| **PodcastFeedImport** | Add-by-URL pipeline: classifies input (RSS vs website), discovers feeds from HTML (`<link rel="alternate">` and common feed paths), and parses RSS/Atom into a normalized feed. Reused by the audiobook flow to read LibriVox chapter feeds. |
 | **PodcastRefresh** | Polls feeds for new episodes and updates the DB. |
 | **PodcastDownloader** | Downloads episode audio and writes metadata. |
 | **PodcastCoverExtractor** | Extracts and caches episode/show artwork. |
 | **PodcastScheduler** | Auto-refresh and auto-download cadence. |
 | **PodcastStorage** | On-disk layout for downloaded episodes. |
 | **PodcastDeviceSync** | Picks the right episodes per device and copies them during sync. |
+
+### Audiobooks (Extra)
+
+Free public-domain audiobooks from [LibriVox](https://librivox.org), downloaded on demand at sync time. No account or API key required.
+
+| Module | Responsibility |
+|---|---|
+| **AudiobookSubscriptions** | CRUD for subscribed books and their chapters; pulls the chapter list from each book's RSS feed via `PodcastFeedImport`. |
+| **LibrivoxClient** | Searches the LibriVox catalog by title/author and maps results. |
+| **AudiobookDownloader** | Downloads chapter audio on demand. |
+| **AudiobookCover / CoverClient** | Resolves cover artwork from Google Books / Open Library (LibriVox feeds rarely carry art); supports a candidate search for the manual cover picker. |
+| **AudiobookStorage** | On-disk layout for downloaded chapters and covers. |
+| **AudiobookDeviceSync** | Downloads-on-sync and copies chapters (and the cover) to `<device>/<Audiobooks>/<Author - Title>/`, idempotent via `device_audiobook_synced`. |
 
 ### Playback
 
@@ -109,7 +126,7 @@ The plumbing every other module sits on top of.
 
 | Module | Responsibility |
 |---|---|
-| **IPC Handlers** (`ipc.ts`) | Around 90 channels bridged to the renderer. Applies `safe()` wrapper, `sanitizeErrorMessage`, and rate limiting. |
+| **IPC Handlers** (`ipc.ts`) | Around 110 channels bridged to the renderer. Applies `safe()` wrapper, `sanitizeErrorMessage`, and rate limiting. |
 | **AppDatabase** | Single `better-sqlite3` instance. All reads and writes go through here. |
 | **Prefs** | Reads and writes `prefs.json` (settings, encrypted API key via Electron's `safeStorage`). |
 | **PathAllowlist** | Validates that library and shadow library paths stay within allowed directories. |
@@ -133,6 +150,7 @@ Server state lives in stores; React components subscribe.
 | **useThemeStore** | Light/dark and accent. |
 | **usePlayerStore** | Current track, queue, playback position. |
 | **usePodcastsStore** | Subscriptions, episode lists, download progress. |
+| **useAudiobooksStore** | LibriVox subscriptions, chapters per book, live cover updates. |
 | **useSavantStore** | Mood chat session, generated playlists, backfill progress. |
 
 ### Top-level panels
@@ -147,7 +165,8 @@ One per primary tab in the sidebar.
 | **DevicePanel** | Add/edit devices, codec configuration, online checks. |
 | **SyncPanel** | Pick what to sync and run it. |
 | **PlaylistPanel** | Smart, Genius, Savant tabs. |
-| **AutoPodcastsPanel** | Subscribe to shows and configure per-device auto-sync. |
+| **AutoPodcastsPanel** | Subscribe to shows (search or by URL) and configure per-device auto-sync. |
+| **AutoAudiobooksPanel** | Browse and subscribe to free LibriVox audiobooks ("Extra Audiobooks" tab). |
 | **SettingsPanel** | OpenRouter, harmonic analysis, codecs, podcasts. |
 
 ### Ratings UI
@@ -165,7 +184,8 @@ One per primary tab in the sidebar.
 | **SyncProgressModal** | Copy progress; uses `useRef` counters to avoid stale-closure bugs in the `onComplete` callback. |
 | **BackfillProgressModal** | Harmonic backfill progress. |
 | **AddDeviceModal / AddFolderModal** | Forms for new devices and library folders. |
-| **PodcastSearchModal / PodcastEpisodeModal** | Discover and inspect podcasts. |
+| **PodcastSearchModal / PodcastEpisodeModal** | Discover (keyword **Search** or **Add by URL** tabs) and inspect podcasts. |
+| **AudiobookSearchModal / AudiobookDetailModal / AudiobookCoverPickerModal** | Search LibriVox, inspect a book's chapters, and pick a cover. |
 | **MpcUnavailableModal** | Surfaced when `mpcenc` is missing on the host. |
 | **UpdateAvailableModal** | Prompts the user when a new release is detected. |
 | **ConfirmDialog** | Generic confirm/cancel. |
@@ -174,7 +194,7 @@ One per primary tab in the sidebar.
 
 | Component | Purpose |
 |---|---|
-| **FloatChat** | Floating Rocksy chat, backed by `AssistantChat` on the main process. |
+| **FloatChat** | Floating Rocksy chat, backed by `AssistantChat` on the main process. Renders the Confirm / Cancel gate for destructive tool calls and locks input until the user responds. |
 | **SavantInlineChat** | Inline mood chat used inside the Playlists panel. |
 
 ### Playback
@@ -197,7 +217,7 @@ The **preload script** uses Electron's `contextBridge` to expose a strict allowl
 
 ## Database schema (high-level)
 
-One SQLite file, around 33 tables. They group naturally by feature:
+One SQLite file, around 36 tables. They group naturally by feature:
 
 **Library core** — your music catalog itself.
 
@@ -226,6 +246,10 @@ One SQLite file, around 33 tables. They group naturally by feature:
 **Podcasts** — subscriptions, episodes, and what has been copied to each device.
 
 `podcast_subscriptions` · `podcast_episodes` · `device_podcast_synced`
+
+**Audiobooks** — LibriVox subscriptions, their chapters, and what has been copied to each device.
+
+`audiobook_subscriptions` · `audiobook_chapters` · `device_audiobook_synced`
 
 **Playback and history** — fuel for the Genius engine.
 

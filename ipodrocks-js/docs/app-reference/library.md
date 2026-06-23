@@ -10,14 +10,15 @@ The Library panel manages your music catalog: folders, scans, shadow libraries, 
 - **Harmonic data banner** — Shows how many tracks have key/BPM data. Links to Settings to enable extraction and Essentia analysis.
 - **Library Folders** — Compact list of added folders with remove option.
 - **Shadow Libraries** — Pre-transcoded mirrors (e.g. FLAC → MPC). Create, rebuild, or delete them.
-- **Tracks / Playlists** — Switch between the track list and library playlists. Search, sort, and filter by device, type, and sync status.
+- **Track list** — Search, sort, and filter by device, type, sync status, and **playlist**. Selecting a playlist from the filter dropdown narrows the list to that playlist's tracks. (The separate Playlists tab was removed in 2.0.0; full playlist management lives in the [Playlists](./playlists.md) panel.)
+- **Broken-playlist banner** — If a re-scan removes tracks that playlists still reference, a warning banner appears here with a link to repair or delete the affected playlists.
 - **Preview tracks** — double-click a track to play it in the persistent player bar at the bottom of the window.
 
 ## How it works
 
 - **Scan** reads file tags (artist, album, title, genre, etc.) and optionally key/BPM via metadata or Essentia. It stores content hashes to skip unchanged files on the next scan.
 - **Shadow libraries** are built once; devices can use them as the source instead of the primary library for faster sync (no on-the-fly transcoding). A shadow library is a **file-only mirror** — it contains the transcoded audio files and copied album artwork, nothing else. Play counts, ratings, and listening history are **not** stored in or synced through shadow libraries; they live in the primary library database and are updated by ingesting `playback.log` from the device. When the primary library changes, shadow libraries are kept in sync automatically (adds, updates, and removes propagate).
-- The track list is virtualized for large libraries. Filters (device, type, on device) apply in memory.
+- The track list is virtualized for large libraries. Filters (device, type, on device, playlist) apply in memory.
 
 ## How to work with it
 
@@ -39,3 +40,15 @@ Double-click any track in the library list to start playback in the player bar t
 **Format support** — Native playback for MP3, AAC, FLAC, OGG, Opus, PCM, and ALAC. Musepack, APE, WAV, and AIFF are transcoded to Ogg Vorbis on demand via FFmpeg the first time you press play; the transcoded copy is stored in a temp directory and reused on subsequent plays.
 
 **Caveats** — Missing or unreadable files fail silently in the player bar. Transcoding errors are logged to the console. There is no pre-cache; each transcode happens on demand at playback time.
+
+## Rocksy
+
+[Rocksy](./assistant.md) can browse and manage your library from the chat:
+
+- "What artists do I have in Rock?" → `library_list_artists` (also `library_list_albums`, `library_list_genres`)
+- "Search my library for Bowie" → `library_search_tracks`
+- "Add `/Users/me/Music` as a library folder" → `library_add_folder` *(asks you to confirm first)*
+- "Remove that folder" → `library_remove_folder` *(asks you to confirm first)*
+- "Rescan my library" → `library_scan` *(asks you to confirm first)*
+
+Read tools run immediately; anything that adds/removes folders or scans pauses for a **Confirm / Cancel** prompt.

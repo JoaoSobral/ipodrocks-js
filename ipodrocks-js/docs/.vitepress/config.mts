@@ -72,6 +72,7 @@ export default defineConfig({
               ],
             },
             { text: "Auto Podcasts", link: "/app-reference/autopodcasts" },
+            { text: "Extra Audiobooks", link: "/app-reference/audiobooks" },
             { text: "Sync", link: "/app-reference/sync" },
             {
               text: "Settings",
@@ -88,7 +89,7 @@ export default defineConfig({
               ],
             },
             { text: "Ratings", link: "/app-reference/ratings" },
-            { text: "Music Assistant", link: "/app-reference/assistant" },
+            { text: "Rocksy (AI Assistant)", link: "/app-reference/assistant" },
           ],
         },
       ],
