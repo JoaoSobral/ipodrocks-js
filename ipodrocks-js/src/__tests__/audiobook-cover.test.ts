@@ -31,7 +31,7 @@ afterEach(() => {
 describe("resolveCoverUrl", () => {
   it("returns Google Books thumbnail when found", async () => {
     mockFetch((url) => {
-      if (url.includes(GOOGLE_URL)) {
+      if (new URL(url).origin === GOOGLE_URL) {
         return new Response(
           JSON.stringify({ items: [{ volumeInfo: { imageLinks: { thumbnail: "http://books.google.com/img.jpg" } } }] }),
           { status: 200 }
@@ -46,10 +46,10 @@ describe("resolveCoverUrl", () => {
 
   it("falls back to Open Library when Google Books returns no items", async () => {
     mockFetch((url) => {
-      if (url.includes(GOOGLE_URL)) {
+      if (new URL(url).origin === GOOGLE_URL) {
         return new Response(JSON.stringify({}), { status: 200 });
       }
-      if (url.includes(OL_URL)) {
+      if (new URL(url).origin === OL_URL) {
         return new Response(JSON.stringify({ docs: [{ cover_i: 9999 }] }), { status: 200 });
       }
       throw new Error("unexpected fetch: " + url);
@@ -68,7 +68,7 @@ describe("resolveCoverUrl", () => {
 
   it("returns null when Google Books fetch fails (network error)", async () => {
     mockFetch((url) => {
-      if (url.includes(GOOGLE_URL)) throw new Error("network error");
+      if (new URL(url).origin === GOOGLE_URL) throw new Error("network error");
       return new Response(JSON.stringify({}), { status: 200 });
     });
 
@@ -111,13 +111,13 @@ describe("downloadCover", () => {
     // Stub fetch: Google Books returns thumbnail URL, image fetch returns PNG bytes
     const imageBytes = Buffer.from("FAKEIMGDATA");
     mockFetch((url) => {
-      if (url.includes(GOOGLE_URL)) {
+      if (new URL(url).origin === GOOGLE_URL) {
         return new Response(
           JSON.stringify({ items: [{ volumeInfo: { imageLinks: { thumbnail: "https://img.example.com/cover.jpg" } } }] }),
           { status: 200 }
         );
       }
-      if (url.includes("img.example.com")) {
+      if (new URL(url).hostname === "img.example.com") {
         return new Response(imageBytes, {
           status: 200,
           headers: { "content-type": "image/jpeg" },

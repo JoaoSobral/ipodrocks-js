@@ -36,7 +36,15 @@ function buildAuthorName(authors?: LibrivoxAuthor[]): string | null {
 }
 
 function stripHtml(html: string): string {
-  return html.replace(/<[^>]*>/g, "").trim();
+  // Apply repeatedly until stable: a single pass can leave behind tags
+  // reconstructed from overlapping/nested input (e.g. "<scr<script>ipt>").
+  let prev: string;
+  let cur = html;
+  do {
+    prev = cur;
+    cur = cur.replace(/<[^>]*>/g, "");
+  } while (cur !== prev);
+  return cur.trim();
 }
 
 function mapBook(b: LibrivoxBook): LibrivoxSearchResult {
