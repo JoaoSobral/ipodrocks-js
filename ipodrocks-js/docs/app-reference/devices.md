@@ -25,3 +25,14 @@ The Devices panel lets you add, edit, and check Rockbox and mountable players.
 4. **Check Device** before syncing to see what will change. Use "Recheck" after a sync to confirm.
 5. **Playback log** — Enable if you use Genius playlists; iPodRocks reads `playback.log` from the device for listening history.
 6. **Rockbox smart playlists (tagnavi)** — When enabled, smart playlists sync as live tagnavi query entries (written to `.rockbox/tagnavi_user.config`) instead of static `.m3u` files. Genius, Savant, and Custom playlists always write `.m3u` regardless of this setting. See [Smart Playlists → Rockbox dynamic mode](./playlists-smart.md#rockbox-dynamic-mode-per-device-opt-in).
+
+## Rocksy
+
+[Rocksy](./assistant.md) can inspect and operate your devices from the chat:
+
+- "What devices do I have?" → `device_list`
+- "Check my iPod" → `device_check` *(asks you to confirm first)*
+- "Sync my iPod" → `device_sync` *(asks you to confirm first)*
+- "Remove the old Nano" → `device_remove` *(asks you to confirm first)*
+
+Listing devices runs immediately; checking, syncing, and removing a device each pause for a **Confirm / Cancel** prompt before running.

@@ -4,13 +4,17 @@
  */
 
 import Database from "better-sqlite3";
-import { callOpenRouter, OpenRouterConfig, OpenRouterMessage } from "../llm/openRouterClient";
+import {
+  callOpenRouter,
+  callOpenRouterWithTools,
+  OpenRouterConfig,
+  OpenRouterMessage,
+} from "../llm/openRouterClient";
 import { APP_DOCS } from "./appDocs";
 import { getAvailableGeniusTypes } from "../playlists/genius-engine";
-import type {
-  GeniusGenerateOptions,
-  SmartPlaylistRule,
-} from "../../shared/types";
+import type { GeniusGenerateOptions, SmartPlaylistRule } from "../../shared/types";
+import type { AiToolContext } from "./tools";
+import { buildToolDefinitions, getToolByName } from "./tools";
 
 const MAX_CONTEXT_TRACKS = 2500;
 const MAX_PLAYLIST_TRACKS = 150;
@@ -275,9 +279,11 @@ function buildDevicesContext(db: Database.Database): string {
   }>;
 
   const getSyncPrefs = db.prepare(
-    `SELECT sync_type, extra_track_policy, include_music, include_podcasts,
-            include_audiobooks, include_playlists, skip_album_artwork
-     FROM device_sync_preferences WHERE device_id = ?`
+    `SELECT dsp.sync_type, dsp.extra_track_policy, dsp.include_music, dsp.include_podcasts,
+            dsp.include_audiobooks, dsp.include_playlists, d.skip_album_artwork
+     FROM device_sync_preferences dsp
+     JOIN devices d ON dsp.device_id = d.id
+     WHERE dsp.device_id = ?`
   );
 
   if (devices.length === 0) return "## Devices\nNo devices configured.";
@@ -496,7 +502,34 @@ function buildActivityContext(db: Database.Database): string {
 
 const ASSISTANT_SYSTEM_PROMPT = `You are Rocksy, the user's music buddy inside iPodRocks, a personal music library and iPod sync app.
 You're warm, enthusiastic, and genuinely passionate about music. Talk like a close friend who shares their love of music — not a corporate assistant reading from a database.
-You have full knowledge of their setup: library (tracks, artists, albums, genres, playlists, listening history, harmonic data), all configured devices (models, codec profiles, sync settings, last sync dates), shadow libraries (transcoded copies), auto-podcast subscriptions and episode status, recent app activity, AND full knowledge of how iPodRocks works (all features, panels, settings, troubleshooting). Use all of this to give personal, helpful responses.
+You have full knowledge of their setup: library (tracks, artists, albums, genres, playlists, listening history, harmonic data), all configured devices (models, codec profiles, sync settings, last sync dates), shadow libraries (transcoded copies), auto-podcast subscriptions and episode status, extra audiobook subscriptions (public-domain LibriVox books), recent app activity, AND full knowledge of how iPodRocks works (all features, panels, settings, troubleshooting). Use all of this to give personal, helpful responses.
+
+You have **tools** — use them proactively whenever the user asks you to do something you have a tool for. Do not say you "can't" do something if a tool exists for it.
+
+Tool usage rules (CRITICAL):
+- User asks to find, search, or look up a podcast → call \`podcast_search\` immediately.
+- User asks to subscribe to a podcast → call \`podcast_search\` first (if you don't already have the feed), then call \`podcast_subscribe\`.
+- User gives an RSS feed URL, podcast website URL, or says "subscribe using this link/URL" → call \`podcast_add_by_url\` with that URL immediately. No API key needed.
+- User asks to create a playlist → call \`playlist_create_smart\` or \`playlist_create_genius\`. Get genre/artist/album IDs via \`library_list_genres/artists/albums\` first if you need them.
+- User asks about their podcasts / subscriptions → call \`podcast_list_subscriptions\`.
+- User asks about their devices → call \`device_list\`.
+- User asks to sync a device / "sync my iPod" → call \`device_list\` first to get the device ID, then call \`device_sync\`.
+- User asks to remove or delete a device → call \`device_list\` first, then call \`device_remove\`.
+- User asks to scan the library / "scan for new music" / "rescan" → call \`library_scan\`.
+- User asks about playlists with missing/broken songs, or "why does my playlist show wrong count", or "fix my playlist" → call \`playlist_list_broken\` first to see which playlists are affected, then call \`playlist_repair\` on the ones the user confirms (or all if they say "fix all"). Only smart playlists can be rebuilt from rules; for others, Repair removes the missing tracks.
+- NEVER say "I can't search for podcasts" or "I can't browse the internet" — you have \`podcast_search\` for exactly this purpose.
+- NEVER say "I can't sync devices" or "I don't have a sync tool" — you have \`device_sync\`.
+- NEVER say "I can't delete or remove a device" — you have \`device_remove\`.
+- NEVER say "I can't fix or repair playlists" — you have \`playlist_list_broken\` and \`playlist_repair\`.
+- NEVER say "I can't scan the library" — you have \`library_scan\`.
+- NEVER tell the user to manually find an RSS feed — use \`podcast_search\` for name-based search, or \`podcast_add_by_url\` if they have a specific URL.
+- User asks to find, search, or look up a LibriVox or public-domain audiobook → call \`audiobook_search\` immediately.
+- User asks to add, subscribe to, or get a LibriVox audiobook → call \`audiobook_search\` first, then call \`audiobook_subscribe\` with the matching result. Added books appear in the Sync panel's Audiobooks list badged "Auto" and their chapters download automatically when the user syncs their device.
+- User asks about their extra audiobooks → call \`audiobook_list_subscriptions\`.
+- User asks to remove or delete an extra audiobook → call \`audiobook_list_subscriptions\` first, then call \`audiobook_unsubscribe\`.
+- User says a book's cover is missing or wrong → call \`audiobook_refresh_cover\` with the subscription ID (get it from \`audiobook_list_subscriptions\` first if needed). Covers are fetched automatically on add via Google Books / Open Library, so you only need this tool to fix a missing or incorrect one.
+- NEVER say "I can't add LibriVox audiobooks" or "I can't search for public-domain books" — you have \`audiobook_search\` and \`audiobook_subscribe\` for exactly this.
+- Actions that require confirmation (device sync, device removal, library scan, downloads, deletes, folder changes) will prompt the user before running.
 
 Personality guidelines:
 - Be warm, casual, and personal. Use their name naturally if you know it from pinned memories.
@@ -506,6 +539,7 @@ Personality guidelines:
 - Use humor, enthusiasm, and personality. You're a music nerd who loves geeking out.
 - Keep responses concise (1–4 sentences for music chat, step-by-step for how-to questions) but make every word feel human.
 - If asked about creating a Savant (AI) playlist, point them to the Playlists > Savant tab.
+- When you call a tool that requires confirmation, briefly explain what you're about to do so the user knows what they're confirming.
 
 Format your replies with **Markdown** for readability:
 - Use **bold** for artist names, album titles, or key terms.
@@ -858,19 +892,12 @@ function buildPlaylistInstructions(db: Database.Database): string {
     )
     .join("\n");
 
+  // Provide the reference data as context so the model can pass correct IDs
+  // to playlist_create_smart / playlist_create_genius without extra tool calls.
   return `
 
-## Playlist Creation
-When the user explicitly asks you to create a Smart or Genius playlist, you can create it by including a tag at the very end of your response (after your natural reply).
-
-### Smart Playlist (genre/artist/album-based)
-Use when the user wants a playlist by genre, artist, or album. Rules use IDs from the reference lists below.
-Format: \`<SMART_PLAYLIST>{"name":"Playlist Name","rules":[{"ruleType":"genre","targetId":5,"targetLabel":"Rock"}],"trackLimit":50}</SMART_PLAYLIST>\`
-- ruleType: "genre" | "artist" | "album"
-- targetId: must match an id from the reference list
-- targetLabel: display name (genre name, artist name, or "Title — Artist" for album)
-- trackLimit: optional, 10–300 (default 50)
-- At least one rule required. Multiple rules of same type = OR; different types = AND.
+## Playlist reference data (for playlist_create_smart / playlist_create_genius tools)
+Use these IDs when calling the playlist creation tools. Do NOT emit action tags — use the tools instead.
 
 Available genres (id, name):
 [\n${genreList}\n]
@@ -881,23 +908,10 @@ Available artists (id, name):
 Available albums (id, title, artist):
 [\n${albumList}\n]
 
-### Genius Playlist (playback-history-based)
-Use when the user wants a playlist based on listening history (most played, favorites, late night, etc.).
-Format: \`<GENIUS_PLAYLIST>{"name":"Playlist Name","geniusType":"late_night","maxTracks":30}</GENIUS_PLAYLIST>\`
-- geniusType: one of the values below
-- maxTracks: optional, default 25
-- For deep_dive: add "artist":"Artist Name"
-- For time_capsule: add "targetMonth":1–12, "targetYear":2020
-- For golden_era: add "rangeStartMonthsAgo":48, "rangeEndMonthsAgo":24
-
-Available genius types:
+Available genius types (for playlist_create_genius → genius_type argument):
 ${geniusList}
 
-### Rules
-- ONLY emit playlist tags when the user EXPLICITLY asks to create a playlist. Normal conversation must NEVER trigger these tags.
-- Confirm what you're creating in your natural reply before the tag.
-- Tags MUST appear at the very end of your response, on their own line.
-- Savant (AI mood-based) playlists are NOT supported here — direct the user to Playlists > Savant tab.
+Savant (AI mood-based) playlists are NOT supported via tools — direct the user to Playlists > Savant tab.
 `;
 }
 
@@ -906,6 +920,23 @@ export interface AppPaths {
   podcastsRoot: string;
   autoPodcastEnabled: boolean;
   autoPodcastIntervalMin: number;
+}
+
+export interface PendingAction {
+  toolCallId: string;
+  tool: string;
+  args: Record<string, unknown>;
+  summary: string;
+}
+
+export interface AssistantResult {
+  reply: string;
+  playlistCreated?: string;
+  pendingAction?: PendingAction;
+  /** Memory action tags extracted from the LLM reply. */
+  pin?: boolean;
+  unpinIds?: number[];
+  replaceId?: number | null;
 }
 
 function buildAppPathsContext(db: Database.Database, paths: AppPaths): string {
@@ -931,12 +962,15 @@ function buildAppPathsContext(db: Database.Database, paths: AppPaths): string {
   return lines.join("\n");
 }
 
+const MAX_TOOL_ITERATIONS = 5;
+
 export async function sendAssistantMessage(
   messages: Array<{ role: "user" | "assistant"; content: string }>,
   db: Database.Database,
   config: OpenRouterConfig,
-  appPaths: AppPaths
-): Promise<string> {
+  appPaths: AppPaths,
+  toolCtx: AiToolContext
+): Promise<AssistantResult> {
   // F9: Cache the expensive context queries with a 5-minute TTL
   const now = Date.now();
   if (!libraryContextCache || now - libraryContextCache.ts > LIBRARY_CONTEXT_TTL_MS) {
@@ -964,21 +998,128 @@ export async function sendAssistantMessage(
   const appPathsContext = buildAppPathsContext(db, appPaths);
   const activityContext = buildActivityContext(db);
 
-  const { text: pinnedText, count: pinnedCount } =
-    buildPinnedMemoriesContext(db);
+  const { text: pinnedText, count: pinnedCount } = buildPinnedMemoriesContext(db);
   const memoryInstructions = buildMemoryInstructions(pinnedText, pinnedCount);
 
-  const llmMessages: OpenRouterMessage[] = [
+  const systemMessages: OpenRouterMessage[] = [
     {
       role: "system",
       content: `${ASSISTANT_SYSTEM_PROMPT}\n<app_docs>\n${APP_DOCS}\n</app_docs>`,
     },
     {
       role: "system",
-      content: `${memoryInstructions}\n${playlistInstructions}\n<library_context>\n${libraryContext}\n</library_context>\n<app_data>\n${appDataContext}\n</app_data>\n<app_paths>\n${appPathsContext}\n</app_paths>\n<dashboard>\n${activityContext}\n</dashboard>\n\nUse the app_docs to answer how-to and feature questions about iPodRocks. Use library_context for the music collection. Use app_data for devices, shadow libraries, and podcast configuration. Use app_paths for file locations. Use dashboard for recent activity. If something is genuinely not covered, say so.`,
+      content: `${memoryInstructions}\n${playlistInstructions}\n<library_context>\n${libraryContext}\n</library_context>\n<app_data>\n${appDataContext}\n</app_data>\n<app_paths>\n${appPathsContext}\n</app_paths>\n<dashboard>\n${activityContext}\n</dashboard>\n\nUse the app_docs to answer how-to and feature questions about iPodRocks. Use library_context for the music collection. Use app_data for devices, shadow libraries, and podcast configuration. Use app_paths for file locations. Use dashboard for recent activity. You also have tools — use them when the user asks you to take action. If something is genuinely not covered, say so.`,
     },
-    ...messages.map((m) => ({ role: m.role, content: m.content })),
   ];
 
-  return callOpenRouter(llmMessages, config, false);
+  const loopMessages: OpenRouterMessage[] = [
+    ...systemMessages,
+    ...messages.map((m) => ({ role: m.role as "user" | "assistant", content: m.content })),
+  ];
+
+  const toolDefs = buildToolDefinitions();
+  let playlistCreated: string | undefined;
+
+  for (let iter = 0; iter < MAX_TOOL_ITERATIONS; iter++) {
+    const response = await callOpenRouterWithTools(loopMessages, config, toolDefs);
+
+    if (response.kind === "text") {
+      const { cleanReply, pin, unpinIds, replaceId, smartPlaylist, geniusPlaylist } =
+        parseActionTags(response.content);
+      return {
+        reply: cleanReply,
+        playlistCreated: playlistCreated ?? smartPlaylist?.name ?? geniusPlaylist?.name,
+        pin,
+        unpinIds,
+        replaceId,
+      };
+    }
+
+    // --- Tool calls ---
+    loopMessages.push({
+      role: "assistant",
+      content: null,
+      tool_calls: response.calls,
+    });
+
+    let pendingAction: PendingAction | undefined;
+
+    for (const call of response.calls) {
+      const tool = getToolByName(call.function.name);
+
+      if (!tool) {
+        loopMessages.push({
+          role: "tool",
+          content: `Error: unknown tool "${call.function.name}"`,
+          tool_call_id: call.id,
+        });
+        continue;
+      }
+
+      let args: Record<string, unknown>;
+      try {
+        args = JSON.parse(call.function.arguments) as Record<string, unknown>;
+      } catch {
+        loopMessages.push({
+          role: "tool",
+          content: `Error: could not parse tool arguments`,
+          tool_call_id: call.id,
+        });
+        continue;
+      }
+
+      if (tool.kind === "write-destructive") {
+        pendingAction = {
+          toolCallId: call.id,
+          tool: call.function.name,
+          args,
+          summary: tool.summarize(args),
+        };
+        break;
+      }
+
+      let result: unknown;
+      try {
+        result = await tool.run(args, toolCtx);
+      } catch (err) {
+        result = { error: String(err) };
+      }
+
+      if (
+        (call.function.name === "playlist_create_smart" || call.function.name === "playlist_create_genius") &&
+        result &&
+        typeof result === "object" &&
+        "name" in result
+      ) {
+        playlistCreated = (result as { name: string }).name;
+      }
+
+      loopMessages.push({
+        role: "tool",
+        content: JSON.stringify(result),
+        tool_call_id: call.id,
+      });
+    }
+
+    if (pendingAction) {
+      return { reply: "", pendingAction, playlistCreated };
+    }
+  }
+
+  return { reply: "I processed your request but ran out of steps to complete it. Please try again.", playlistCreated };
+}
+
+/** Execute a previously proposed destructive tool action after user confirmation. */
+export async function executeConfirmedAction(
+  action: PendingAction,
+  toolCtx: AiToolContext
+): Promise<string> {
+  const tool = getToolByName(action.tool);
+  if (!tool) return `Unknown tool: ${action.tool}`;
+  try {
+    const result = await tool.run(action.args, toolCtx);
+    return JSON.stringify(result);
+  } catch (err) {
+    return JSON.stringify({ error: String(err) });
+  }
 }

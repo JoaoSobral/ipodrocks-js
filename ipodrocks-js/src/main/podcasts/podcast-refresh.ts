@@ -7,6 +7,7 @@ import {
   markLastRefreshed,
   listEpisodes,
 } from "./podcast-subscriptions";
+import { fetchAndParseFeed } from "./podcast-feed-import";
 import { downloadEpisode } from "./podcast-downloader";
 import { getPodcastsRoot } from "./podcast-storage";
 
@@ -15,7 +16,120 @@ const MAX_STORED_EPISODES = 10;
 interface SubRow {
   id: number;
   feed_id: number;
+  feed_url: string;
+  source: string;
   auto_count: number;
+}
+
+/** Select target episode IDs, download missing ones, and prune old ones. */
+async function downloadAndPruneTargets(
+  db: Database.Database,
+  subId: number,
+  feedId: number,
+  autoCount: number
+): Promise<void> {
+  let targetIds: number[];
+
+  if (autoCount > 0) {
+    const rows = db
+      .prepare(
+        `SELECT id FROM podcast_episodes
+         WHERE subscription_id = ?
+         ORDER BY published_at DESC
+         LIMIT ?`
+      )
+      .all(subId, autoCount) as { id: number }[];
+    targetIds = rows.map((r) => r.id);
+  } else {
+    const rows = db
+      .prepare(
+        `SELECT id FROM podcast_episodes
+         WHERE subscription_id = ? AND manual_selected = 1
+         ORDER BY published_at DESC
+         LIMIT 5`
+      )
+      .all(subId) as { id: number }[];
+    targetIds = rows.map((r) => r.id);
+  }
+
+  const currentRoot = getPodcastsRoot();
+  for (const epId of targetIds) {
+    const ep = db
+      .prepare("SELECT download_state, local_path FROM podcast_episodes WHERE id = ?")
+      .get(epId) as { download_state: string; local_path: string | null } | undefined;
+    if (!ep) continue;
+    const alreadyDone =
+      ep.download_state === "ready" &&
+      ep.local_path !== null &&
+      ep.local_path.startsWith(currentRoot);
+    if (alreadyDone) continue;
+    await downloadEpisode(db, epId, feedId);
+  }
+
+  if (autoCount > 0) {
+    pruneOldEpisodes(db, subId);
+  }
+}
+
+async function refreshPodcastIndexSubscription(
+  db: Database.Database,
+  sub: SubRow,
+  apiKey: string,
+  apiSecret: string
+): Promise<void> {
+  const MAX_FETCH = 50;
+  let episodes;
+  try {
+    episodes = await getEpisodes(sub.feed_id, MAX_FETCH, apiKey, apiSecret);
+  } catch (err) {
+    console.error(`[podcasts] PI refresh failed for sub ${sub.id}:`, err);
+    return;
+  }
+
+  for (const ep of episodes) {
+    if (!ep.guid || !ep.enclosureUrl) continue;
+    upsertEpisode(db, sub.id, {
+      guid: ep.guid,
+      title: ep.title,
+      description: ep.description,
+      enclosureUrl: ep.enclosureUrl,
+      durationSeconds: ep.duration,
+      publishedAt: ep.datePublished,
+      fileSize: ep.enclosureLength,
+    });
+  }
+
+  markLastRefreshed(db, sub.id);
+  await downloadAndPruneTargets(db, sub.id, sub.feed_id, sub.auto_count);
+}
+
+async function refreshRssSubscription(
+  db: Database.Database,
+  sub: SubRow
+): Promise<void> {
+  let parsed;
+  try {
+    parsed = await fetchAndParseFeed(sub.feed_url);
+  } catch (err) {
+    console.error(`[podcasts] RSS refresh failed for sub ${sub.id}:`, err);
+    return;
+  }
+
+  for (const ep of parsed.episodes) {
+    if (!ep.enclosureUrl) continue;
+    upsertEpisode(db, sub.id, {
+      guid: ep.guid,
+      title: ep.title,
+      description: ep.description,
+      enclosureUrl: ep.enclosureUrl,
+      durationSeconds: ep.durationSeconds,
+      publishedAt: ep.publishedAt,
+      fileSize: ep.enclosureLength,
+    });
+  }
+
+  markLastRefreshed(db, sub.id);
+  await downloadAndPruneTargets(db, sub.id, sub.feed_id, sub.auto_count);
 }
 
 /**
@@ -33,77 +147,14 @@ export async function refreshSubscription(
   apiSecret: string
 ): Promise<void> {
   const sub = db
-    .prepare("SELECT id, feed_id, auto_count FROM podcast_subscriptions WHERE id = ?")
+    .prepare("SELECT id, feed_id, feed_url, source, auto_count FROM podcast_subscriptions WHERE id = ?")
     .get(subId) as SubRow | undefined;
   if (!sub) return;
 
-  const MAX_FETCH = 50;
-  let episodes;
-  try {
-    episodes = await getEpisodes(sub.feed_id, MAX_FETCH, apiKey, apiSecret);
-  } catch (err) {
-    console.error(`[podcasts] refresh failed for sub ${subId}:`, err);
-    return;
-  }
-
-  for (const ep of episodes) {
-    if (!ep.guid || !ep.enclosureUrl) continue;
-    upsertEpisode(db, subId, {
-      guid: ep.guid,
-      title: ep.title,
-      description: ep.description,
-      enclosureUrl: ep.enclosureUrl,
-      durationSeconds: ep.duration,
-      publishedAt: ep.datePublished,
-      fileSize: ep.enclosureLength,
-    });
-  }
-
-  markLastRefreshed(db, subId);
-
-  // Determine target episode IDs to download
-  let targetIds: number[] = [];
-
-  if (sub.auto_count > 0) {
-    const rows = db
-      .prepare(
-        `SELECT id FROM podcast_episodes
-         WHERE subscription_id = ?
-         ORDER BY published_at DESC
-         LIMIT ?`
-      )
-      .all(subId, sub.auto_count) as { id: number }[];
-    targetIds = rows.map((r) => r.id);
+  if (sub.source === "rss") {
+    await refreshRssSubscription(db, sub);
   } else {
-    const rows = db
-      .prepare(
-        `SELECT id FROM podcast_episodes
-         WHERE subscription_id = ? AND manual_selected = 1
-         ORDER BY published_at DESC
-         LIMIT 5`
-      )
-      .all(subId) as { id: number }[];
-    targetIds = rows.map((r) => r.id);
-  }
-
-  // Download missing episodes sequentially to avoid hammering the server
-  for (const epId of targetIds) {
-    const ep = db
-      .prepare("SELECT download_state, local_path FROM podcast_episodes WHERE id = ?")
-      .get(epId) as { download_state: string; local_path: string | null } | undefined;
-    if (!ep) continue;
-    const currentRoot = getPodcastsRoot();
-    const alreadyDone =
-      ep.download_state === "ready" &&
-      ep.local_path !== null &&
-      ep.local_path.startsWith(currentRoot);
-    if (alreadyDone) continue;
-
-    await downloadEpisode(db, epId, sub.feed_id);
-  }
-
-  if (sub.auto_count > 0) {
-    pruneOldEpisodes(db, subId);
+    await refreshPodcastIndexSubscription(db, sub, apiKey, apiSecret);
   }
 }
 
@@ -164,7 +215,7 @@ export function getReadyTargetEpisodes(
   subId: number
 ): Array<{ id: number; feedId: number; localPath: string }> {
   const sub = db
-    .prepare("SELECT id, feed_id, auto_count FROM podcast_subscriptions WHERE id = ?")
+    .prepare("SELECT id, feed_id, feed_url, source, auto_count FROM podcast_subscriptions WHERE id = ?")
     .get(subId) as SubRow | undefined;
   if (!sub) return [];
 

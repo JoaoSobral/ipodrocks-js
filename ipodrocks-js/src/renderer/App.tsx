@@ -7,6 +7,7 @@ import { DevicePanel } from "./components/panels/DevicePanel";
 import { SyncPanel } from "./components/panels/SyncPanel";
 import { PlaylistPanel } from "./components/panels/PlaylistPanel";
 import { AutoPodcastsPanel } from "./components/panels/AutoPodcastsPanel";
+import { AutoAudiobooksPanel } from "./components/panels/AutoAudiobooksPanel";
 import { SettingsPanel } from "./components/panels/SettingsPanel";
 import { FloatChat } from "./components/assistant/FloatChat";
 import { ThemeToggle } from "./components/common/ThemeToggle";
@@ -14,6 +15,7 @@ import { BuyMeACoffeeButton } from "./components/common/BuyMeACoffeeButton";
 import { PlayerBar } from "./components/player/PlayerBar";
 import { useThemeStore } from "./stores/theme-store";
 import { useUIStore } from "./stores/ui-store";
+import { Toaster } from "sonner";
 
 type Panel =
   | "welcome"
@@ -22,7 +24,8 @@ type Panel =
   | "devices"
   | "sync"
   | "playlists"
-  | "autopodcasts";
+  | "autopodcasts"
+  | "autoaudiobooks";
 
 interface NavItem {
   id: Panel;
@@ -107,6 +110,21 @@ const navItems: NavItem[] = [
     ),
   },
   {
+    id: "autoaudiobooks",
+    label: "Extra Audiobooks",
+    icon: (
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        width="20"
+        height="20"
+        viewBox="0 0 24 24"
+        fill="currentColor"
+      >
+        <path d="M19 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h13a1 1 0 0 0 1-1V3a1 1 0 0 0-1-1M6 4h1v16H6zm13 16H9V4h10z" />
+      </svg>
+    ),
+  },
+  {
     id: "devices",
     label: "Devices",
     icon: (
@@ -146,6 +164,7 @@ const panels: Record<Panel, () => JSX.Element> = {
   sync: SyncPanel,
   playlists: PlaylistPanel,
   autopodcasts: AutoPodcastsPanel,
+  autoaudiobooks: AutoAudiobooksPanel,
 };
 
 const SHOW_THEME_TOGGLE: Panel[] = [
@@ -156,6 +175,7 @@ const SHOW_THEME_TOGGLE: Panel[] = [
   "sync",
   "playlists",
   "autopodcasts",
+  "autoaudiobooks",
 ];
 
 export function App() {
@@ -164,11 +184,27 @@ export function App() {
   const [appVersion, setAppVersion] = useState("");
   const { theme } = useThemeStore();
   const setOpenSettings = useUIStore((s) => s.setOpenSettings);
+  const setNavigateTo = useUIStore((s) => s.setNavigateTo);
+  const pendingSyncDeviceId = useUIStore((s) => s.pendingSyncDeviceId);
+  const pendingLibraryScan = useUIStore((s) => s.pendingLibraryScan);
 
   useEffect(() => {
     setOpenSettings(() => setSettingsOpen(true));
     return () => setOpenSettings(null);
   }, [setOpenSettings]);
+
+  useEffect(() => {
+    setNavigateTo((panel: string) => setActive(panel as Panel));
+    return () => setNavigateTo(null);
+  }, [setNavigateTo]);
+
+  useEffect(() => {
+    if (pendingSyncDeviceId != null) setActive("sync");
+  }, [pendingSyncDeviceId]);
+
+  useEffect(() => {
+    if (pendingLibraryScan) setActive("library");
+  }, [pendingLibraryScan]);
 
   useEffect(() => {
     getAppVersion().then(({ version }) => setAppVersion(version));
@@ -186,9 +222,9 @@ export function App() {
   }, [theme]);
 
   return (
-    <div className="flex h-screen text-foreground select-none overflow-hidden bg-background">
+    <div className="flex h-screen text-foreground overflow-hidden bg-background">
       {/* Sidebar */}
-      <nav className="flex flex-col w-56 shrink-0 border-r border-sidebar-border bg-sidebar">
+      <nav className="flex flex-col w-56 shrink-0 border-r border-sidebar-border bg-sidebar select-none">
         {/* macOS traffic lights spacer */}
         <div className="h-8 shrink-0 [-webkit-app-region:drag]" />
 
@@ -234,7 +270,7 @@ export function App() {
 
       {/* Main content */}
       <main className="flex-1 min-w-0 flex flex-col overflow-hidden bg-background">
-        <header className="border-b border-border bg-card px-8 py-4 shrink-0 [-webkit-app-region:drag] flex items-center justify-between">
+        <header className="border-b border-border bg-card px-8 py-4 shrink-0 [-webkit-app-region:drag] flex items-center justify-between select-none">
           <h2 className="text-xl font-semibold text-foreground flex items-center gap-2">
             <span>{current.icon}</span>
             {current.label}
@@ -283,6 +319,8 @@ export function App() {
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
       />
+
+      <Toaster theme={theme === "dark" ? "dark" : "light"} richColors />
     </div>
   );
 }

@@ -1,11 +1,14 @@
 import { useState, useRef, useEffect } from "react";
 import {
   sendAssistantChat,
+  confirmAssistantAction,
   getOpenRouterConfig,
   clearAssistantHistory,
+  type AssistantPendingAction,
 } from "../../ipc/api";
 import { MarkdownContent } from "../common/MarkdownContent";
 import { ErrorBox } from "../common/ErrorBox";
+import { useUIStore } from "../../stores/ui-store";
 
 const OPENING_MESSAGE =
   "Hey! I'm Rocksy. How can I help? 😊 I know your library, understand iPodrocks, and can craft playlists in seconds.";
@@ -19,6 +22,7 @@ export function FloatChat() {
   const [isLoading, setIsLoading] = useState(false);
   const [hasApiKey, setHasApiKey] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [pendingAction, setPendingAction] = useState<AssistantPendingAction | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const messagesRef = useRef(messages);
   messagesRef.current = messages;
@@ -28,14 +32,38 @@ export function FloatChat() {
   }, []);
 
   useEffect(() => {
+    const unsubSync = window.api.on("assistant:triggerSync", (...args: unknown[]) => {
+      const payload = args[0] as { deviceId: number };
+      useUIStore.getState().setPendingSyncDeviceId(payload.deviceId);
+    });
+    const unsubScan = window.api.on("assistant:triggerLibraryScan", () => {
+      useUIStore.getState().setPendingLibraryScan(true);
+    });
+    return () => {
+      unsubSync();
+      unsubScan();
+    };
+  }, []);
+
+  useEffect(() => {
     scrollRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, isLoading]);
+  }, [messages, isLoading, pendingAction]);
+
+  function appendAssistantMessage(content: string) {
+    const next = [
+      ...messagesRef.current,
+      { role: "assistant" as const, content },
+    ];
+    messagesRef.current = next;
+    setMessages(next);
+  }
 
   async function handleSend() {
     const text = inputValue.trim();
     if (!text || isLoading) return;
 
     setInputValue("");
+    setPendingAction(null);
     const userMsg = { role: "user" as const, content: text };
     const history = [...messagesRef.current, userMsg];
     messagesRef.current = history;
@@ -51,20 +79,47 @@ export function FloatChat() {
         return;
       }
 
+      if (result.pendingAction) {
+        setPendingAction(result.pendingAction);
+        const confirmMsg = `I'd like to **${result.pendingAction.summary}**. Should I proceed?`;
+        appendAssistantMessage(confirmMsg);
+        return;
+      }
+
       const replyContent = result.playlistCreated
         ? `**Playlist created: "${result.playlistCreated}"**\n\n${result.reply}`
         : result.reply;
-      const next = [
-        ...messagesRef.current,
-        { role: "assistant" as const, content: replyContent },
-      ];
-      messagesRef.current = next;
-      setMessages(next);
+      appendAssistantMessage(replyContent);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setIsLoading(false);
     }
+  }
+
+  async function handleConfirmAction() {
+    if (!pendingAction) return;
+    const action = pendingAction;
+    setPendingAction(null);
+    setIsLoading(true);
+    setError(null);
+    try {
+      const result = await confirmAssistantAction(action);
+      if ("error" in result) {
+        setError(result.error);
+        return;
+      }
+      appendAssistantMessage(result.reply);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  function handleCancelAction() {
+    setPendingAction(null);
+    appendAssistantMessage("No problem! Let me know if there's anything else I can help with.");
   }
 
   if (hasApiKey === false) return null;
@@ -160,6 +215,26 @@ export function FloatChat() {
                 </div>
               ))
             )}
+            {pendingAction && !isLoading && (
+              <div className="flex justify-start">
+                <div className="flex gap-2 mt-1">
+                  <button
+                    type="button"
+                    onClick={handleConfirmAction}
+                    className="rounded-lg bg-primary text-primary-foreground px-3 py-1.5 text-xs font-medium hover:bg-primary/90"
+                  >
+                    Confirm
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleCancelAction}
+                    className="rounded-lg border border-border text-muted-foreground px-3 py-1.5 text-xs font-medium hover:bg-muted/50"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
             {isLoading && (
               <div className="flex justify-start">
                 <div className="rounded-xl px-3 py-2 bg-muted/50 text-sm text-muted-foreground">
@@ -189,14 +264,14 @@ export function FloatChat() {
                     handleSend();
                   }
                 }}
-                placeholder="Ask about your library…"
-                disabled={isLoading}
+                placeholder={pendingAction ? "Confirm or cancel above…" : "Ask about your library…"}
+                disabled={isLoading || !!pendingAction}
                 className="flex-1 rounded-lg bg-input border border-border px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground outline-none focus:border-primary/50 disabled:opacity-50"
               />
               <button
                 type="button"
                 onClick={handleSend}
-                disabled={!inputValue.trim() || isLoading}
+                disabled={!inputValue.trim() || isLoading || !!pendingAction}
                 className="rounded-lg bg-primary text-primary-foreground px-4 py-2 text-sm font-medium hover:bg-primary/90 disabled:opacity-40 disabled:pointer-events-none"
               >
                 Send

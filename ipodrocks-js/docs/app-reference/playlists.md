@@ -24,3 +24,15 @@ The Playlists panel has four tabs: **All**, **Smart**, **Genius**, and **Savant*
 1. Start with **All** to see existing playlists and create new ones (Smart or Genius from the Create button).
 2. For **Genius**, add a device and enable playback log. Load from database or recheck the device before generating.
 3. For **Savant**, add your OpenRouter API key in Settings first. Enable harmonic extraction in Library for better key-aware mixing.
+
+## Rocksy
+
+[Rocksy](./assistant.md) can create and triage playlists from the chat:
+
+- "Make a Smart playlist of my 4-star Rock tracks" → `playlist_create_smart`
+- "Build a Genius playlist from my most played, 25 tracks" → `playlist_create_genius`
+- "Which playlists have missing songs?" → `playlist_list_broken`
+- "Repair that playlist" → `playlist_repair`
+- "Delete the Workout playlist" → `playlist_delete` *(asks you to confirm first)*
+
+Smart and Genius creation and repair run immediately; deleting a playlist pauses for a **Confirm / Cancel** prompt. Rocksy creates Smart/Genius playlists through the same backend as the Playlists panel (the legacy `<SMART_PLAYLIST>` / `<GENIUS_PLAYLIST>` tags remain as a fallback). Savant playlists are not created via Rocksy — use the Savant tab.

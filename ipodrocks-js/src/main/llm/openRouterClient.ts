@@ -8,9 +8,30 @@ import type { OpenRouterConfig } from "../../shared/types";
 export type { OpenRouterConfig };
 
 export interface OpenRouterMessage {
-  role: "system" | "user" | "assistant";
-  content: string;
+  role: "system" | "user" | "assistant" | "tool";
+  content: string | null;
+  tool_calls?: ToolCall[];
+  tool_call_id?: string;
 }
+
+export interface ToolDefinition {
+  type: "function";
+  function: {
+    name: string;
+    description: string;
+    parameters: Record<string, unknown>;
+  };
+}
+
+export interface ToolCall {
+  id: string;
+  type: "function";
+  function: { name: string; arguments: string };
+}
+
+export type ToolCallResponse =
+  | { kind: "text"; content: string }
+  | { kind: "tool_calls"; calls: ToolCall[] };
 
 // ---------------------------------------------------------------------------
 // F4: Per-channel rate limiter — max 10 calls per 60 seconds per channel
@@ -82,7 +103,62 @@ export async function callOpenRouter(
   }
 
   const data = (await response.json()) as {
-    choices?: Array<{ message?: { content?: string } }>;
+    choices?: Array<{ message?: { content?: string | null } }>;
   };
   return data.choices?.[0]?.message?.content ?? "";
+}
+
+export async function callOpenRouterWithTools(
+  messages: OpenRouterMessage[],
+  config: OpenRouterConfig,
+  tools: ToolDefinition[]
+): Promise<ToolCallResponse> {
+  let response: Response;
+  try {
+    response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      headers: {
+        Authorization: `Bearer ${config.apiKey}`,
+        "Content-Type": "application/json",
+        "HTTP-Referer": config.siteUrl ?? "app://electron",
+        "X-Title": config.siteName ?? "iPodRocks",
+      },
+      body: JSON.stringify({
+        model: config.model,
+        messages,
+        temperature: 0.7,
+        max_tokens: 2000,
+        tools,
+        tool_choice: "auto",
+      }),
+    });
+  } catch (err) {
+    if (err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError")) {
+      throw new Error(`OpenRouter request timed out after ${REQUEST_TIMEOUT_MS / 1000}s`);
+    }
+    throw err;
+  }
+
+  if (!response.ok) {
+    const err = await response.text();
+    throw new Error(`OpenRouter error ${response.status}: ${err}`);
+  }
+
+  const data = (await response.json()) as {
+    choices?: Array<{
+      message?: {
+        content?: string | null;
+        tool_calls?: ToolCall[];
+      };
+      finish_reason?: string;
+    }>;
+  };
+
+  const choice = data.choices?.[0];
+  const msg = choice?.message;
+  if (choice?.finish_reason === "tool_calls" || (msg?.tool_calls?.length ?? 0) > 0) {
+    return { kind: "tool_calls", calls: msg?.tool_calls ?? [] };
+  }
+  return { kind: "text", content: msg?.content ?? "" };
 }

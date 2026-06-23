@@ -75,7 +75,7 @@ export function AutoPodcastsPanel() {
         <EmptyState
           icon="🎙"
           title="No subscriptions yet"
-          description='Click "Search & Subscribe" to find podcasts and start auto-downloading episodes to your devices.'
+          description='Click "Search & Subscribe" to find podcasts by name, or paste an RSS feed or podcast website URL directly — no API key required.'
           action={
             <Button variant="primary" size="sm" onClick={() => setSearchOpen(true)}>
               Search & Subscribe

@@ -39,7 +39,6 @@ export interface RunSyncOptions {
   includePlaylists?: boolean;
   progressCallback?: ProgressCallback;
   cancelSignal?: AbortSignal;
-  ignoreSpaceCheck?: boolean;
   /** When true, do not copy album artwork (*.jpg, *.png) to device. */
   skipAlbumArtwork?: boolean;
   /** F7: Pre-loaded path→mtime from content_hashes to avoid per-track fs.statSync. */
@@ -914,7 +913,7 @@ export async function runSync(
   });
 
   let removedCount = 0;
-  if (extraTrackPolicy === "remove" && analysis.extras.length > 0) {
+  if ((extraTrackPolicy === "remove" || extraTrackPolicy === "remove-all") && analysis.extras.length > 0) {
     const { removed } = removeExtraTracks(analysis.extras, progressCallback, cancelSignal);
     removedCount = removed;
   }

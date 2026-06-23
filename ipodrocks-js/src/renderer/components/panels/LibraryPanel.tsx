@@ -42,6 +42,11 @@ import {
   setMpcRemindDisabled,
   checkSavantKeyData,
   setTrackRating,
+  getBrokenPlaylists,
+  repairPlaylist,
+  rebuildPlaylist,
+  deletePlaylist,
+  getPlaylistTracks,
 } from "../../ipc/api";
 import { MpcUnavailableModal } from "../modals/MpcUnavailableModal";
 import { RatingConflictsModal } from "../RatingConflictsModal";
@@ -102,9 +107,11 @@ export function LibraryPanel() {
   const [typeFilter, setTypeFilter] = useState<string>("all");
   const [syncFilter, setSyncFilter] = useState<string>("all");
   const [cacheCleared, setCacheCleared] = useState<number | null>(null);
-  const [libraryView, setLibraryView] = useState<"tracks" | "playlists">("tracks");
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
-  const [playlistsLoading, setPlaylistsLoading] = useState(false);
+  const [selectedPlaylistId, setSelectedPlaylistId] = useState<number | null>(null);
+  const [playlistTrackIds, setPlaylistTrackIds] = useState<Set<number> | null>(null);
+  const [brokenPlaylists, setBrokenPlaylists] = useState<{ id: number; name: string; typeName: string; missingCount: number; totalCount: number }[]>([]);
+  const [showBrokenModal, setShowBrokenModal] = useState(false);
 
   const [shadowLibs, setShadowLibs] = useState<ShadowLibrary[]>([]);
   const [showCreateShadow, setShowCreateShadow] = useState(false);
@@ -135,6 +142,8 @@ export function LibraryPanel() {
     bpmOnlyCount: number;
   } | null>(null);
   const openSettings = useUIStore((s) => s.openSettings);
+  const pendingLibraryScan = useUIStore((s) => s.pendingLibraryScan);
+  const setPendingLibraryScan = useUIStore((s) => s.setPendingLibraryScan);
   const [conflictCount, setConflictCount] = useState(0);
   const [conflictsModalOpen, setConflictsModalOpen] = useState(false);
   const trackListContainerRef = useRef<HTMLDivElement>(null);
@@ -163,14 +172,9 @@ export function LibraryPanel() {
   }, [fetchTracks, fetchFolders, fetchStats]);
 
   useEffect(() => {
-    if (libraryView === "playlists") {
-      setPlaylistsLoading(true);
-      getPlaylists()
-        .then(setPlaylists)
-        .catch(console.error)
-        .finally(() => setPlaylistsLoading(false));
-    }
-  }, [libraryView]);
+    getPlaylists().then(setPlaylists).catch(console.error);
+    getBrokenPlaylists().then(setBrokenPlaylists).catch(console.error);
+  }, []);
 
   useEffect(() => {
     getDevices().then(setDevices).catch(console.error);
@@ -210,6 +214,16 @@ export function LibraryPanel() {
   }, [selectedDeviceId]);
 
   useEffect(() => {
+    if (selectedPlaylistId == null) {
+      setPlaylistTrackIds(null);
+      return;
+    }
+    getPlaylistTracks(selectedPlaylistId)
+      .then((tracks) => setPlaylistTrackIds(new Set(tracks.map((t) => t.id))))
+      .catch(() => setPlaylistTrackIds(null));
+  }, [selectedPlaylistId]);
+
+  useEffect(() => {
     if (!showCreateShadow) return;
     const configs = Array.isArray(codecConfigs) ? codecConfigs : [];
     const hasMpc = configs.some((c) => (c?.codec_name ?? "").toUpperCase() === "MPC");
@@ -239,6 +253,9 @@ export function LibraryPanel() {
         base = base.filter((t) => !syncedPaths.has(t.path));
       }
     }
+    if (playlistTrackIds != null) {
+      base = base.filter((t) => playlistTrackIds.has(t.id));
+    }
     return [...base].sort((a, b) => {
       const av = a[sortField];
       const bv = b[sortField];
@@ -253,7 +270,7 @@ export function LibraryPanel() {
       }
       return sortDir === "asc" ? cmp : -cmp;
     });
-  }, [tracks, search, sortField, sortDir, typeFilter, syncFilter, selectedDeviceId, syncedPaths]);
+  }, [tracks, search, sortField, sortDir, typeFilter, syncFilter, selectedDeviceId, syncedPaths, playlistTrackIds]);
 
   function toggleSort(field: SortField) {
     if (sortField === field) {
@@ -293,6 +310,13 @@ export function LibraryPanel() {
     setShowScanProgress(true);
   }
 
+  useEffect(() => {
+    if (pendingLibraryScan && folders.length > 0) {
+      setPendingLibraryScan(false);
+      handleScan();
+    }
+  }, [pendingLibraryScan, folders.length, setPendingLibraryScan]);
+
   async function handleClearCache() {
     const n = await clearContentHashes();
     setCacheCleared(n);
@@ -304,6 +328,8 @@ export function LibraryPanel() {
     setFoldersToScan(null);
     fetchTracks();
     fetchStats();
+    getBrokenPlaylists().then(setBrokenPlaylists).catch(console.error);
+    getPlaylists().then(setPlaylists).catch(console.error);
   }
 
   async function handlePickFolder() {
@@ -483,6 +509,22 @@ export function LibraryPanel() {
         </div>
       )}
 
+      {/* Broken playlists banner */}
+      {brokenPlaylists.length > 0 && (
+        <div className="flex items-center gap-2 px-2 py-1.5 rounded-md border border-warning/30 bg-warning/10 text-[11px]">
+          <span className="text-warning shrink-0">⚠</span>
+          <span className="text-warning flex-1 min-w-0">
+            <span className="font-medium">{brokenPlaylists.length}</span>
+            {" playlist"}
+            {brokenPlaylists.length !== 1 ? "s have" : " has"}
+            {" missing tracks"}
+          </span>
+          <Button variant="ghost" size="sm" onClick={() => setShowBrokenModal(true)}>
+            Review →
+          </Button>
+        </div>
+      )}
+
       {/* Folders + Shadow Libraries — compact side-by-side grid */}
       <div className="grid grid-cols-2 gap-2">
         {/* Library Folders */}
@@ -624,24 +666,6 @@ export function LibraryPanel() {
         />
       ) : (
         <div className="flex-1 flex flex-col min-h-0 min-w-0">
-          <div className="flex gap-1 p-0.5 rounded-md bg-muted/30 w-fit shrink-0">
-            {(["tracks", "playlists"] as const).map((view) => (
-              <button
-                key={view}
-                type="button"
-                className={`px-3 py-1 rounded text-[11px] font-medium transition-colors capitalize ${
-                  libraryView === view
-                    ? "bg-primary/15 text-primary"
-                    : "text-muted-foreground hover:text-muted-foreground"
-                }`}
-                onClick={() => setLibraryView(view)}
-              >
-                {view}
-              </button>
-            ))}
-          </div>
-
-          {libraryView === "tracks" ? (
         <Card title="Tracks" className="flex-1 flex flex-col min-h-[400px] min-w-0 overflow-hidden">
           <Input
             placeholder="Search by title, artist, or album…"
@@ -695,6 +719,23 @@ export function LibraryPanel() {
                 placeholder="All"
                 className="w-24"
                 disabled={selectedDeviceId == null}
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <Label className="mb-0 shrink-0">Playlist:</Label>
+              <Select
+                options={[
+                  { value: "", label: "All" },
+                  ...(Array.isArray(playlists) ? playlists : []).map((pl) => ({
+                    value: String(pl.id),
+                    label: `${pl.name} (${pl.trackCount})`,
+                  })),
+                ]}
+                value={selectedPlaylistId != null ? String(selectedPlaylistId) : ""}
+                onChange={(v) => setSelectedPlaylistId(v ? Number(v) : null)}
+                placeholder="All"
+                className="w-40"
+                testId="playlist-filter"
               />
             </div>
           </div>
@@ -793,41 +834,6 @@ export function LibraryPanel() {
             </div>
           </div>
         </Card>
-          ) : (
-        <Card title="Playlists" className="flex-1 flex flex-col min-h-0">
-          <TableHeader>
-            <span className="flex-[3]">Name</span>
-            <span className="w-24 text-right">Songs</span>
-            <span className="w-28">Type</span>
-          </TableHeader>
-          <div className="flex-1 overflow-auto min-h-0">
-            {playlistsLoading ? (
-              <div className="flex justify-center py-12">
-                <Spinner />
-              </div>
-            ) : playlists.length === 0 ? (
-              <p className="text-center text-xs text-muted-foreground py-8">No playlists</p>
-            ) : (
-              playlists.map((pl) => (
-                <div
-                  key={pl.id}
-                  className="flex items-center gap-2 px-3 py-2 text-sm hover:bg-muted/30 border-b border-border transition-colors"
-                >
-                  <span className="flex-[3] truncate text-foreground font-medium">{pl.name}</span>
-                  <span className="w-24 text-right text-muted-foreground tabular-nums">
-                    {pl.trackCount}
-                  </span>
-                  <span className="w-28">
-                    <Badge variant="primary" className="capitalize">
-                      {pl.typeName}
-                    </Badge>
-                  </span>
-                </div>
-              ))
-            )}
-          </div>
-        </Card>
-          )}
         </div>
       )}
 
@@ -1129,6 +1135,81 @@ export function LibraryPanel() {
           getRatingConflicts().then((rows) => setConflictCount(rows.length)).catch(console.error);
         }}
       />
+
+      {/* Broken playlists fix modal */}
+      <Modal
+        open={showBrokenModal}
+        onClose={() => setShowBrokenModal(false)}
+        title="Playlists with missing tracks"
+        className="max-w-lg"
+      >
+        <div className="flex flex-col gap-3">
+          <p className="text-xs text-muted-foreground">
+            These playlists reference tracks that have been removed from your library. Repair removes the missing entries; Rebuild re-resolves tracks from rules (smart playlists only).
+          </p>
+          <div className="space-y-1 max-h-64 overflow-y-auto">
+            {brokenPlaylists.map((pl) => (
+              <div key={pl.id} className="flex items-center gap-2 px-2 py-2 rounded-md border border-border bg-muted/20">
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-medium text-foreground truncate">{pl.name}</p>
+                  <p className="text-[10px] text-muted-foreground">
+                    {pl.missingCount} missing · {pl.totalCount - pl.missingCount} remaining · {pl.typeName}
+                  </p>
+                </div>
+                <div className="flex gap-1 shrink-0">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="!text-[10px] !py-0.5 !px-2"
+                    onClick={() => {
+                      repairPlaylist(pl.id)
+                        .then(() => getBrokenPlaylists().then(setBrokenPlaylists).catch(console.error))
+                        .then(() => getPlaylists().then(setPlaylists).catch(console.error))
+                        .catch(console.error);
+                    }}
+                  >
+                    Repair
+                  </Button>
+                  {pl.typeName === "smart" && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="!text-[10px] !py-0.5 !px-2"
+                      onClick={() => {
+                        rebuildPlaylist(pl.id)
+                          .then(() => getBrokenPlaylists().then(setBrokenPlaylists).catch(console.error))
+                          .then(() => getPlaylists().then(setPlaylists).catch(console.error))
+                          .catch(console.error);
+                      }}
+                    >
+                      Rebuild
+                    </Button>
+                  )}
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="!text-[10px] !py-0.5 !px-2 text-destructive hover:text-destructive"
+                    onClick={() => {
+                      deletePlaylist(pl.id)
+                        .then(() => getBrokenPlaylists().then(setBrokenPlaylists).catch(console.error))
+                        .then(() => getPlaylists().then(setPlaylists).catch(console.error))
+                        .catch(console.error);
+                    }}
+                  >
+                    Delete
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </div>
+          {brokenPlaylists.length === 0 && (
+            <p className="text-center text-xs text-success py-2">All playlists are healthy!</p>
+          )}
+          <div className="flex justify-end pt-1">
+            <Button onClick={() => setShowBrokenModal(false)}>Close</Button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }

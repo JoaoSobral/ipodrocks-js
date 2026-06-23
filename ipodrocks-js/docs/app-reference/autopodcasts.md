@@ -4,7 +4,7 @@ Auto Podcasts lets you subscribe to any podcast, configure how many episodes to 
 
 ## What it does
 
-- **Subscribe** — Search for any podcast by keyword using the Podcast Index catalog. Add as many subscriptions as you like.
+- **Subscribe** — Search for any podcast by keyword using the Podcast Index catalog, **or** add a show directly by pasting its RSS feed or website URL. Add as many subscriptions as you like.
 - **Auto-download** — For each subscription, choose how many of the latest episodes to keep (1–5), or switch to manual selection (pick up to 5 specific episodes yourself).
 - **Background refresh** — iPodRocks periodically checks every subscription's RSS feed for new episodes. The refresh runs while the app is open, on a schedule you control in Settings.
 - **Device sync** — Episodes that have been downloaded are automatically copied to each device that has Auto Podcasts enabled, into that device's configured Podcasts folder.
@@ -72,6 +72,17 @@ The search and RSS feed fetching use the [Podcast Index](https://podcastindex.or
 3. Type a keyword — results appear live as you type.
 4. Click **+ Add** next to any podcast. It appears in your subscriptions grid immediately, with its artwork.
 
+#### Add by URL (no API key needed)
+
+If you already have a feed URL, or a show isn't in the Podcast Index, use the **Add by URL** tab in the search dialog:
+
+1. Switch to the **Add by URL** tab.
+2. Paste the podcast's **RSS feed URL** or its **website URL**. iPodRocks figures out which one you gave it: feeds are parsed directly, while website URLs are crawled for a linked feed (`<link rel="alternate">`) and common feed paths like `/feed`, `/rss`, and `/feed.xml`.
+3. A preview shows the show's title, author, artwork, and episode count.
+4. Confirm to subscribe. The show then behaves exactly like a Podcast Index subscription.
+
+This path does **not** require Podcast Index credentials — it fetches the feed directly.
+
 ### 4. Configure each subscription
 
 Click any subscription card to open its episode modal:
@@ -85,6 +96,20 @@ Click any subscription card to open its episode modal:
 ### 5. Enable Auto Podcasts on a device
 
 Open the **Devices** panel, select a device, and enable the **Auto Podcasts** toggle in the device settings. Once enabled, every scheduler cycle copies newly ready episodes to that device.
+
+## Rocksy
+
+[Rocksy](./assistant.md) can manage podcasts from the chat:
+
+- "Find podcasts about woodworking" → `podcast_search`
+- "Subscribe to Syntax" → `podcast_subscribe`
+- "Subscribe to this feed: `https://…/feed.xml`" → `podcast_add_by_url`
+- "What podcasts am I subscribed to?" → `podcast_list_subscriptions`
+- "List the latest episodes of Syntax" → `podcast_list_episodes`
+- "Download the latest episodes for Syntax" → `podcast_download_now` *(asks you to confirm first)*
+- "Delete old episodes of Syntax" → `podcast_delete_episodes` *(asks you to confirm first)*
+
+Searching, listing, and subscribing run immediately; downloading and deleting episodes pause for a **Confirm / Cancel** prompt.
 
 ## Tips
 

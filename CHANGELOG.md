@@ -1,5 +1,81 @@
 # Changelog
 
+## [2.0.0] — 2026-06
+
+### Features
+
+#### Rocksy — Full AI agency via tool calling
+
+- **Rocksy can now act, not just answer** — The floating chat panel is backed by a real tool-calling loop (OpenAI-compatible `tools` + `tool_choice`). Instead of receiving a static dump of your library on every message, Rocksy calls structured tools to fetch data on demand and execute operations on your behalf.
+- **17 tools across four domains** — Read tools (`library_search_tracks`, `library_list_albums/artists/genres`, `podcast_search`, `podcast_list_subscriptions/episodes`, `device_list`) run inline and return live data. Write-safe tools (`playlist_create_smart`, `playlist_create_genius`, `podcast_subscribe`) execute immediately without confirmation. Write-destructive tools (`device_check`, `podcast_download_now`, `podcast_delete_episodes`, `library_add_folder`, `library_remove_folder`, `playlist_delete`) require explicit user confirmation before running.
+- **Confirm gate for destructive actions** — When Rocksy proposes a destructive action (e.g. "Download latest episodes for Syntax?"), it pauses and renders **Confirm / Cancel** buttons in the chat. The action only executes after the user clicks Confirm. The text input is locked while a confirmation is pending.
+- **Tool-call loop with iteration cap** — `sendAssistantMessage` runs up to 5 tool-call rounds per user message, feeding each tool result back to the model before it produces a final reply. This lets Rocksy do multi-step work (search → subscribe, list → create) in a single turn.
+- **Playlist creation migrated to tool calls** — Smart and Genius playlists are now created via `playlist_create_smart` / `playlist_create_genius` tools (with full DB-ID validation) instead of the old `<SMART_PLAYLIST>` / `<GENIUS_PLAYLIST>` action-tag scheme. The legacy tags remain supported as a fallback.
+- **`assistant:confirmAction` IPC channel** — A new channel executes a previously proposed destructive tool after the user confirms it in the renderer, and returns a human-readable result message that is appended to the chat history.
+- **Expanded `ActivityOperation` type** — Added `remove_folder`, `playlist_deleted`, `podcast_subscribed`, `podcast_downloaded`, `podcast_episodes_deleted` to the activity log's operation union so all AI-initiated writes are recorded in Recent Activity.
+
+#### Playlists as a library filter (tab removed)
+
+- **Playlists are now a filter on the library track list** — Instead of a read-only Playlists tab that duplicated PlaylistPanel, there is now a Playlist `<select>` in the Library panel's filter row. Selecting a playlist narrows the track list to that playlist's members. The redundant Playlists tab in LibraryPanel has been removed; full playlist management stays in PlaylistPanel.
+
+#### Broken-playlist detection & repair
+
+- **Playlists referencing deleted tracks are now detected and flagged** — When tracks are removed during a library re-scan, any playlists that still reference those tracks are marked broken. Broken playlists are surfaced in three places: a warning banner in the Library panel, warning badges on affected playlist cards in PlaylistPanel, and a gate modal that blocks sync until the issue is resolved.
+- **Accurate track count** — The playlist `trackCount` now only counts items whose track exists in the library, so the displayed count is always accurate even before repair.
+- **Repair / Delete actions** — Each broken playlist can be Repaired (dangling items removed, positions renumbered) or Deleted outright. Smart playlists also offer Rebuild (re-resolves tracks from the stored rules).
+- **Sync gate with "Repair all & continue"** — If a sync would include broken playlists, the sync is blocked and a modal offers one-click "Repair all & continue" to fix them in place before proceeding.
+
+#### Skip album artwork moved to device profile
+
+- **"Skip album artwork" is now a per-device setting** — Moved from the per-sync Sync panel into the Device panel alongside "Skip playback log" and "Auto podcasts". The setting is persisted in the `devices` table (migrated idempotently) and read at sync time from the device profile.
+
+#### Dead "Ignore space check" removed
+
+- **Removed the unused "Ignore space check" toggle** — The `ignoreSpaceCheck` flag and the underlying `canFitContent()` method had zero callers and were never consulted during sync. The toggle, its prefs field, IPC plumbing, schema column, and type definitions have all been removed.
+
+#### Text selection & right-click clipboard menu
+
+- **Text is now selectable throughout the app** — Removed the global `select-none` that blocked text selection on the entire UI. You can now click-drag with the left mouse button to select text anywhere in the content area. The sidebar navigation and title-bar header remain non-selectable so they keep behaving like app chrome.
+- **Native right-click context menu** — Right-clicking anywhere now shows a Cut / Copy / Paste / Select All menu. Each item is enabled only when applicable: Copy when text is selected, and Cut / Paste / Select All inside editable fields (driven by the web contents' `editFlags`). Implemented in the main process via the `context-menu` event on the window's `webContents`.
+
+#### Extra Audiobooks — free public-domain audiobooks (LibriVox)
+
+- **New "Extra Audiobooks" tab** — A dedicated panel for browsing and subscribing to free, public-domain audiobooks from [LibriVox](https://librivox.org). No account, API key, or credentials required. Subscribed books show as a cover grid tagged **Extra**, with chapter count and total runtime.
+- **Search & Add** — Search LibriVox by title or author (author search also retries on the last word, so "Philip K. Dick" matches). Results are de-duplicated and rendered with covers; one click subscribes and pulls the book's chapter list from its RSS feed.
+- **Download-on-sync** — Audiobooks are not pre-downloaded. Each book's chapters are fetched on demand the first time you sync a device that includes it, then copied to `<device>/<Audiobooks folder>/<Author - Title>/NN <Chapter>.ext`. The book cover is copied alongside as `cover.<ext>`. Already-synced chapters are skipped idempotently via a `device_audiobook_synced` table; renamed destinations are migrated automatically.
+- **Cover picker** — LibriVox feeds rarely carry artwork, so covers are resolved automatically from Google Books / Open Library after subscribing (fetched in the background and swapped in live). A **Search cover** button in the book detail modal lets you pick a different cover from candidate results.
+- **Detail modal** — Click any book to see its author, language, runtime, description, and per-chapter download state (ready / downloading / failed / pending / skipped). **Remove Book** unsubscribes and deletes all local chapter files.
+- **Sync integration** — Audiobooks participate in Full and Custom sync like podcasts: a per-device include toggle plus Custom-sync Include/Exclude selection by book label. Progress is reported under the `audiobook` content type.
+
+#### Podcasts — add by RSS feed or website URL
+
+- **"Add by URL" tab in podcast search** — Alongside the Podcast Index keyword search, you can now subscribe by pasting a podcast's RSS feed or website URL directly — no API key needed for this path. Website URLs are crawled for `<link rel="alternate">` feed references and common feed paths (`/feed`, `/rss`, `/feed.xml`, …); RSS/Atom feeds are parsed directly. A preview (title, author, artwork, episode count) is shown before you confirm the subscription.
+- **Shared RSS parser** — A new `podcast-feed-import.ts` module handles input classification, feed discovery, and RSS/Atom parsing. It is reused by the audiobook subscription flow to read LibriVox chapter feeds.
+
+### AI Assistant (Rocksy)
+
+- **Audiobook tools** — `audiobook_search` (read), `audiobook_list_subscriptions` (read), `audiobook_subscribe` (write-safe), `audiobook_unsubscribe` (write-destructive), and `audiobook_refresh_cover` (write-safe) let Rocksy find, add, manage, and re-cover LibriVox audiobooks from the chat.
+- **`podcast_add_by_url` tool (write-safe)** — Rocksy can subscribe to a podcast from a pasted RSS or website URL, complementing the existing `podcast_search` / `podcast_subscribe` flow.
+- **System prompt directives** — Added rules so Rocksy reaches for the audiobook and add-by-URL tools instead of declining.
+- **`playlist_list_broken` tool (read)** — Rocksy can now check which playlists have missing tracks and report them to the user.
+- **`playlist_repair` tool (write-safe)** — Rocksy can repair broken playlists on the user's behalf (removes dangling items). Pairs with `playlist_delete` for full triage from the chat.
+- **System prompt directive** — When the user mentions playlists with missing songs or asks to fix a playlist, Rocksy now calls `playlist_list_broken` first, then `playlist_repair` or `playlist_delete`, instead of saying it can't help.
+
+### Testing
+
+- **`assistant-tools.test.ts`** — 31 new cases covering the tool registry: no duplicate names, every tool has required fields, `getToolByName` lookups, `buildToolDefinitions` produces valid OpenAI-compatible schemas; read tools return correct data; write-safe tools (`playlist_create_smart`) reject empty names, empty rules, and invalid IDs; every write-destructive tool is correctly classified; `library_remove_folder` and `playlist_delete` happy-path and invalid-arg cases; `podcast_delete_episodes` summarize shows episode count.
+- **`assistant-tools.test.ts` (v2.0 additions)** — New cases for `playlist_list_broken` (read tier, returns broken list), `playlist_repair` (write-safe tier, calls `repairPlaylist`, throws on invalid ID, summarize includes ID) and their mock setup.
+- **`behaviors/playlists.test.ts`** — New `getBrokenPlaylists` / `repairPlaylist` behavior tests: healthy playlist returns no broken entries; deleting a track with FKs off produces a broken entry with correct `missingCount`/`totalCount`; accurate `trackCount` before repair; `repairPlaylist` removes only the dangling item, renumbers positions, and the playlist is no longer broken; all-missing case leaves an empty (not deleted) playlist.
+- **`tests/e2e/library-playlist-filter.test.ts`** — Playwright E2E test asserting the old tracks/playlists toggle is absent and a playlist filter `<select>` is visible in the Library panel.
+- **`tests/e2e/audiobook-add.test.ts`** — Playwright E2E covering the Extra Audiobooks flow: search LibriVox, subscribe, see the book in the grid tagged "Extra", open the detail modal, and unsubscribe.
+- **`tests/e2e/podcast-add-by-url.test.ts`** — Playwright E2E for the "Add by URL" tab: paste a feed URL, preview the show, and subscribe.
+- **`audiobook-cover.test.ts`** — Cover resolution from Google Books / Open Library, candidate search, and graceful fallback when no cover is found.
+- **`podcast-feed-import.test.ts`** — Input classification (RSS vs website), feed discovery from HTML, and RSS/Atom parsing (titles, enclosures, durations, dates).
+- **`sync-progress-modal.test.tsx`** — Sync progress modal renders the `audiobook` content type and per-type counts.
+- **`regressions/device-sync-preferences.test.ts`** — Updated to remove `ignoreSpaceCheck` and `skipAlbumArtwork` from `DeviceSyncPreferences` object literals and raw SQL inserts (both columns removed from the `device_sync_preferences` table).
+
+---
+
 ## [1.3.7] — 2026-06
 
 ### Bug fixes

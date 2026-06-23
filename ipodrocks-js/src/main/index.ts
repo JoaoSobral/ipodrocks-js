@@ -1,10 +1,13 @@
-import { app, BrowserWindow } from "electron";
+import { app, BrowserWindow, Menu, MenuItem } from "electron";
 import * as fs from "fs";
 import * as path from "path";
-import { registerIpcHandlers } from "./ipc";
+import { registerIpcHandlers, getLibraryDb } from "./ipc";
 import { registerMediaScheme, registerMediaProtocol } from "./player/media-protocol";
 import { cleanupPlayerTemp } from "./player/player-source";
 import { stopPodcastScheduler } from "./podcasts/podcast-scheduler";
+import { setLibrivoxBaseUrl } from "./audiobooks/librivox-client";
+import { setCoverApiBaseUrls } from "./audiobooks/cover-client";
+import { backfillMissingCovers } from "./audiobooks/audiobook-cover";
 
 // Prevent SharedImageManager/mailbox GPU overlay errors on macOS
 if (process.platform === "darwin") {
@@ -12,6 +15,14 @@ if (process.platform === "darwin") {
 }
 
 registerMediaScheme();
+
+// Allow test env to redirect external API calls to local stubs
+if (process.env.LIBRIVOX_BASE_URL) setLibrivoxBaseUrl(process.env.LIBRIVOX_BASE_URL);
+setCoverApiBaseUrls({
+  googleBooks: process.env.GOOGLE_BOOKS_BASE_URL,
+  openLibrary: process.env.OPENLIBRARY_BASE_URL,
+  openLibraryCovers: process.env.OPENLIBRARY_COVERS_BASE_URL,
+});
 
 const devServerUrl = process.env.VITE_DEV_SERVER_URL;
 
@@ -48,6 +59,37 @@ function getIconPath(): string {
   return path.join(baseDirs[0], names[0]);
 }
 
+function attachContextMenu(win: BrowserWindow): void {
+  win.webContents.on("context-menu", (_event, params) => {
+    const hasSelection = params.selectionText.trim().length > 0;
+    const items: MenuItem[] = [
+      new MenuItem({
+        label: "Cut",
+        role: "cut",
+        enabled: params.isEditable && hasSelection,
+      }),
+      new MenuItem({
+        label: "Copy",
+        role: "copy",
+        enabled: hasSelection,
+      }),
+      new MenuItem({
+        label: "Paste",
+        role: "paste",
+        enabled: params.isEditable && params.editFlags.canPaste,
+      }),
+      new MenuItem({ type: "separator" }),
+      new MenuItem({
+        label: "Select All",
+        role: "selectAll",
+        enabled: params.editFlags.canSelectAll,
+      }),
+    ];
+
+    Menu.buildFromTemplate(items).popup({ window: win });
+  });
+}
+
 function createWindow(): BrowserWindow {
   const preloadPath = path.join(__dirname, "preload.js");
   const iconPath = getIconPath();
@@ -82,11 +124,15 @@ app.whenReady().then(() => {
   cleanupPlayerTemp();
   registerMediaProtocol();
   registerIpcHandlers();
-  createWindow();
+  // Non-blocking startup backfill for books added before cover support
+  backfillMissingCovers(getLibraryDb()).catch(() => {});
+  const win = createWindow();
+  attachContextMenu(win);
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {
-      createWindow();
+      const w = createWindow();
+      attachContextMenu(w);
     }
   });
 });

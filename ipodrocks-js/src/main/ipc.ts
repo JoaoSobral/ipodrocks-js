@@ -150,7 +150,22 @@ import {
   setManualSelection,
 } from "./podcasts/podcast-subscriptions";
 import { refreshSubscription, refreshAll, refreshAllForNewFolder } from "./podcasts/podcast-refresh";
+import { discoverFeeds, fetchAndParseFeed, feedPreview, importFeed } from "./podcasts/podcast-feed-import";
 import { syncPodcastsToDevice } from "./podcasts/podcast-device-sync";
+import { searchAudiobooks } from "./audiobooks/librivox-client";
+import {
+  listSubscriptions as listAudiobookSubs,
+  subscribe as audiobookSubscribeFn,
+  unsubscribe as audiobookUnsubscribeFn,
+  listChapters,
+  subLabel as audiobookSubLabel,
+} from "./audiobooks/audiobook-subscriptions";
+import { syncAutoAudiobooksToDevice } from "./audiobooks/audiobook-device-sync";
+import {
+  downloadCover as downloadAudiobookCover,
+  downloadCoverFromUrl as downloadAudiobookCoverFromUrl,
+} from "./audiobooks/audiobook-cover";
+import { searchCoverCandidates } from "./audiobooks/cover-client";
 import { startPodcastScheduler, stopPodcastScheduler } from "./podcasts/podcast-scheduler";
 import { downloadEpisode } from "./podcasts/podcast-downloader";
 import { getPodcastsRoot, getDefaultPodcastsRoot } from "./podcasts/podcast-storage";
@@ -174,6 +189,7 @@ import {
 } from "./savant/savantPlaylistChat";
 import {
   sendAssistantMessage,
+  executeConfirmedAction,
   loadAssistantHistory,
   loadNonPinnedHistory,
   saveAssistantMessages,
@@ -185,7 +201,9 @@ import {
   MAX_PINNED_MEMORIES,
   invalidateAssistantCache,
   type AppPaths,
+  type PendingAction,
 } from "./assistant/assistantChat";
+import type { AiToolContext } from "./assistant/tools";
 import { randomUUID } from "crypto";
 import { logActivity, getRecentActivity } from "./activity/activity-logger";
 import { checkRateLimit } from "./llm/openRouterClient";
@@ -255,6 +273,10 @@ function getLibrary(): Library {
     devicesCore = new DevicesCore(library.getConnection());
   }
   return library;
+}
+
+export function getLibraryDb(): import("better-sqlite3").Database {
+  return getLibrary().getConnection();
 }
 
 function getPlaylistCore(): PlaylistCore {
@@ -1131,8 +1153,6 @@ export function registerIpcHandlers(): void {
         includePodcasts: opts.includePodcasts !== false,
         includeAudiobooks: opts.includeAudiobooks !== false,
         includePlaylists: opts.includePlaylists !== false,
-        ignoreSpaceCheck: opts.ignoreSpaceCheck,
-        skipAlbumArtwork: opts.skipAlbumArtwork === true,
         preserveFolderStructure: opts.preserveFolderStructure !== false,
         selections: opts.selections ?? emptySelections(),
       } satisfies DeviceSyncPreferences);
@@ -1283,8 +1303,7 @@ export function registerIpcHandlers(): void {
         syncType: opts.syncType,
         extraTrackPolicy: opts.extraTrackPolicy,
         cancelSignal: syncSignal,
-        ignoreSpaceCheck: opts.ignoreSpaceCheck,
-        skipAlbumArtwork: opts.skipAlbumArtwork,
+        skipAlbumArtwork: device.profile.skipAlbumArtwork === true,
         preserveFolderStructure,
         preloadedMtimes,
         profileCodecExtOverride: profileCodecExtOverride ?? undefined,
@@ -1308,9 +1327,10 @@ export function registerIpcHandlers(): void {
       const willRunPodcast = Object.keys(podcastLibraryTracks).length > 0;
       const willRunAudiobook = Object.keys(audiobookLibraryTracks).length > 0;
       const hasAutoPodcasts = device.profile.autoPodcastsEnabled === true;
+      const hasAutoAudiobooks = listAudiobookSubs(lib.getConnection()).length > 0;
       const isEmptyLibrary = !willRunMusic && !willRunPodcast && !willRunAudiobook;
 
-      if (isEmptyLibrary && !hasAutoPodcasts) {
+      if (isEmptyLibrary && !hasAutoPodcasts && !hasAutoAudiobooks) {
         const isShadow = device.profile.sourceLibraryType === "shadow" && device.profile.shadowLibraryId != null;
         const emptyMessage = isShadow
           ? "Shadow library contains no files to sync. Build or select a shadow library that has tracks."
@@ -1485,6 +1505,62 @@ export function registerIpcHandlers(): void {
         }
       }
 
+      // Auto Audiobooks: download-on-sync for books in scope
+      try {
+        const autoAbResult = await syncAutoAudiobooksToDevice(
+          lib.getConnection(),
+          opts.deviceId,
+          {
+            syncType: opts.syncType,
+            includeAudiobooks: opts.includeAudiobooks !== false,
+            selectedLabels: opts.selections?.audiobooks ?? [],
+            mode: opts.selections?.mode ?? "include",
+          },
+          syncOpts.progressCallback
+        );
+        result.synced += autoAbResult.synced;
+        result.errors += autoAbResult.errors;
+      } catch (err) {
+        console.error("[ipc] Auto audiobook sync to device failed:", err);
+      }
+
+      // "Remove all" — wipe auto podcasts and extra audiobooks off the device
+      if (opts.extraTrackPolicy === "remove-all") {
+        const db = lib.getConnection();
+        try {
+          const podcastRows = db
+            .prepare("SELECT device_relative_path FROM device_podcast_synced WHERE device_id = ?")
+            .all(opts.deviceId) as { device_relative_path: string }[];
+          for (const row of podcastRows) {
+            const abs = path.join(device.profile.mountPath, row.device_relative_path);
+            try { fs.unlinkSync(abs); } catch { /* ignore */ }
+          }
+          db.prepare("DELETE FROM device_podcast_synced WHERE device_id = ?").run(opts.deviceId);
+          if (podcastRows.length > 0) {
+            syncOpts.progressCallback?.({ event: "log", message: `Remove all: removed ${podcastRows.length} auto-podcast file(s) from device.` });
+            result.removed += podcastRows.length;
+          }
+        } catch (err) {
+          console.error("[ipc] remove-all: podcast cleanup failed:", err);
+        }
+        try {
+          const abRows = db
+            .prepare("SELECT device_relative_path FROM device_audiobook_synced WHERE device_id = ?")
+            .all(opts.deviceId) as { device_relative_path: string }[];
+          for (const row of abRows) {
+            const abs = path.join(device.profile.mountPath, row.device_relative_path);
+            try { fs.unlinkSync(abs); } catch { /* ignore */ }
+          }
+          db.prepare("DELETE FROM device_audiobook_synced WHERE device_id = ?").run(opts.deviceId);
+          if (abRows.length > 0) {
+            syncOpts.progressCallback?.({ event: "log", message: `Remove all: removed ${abRows.length} extra-audiobook file(s) from device.` });
+            result.removed += abRows.length;
+          }
+        } catch (err) {
+          console.error("[ipc] remove-all: extra audiobook cleanup failed:", err);
+        }
+      }
+
       if (result.errors > 0) result.status = "error";
 
       const shouldWritePlaylists =
@@ -1569,7 +1645,7 @@ export function registerIpcHandlers(): void {
               event: "log",
               message: `${orphanPaths.length} orphan playlist(s) on device.`,
             });
-            if (opts.extraTrackPolicy === "remove") {
+            if (opts.extraTrackPolicy === "remove" || opts.extraTrackPolicy === "remove-all") {
               const { removed } = removeExtraTracks(
                 orphanPaths,
                 syncOpts.progressCallback,
@@ -1780,6 +1856,30 @@ export function registerIpcHandlers(): void {
         libraryFolderPaths,
         preserveFolderStructure,
       });
+    })
+  );
+
+  ipcMain.handle(
+    "playlist:getBroken",
+    safe("playlist:getBroken", async () => getPlaylistCore().getBrokenPlaylists())
+  );
+
+  ipcMain.handle(
+    "playlist:repair",
+    safe("playlist:repair", async (_event, playlistId: number) => {
+      const result = getPlaylistCore().repairPlaylist(playlistId);
+      logActivity(getLibrary().getConnection(), "playlist_repaired", `Repaired playlist #${playlistId}: removed ${result.removed} missing tracks`);
+      invalidateAssistantCache();
+      return result;
+    })
+  );
+
+  ipcMain.handle(
+    "playlist:rebuild",
+    safe("playlist:rebuild", async (_event, playlistId: number) => {
+      const ok = getPlaylistCore().rebuildSmartPlaylist(playlistId);
+      if (ok) invalidateAssistantCache();
+      return { rebuilt: ok };
     })
   );
 
@@ -2041,85 +2141,24 @@ export function registerIpcHandlers(): void {
         autoPodcastEnabled: autoPodcastSettings.enabled,
         autoPodcastIntervalMin: autoPodcastSettings.refreshIntervalMinutes,
       };
-      const rawReply = await sendAssistantMessage(fullHistory, db, config, appPaths);
-      const {
-        cleanReply,
-        pin,
-        unpinIds,
-        replaceId,
-        smartPlaylist,
-        geniusPlaylist,
-      } = parseActionTags(rawReply);
-
-      let playlistCreated: string | undefined;
-
-      try {
-        if (smartPlaylist) {
-          // F3: Validate rule IDs against DB before trusting LLM output
-          const stmtForType: Record<string, ReturnType<typeof db.prepare>> = {
-            genre: db.prepare("SELECT 1 FROM genres WHERE id = ?"),
-            artist: db.prepare("SELECT 1 FROM artists WHERE id = ?"),
-            album: db.prepare("SELECT 1 FROM albums WHERE id = ?"),
-          };
-          const validatedRules = smartPlaylist.rules.filter((r) => {
-            if (r.targetId == null) return true; // "all" rules have no ID
-            const stmt = stmtForType[r.ruleType];
-            if (!stmt) return false;
-            return stmt.get(r.targetId) != null;
-          });
-          if (validatedRules.length > 0) {
-            const core = getPlaylistCore();
-            core.createSmartPlaylist(
-              smartPlaylist.name,
-              validatedRules,
-              "",
-              smartPlaylist.trackLimit
-            );
-            logActivity(db, "playlist_generated", `Smart: ${smartPlaylist.name}`);
-            playlistCreated = smartPlaylist.name;
-          }
-        } else if (geniusPlaylist) {
-          // F3: Validate geniusType against known types
-          const validTypes = getAvailableGeniusTypes(db).map((t) => t.value);
-          if (!validTypes.includes(geniusPlaylist.geniusType)) {
-            console.warn(`[assistant] Invalid geniusType from LLM: ${geniusPlaylist.geniusType}`);
-          } else {
-            const result = generateGeniusPlaylistFromDb(
-              geniusPlaylist.geniusType,
-              db,
-              geniusPlaylist.opts
-            );
-            const trackIds = result.tracks.map((t) => t.id);
-            const maxTracks = geniusPlaylist.opts.maxTracks ?? 25;
-            if (trackIds.length > 0) {
-              const core = getPlaylistCore();
-              core.createGeniusPlaylist(
-                geniusPlaylist.geniusType,
-                trackIds,
-                null,
-                maxTracks,
-                geniusPlaylist.name
-              );
-              logActivity(
-                db,
-                "playlist_generated",
-                `Genius: ${geniusPlaylist.name} (${trackIds.length} tracks)`
-              );
-              playlistCreated = geniusPlaylist.name;
-            }
-          }
-        }
-      } catch (err) {
-        console.error("[assistant] playlist creation failed:", err);
-      }
-
-      const { userMsgId, assistantMsgId } = saveAssistantMessages(
+      const toolCtx: AiToolContext = {
         db,
-        userMessage,
-        cleanReply
-      );
+        getLibrary,
+        getPlaylistCore,
+        getDevicesCore,
+        getPodcastIndexConfig,
+      };
+      const result = await sendAssistantMessage(fullHistory, db, config, appPaths, toolCtx);
 
-      for (const uid of unpinIds) unpinMessages(db, uid);
+      const { reply, playlistCreated, pendingAction, pin, unpinIds, replaceId } = result;
+
+      // When there's a pending action, save an empty placeholder reply (the confirm UI
+      // is shown in the renderer; the real reply is stored after confirmation).
+      const replyToSave = reply || (pendingAction ? `[Pending: ${pendingAction.summary}]` : "");
+
+      const { userMsgId, assistantMsgId } = saveAssistantMessages(db, userMessage, replyToSave);
+
+      for (const uid of unpinIds ?? []) unpinMessages(db, uid);
       if (replaceId) unpinMessages(db, replaceId);
 
       if (pin || replaceId) {
@@ -2128,7 +2167,38 @@ export function registerIpcHandlers(): void {
         }
       }
 
-      return { reply: cleanReply, playlistCreated };
+      return { reply, playlistCreated, pendingAction };
+    })
+  );
+
+  ipcMain.handle(
+    "assistant:confirmAction",
+    safe("assistant:confirmAction", async (_event, action: PendingAction) => {
+      if (!checkRateLimit("assistant:chat"))
+        return { error: "Rate limit exceeded. Please wait before sending another message." };
+      const db = getLibrary().getConnection();
+      const toolCtx: AiToolContext = {
+        db,
+        getLibrary,
+        getPlaylistCore,
+        getDevicesCore,
+        getPodcastIndexConfig,
+      };
+      const rawResult = await executeConfirmedAction(action, toolCtx);
+      let resultText: string;
+      try {
+        const parsed = JSON.parse(rawResult) as Record<string, unknown>;
+        if (parsed.error) {
+          resultText = `Action failed: ${String(parsed.error)}`;
+        } else if (parsed.ok || parsed.created || parsed.deleted || parsed.removed) {
+          resultText = `Done! ${action.summary} completed successfully.`;
+        } else {
+          resultText = `Done! ${action.summary}`;
+        }
+      } catch {
+        resultText = `Done! ${action.summary}`;
+      }
+      return { reply: resultText };
     })
   );
 
@@ -2419,8 +2489,7 @@ export function registerIpcHandlers(): void {
     safe("podcast:downloadNow", async (_event, subId: number) => {
       const db = getLibrary().getConnection();
       const config = getPodcastIndexConfig();
-      if (!config) return { error: "NO_CREDS" };
-      await refreshSubscription(db, subId, config.apiKey, config.apiSecret);
+      await refreshSubscription(db, subId, config?.apiKey ?? "", config?.apiSecret ?? "");
       return { ok: true };
     })
   );
@@ -2430,9 +2499,33 @@ export function registerIpcHandlers(): void {
     safe("podcast:refreshAllForNewFolder", async () => {
       const db = getLibrary().getConnection();
       const config = getPodcastIndexConfig();
-      if (!config) return { error: "NO_CREDS" };
-      await refreshAllForNewFolder(db, config.apiKey, config.apiSecret);
+      await refreshAllForNewFolder(db, config?.apiKey ?? "", config?.apiSecret ?? "");
       return { ok: true };
+    })
+  );
+
+  ipcMain.handle(
+    "podcast:discoverFeeds",
+    safe("podcast:discoverFeeds", async (_event, input: string) => {
+      return discoverFeeds(input);
+    })
+  );
+
+  ipcMain.handle(
+    "podcast:previewFeed",
+    safe("podcast:previewFeed", async (_event, feedUrl: string) => {
+      const parsed = await fetchAndParseFeed(feedUrl);
+      return feedPreview(parsed);
+    })
+  );
+
+  ipcMain.handle(
+    "podcast:subscribeByUrl",
+    safe("podcast:subscribeByUrl", async (_event, feedUrl: string) => {
+      const db = getLibrary().getConnection();
+      const result = await importFeed(db, feedUrl);
+      invalidateAssistantCache();
+      return result;
     })
   );
 
@@ -2522,4 +2615,81 @@ export function registerIpcHandlers(): void {
 
   // Start the podcast background scheduler
   startPodcastScheduler(getLibrary().getConnection());
+
+  // ---- Auto Audiobooks ----
+  ipcMain.handle(
+    "audiobook:search",
+    safe("audiobook:search", async (_event, term: string) => {
+      return searchAudiobooks(term);
+    })
+  );
+
+  ipcMain.handle(
+    "audiobook:listSubs",
+    safe("audiobook:listSubs", async () => {
+      const db = getLibrary().getConnection();
+      return listAudiobookSubs(db);
+    })
+  );
+
+  ipcMain.handle(
+    "audiobook:subscribe",
+    safe("audiobook:subscribe", async (event, result: import("../shared/types").LibrivoxSearchResult) => {
+      const db = getLibrary().getConnection();
+      const sub = await audiobookSubscribeFn(db, result, (updated) => {
+        // Cover finished downloading after we returned — push it to the renderer.
+        if (!event.sender.isDestroyed()) event.sender.send("audiobook:coverUpdated", updated);
+      });
+      invalidateAssistantCache();
+      logActivity(db, "audiobook_subscribed", `Added audiobook: ${result.title}`);
+      return sub;
+    })
+  );
+
+  ipcMain.handle(
+    "audiobook:unsubscribe",
+    safe("audiobook:unsubscribe", async (_event, subId: number) => {
+      const db = getLibrary().getConnection();
+      audiobookUnsubscribeFn(db, subId);
+      invalidateAssistantCache();
+      return undefined;
+    })
+  );
+
+  ipcMain.handle(
+    "audiobook:listChapters",
+    safe("audiobook:listChapters", async (_event, subId: number) => {
+      const db = getLibrary().getConnection();
+      return listChapters(db, subId);
+    })
+  );
+
+  ipcMain.handle(
+    "audiobook:refreshCover",
+    safe("audiobook:refreshCover", async (_event, subId: number) => {
+      const db = getLibrary().getConnection();
+      await downloadAudiobookCover(db, subId);
+      return listAudiobookSubs(db).find((s) => s.id === subId) ?? null;
+    })
+  );
+
+  ipcMain.handle(
+    "audiobook:searchCoverCandidates",
+    safe("audiobook:searchCoverCandidates", async (_event, subId: number) => {
+      const db = getLibrary().getConnection();
+      const sub = listAudiobookSubs(db).find((s) => s.id === subId);
+      if (!sub) return [];
+      return searchCoverCandidates(sub.title, sub.author);
+    })
+  );
+
+  ipcMain.handle(
+    "audiobook:setCoverFromUrl",
+    safe("audiobook:setCoverFromUrl", async (_event, subId: number, url: string) => {
+      const db = getLibrary().getConnection();
+      const localPath = await downloadAudiobookCoverFromUrl(db, subId, url);
+      if (!localPath) return null;
+      return listAudiobookSubs(db).find((s) => s.id === subId) ?? null;
+    })
+  );
 }

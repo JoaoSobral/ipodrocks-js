@@ -104,6 +104,7 @@ export interface DeviceProfile extends Device {
   modelName: string | null;
   modelInternalValue: string | null;
   skipPlaybackLog?: boolean;
+  skipAlbumArtwork?: boolean;
   rockboxSmartPlaylists?: boolean;
   devMode?: boolean;
   autoPodcastsEnabled?: boolean;
@@ -129,13 +130,6 @@ export interface DiskSpace {
 export interface ContentStats {
   fileCount: number;
   totalGb: number;
-}
-
-export interface FitCheck {
-  canFit: boolean;
-  requiredGb: number;
-  availableGb: number;
-  remainingGb: number;
 }
 
 export interface AddDeviceConfig {
@@ -377,7 +371,7 @@ export interface CustomSelections {
 }
 
 export type SyncType = "full" | "custom";
-export type ExtraTrackPolicy = "keep" | "remove" | "prompt";
+export type ExtraTrackPolicy = "keep" | "remove" | "remove-all" | "prompt";
 export type PlaybackStrategy = "native" | "transcode";
 
 export interface DeviceSyncPreferences {
@@ -387,8 +381,6 @@ export interface DeviceSyncPreferences {
   includePodcasts: boolean;
   includeAudiobooks: boolean;
   includePlaylists: boolean;
-  ignoreSpaceCheck: boolean;
-  skipAlbumArtwork: boolean;
   /** When true, mirror the source library folder structure 1:1 on the device
    * (preserving album folder names incl. year) instead of rebuilding paths from
    * artist/album tags. */
@@ -400,7 +392,6 @@ export interface SyncOptions {
   deviceId: number;
   syncType: SyncType;
   extraTrackPolicy: ExtraTrackPolicy;
-  ignoreSpaceCheck: boolean;
   selections?: CustomSelections;
   /** For full sync: include music tracks (default true). */
   includeMusic?: boolean;
@@ -410,8 +401,6 @@ export interface SyncOptions {
   includeAudiobooks?: boolean;
   /** For full sync: write M3U playlists to device (default true). */
   includePlaylists?: boolean;
-  /** When true, do not copy album artwork (*.jpg, *.png) to device (default false). */
-  skipAlbumArtwork?: boolean;
   /** When true, mirror the source library folder structure 1:1 instead of
    * rebuilding device paths from artist/album tags (default true). */
   preserveFolderStructure?: boolean;
@@ -470,9 +459,78 @@ export interface PodcastIndexConfig {
   apiSecret: string;
 }
 
+export interface FeedCandidate {
+  feedUrl: string;
+  title: string | null;
+}
+
+export interface PodcastFeedPreview {
+  feedUrl: string;
+  title: string;
+  author: string | null;
+  description: string | null;
+  imageUrl: string | null;
+  episodeCount: number;
+}
+
 export interface AutoPodcastSettings {
   enabled: boolean;
   refreshIntervalMinutes: number;
+}
+
+// ---------------------------------------------------------------------------
+// Auto Audiobooks (LibriVox)
+// ---------------------------------------------------------------------------
+
+export interface LibrivoxSearchResult {
+  librivoxId: number;
+  title: string;
+  author: string | null;
+  description: string | null;
+  imageUrl: string | null;
+  rssUrl: string;
+  language: string | null;
+  numSections: number;
+  totalSeconds: number;
+}
+
+export interface AudiobookSubscription {
+  id: number;
+  librivoxId: number;
+  title: string;
+  author: string | null;
+  description: string | null;
+  imageUrl: string | null;
+  rssUrl: string;
+  language: string | null;
+  numSections: number;
+  totalSeconds: number;
+  lastRefreshedAt: string | null;
+  createdAt: string;
+}
+
+export interface CoverCandidate {
+  thumbnailUrl: string;
+  largeUrl: string;
+  bookTitle: string;
+  source: "google-books" | "open-library";
+}
+
+export type ChapterDownloadState = "pending" | "downloading" | "ready" | "failed" | "skipped";
+
+export interface AudiobookChapter {
+  id: number;
+  subscriptionId: number;
+  guid: string;
+  chapterNumber: number | null;
+  title: string;
+  enclosureUrl: string;
+  durationSeconds: number | null;
+  fileSize: number | null;
+  localPath: string | null;
+  downloadState: ChapterDownloadState;
+  downloadError: string | null;
+  createdAt: string;
 }
 
 export interface ScanResult {

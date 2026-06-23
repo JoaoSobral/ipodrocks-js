@@ -12,7 +12,7 @@
 
 ## ✨ Why iPodRocks?
 
-iPodRocks is a sync manager for [Rockbox devices](https://www.rockbox.org/) — and any mountable player. Multiple libraries, shadow transcoding, auto-downloading podcasts, AI-powered playlists, harmonic mixing, and AI assistant Rocksy that knows your entire collection. All in one desktop app.
+iPodRocks is a sync manager for [Rockbox devices](https://www.rockbox.org/) — and any mountable player. Multiple libraries, shadow transcoding, auto-downloading podcasts, free public-domain audiobooks, AI-powered playlists, harmonic mixing, and AI assistant Rocksy that knows your entire collection and can act on your behalf. All in one desktop app.
 
 ### What is not!
 
@@ -77,6 +77,8 @@ If you really like iPodRocks and want to keep it caffeinated, you can buy me a c
 - **Star-rated playlists** — Both Smart and Genius support a `top_rated` strategy that surfaces tracks rated 4★+ (Rockbox 0–10 ≥ 8). Smart variant works even before any device log is ingested.
 - **Genius from playback logs** — Rediscovery, Forgotten Gems, Most Played, Favorites, Deep Dive, and more. Star ratings from your library now flow into every Genius algorithm.
 - **Rockbox-native smart playlists (tagnavi)** — Per-device opt-in: Smart playlists are written as live, auto-updating Rockbox tagtree entries in `.rockbox/tagnavi_custom.config` instead of frozen `.m3u` snapshots. Other playlist kinds still write `.m3u`.
+- **Playlists as a library filter** — Filter the Library track list down to any playlist's members with a Playlist `<select>` in the filter row; full playlist management lives in the Playlists panel.
+- **Broken-playlist detection & repair** — When a re-scan removes tracks, playlists that still reference them are flagged (warning banner, badges, and a sync gate). Repair drops the dangling items and renumbers; Smart playlists can also be Rebuilt from their rules. A sync gate offers one-click "Repair all & continue".
 
 ### Savant Playlists — AI-Powered
 - **Mood Chat** — Describe your vibe in plain English; get a tailored playlist
@@ -89,20 +91,33 @@ If you really like iPodRocks and want to keep it caffeinated, you can buy me a c
 - Camelot wheel compatibility for DJ-style flow
 - Optional backfill with genre-based sampling
 
-### Rocksy
+### Rocksy — AI assistant that acts, not just answers
+- **Real tool-calling agency** — Rocksy is backed by a tool-calling loop with 20+ structured tools across library, playlists, podcasts, audiobooks, and devices. Instead of just chatting, it fetches live data on demand and performs operations on your behalf — search and subscribe to a podcast, find and add a LibriVox audiobook, create a playlist, check a device, or repair a broken playlist, all from the chat
+- **Confirm gate for destructive actions** — When Rocksy proposes something destructive (deleting episodes, removing a folder, unsubscribing, deleting a playlist) it pauses and shows **Confirm / Cancel** buttons; nothing runs until you approve
 - **Chat** — Ask about your library, playlists, artists, and get recommendations
 - **Persistent memory** — The assistant remembers important things you tell it across sessions (up to 40 pinned memories). Say "always remember my name is Pedro" or "don't forget I love jazz" and it will carry that context every time you open the app
 - **Rolling conversation history** — Keeps the last 100 exchanges as hidden context so the assistant stays informed without cluttering your chat
 - **Create playlists by talking** — Ask the assistant to make a Smart or Genius playlist in plain English: "Make me a rock playlist with 30 tracks" or "Create a late night favorites playlist from my listening history" — it handles the rest
+- **Manage podcasts & audiobooks by talking** — "Subscribe to Syntax", "Add this RSS feed", "Find audiobooks by Jules Verne", "What audiobooks do I have?"
+- **Fix broken playlists** — "Which playlists have missing songs?" then "Repair that one" — Rocksy lists and repairs broken playlists for you
 - **Smart memory management** — Up to 40 permanently pinned memories that survive the rolling history limit. Say "forget about that" or "actually my name is X" to update or remove memories
 - Markdown rendering, copy-paste friendly
 
 ### Auto Podcasts
 - **Search & subscribe** — Find any podcast by keyword using the free [Podcast Index](https://podcastindex.org/) API
+- **Add by URL** — Subscribe by pasting an RSS feed or website URL directly — no API key needed for this path. Website URLs are crawled for their feed; a preview (title, author, artwork, episode count) is shown before you confirm
 - **Auto-download** — Keep the last 1–5 episodes per subscription, or switch to manual episode selection (pick up to 5 specific episodes)
 - **Background refresh** — Checks feeds automatically while the app is open (every 15 min, 30 min, or 1 hour — your choice)
 - **Device sync** — Downloaded episodes are automatically copied to each device that has Auto Podcasts enabled, into its `Podcasts` folder
 - **Per-subscription control** — Change the download window or retrigger downloads instantly with "Download now"
+
+### Extra Audiobooks — free public-domain audiobooks (LibriVox)
+- **Search & subscribe** — Browse and subscribe to free, public-domain audiobooks from [LibriVox](https://librivox.org). No account, API key, or credentials required
+- **Cover grid** — Subscribed books appear as a cover grid tagged **Extra**, with chapter count and total runtime
+- **Download-on-sync** — Chapters aren't pre-downloaded; they're fetched on demand the first time you sync a device that includes the book, then copied into the device's `Audiobooks` folder (one folder per book, with cover art alongside)
+- **Automatic covers** — LibriVox feeds rarely carry artwork, so covers are resolved automatically from Google Books / Open Library, with a **Search cover** picker if you want a different one
+- **Detail modal** — See author, language, runtime, description, and per-chapter download state; **Remove Book** unsubscribes and deletes local files
+- **Sync integration** — Audiobooks participate in Full and Custom sync (Include/Exclude) just like podcasts
 
 ### Sync & Conversion
 - **Full or custom sync** — Pick albums, artists, genres, playlists
@@ -196,14 +211,23 @@ If `mpcenc` is not on your PATH, iPodRocks will prompt when you select Musepack.
 - **Savant** — AI-generated from mood (requires OpenRouter API key in Settings); rating-aware curation
 - **Tagnavi mode** — Enable "Rockbox smart playlists (tagnavi)" on a device to sync Smart playlists as live, auto-updating Rockbox tagtree entries instead of static `.m3u` files
 - **Via Rocksy** — Ask the chat to create a Smart or Genius playlist for you in plain English. Rocksy knows your genres, artists, albums, and listening history and builds the playlist instantly
+- **Broken playlists** — Playlists that reference deleted tracks are flagged after a re-scan; Repair, Rebuild (Smart), or Delete them, or use the sync gate's "Repair all & continue"
 
 ### Auto Podcasts
 
-- Subscribe to any podcast via the **Search & Subscribe** modal (powered by Podcast Index — free API key required)
+- Subscribe to any podcast via the **Search & Subscribe** modal (powered by Podcast Index — free API key required), or use the **Add by URL** tab to paste an RSS feed or website URL directly (no API key needed)
 - Set each subscription to auto-download the last 1–5 episodes, or pick episodes manually
 - Background scheduler refreshes feeds and downloads new episodes automatically
 - Enable Auto Podcasts on a device (in its settings) to have ready episodes copied there on every refresh cycle
 - Get credentials at [api.podcastindex.org/signup](https://api.podcastindex.org/signup), then configure in **Settings → Auto Podcasts**
+
+### Extra Audiobooks
+
+- Open the **Extra Audiobooks** tab and click **Search & Add** to find free, public-domain audiobooks on [LibriVox](https://librivox.org) by title or author — no account or API key required
+- Subscribe in one click; the chapter list is pulled from the book's RSS feed and a cover is fetched automatically (use **Search cover** to pick a different one)
+- Chapters use **download-on-sync** — they're fetched on demand the first time you sync a device that includes the book, then copied to its `Audiobooks` folder as `<Author - Title>/NN <Chapter>.ext` with `cover.<ext>` alongside
+- Include audiobooks in **Full sync** via the content toggle, or pick specific books in **Custom sync** (Include or Exclude)
+- Open a book to see per-chapter download state; **Remove Book** unsubscribes and deletes its local files
 
 ### Sync
 

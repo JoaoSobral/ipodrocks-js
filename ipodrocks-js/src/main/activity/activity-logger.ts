@@ -11,10 +11,18 @@ export type ActivityOperation =
   | "sync"
   | "library_scan"
   | "add_folder"
+  | "remove_folder"
   | "add_device"
   | "update_device"
   | "read_playback_log"
-  | "playlist_generated";
+  | "playlist_generated"
+  | "playlist_deleted"
+  | "playlist_repaired"
+  | "podcast_subscribed"
+  | "podcast_downloaded"
+  | "podcast_episodes_deleted"
+  | "audiobook_subscribed"
+  | "audiobook_unsubscribed";
 
 export interface ActivityEntry {
   id: number;

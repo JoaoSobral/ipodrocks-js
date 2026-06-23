@@ -30,6 +30,8 @@ import type {
   PodcastSubscription,
   PodcastEpisode,
   PodcastSearchResult,
+  FeedCandidate,
+  PodcastFeedPreview,
 } from "@shared/types";
 
 export type {
@@ -41,6 +43,8 @@ export type {
   PodcastSubscription,
   PodcastEpisode,
   PodcastSearchResult,
+  FeedCandidate,
+  PodcastFeedPreview,
   AddDeviceConfig,
   ScanResult,
   SyncOptions,
@@ -424,6 +428,18 @@ export async function deletePlaylist(id: number): Promise<void> {
   await window.api.invoke("playlist:delete", id);
 }
 
+export async function getBrokenPlaylists(): Promise<{ id: number; name: string; typeName: string; missingCount: number; totalCount: number }[]> {
+  return window.api.invoke("playlist:getBroken") as Promise<{ id: number; name: string; typeName: string; missingCount: number; totalCount: number }[]>;
+}
+
+export async function repairPlaylist(id: number): Promise<{ removed: number; remaining: number }> {
+  return window.api.invoke("playlist:repair", id) as Promise<{ removed: number; remaining: number }>;
+}
+
+export async function rebuildPlaylist(id: number): Promise<{ rebuilt: boolean }> {
+  return window.api.invoke("playlist:rebuild", id) as Promise<{ rebuilt: boolean }>;
+}
+
 export async function exportPlaylist(id: number, deviceId?: number): Promise<string> {
   return window.api.invoke("playlist:export", id, deviceId) as Promise<string>;
 }
@@ -615,13 +631,28 @@ export async function skipSavantPlaylistChat(sessionId: string): Promise<void> {
   return window.api.invoke("savant:playlistChat:skip", sessionId) as Promise<void>;
 }
 
+export interface AssistantPendingAction {
+  toolCallId: string;
+  tool: string;
+  args: Record<string, unknown>;
+  summary: string;
+}
+
 export async function sendAssistantChat(
   userMessage: string
 ): Promise<
-  { reply: string; playlistCreated?: string } | { error: string }
+  { reply: string; playlistCreated?: string; pendingAction?: AssistantPendingAction } | { error: string }
 > {
   return window.api.invoke("assistant:chat", userMessage) as Promise<
-    { reply: string; playlistCreated?: string } | { error: string }
+    { reply: string; playlistCreated?: string; pendingAction?: AssistantPendingAction } | { error: string }
+  >;
+}
+
+export async function confirmAssistantAction(
+  action: AssistantPendingAction
+): Promise<{ reply: string } | { error: string }> {
+  return window.api.invoke("assistant:confirmAction", action) as Promise<
+    { reply: string } | { error: string }
   >;
 }
 
@@ -840,4 +871,75 @@ export async function podcastSetDeviceAutoPodcasts(
   enabled: boolean
 ): Promise<void> {
   await window.api.invoke("podcast:setDeviceAutoPodcasts", deviceId, enabled);
+}
+
+export async function podcastDiscoverFeeds(input: string): Promise<FeedCandidate[]> {
+  const result = await window.api.invoke("podcast:discoverFeeds", input) as FeedCandidate[] | { error: string };
+  if (result && typeof result === "object" && "error" in result) {
+    throw new Error((result as { error: string }).error);
+  }
+  return result as FeedCandidate[];
+}
+
+export async function podcastPreviewFeed(feedUrl: string): Promise<PodcastFeedPreview | { error: string }> {
+  return window.api.invoke("podcast:previewFeed", feedUrl) as Promise<PodcastFeedPreview | { error: string }>;
+}
+
+export async function podcastSubscribeByUrl(feedUrl: string): Promise<PodcastSubscription> {
+  return window.api.invoke("podcast:subscribeByUrl", feedUrl) as Promise<PodcastSubscription>;
+}
+
+// ---------------------------------------------------------------------------
+// Auto Audiobooks (LibriVox)
+// ---------------------------------------------------------------------------
+
+export type {
+  LibrivoxSearchResult,
+  AudiobookSubscription,
+  AudiobookChapter,
+} from "@shared/types";
+
+export async function audiobookSearch(
+  term: string
+): Promise<import("@shared/types").LibrivoxSearchResult[]> {
+  return window.api.invoke("audiobook:search", term) as Promise<import("@shared/types").LibrivoxSearchResult[]>;
+}
+
+export async function audiobookListSubs(): Promise<import("@shared/types").AudiobookSubscription[]> {
+  return window.api.invoke("audiobook:listSubs") as Promise<import("@shared/types").AudiobookSubscription[]>;
+}
+
+export async function audiobookSubscribe(
+  result: import("@shared/types").LibrivoxSearchResult
+): Promise<import("@shared/types").AudiobookSubscription> {
+  return window.api.invoke("audiobook:subscribe", result) as Promise<import("@shared/types").AudiobookSubscription>;
+}
+
+export async function audiobookUnsubscribe(subId: number): Promise<void> {
+  await window.api.invoke("audiobook:unsubscribe", subId);
+}
+
+export async function audiobookListChapters(
+  subId: number
+): Promise<import("@shared/types").AudiobookChapter[]> {
+  return window.api.invoke("audiobook:listChapters", subId) as Promise<import("@shared/types").AudiobookChapter[]>;
+}
+
+export async function audiobookRefreshCover(
+  subId: number
+): Promise<import("@shared/types").AudiobookSubscription | null> {
+  return window.api.invoke("audiobook:refreshCover", subId) as Promise<import("@shared/types").AudiobookSubscription | null>;
+}
+
+export async function audiobookSearchCoverCandidates(
+  subId: number
+): Promise<import("@shared/types").CoverCandidate[]> {
+  return window.api.invoke("audiobook:searchCoverCandidates", subId) as Promise<import("@shared/types").CoverCandidate[]>;
+}
+
+export async function audiobookSetCoverFromUrl(
+  subId: number,
+  url: string
+): Promise<import("@shared/types").AudiobookSubscription | null> {
+  return window.api.invoke("audiobook:setCoverFromUrl", subId, url) as Promise<import("@shared/types").AudiobookSubscription | null>;
 }

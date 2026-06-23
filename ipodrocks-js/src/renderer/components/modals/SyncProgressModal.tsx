@@ -116,7 +116,10 @@ export function SyncProgressModal({
   onCompleteRef.current = onComplete;
 
   const isRunning = !finished && !error;
-  const pct = totalItems > 0 ? Math.round((processedItems / totalItems) * 100) : 0;
+  const rawPct = totalItems > 0 ? Math.round((processedItems / totalItems) * 100) : 0;
+  // On a clean finish the bar should read 100% even when the backend's pre-count
+  // (totalItems) ended up higher than the number of items actually copied.
+  const pct = finished && !error && !cancelled ? 100 : Math.min(rawPct, 100);
 
   const handleProgress = useCallback((p: SyncProgress) => {
     setProgress(p);
@@ -320,20 +323,22 @@ export function SyncProgressModal({
       <div className="flex flex-col gap-4">
         <ProgressBar value={pct} showPercent variant={variant} />
 
-        <div className="flex items-center justify-between text-xs text-muted-foreground">
-          <span className="truncate max-w-[50%]">
-            {progress?.event === "log" && progress?.message
-              ? progress.message
-              : progress?.path
-                ? pathBasename(progress.path)
-                : "Preparing…"}
-          </span>
-          <div className="flex gap-4 tabular-nums shrink-0">
-            <span>{processedItems} / {totalItems || "?"} items</span>
-            <span className="text-success">{copiedItems} copied</span>
-            <span className="text-muted-foreground">{Math.floor(elapsedSec / 60)}:{String(elapsedSec % 60).padStart(2, "0")} elapsed</span>
+        {!finished && (
+          <div className="flex items-center justify-between text-xs text-muted-foreground">
+            <span className="truncate max-w-[50%]">
+              {progress?.event === "log" && progress?.message
+                ? progress.message
+                : progress?.path
+                  ? pathBasename(progress.path)
+                  : "Preparing…"}
+            </span>
+            <div className="flex gap-4 tabular-nums shrink-0">
+              <span className="text-success font-medium">{copiedItems} / {totalItems || "?"} copied</span>
+              <span>{processedItems} processed</span>
+              <span className="text-muted-foreground">{Math.floor(elapsedSec / 60)}:{String(elapsedSec % 60).padStart(2, "0")} elapsed</span>
+            </div>
           </div>
-        </div>
+        )}
 
         {/* Recent items */}
         <div className="flex items-center justify-between gap-2">
@@ -352,14 +357,14 @@ export function SyncProgressModal({
           className="h-40 overflow-y-auto rounded-lg border border-border bg-muted/30 p-3 text-xs font-mono"
         >
           {recentItems.length === 0 && (
-            <p className="text-muted-foreground">
-              {finished && totalItems === 0
-                ? "Nothing to sync — items already up to date."
-                : finished && totalItems > 0
-                  ? "Sync completed."
-                  : hasReceivedTotalRef.current && totalItems > 0
-                    ? "Preparing files for sync…"
-                    : "Waiting for sync…"}
+            <p className={finished ? "text-sm font-bold text-foreground" : "text-muted-foreground"}>
+              {finished
+                ? cancelled
+                  ? "Sync was cancelled."
+                  : "Nothing to sync — device up to date."
+                : hasReceivedTotalRef.current && totalItems > 0
+                  ? "Preparing files for sync…"
+                  : "Waiting for sync…"}
             </p>
           )}
           {recentItems.map((item) => (
@@ -389,7 +394,7 @@ export function SyncProgressModal({
           <ErrorBox>{error}</ErrorBox>
         )}
 
-        {finished && !error && (
+        {finished && !error && processedItems > 0 && (
           <div className="rounded-lg border border-border bg-muted/30 p-3 text-sm">
             <div className="grid grid-cols-3 gap-3 text-center">
               <div>
