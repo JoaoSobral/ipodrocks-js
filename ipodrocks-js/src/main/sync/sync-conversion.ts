@@ -20,6 +20,13 @@ export interface ConversionSettings {
   codec?: string;
   bitrate?: number;
   quality?: number;
+  /**
+   * When true and the codec is a lossy ffmpeg codec (mp3/aac/ogg/opus), encode
+   * in variable-bitrate (VBR) mode targeting a quality level derived from
+   * `bitrate` instead of using a fixed `-b:a` target. Ignored for all other
+   * codecs (lossless and MPC have no CBR/VBR switch).
+   */
+  vbr?: boolean;
   transfer_mode?: string;
   rule_applied?: string;
   /** Metadata to embed in the output (used for MPC and other codecs that need explicit tag write-back). */
@@ -87,6 +94,46 @@ function cleanupTemp(p: string): void {
   }
 }
 
+/** Codecs that support a variable-bitrate (VBR) encoding mode via ffmpeg. */
+const VBR_CAPABLE_CODECS = new Set(["mp3", "aac", "ogg", "opus"]);
+
+/**
+ * Build ffmpeg args for VBR (variable-bitrate) encoding of a lossy codec,
+ * mapping the chosen `bitrate` (kbps) to an equivalent quality target. Only
+ * called for codecs in {@link VBR_CAPABLE_CODECS}.
+ */
+function vbrCodecArgs(codec: string, bitrate: number): string[] {
+  switch (codec) {
+    case "mp3": {
+      // libmp3lame -q:a is the VBR (V) scale: 0 = best (~245k), 9 = smallest.
+      const q =
+        bitrate >= 320 ? 0 : bitrate >= 256 ? 1 : bitrate >= 192 ? 2 :
+        bitrate >= 128 ? 5 : bitrate >= 96 ? 7 : 4;
+      return ["-c:a", "mp3", "-q:a", String(q)];
+    }
+    case "ogg": {
+      // libvorbis -q:a ranges -1..10, 10 = best quality.
+      const q =
+        bitrate >= 320 ? 9 : bitrate >= 256 ? 7 : bitrate >= 192 ? 6 :
+        bitrate >= 128 ? 4 : bitrate >= 96 ? 2 : 3;
+      return ["-c:a", "libvorbis", "-q:a", String(q)];
+    }
+    case "aac": {
+      // Native ffmpeg aac VBR -q:a (~0.1..2.0), higher = better quality.
+      const q =
+        bitrate >= 256 ? "2" : bitrate >= 192 ? "1.6" : bitrate >= 128 ? "1.1" :
+        bitrate >= 96 ? "0.7" : "1";
+      return ["-c:a", "aac", "-q:a", q];
+    }
+    case "opus":
+      // libopus is VBR-capable; keep the bitrate as the target and make VBR
+      // explicit (it is the libopus default, but we set it for clarity).
+      return ["-c:a", "libopus", "-b:a", `${bitrate}k`, "-vbr", "on"];
+    default:
+      return ["-c:a", "mp3", "-q:a", "2"];
+  }
+}
+
 function buildFfmpegCommand(
   src: string,
   dest: string,
@@ -97,19 +144,23 @@ function buildFfmpegCommand(
 
   const cmd = [getFfmpegPath(), "-y", "-i", src];
 
-  const codecArgs: Record<string, string[]> = {
-    mp3: ["-c:a", "mp3", "-b:a", `${bitrate}k`],
-    aac: ["-c:a", "aac", "-b:a", `${bitrate}k`],
-    alac:
-      bitrate >= 1000
-        ? ["-c:a", "alac", "-q:a", "0"]
-        : ["-c:a", "alac", "-b:a", `${bitrate}k`],
-    flac: ["-c:a", "flac", "-compression_level", "8"],
-    ogg: ["-c:a", "libvorbis", "-b:a", `${bitrate}k`],
-    opus: ["-c:a", "libopus", "-b:a", `${bitrate}k`],
-  };
+  if (settings.vbr && VBR_CAPABLE_CODECS.has(codec)) {
+    cmd.push(...vbrCodecArgs(codec, bitrate));
+  } else {
+    const codecArgs: Record<string, string[]> = {
+      mp3: ["-c:a", "mp3", "-b:a", `${bitrate}k`],
+      aac: ["-c:a", "aac", "-b:a", `${bitrate}k`],
+      alac:
+        bitrate >= 1000
+          ? ["-c:a", "alac", "-q:a", "0"]
+          : ["-c:a", "alac", "-b:a", `${bitrate}k`],
+      flac: ["-c:a", "flac", "-compression_level", "8"],
+      ogg: ["-c:a", "libvorbis", "-b:a", `${bitrate}k`],
+      opus: ["-c:a", "libopus", "-b:a", `${bitrate}k`],
+    };
 
-  cmd.push(...(codecArgs[codec] ?? ["-c:a", "mp3", "-b:a", `${bitrate}k`]));
+    cmd.push(...(codecArgs[codec] ?? ["-c:a", "mp3", "-b:a", `${bitrate}k`]));
+  }
 
   if (codec === "opus" || codec === "ogg") {
     cmd.push("-map", "0:a", "-map_metadata", "0");

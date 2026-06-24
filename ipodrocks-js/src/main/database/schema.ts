@@ -209,6 +209,7 @@ CREATE TABLE IF NOT EXISTS devices (
     rockbox_smart_playlists BOOLEAN NOT NULL DEFAULT 0,
     dev_mode BOOLEAN NOT NULL DEFAULT 0,
     skip_album_artwork BOOLEAN NOT NULL DEFAULT 0,
+    vbr_enabled BOOLEAN NOT NULL DEFAULT 0,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (default_transfer_mode_id) REFERENCES device_transfer_modes (id),
     FOREIGN KEY (default_codec_config_id) REFERENCES codec_configurations (id),
@@ -341,6 +342,7 @@ CREATE TABLE IF NOT EXISTS shadow_libraries (
     path TEXT NOT NULL UNIQUE,
     codec_config_id INTEGER NOT NULL,
     status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'building', 'ready', 'error')),
+    vbr_enabled BOOLEAN NOT NULL DEFAULT 0,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (codec_config_id) REFERENCES codec_configurations (id)
 );

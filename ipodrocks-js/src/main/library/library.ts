@@ -230,9 +230,15 @@ export class Library {
   createShadowLibrary(
     name: string,
     libPath: string,
-    codecConfigId: number
+    codecConfigId: number,
+    vbrEnabled = false
   ): number {
-    return this.shadowManager.createShadowLibrary(name, libPath, codecConfigId);
+    return this.shadowManager.createShadowLibrary(
+      name,
+      libPath,
+      codecConfigId,
+      vbrEnabled
+    );
   }
 
   deleteShadowLibrary(id: number, removeFiles = true): boolean {

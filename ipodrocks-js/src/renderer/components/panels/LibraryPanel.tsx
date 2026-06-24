@@ -2,7 +2,7 @@ import { useEffect, useState, useMemo, useRef, useCallback } from "react";
 import { FixedSizeList as List } from "react-window";
 import { RatingStars } from "../RatingStars";
 import { formatDuration, formatSize, formatBitrate, formatShadowCodecLabel, formatShadowCodecAndBitrate, formatShadowSize } from "../../utils/format";
-import { getTranscodableCodecConfigs } from "../../utils/codec";
+import { getTranscodableCodecConfigs, isVbrCapableCodec } from "../../utils/codec";
 import { Card } from "../common/Card";
 import { Button } from "../common/Button";
 import { InfoTooltip } from "../common/InfoTooltip";
@@ -119,6 +119,7 @@ export function LibraryPanel() {
   const [shadowPath, setShadowPath] = useState("");
   const [shadowSubmitted, setShadowSubmitted] = useState(false);
   const [shadowCodecConfigId, setShadowCodecConfigId] = useState<number | null>(null);
+  const [shadowVbr, setShadowVbr] = useState(false);
   const [codecConfigs, setCodecConfigs] = useState<CodecConfig[]>([]);
   const [shadowBuildProgress, setShadowBuildProgress] = useState<ShadowBuildProgress | null>(null);
   const [showShadowBuild, setShowShadowBuild] = useState(false);
@@ -376,13 +377,14 @@ export function LibraryPanel() {
     });
     shadowBuildUnsubRef.current = unsub;
     try {
-      await createShadowLibrary(shadowName, shadowPath, shadowCodecConfigId);
+      await createShadowLibrary(shadowName, shadowPath, shadowCodecConfigId, shadowVbr);
     } catch (err) {
       console.error("Shadow create error:", err);
     }
     setShadowName("");
     setShadowPath("");
     setShadowCodecConfigId(null);
+    setShadowVbr(false);
     getShadowLibraries().then(setShadowLibs).catch(console.error);
   }
 
@@ -947,10 +949,31 @@ export function LibraryPanel() {
               })),
             ]}
             value={shadowCodecConfigId != null ? String(shadowCodecConfigId) : ""}
-            onChange={(v) => setShadowCodecConfigId(v ? Number(v) : null)}
+            onChange={(v) => {
+              const id = v ? Number(v) : null;
+              setShadowCodecConfigId(id);
+              const cc = transcodableCodecConfigs.find((c) => c.id === id);
+              if (!isVbrCapableCodec(cc?.codec_name)) setShadowVbr(false);
+            }}
             placeholder="Select a codec…"
             hint={shadowSubmitted && shadowCodecConfigId == null ? "Please select a codec configuration" : undefined}
           />
+          {isVbrCapableCodec(
+            transcodableCodecConfigs.find((c) => c.id === shadowCodecConfigId)?.codec_name
+          ) && (
+            <label className="flex items-center gap-2 cursor-pointer text-sm text-foreground">
+              <input
+                type="checkbox"
+                checked={shadowVbr}
+                onChange={(e) => setShadowVbr(e.target.checked)}
+                className="rounded border-border bg-muted/30 accent-primary focus:ring-primary/50"
+              />
+              <span className="flex items-center gap-1">
+                Variable bitrate (VBR)
+                <InfoTooltip text="Encode at a quality level derived from the chosen bitrate instead of a fixed bitrate. VBR usually gives better quality per file size." />
+              </span>
+            </label>
+          )}
           <div className="flex justify-end gap-2 pt-2">
             <Button onClick={() => { setShowCreateShadow(false); setShadowSubmitted(false); }}>Cancel</Button>
             <Button

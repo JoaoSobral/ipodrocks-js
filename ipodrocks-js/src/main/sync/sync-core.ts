@@ -448,7 +448,7 @@ export async function copyMissingTracks(
   libraryFolderPaths?: Map<number, string>,
   progressCallback?: ProgressCallback,
   cancelSignal?: AbortSignal,
-  deviceProfile?: { codecConfigBitrate?: number | null; codecConfigQuality?: number | null },
+  deviceProfile?: { codecConfigBitrate?: number | null; codecConfigQuality?: number | null; vbrEnabled?: boolean },
   codecMismatchMap?: Map<string, string>,
   preserveFolderStructure = false
 ): Promise<{ synced: number; missingFiles: string[]; errors: number }> {
@@ -503,6 +503,7 @@ export async function copyMissingTracks(
         codec: codecLower,
         bitrate: isMpc ? undefined : bitrate,
         quality: isMpc ? quality : undefined,
+        vbr: !!deviceProfile?.vbrEnabled,
         rule_applied: "device_default",
       };
     } else {

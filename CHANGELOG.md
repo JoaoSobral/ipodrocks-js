@@ -1,5 +1,15 @@
 # Changelog
 
+## [2.0.1] — 2026-06
+
+### Features
+
+#### VBR (variable bitrate) transcoding for lossy codecs
+
+- **VBR option when transcoding to a lossy codec** — When converting to MP3, AAC, OGG (Vorbis), or Opus, you can now tick **Variable bitrate (VBR)** to encode at a quality level derived from the chosen bitrate instead of a fixed bitrate. VBR typically yields better quality per file size.
+- **Available for shadow libraries and devices** — The checkbox appears in the **Create Shadow Library** dialog and in a device's **Transcode → Codec Configuration** section, but only for VBR-capable lossy codecs. It is hidden for lossless codecs (FLAC/ALAC/PCM), which are always variable, and for Musepack, which is already quality-based.
+- **Persisted per shadow library and per device** — The setting is stored on each shadow library (`shadow_libraries.vbr_enabled`) and device (`devices.vbr_enabled`); existing installs are migrated with VBR off so current encodes are unchanged.
+
 ## [2.0.0] — 2026-06
 
 ### Features

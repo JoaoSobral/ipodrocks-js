@@ -651,7 +651,7 @@ export function registerIpcHandlers(): void {
     "shadow:create",
     safe("shadow:create", async (
       event,
-      config: { name: string; path: string; codecConfigId: number }
+      config: { name: string; path: string; codecConfigId: number; vbrEnabled?: boolean }
     ) => {
       const validated = validateFolderPath(config.path);
       if ("error" in validated) return { error: validated.error };
@@ -660,7 +660,8 @@ export function registerIpcHandlers(): void {
       const id = lib.createShadowLibrary(
         config.name,
         validated.path,
-        config.codecConfigId
+        config.codecConfigId,
+        config.vbrEnabled ?? false
       );
 
       activeShadowBuildAbort = new AbortController();

@@ -30,6 +30,7 @@ export class AppDatabase {
     this.migratePodcastSource();
     this.migrateDeviceSyncPreferences();
     this.migrateDeviceSkipAlbumArtwork();
+    this.migrateVbrEnabled();
   }
 
   /**
@@ -90,6 +91,29 @@ export class AppDatabase {
       }
     } catch (err) {
       console.error("[db] migration failed (migrateDeviceSkipAlbumArtwork):", err);
+    }
+  }
+
+  /**
+   * Add the vbr_enabled column to devices and shadow_libraries for existing
+   * databases. Backfills with 0 (CBR / fixed-bitrate) so upgrades keep their
+   * current encoding behavior; fresh installs default to 0 via SCHEMA_SQL.
+   */
+  private migrateVbrEnabled(): void {
+    if (!this.db) return;
+    for (const table of ["devices", "shadow_libraries"]) {
+      try {
+        const rows = this.db
+          .prepare(`PRAGMA table_info(${table})`)
+          .all() as { name: string }[];
+        if (!new Set(rows.map((r) => r.name)).has("vbr_enabled")) {
+          this.db
+            .prepare(`ALTER TABLE ${table} ADD COLUMN vbr_enabled BOOLEAN NOT NULL DEFAULT 0`)
+            .run();
+        }
+      } catch (err) {
+        console.error(`[db] migration failed (migrateVbrEnabled:${table}):`, err);
+      }
     }
   }
 
