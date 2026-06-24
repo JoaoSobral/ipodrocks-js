@@ -55,6 +55,7 @@ interface ShadowLibraryRow {
   path: string;
   codec_config_id: number;
   status: string;
+  vbr_enabled: number;
   created_at: string;
   codec_config_name: string;
   codec_name: string;
@@ -122,7 +123,7 @@ export class ShadowLibraryManager {
 
     const baseQuery = `
       SELECT sl.id, sl.name, sl.path, sl.codec_config_id, sl.status,
-             sl.created_at, cc.name as codec_config_name,
+             sl.vbr_enabled, sl.created_at, cc.name as codec_config_name,
              c.name as codec_name,
              cc.bitrate_value, cc.quality_value, cc.bits_per_sample,
              COALESCE((
@@ -141,8 +142,8 @@ export class ShadowLibraryManager {
     this.stmtGetById = db.prepare(baseQuery + " WHERE sl.id = ?");
 
     this.stmtInsert = db.prepare(
-      `INSERT INTO shadow_libraries (name, path, codec_config_id, status)
-       VALUES (?, ?, ?, 'pending')`
+      `INSERT INTO shadow_libraries (name, path, codec_config_id, vbr_enabled, status)
+       VALUES (?, ?, ?, ?, 'pending')`
     );
 
     this.stmtDelete = db.prepare(
@@ -214,7 +215,8 @@ export class ShadowLibraryManager {
   createShadowLibrary(
     name: string,
     libPath: string,
-    codecConfigId: number
+    codecConfigId: number,
+    vbrEnabled = false
   ): number {
     if (!name?.trim()) throw new Error("Shadow library name is required");
     if (!libPath?.trim()) throw new Error("Shadow library path is required");
@@ -222,7 +224,12 @@ export class ShadowLibraryManager {
     const resolvedPath = path.resolve(libPath);
     fs.mkdirSync(resolvedPath, { recursive: true });
 
-    const info = this.stmtInsert.run(name.trim(), resolvedPath, codecConfigId);
+    const info = this.stmtInsert.run(
+      name.trim(),
+      resolvedPath,
+      codecConfigId,
+      vbrEnabled ? 1 : 0
+    );
     return Number(info.lastInsertRowid);
   }
 
@@ -274,7 +281,7 @@ export class ShadowLibraryManager {
     this.stmtSetStatus.run("building", shadowLibId);
     const total = allTracks.length;
 
-    const settings = this._buildConversionSettings(codecConfig);
+    const settings = this._buildConversionSettings(codecConfig, lib.vbrEnabled);
 
     let converted = 0;
     let skipped = 0;
@@ -498,7 +505,7 @@ export class ShadowLibraryManager {
         lib.codecConfigId
       ) as CodecConfigRow | undefined;
       if (!codecConfig) continue;
-      const settings = this._buildConversionSettings(codecConfig);
+      const settings = this._buildConversionSettings(codecConfig, lib.vbrEnabled);
 
       for (const track of tracksToPropagate) {
         if (signal?.aborted) return;
@@ -679,12 +686,14 @@ export class ShadowLibraryManager {
   }
 
   private _buildConversionSettings(
-    codecConfig: CodecConfigRow
+    codecConfig: CodecConfigRow,
+    vbrEnabled = false
   ): ConversionSettings {
     const codec = codecConfig.codec_name.toLowerCase();
     const settings: ConversionSettings = {
       codec,
       transfer_mode: "convert",
+      vbr: vbrEnabled,
     };
 
     if (codecConfig.bitrate_value != null) {
@@ -713,6 +722,7 @@ export class ShadowLibraryManager {
       codecQualityValue: row.quality_value ?? null,
       codecBitsPerSample: row.bits_per_sample ?? null,
       totalBytes,
+      vbrEnabled: !!row.vbr_enabled,
       status: row.status as ShadowLibrary["status"],
       trackCount: row.track_count,
       createdAt: row.created_at,

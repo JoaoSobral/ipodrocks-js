@@ -108,6 +108,8 @@ export interface DeviceProfile extends Device {
   rockboxSmartPlaylists?: boolean;
   devMode?: boolean;
   autoPodcastsEnabled?: boolean;
+  /** When true, lossy transcodes for this device use variable-bitrate (VBR). */
+  vbrEnabled?: boolean;
 }
 
 export type ContentType = "music" | "podcast" | "audiobook" | "playlist";
@@ -147,6 +149,7 @@ export interface AddDeviceConfig {
   skipPlaybackLog?: boolean;
   rockboxSmartPlaylists?: boolean;
   devMode?: boolean;
+  vbrEnabled?: boolean;
 }
 
 export interface DeviceValidation {
@@ -560,6 +563,8 @@ export interface ShadowLibrary {
   codecBitsPerSample: number | null;
    /** Approximate total size of the shadow library in bytes (from primary track file_size). */
   totalBytes: number;
+  /** When true, lossy codecs are encoded in variable-bitrate (VBR) mode. */
+  vbrEnabled: boolean;
   status: "pending" | "building" | "ready" | "error";
   trackCount: number;
   createdAt: string;

@@ -42,6 +42,7 @@ interface DeviceRow {
   rockbox_smart_playlists: number;
   dev_mode: number;
   auto_podcasts_enabled: number;
+  vbr_enabled: number;
 }
 
 const DEVICES_QUERY = `
@@ -50,7 +51,7 @@ const DEVICES_QUERY = `
          d.default_transfer_mode_id, d.default_codec_config_id, d.model_id,
          d.override_bitrate, d.override_quality, d.override_bits,
          d.partial_sync_enabled, d.skip_playback_log, d.skip_album_artwork, d.rockbox_smart_playlists, d.dev_mode,
-         d.auto_podcasts_enabled, d.source_library_type, d.shadow_library_id,
+         d.auto_podcasts_enabled, d.vbr_enabled, d.source_library_type, d.shadow_library_id,
          dtm.name as transfer_mode_name,
          cc.name as codec_config_name, cc.bitrate_value, cc.quality_value,
          cc.bits_per_sample, c.name as codec_name,
@@ -86,6 +87,7 @@ const ALLOWED_UPDATE_FIELDS = new Set([
   "rockbox_smart_playlists",
   "dev_mode",
   "auto_podcasts_enabled",
+  "vbr_enabled",
 ]);
 
 const FIELD_MAP: Record<string, string> = {
@@ -112,6 +114,7 @@ const FIELD_MAP: Record<string, string> = {
   rockboxSmartPlaylists: "rockbox_smart_playlists",
   devMode: "dev_mode",
   autoPodcastsEnabled: "auto_podcasts_enabled",
+  vbrEnabled: "vbr_enabled",
 };
 
 export class DevicesCore {
@@ -160,8 +163,8 @@ export class DevicesCore {
         `INSERT INTO devices
          (name, mount_path, music_folder, podcast_folder, audiobook_folder, playlist_folder,
           default_transfer_mode_id, default_codec_config_id, description,
-          model_id, source_library_type, shadow_library_id, skip_playback_log, rockbox_smart_playlists, dev_mode)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          model_id, source_library_type, shadow_library_id, skip_playback_log, rockbox_smart_playlists, dev_mode, vbr_enabled)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         config.name,
@@ -178,7 +181,8 @@ export class DevicesCore {
         config.shadowLibraryId ?? null,
         config.skipPlaybackLog ? 1 : 0,
         config.rockboxSmartPlaylists ? 1 : 0,
-        config.devMode ? 1 : 0
+        config.devMode ? 1 : 0,
+        config.vbrEnabled ? 1 : 0
       );
 
     const newId = Number(info.lastInsertRowid);
@@ -209,7 +213,7 @@ export class DevicesCore {
       if (!dbField || !ALLOWED_UPDATE_FIELDS.has(dbField)) continue;
       fields.push(`${dbField} = ?`);
       const normalized =
-        dbField === "partial_sync_enabled" || dbField === "skip_playback_log" || dbField === "skip_album_artwork" || dbField === "rockbox_smart_playlists" || dbField === "dev_mode" || dbField === "auto_podcasts_enabled"
+        dbField === "partial_sync_enabled" || dbField === "skip_playback_log" || dbField === "skip_album_artwork" || dbField === "rockbox_smart_playlists" || dbField === "dev_mode" || dbField === "auto_podcasts_enabled" || dbField === "vbr_enabled"
           ? (value ? 1 : 0)
           : value;
       values.push(normalized);
@@ -359,6 +363,7 @@ export class DevicesCore {
       rockboxSmartPlaylists: !!(row.rockbox_smart_playlists ?? 0),
       devMode: !!(row.dev_mode ?? 0),
       autoPodcastsEnabled: !!(row.auto_podcasts_enabled ?? 0),
+      vbrEnabled: !!(row.vbr_enabled ?? 0),
     };
   }
 }

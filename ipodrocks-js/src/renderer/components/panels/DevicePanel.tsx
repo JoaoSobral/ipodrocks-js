@@ -30,7 +30,7 @@ import {
 } from "../../ipc/api";
 import { MpcUnavailableModal } from "../modals/MpcUnavailableModal";
 import { formatCodecLabel } from "../../utils/format";
-import { getTranscodableCodecConfigs } from "../../utils/codec";
+import { getTranscodableCodecConfigs, isVbrCapableCodec } from "../../utils/codec";
 import { createDeviceIconResolver } from "../../utils/device-icon";
 import { DeviceIcon } from "../common/DeviceIcon";
 import type { CheckResult, DeviceModel, CodecConfig } from "../../ipc/api";
@@ -89,6 +89,7 @@ export function DevicePanel() {
   const [rockboxSmartPlaylists, setRockboxSmartPlaylists] = useState(false);
   const [autoPodcastsEnabled, setAutoPodcastsEnabled] = useState(false);
   const [skipAlbumArtwork, setSkipAlbumArtwork] = useState(false);
+  const [vbrEnabled, setVbrEnabled] = useState(false);
   const [devMode, setDevMode] = useState(false);
   const [musicFolder, setMusicFolder] = useState("Music");
   const [podcastFolder, setPodcastFolder] = useState("Podcasts");
@@ -150,6 +151,8 @@ export function DevicePanel() {
     setPlaybackLogEnabled(true); // true = read playback.log (default)
     setRockboxSmartPlaylists(false);
     setAutoPodcastsEnabled(false);
+    setSkipAlbumArtwork(false);
+    setVbrEnabled(false);
     setDevMode(false);
     setMusicFolder("Music");
     setPodcastFolder("Podcasts");
@@ -195,6 +198,7 @@ export function DevicePanel() {
 
     setPlaybackLogEnabled(!(device.skipPlaybackLog ?? false));
     setSkipAlbumArtwork(device.skipAlbumArtwork ?? false);
+    setVbrEnabled(device.vbrEnabled ?? false);
     setRockboxSmartPlaylists(device.rockboxSmartPlaylists ?? false);
     setAutoPodcastsEnabled(device.autoPodcastsEnabled ?? false);
     setDevMode(device.devMode ?? false);
@@ -252,6 +256,7 @@ export function DevicePanel() {
       shadowLibraryId: resolvedShadowId,
       skipPlaybackLog: !playbackLogEnabled,
       skipAlbumArtwork,
+      vbrEnabled: transferMode === "transcode" ? vbrEnabled : false,
       rockboxSmartPlaylists,
       devMode,
     };
@@ -702,10 +707,33 @@ export function DevicePanel() {
                 })),
               ]}
               value={defaultCodecConfigId != null ? String(defaultCodecConfigId) : ""}
-              onChange={(v) => setDefaultCodecConfigId(v ? Number(v) : null)}
+              onChange={(v) => {
+                const id = v ? Number(v) : null;
+                setDefaultCodecConfigId(id);
+                const cc = transcodableConfigs.find((c) => c.id === id);
+                if (!isVbrCapableCodec(cc?.codec_name)) setVbrEnabled(false);
+              }}
               placeholder="Select a codec…"
             />
           )}
+
+          {transferMode === "transcode" &&
+            isVbrCapableCodec(
+              transcodableConfigs.find((c) => c.id === defaultCodecConfigId)?.codec_name
+            ) && (
+              <label className="flex items-center gap-2.5 cursor-pointer">
+                <input
+                  type="checkbox"
+                  className={checkboxClass}
+                  checked={vbrEnabled}
+                  onChange={(e) => setVbrEnabled(e.target.checked)}
+                />
+                <span className="text-sm text-foreground flex items-center gap-1">
+                  Variable bitrate (VBR)
+                  <InfoTooltip text="Encode at a quality level derived from the chosen bitrate instead of a fixed bitrate. VBR usually gives better quality per file size." />
+                </span>
+              </label>
+            )}
 
           {/* Description */}
           <Input

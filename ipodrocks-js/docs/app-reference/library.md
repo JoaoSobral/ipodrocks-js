@@ -18,6 +18,7 @@ The Library panel manages your music catalog: folders, scans, shadow libraries, 
 
 - **Scan** reads file tags (artist, album, title, genre, etc.) and optionally key/BPM via metadata or Essentia. It stores content hashes to skip unchanged files on the next scan.
 - **Shadow libraries** are built once; devices can use them as the source instead of the primary library for faster sync (no on-the-fly transcoding). A shadow library is a **file-only mirror** — it contains the transcoded audio files and copied album artwork, nothing else. Play counts, ratings, and listening history are **not** stored in or synced through shadow libraries; they live in the primary library database and are updated by ingesting `playback.log` from the device. When the primary library changes, shadow libraries are kept in sync automatically (adds, updates, and removes propagate).
+- **Variable bitrate (VBR)** — When creating a shadow library with a lossy codec (MP3, AAC, OGG, Opus), tick **Variable bitrate (VBR)** to encode at a quality level derived from the chosen bitrate instead of a fixed bitrate — usually better quality per file size. The option only shows for these codecs; lossless codecs (FLAC/ALAC) are always variable and Musepack is already quality-based, so it is hidden for them.
 - The track list is virtualized for large libraries. Filters (device, type, on device, playlist) apply in memory.
 
 ## How to work with it

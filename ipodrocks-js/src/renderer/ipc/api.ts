@@ -236,11 +236,13 @@ export async function createShadowLibrary(
   name: string,
   path: string,
   codecConfigId: number,
+  vbrEnabled = false,
 ): Promise<ShadowLibrary> {
   return window.api.invoke("shadow:create", {
     name,
     path,
     codecConfigId,
+    vbrEnabled,
   }) as Promise<ShadowLibrary>;
 }
 
