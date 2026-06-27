@@ -29,7 +29,7 @@ export function classifyInput(raw: string): InputKind {
 
 async function fetchText(url: string): Promise<{ text: string; finalUrl: string }> {
   const res = await fetch(url, {
-    headers: { "User-Agent": UA, Accept: "*/*" },
+    headers: { "User-Agent": UA, Accept: "*/*", "Accept-Language": "en-US,en;q=0.9" },
     signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
   });
   if (!res.ok) throw new Error(`HTTP ${res.status} from ${url}`);
@@ -40,7 +40,7 @@ async function probeIsFeed(url: string): Promise<boolean> {
   try {
     const res = await fetch(url, {
       method: "HEAD",
-      headers: { "User-Agent": UA },
+      headers: { "User-Agent": UA, "Accept-Language": "en-US,en;q=0.9" },
       signal: AbortSignal.timeout(8_000),
     });
     const ct = res.headers.get("content-type") ?? "";
