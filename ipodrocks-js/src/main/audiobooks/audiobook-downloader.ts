@@ -1,9 +1,11 @@
 import * as fs from "fs";
 import * as path from "path";
+import * as crypto from "crypto";
 import { pipeline } from "stream/promises";
 import { Readable } from "stream";
 import type Database from "better-sqlite3";
 import { ensureChapterDir, getChapterPath } from "./audiobook-storage";
+import { DOWNLOAD_HEADERS } from "../utils/download-headers";
 
 interface ChapterRow {
   id: number;
@@ -15,6 +17,12 @@ interface ChapterRow {
   download_state: string;
 }
 
+type DownloadResult = { localPath: string } | { error: string };
+
+/** Chapters currently downloading, keyed by id — see podcast-downloader for the
+ * race this prevents (concurrent attempts clobbering each other's temp file). */
+const inFlight = new Map<number, Promise<DownloadResult>>();
+
 function extFromUrl(url: string): string {
   try {
     const u = new URL(url);
@@ -25,10 +33,24 @@ function extFromUrl(url: string): string {
   }
 }
 
-export async function downloadChapter(
+export function downloadChapter(
   db: Database.Database,
   chapterId: number
-): Promise<{ localPath: string } | { error: string }> {
+): Promise<DownloadResult> {
+  const existing = inFlight.get(chapterId);
+  if (existing) return existing;
+
+  const p = runDownload(db, chapterId).finally(() => {
+    inFlight.delete(chapterId);
+  });
+  inFlight.set(chapterId, p);
+  return p;
+}
+
+async function runDownload(
+  db: Database.Database,
+  chapterId: number
+): Promise<DownloadResult> {
   const row = db
     .prepare(
       `SELECT ac.id, ac.subscription_id, ac.enclosure_url, ac.file_size, ac.local_path, ac.download_state,
@@ -57,17 +79,21 @@ export async function downloadChapter(
     ensureChapterDir(row.librivox_id);
 
     const res = await fetch(row.enclosure_url, {
-      headers: { "User-Agent": "iPodRocks/1.0" },
+      headers: DOWNLOAD_HEADERS,
     });
 
     if (!res.ok || !res.body) {
       throw new Error(`HTTP ${res.status} ${res.statusText}`);
     }
 
-    const tmpPath = localPath + ".tmp";
-    const dest = fs.createWriteStream(tmpPath);
-    await pipeline(Readable.fromWeb(res.body as Parameters<typeof Readable.fromWeb>[0]), dest);
-    fs.renameSync(tmpPath, localPath);
+    const tmpPath = `${localPath}.${crypto.randomBytes(6).toString("hex")}.tmp`;
+    try {
+      const dest = fs.createWriteStream(tmpPath);
+      await pipeline(Readable.fromWeb(res.body as Parameters<typeof Readable.fromWeb>[0]), dest);
+      fs.renameSync(tmpPath, localPath);
+    } finally {
+      try { fs.unlinkSync(tmpPath); } catch { /* already renamed or never created */ }
+    }
 
     const stat = fs.statSync(localPath);
     db.prepare(
@@ -80,7 +106,6 @@ export async function downloadChapter(
     db.prepare(
       "UPDATE audiobook_chapters SET download_state = 'failed', download_error = ? WHERE id = ?"
     ).run(msg, chapterId);
-    try { fs.unlinkSync(localPath + ".tmp"); } catch { /* ignore */ }
     return { error: msg };
   }
 }
