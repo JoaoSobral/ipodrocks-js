@@ -4,7 +4,7 @@
 
 ### Fixes
 
-- **Podcast downloads from Captivate-hosted feeds** — Fixed failed downloads of the latest episodes on shows like *The News Agents*. Node's default `Accept-Language: *` header made Captivate's CDN return 404; downloads now send a concrete `Accept-Language`. Same fix applied to audiobook downloads.
+- **Podcast downloads from Captivate-hosted feeds** — Fixed failed downloads of the latest episodes on shows. Node's default `Accept-Language: *` header made Captivate's CDN return 404; downloads now send a concrete `Accept-Language`. Same fix applied to audiobook downloads.
 - **Episode download race** — A manual "Download now" overlapping the auto-refresh could download the same episode twice and wrongly mark a finished download as failed. Concurrent downloads of the same episode are now de-duplicated and write to a unique temp file. Same fix applied to audiobook downloads.
 
 ## [2.0.1] — 2026-06
