@@ -27,7 +27,6 @@ import {
   getArtists,
   getAlbums,
   previewSmartTracks,
-  analyzeDevicePlayback,
   readDevicePlaybackLog,
   getGeniusSummaryFromDb,
   getGeniusTypes,
@@ -51,7 +50,6 @@ import type {
   AnalysisSummary,
   GeniusTypeOption,
   PlaylistGenerationResult,
-  AnalyzeResult,
   SavantKeyData,
   GenerateSavantResult,
 } from "../../ipc/api";
@@ -400,38 +398,6 @@ export function PlaylistPanel() {
       setGeniusStep("summary");
     } catch (err) {
       setGeniusError(err instanceof Error ? err.message : String(err));
-      setGeniusStep("idle");
-    }
-  }
-
-  async function handleAnalyze() {
-    if (geniusDeviceId == null) return;
-    setGeniusStep("analyzing");
-    setGeniusError(null);
-    try {
-      const res: AnalyzeResult = await analyzeDevicePlayback(geniusDeviceId);
-      if (res.error) {
-        setGeniusError(res.error);
-        setGeniusStep("idle");
-        return;
-      }
-      setGeniusSummary(res.summary);
-      setGeniusArtists(res.artists ?? []);
-      if (res.summary.matchedPlays === 0) {
-        setGeniusError(
-          "None of the played tracks in the playback log were found in your library. " +
-            "Check that your library path is configured correctly."
-        );
-        setGeniusStep("idle");
-        return;
-      }
-      const types = await getGeniusTypes();
-      setGeniusTypes(types);
-      setGeniusStep("summary");
-    } catch (err) {
-      setGeniusError(
-        err instanceof Error ? err.message : String(err)
-      );
       setGeniusStep("idle");
     }
   }

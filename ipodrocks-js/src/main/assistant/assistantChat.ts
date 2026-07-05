@@ -5,7 +5,6 @@
 
 import Database from "better-sqlite3";
 import {
-  callOpenRouter,
   callOpenRouterWithTools,
   OpenRouterConfig,
   OpenRouterMessage,

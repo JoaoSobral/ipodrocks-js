@@ -25,3 +25,27 @@ export function pathMatchesAllowedPrefix(
   const sep = platform === "win32" ? path.win32.sep : path.posix.sep;
   return realPath.startsWith(prefix + sep);
 }
+
+/**
+ * Normalizes and validates a device mount path. A device can legitimately be
+ * mounted almost anywhere (removable-media roots, dev-mode folders, temp dirs
+ * in tests), so we cannot use a fixed prefix allowlist like library folders.
+ * Instead we reject the dangerous shapes: empty, null bytes, non-absolute, and
+ * a bare filesystem root. The last one matters because mirror sync deletes
+ * "extra" files under the mount path — pointing a device at `/` or `C:\` could
+ * otherwise sweep the whole disk. Returns the resolved absolute path.
+ */
+export function sanitizeMountPath(rawPath: unknown): string {
+  if (typeof rawPath !== "string" || rawPath.trim() === "") {
+    throw new Error("Mount path cannot be empty");
+  }
+  const trimmed = rawPath.trim();
+  if (trimmed.includes("\0")) {
+    throw new Error("Mount path contains an invalid character");
+  }
+  const resolved = path.resolve(trimmed);
+  if (resolved === path.parse(resolved).root) {
+    throw new Error("Mount path cannot be a filesystem root");
+  }
+  return resolved;
+}

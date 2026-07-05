@@ -1,6 +1,6 @@
 /**
  * IPC harness for behavioral tests that need to exercise the full
- * `registerIpcHandlers()` glue from `src/main/ipc.ts`.
+ * `registerIpcHandlers()` glue from `src/main/ipc/`.
  *
  * Usage:
  *   import { installElectronMock, setupIpcSession } from "./ipc-harness";

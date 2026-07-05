@@ -19,13 +19,14 @@ These are confirmed reuse/efficiency issues found during `src/main/` review. Add
 
 | Area | File | Issue |
 |---|---|---|
-| Reuse | `ipc.ts` | `remapForCheck()` / `remapTracks()` are identical — extract one helper |
-| Reuse | `ipc.ts` | Device track map building (music/podcast/audiobook) repeated 3× |
-| Reuse | `ipc.ts` / `library-core.ts` | `get-or-create` pattern for artist/album/genre duplicated |
+| Reuse | `ipc/devices.ts` + `ipc/sync.ts` | Device track map building (music/podcast/audiobook) repeated 3× |
+| Reuse | `library-scanner.ts` / `library-core.ts` | `get-or-create` pattern for artist/album/genre duplicated |
 | Reuse | `database.ts` + `library-scanner.ts` | Track deduplication logic lives in both |
 | Efficiency | `library-scanner.ts:641` | `INSERT OR IGNORE` then `SELECT` — reverse to `SELECT` first |
 | Efficiency | `metadata-extractor.ts:141` | `parseFile()` called twice per track |
 | Efficiency | `playback-log-ingest.ts:90` | Full library aggregation on every ingest — should be incremental |
 | GitHub Actions | `.github/dependabot.yml` | `package-ecosystem: ""` — Dependabot is disabled |
 | GitHub Actions | All workflows | Actions pinned to floating `@vN` tags instead of commit SHAs |
+
+> Note: `src/main/ipc.ts` was split into per-domain modules under `src/main/ipc/` (one `registerXHandlers()` per channel prefix, shared helpers in `ipc/common.ts`). Add new handlers to the matching domain module.
 

@@ -1,3 +1,4 @@
+import * as fs from "fs";
 import * as path from "path";
 import { net, protocol } from "electron";
 import { pathToFileURL } from "url";
@@ -7,12 +8,19 @@ import { getAudiobooksRoot } from "../audiobooks/audiobook-storage";
 const IMAGE_EXTS = new Set([".jpg", ".jpeg", ".png", ".gif", ".webp"]);
 
 function isAudiobookCoverPath(resolvedPath: string): boolean {
-  const root = getAudiobooksRoot();
   const ext = path.extname(resolvedPath).toLowerCase();
-  return (
-    IMAGE_EXTS.has(ext) &&
-    (resolvedPath.startsWith(root + path.sep) || resolvedPath.startsWith(root + "/"))
-  );
+  if (!IMAGE_EXTS.has(ext)) return false;
+  // Resolve symlinks on both sides so a symlinked cover file can't point the
+  // served path outside the audiobooks root.
+  let realRoot: string;
+  let realPath: string;
+  try {
+    realRoot = fs.realpathSync(getAudiobooksRoot());
+    realPath = fs.realpathSync(resolvedPath);
+  } catch {
+    return false;
+  }
+  return realPath.startsWith(realRoot + path.sep) || realPath.startsWith(realRoot + "/");
 }
 
 /** Call before app.whenReady() to register the media:// scheme as privileged. */

@@ -5,7 +5,7 @@
  * filesystem changes, and propagating removals through the shadow library.
  *
  * Drives the `LibraryScanner` and `ShadowLibraryManager` directly (the same
- * objects the IPC handlers in `src/main/ipc.ts` use).
+ * objects the IPC handlers in `src/main/ipc/` use).
  */
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import * as fs from "fs";

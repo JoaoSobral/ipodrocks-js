@@ -82,7 +82,9 @@ const library_search_tracks: AiTool = {
     const query = String(args.query ?? "");
     const contentType = String(args.content_type ?? "music");
     const limit = Math.min(Number(args.limit ?? 20), 100);
-    const like = `%${query}%`;
+    // Escape LIKE wildcards so a query containing % or _ matches literally.
+    const escaped = query.replace(/[\\%_]/g, (c) => `\\${c}`);
+    const like = `%${escaped}%`;
     return ctx.db
       .prepare(
         `SELECT t.id, t.title, a.name as artist, al.title as album, g.name as genre, t.content_type
@@ -91,7 +93,7 @@ const library_search_tracks: AiTool = {
          LEFT JOIN albums al ON t.album_id = al.id
          LEFT JOIN genres g ON t.genre_id = g.id
          WHERE t.content_type = ?
-           AND (t.title LIKE ? OR a.name LIKE ? OR al.title LIKE ?)
+           AND (t.title LIKE ? ESCAPE '\\' OR a.name LIKE ? ESCAPE '\\' OR al.title LIKE ? ESCAPE '\\')
          ORDER BY a.name, al.title, t.track_number
          LIMIT ?`
       )

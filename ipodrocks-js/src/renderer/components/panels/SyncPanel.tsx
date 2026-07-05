@@ -1,7 +1,6 @@
 import { useEffect, useState, useReducer, useCallback, useMemo } from "react";
 import { Card } from "../common/Card";
 import { Button } from "../common/Button";
-import { ErrorBox } from "../common/ErrorBox";
 import { Select } from "../common/Select";
 import { InfoTooltip } from "../common/InfoTooltip";
 import { Modal } from "../common/Modal";

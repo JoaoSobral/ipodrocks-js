@@ -2,6 +2,7 @@ import { app, BrowserWindow, Menu, MenuItem } from "electron";
 import * as fs from "fs";
 import * as path from "path";
 import { registerIpcHandlers, getLibraryDb } from "./ipc";
+import { openExternalUrl } from "./utils/external-url";
 import { registerMediaScheme, registerMediaProtocol } from "./player/media-protocol";
 import { cleanupPlayerTemp } from "./player/player-source";
 import { stopPodcastScheduler } from "./podcasts/podcast-scheduler";
@@ -108,6 +109,27 @@ function createWindow(): BrowserWindow {
       nodeIntegration: false,
       sandbox: true,
     },
+  });
+
+  // Deny in-app window creation; route external http(s)/mailto links to the
+  // OS browser. Without this, a `target="_blank"` link (including one rendered
+  // from LLM/feed content) would open a child window that inherits this
+  // window's preload — exposing the full `window.api` IPC bridge to it.
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    void openExternalUrl(url);
+    return { action: "deny" };
+  });
+
+  // Block the top-level frame from navigating away from the app itself.
+  const isInternalUrl = (url: string): boolean => {
+    if (devServerUrl && url.startsWith(devServerUrl)) return true;
+    return url.startsWith("file://");
+  };
+  win.webContents.on("will-navigate", (event, url) => {
+    if (!isInternalUrl(url)) {
+      event.preventDefault();
+      void openExternalUrl(url);
+    }
   });
 
   if (devServerUrl) {

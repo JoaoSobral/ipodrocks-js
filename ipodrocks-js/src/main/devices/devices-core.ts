@@ -7,6 +7,7 @@ import {
   DeviceValidation,
 } from "../../shared/types";
 import { Device } from "./device";
+import { sanitizeMountPath } from "../path-allowlist";
 
 interface DeviceRow {
   id: number;
@@ -142,7 +143,7 @@ export class DevicesCore {
 
   addDevice(config: AddDeviceConfig): Device {
     if (!config.name?.trim()) throw new Error("Device name cannot be empty");
-    if (!config.mountPath?.trim()) throw new Error("Mount path cannot be empty");
+    const mountPath = sanitizeMountPath(config.mountPath);
 
     const existing = this.db
       .prepare("SELECT id FROM devices WHERE name = ?")
@@ -168,7 +169,7 @@ export class DevicesCore {
       )
       .run(
         config.name,
-        config.mountPath,
+        mountPath,
         config.musicFolder ?? "Music",
         config.podcastFolder ?? "Podcasts",
         config.audiobookFolder ?? "Audiobooks",
@@ -213,7 +214,9 @@ export class DevicesCore {
       if (!dbField || !ALLOWED_UPDATE_FIELDS.has(dbField)) continue;
       fields.push(`${dbField} = ?`);
       const normalized =
-        dbField === "partial_sync_enabled" || dbField === "skip_playback_log" || dbField === "skip_album_artwork" || dbField === "rockbox_smart_playlists" || dbField === "dev_mode" || dbField === "auto_podcasts_enabled" || dbField === "vbr_enabled"
+        dbField === "mount_path"
+          ? sanitizeMountPath(value)
+          : dbField === "partial_sync_enabled" || dbField === "skip_playback_log" || dbField === "skip_album_artwork" || dbField === "rockbox_smart_playlists" || dbField === "dev_mode" || dbField === "auto_podcasts_enabled" || dbField === "vbr_enabled"
           ? (value ? 1 : 0)
           : value;
       values.push(normalized);

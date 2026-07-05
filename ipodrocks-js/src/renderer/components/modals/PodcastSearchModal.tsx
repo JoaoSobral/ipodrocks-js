@@ -133,7 +133,7 @@ type UrlPhase =
 function UrlTab() {
   const [url, setUrl] = useState("");
   const [phase, setPhase] = useState<UrlPhase>({ kind: "idle" });
-  const { subscribedFeedIds, subscribeByUrl } = usePodcastsStore();
+  const { subscribeByUrl } = usePodcastsStore();
 
   function reset() { setPhase({ kind: "idle" }); setUrl(""); }
 

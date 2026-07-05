@@ -181,35 +181,6 @@ export function listChapters(db: Database.Database, subId: number): AudiobookCha
   return rows.map(rowToChapter);
 }
 
-/** Re-fetches the RSS feed and upserts any new chapters (does not re-download existing). */
-export async function refreshChapters(
-  db: Database.Database,
-  subId: number
-): Promise<void> {
-  const sub = db
-    .prepare("SELECT * FROM audiobook_subscriptions WHERE id = ?")
-    .get(subId) as SubRow | undefined;
-  if (!sub) return;
-
-  try {
-    const parsed = await fetchAndParseFeed(sub.rss_url);
-    const upsert = db.prepare(
-      `INSERT OR IGNORE INTO audiobook_chapters
-         (subscription_id, guid, chapter_number, title, enclosure_url, duration_seconds)
-       VALUES (?, ?, ?, ?, ?, ?)`
-    );
-    const run = db.transaction((chapters: typeof parsed.episodes) => {
-      chapters.forEach((ep, idx) => {
-        upsert.run(subId, ep.guid || `${sub.librivox_id}-${idx}`, idx + 1, ep.title, ep.enclosureUrl, ep.durationSeconds ?? null);
-      });
-    });
-    run(parsed.episodes);
-    db.prepare("UPDATE audiobook_subscriptions SET last_refreshed_at = CURRENT_TIMESTAMP WHERE id = ?").run(subId);
-  } catch (err) {
-    console.warn("[audiobooks] refreshChapters failed for sub", subId, err);
-  }
-}
-
 /** Returns label used for SyncPanel matching: "Title — Author" or just "Title". */
 export function subLabel(sub: Pick<AudiobookSubscription, "title" | "author">): string {
   return sub.author ? `${sub.title} — ${sub.author}` : sub.title;

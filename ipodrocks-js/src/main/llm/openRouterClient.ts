@@ -64,15 +64,20 @@ export function checkRateLimit(channel: string): boolean {
 // ---------------------------------------------------------------------------
 
 const REQUEST_TIMEOUT_MS = 30_000;
+const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 
-export async function callOpenRouter(
-  messages: OpenRouterMessage[],
+/**
+ * Shared POST to the OpenRouter chat-completions endpoint. Centralizes the
+ * auth/identity headers, request timeout, and error/timeout translation so the
+ * individual call variants only differ by request body and response shape.
+ */
+async function postChatCompletion(
   config: OpenRouterConfig,
-  jsonMode = false
-): Promise<string> {
+  body: Record<string, unknown>
+): Promise<Response> {
   let response: Response;
   try {
-    response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    response = await fetch(OPENROUTER_URL, {
       method: "POST",
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       headers: {
@@ -81,13 +86,7 @@ export async function callOpenRouter(
         "HTTP-Referer": config.siteUrl ?? "app://electron",
         "X-Title": config.siteName ?? "iPodRocks",
       },
-      body: JSON.stringify({
-        model: config.model,
-        messages,
-        temperature: 0.7,
-        max_tokens: 2000,
-        ...(jsonMode ? { response_format: { type: "json_object" } } : {}),
-      }),
+      body: JSON.stringify({ model: config.model, ...body }),
     });
   } catch (err) {
     // Distinguish timeout from other network errors
@@ -101,6 +100,20 @@ export async function callOpenRouter(
     const err = await response.text();
     throw new Error(`OpenRouter error ${response.status}: ${err}`);
   }
+  return response;
+}
+
+export async function callOpenRouter(
+  messages: OpenRouterMessage[],
+  config: OpenRouterConfig,
+  jsonMode = false
+): Promise<string> {
+  const response = await postChatCompletion(config, {
+    messages,
+    temperature: 0.7,
+    max_tokens: 2000,
+    ...(jsonMode ? { response_format: { type: "json_object" } } : {}),
+  });
 
   const data = (await response.json()) as {
     choices?: Array<{ message?: { content?: string | null } }>;
@@ -113,37 +126,13 @@ export async function callOpenRouterWithTools(
   config: OpenRouterConfig,
   tools: ToolDefinition[]
 ): Promise<ToolCallResponse> {
-  let response: Response;
-  try {
-    response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-      method: "POST",
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-      headers: {
-        Authorization: `Bearer ${config.apiKey}`,
-        "Content-Type": "application/json",
-        "HTTP-Referer": config.siteUrl ?? "app://electron",
-        "X-Title": config.siteName ?? "iPodRocks",
-      },
-      body: JSON.stringify({
-        model: config.model,
-        messages,
-        temperature: 0.7,
-        max_tokens: 2000,
-        tools,
-        tool_choice: "auto",
-      }),
-    });
-  } catch (err) {
-    if (err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError")) {
-      throw new Error(`OpenRouter request timed out after ${REQUEST_TIMEOUT_MS / 1000}s`);
-    }
-    throw err;
-  }
-
-  if (!response.ok) {
-    const err = await response.text();
-    throw new Error(`OpenRouter error ${response.status}: ${err}`);
-  }
+  const response = await postChatCompletion(config, {
+    messages,
+    temperature: 0.7,
+    max_tokens: 2000,
+    tools,
+    tool_choice: "auto",
+  });
 
   const data = (await response.json()) as {
     choices?: Array<{

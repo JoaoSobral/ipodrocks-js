@@ -15,7 +15,6 @@ import { Spinner } from "../common/Spinner";
 import { Label } from "../common/Label";
 import { TableHeader } from "../common/TableHeader";
 import { Badge } from "../common/Badge";
-import { ListRow } from "../common/ListRow";
 import { ScanProgressModal } from "../modals/ScanProgressModal";
 import { useLibraryStore } from "../../stores/library-store";
 import { usePlayerStore } from "../../stores/player-store";

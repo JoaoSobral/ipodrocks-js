@@ -351,7 +351,7 @@ export function compareLibraries(
   }
 
   const extras: string[] = [];
-  for (const [relStr, [dp]] of deviceByRel) {
+  for (const [, [dp]] of deviceByRel) {
     if (!matchedDevicePaths.has(dp)) {
       extras.push(dp);
     }

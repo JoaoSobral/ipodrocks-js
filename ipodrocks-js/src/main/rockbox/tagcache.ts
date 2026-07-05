@@ -1,6 +1,5 @@
 import * as fs from "fs";
 import * as path from "path";
-import * as os from "os";
 
 /**
  * Rockbox stores ratings (0–10) in its internal tagcache database.
@@ -200,9 +199,4 @@ export function buildDeviceRelativePath(
     .join("/", deviceMusicFolder, deviceFilename)
     .replace(/\\/g, "/");
   return normalized;
-}
-
-/** Synthesize the temp dir path for OS-level temp files. */
-export function getTempDir(): string {
-  return os.tmpdir();
 }

@@ -5,7 +5,6 @@ import {
   listSubscriptions,
   upsertEpisode,
   markLastRefreshed,
-  listEpisodes,
 } from "./podcast-subscriptions";
 import { fetchAndParseFeed } from "./podcast-feed-import";
 import { downloadEpisode } from "./podcast-downloader";

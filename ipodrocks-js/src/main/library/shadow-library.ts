@@ -111,12 +111,10 @@ export class ShadowLibraryManager {
   private stmtDelete: Database.Statement;
   private stmtSetStatus: Database.Statement;
   private stmtInsertTrack: Database.Statement;
-  private stmtSetTrackStatus: Database.Statement;
   private stmtDeleteTrackBySource: Database.Statement;
   private stmtGetTrackBySource: Database.Statement;
   private stmtGetCodecConfig: Database.Statement;
   private stmtGetShadowTracksByLib: Database.Statement;
-  private stmtCountTracks: Database.Statement;
 
   constructor(db: Database.Database) {
     this.db = db;
@@ -161,12 +159,6 @@ export class ShadowLibraryManager {
        VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`
     );
 
-    this.stmtSetTrackStatus = db.prepare(
-      `UPDATE shadow_tracks SET status = ?, error_message = ?,
-              updated_at = CURRENT_TIMESTAMP
-       WHERE shadow_library_id = ? AND source_track_id = ?`
-    );
-
     this.stmtDeleteTrackBySource = db.prepare(
       `DELETE FROM shadow_tracks
        WHERE shadow_library_id = ? AND source_track_id = ?`
@@ -191,10 +183,6 @@ export class ShadowLibraryManager {
       `SELECT id, shadow_library_id, source_track_id, shadow_path,
               status, error_message
        FROM shadow_tracks WHERE shadow_library_id = ?`
-    );
-
-    this.stmtCountTracks = db.prepare(
-      "SELECT COUNT(*) as cnt FROM shadow_tracks WHERE shadow_library_id = ?"
     );
   }
 

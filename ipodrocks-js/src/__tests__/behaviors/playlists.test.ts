@@ -5,7 +5,7 @@
  * (genre, artist, album), retrieving their tracks, and listing/deleting them.
  *
  * Drives the `PlaylistCore` class directly (the same object the `playlist:*`
- * IPC handlers in `src/main/ipc.ts` delegate to).
+ * IPC handlers in `src/main/ipc/` delegate to).
  */
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 

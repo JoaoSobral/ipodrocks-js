@@ -1,5 +1,19 @@
 # Changelog
 
+## [2.0.3] — 2026-07
+
+### Security
+
+- **Hardened window navigation** — External links (including any URL rendered from AI chat or podcast-feed content) now open in your system browser instead of an in-app window, and in-app navigation away from the app is blocked. This closes a path where a link could have opened a window with access to internal app APIs.
+- **URL scheme allowlist** — "Open in browser" actions are now restricted to `http`, `https`, and `mailto`, so links can no longer trigger `file://`, network shares, or other local handlers.
+- **Stricter Content-Security-Policy** — Inline scripts are no longer allowed in the app UI.
+- **Safer device mount paths** — Adding or editing a device now validates the mount path and refuses a bare filesystem root, preventing a misconfiguration from letting a mirror sync delete files across the whole disk.
+- **Download size caps** — Podcast and audiobook downloads are now capped in size, so a broken or hostile feed can't fill your disk.
+
+### Improvements
+
+- **Smaller, clearer main process** — The IPC layer was split into focused per-domain modules, shared logic was de-duplicated, and unused/dead code was removed. No behavior change; the app is easier to maintain and covered by additional tests.
+
 ## [2.0.2] — 2026-06
 
 ### Fixes

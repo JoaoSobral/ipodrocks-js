@@ -6,6 +6,7 @@ import { Readable } from "stream";
 import type Database from "better-sqlite3";
 import { ensureChapterDir, getChapterPath } from "./audiobook-storage";
 import { DOWNLOAD_HEADERS } from "../utils/download-headers";
+import { byteCapTransform } from "../utils/capped-stream";
 
 interface ChapterRow {
   id: number;
@@ -89,7 +90,11 @@ async function runDownload(
     const tmpPath = `${localPath}.${crypto.randomBytes(6).toString("hex")}.tmp`;
     try {
       const dest = fs.createWriteStream(tmpPath);
-      await pipeline(Readable.fromWeb(res.body as Parameters<typeof Readable.fromWeb>[0]), dest);
+      await pipeline(
+        Readable.fromWeb(res.body as Parameters<typeof Readable.fromWeb>[0]),
+        byteCapTransform(),
+        dest
+      );
       fs.renameSync(tmpPath, localPath);
     } finally {
       try { fs.unlinkSync(tmpPath); } catch { /* already renamed or never created */ }
