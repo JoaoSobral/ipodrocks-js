@@ -25,7 +25,6 @@ describe("sanitizeMountPath", () => {
   it("rejects empty / non-string input", () => {
     expect(() => sanitizeMountPath("")).toThrow(/empty/i);
     expect(() => sanitizeMountPath("   ")).toThrow(/empty/i);
-    // @ts-expect-error intentionally passing a non-string
     expect(() => sanitizeMountPath(undefined)).toThrow(/empty/i);
   });
 

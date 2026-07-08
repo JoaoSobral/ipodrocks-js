@@ -20,8 +20,14 @@ export interface ApeTags {
   title?: string;
   artist?: string;
   album?: string;
+  albumArtist?: string;
   genre?: string;
   year?: string;
+  originalYear?: string;
+  originalDate?: string;
+  composer?: string;
+  comment?: string;
+  compilation?: string;
   track?: string;
   disc?: string;
   coverArt?: CoverArt;

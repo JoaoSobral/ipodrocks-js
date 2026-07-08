@@ -27,6 +27,7 @@ These are confirmed reuse/efficiency issues found during `src/main/` review. Add
 | Efficiency | `playback-log-ingest.ts:90` | Full library aggregation on every ingest — should be incremental |
 | GitHub Actions | `.github/dependabot.yml` | `package-ecosystem: ""` — Dependabot is disabled |
 | GitHub Actions | All workflows | Actions pinned to floating `@vN` tags instead of commit SHAs |
+| Correctness | `music-metadata` (dep) | Pre-existing library bug: `parseFile()` throws a RangeError on SV8 Musepack files that carry an APEv2 tag (any header/footer form). `mpcenc` output is always SV8, so scanning/reading tags of iPodRocks-generated MPC files fails (extractor swallows it → filename-based defaults). Written tags are correct (ffmpeg reads them). Needs an upstream fix or a fallback reader (e.g. ffprobe) for MPC. Discovered fixing #91 (2026-07-09). |
 
 > Note: `src/main/ipc.ts` was split into per-domain modules under `src/main/ipc/` (one `registerXHandlers()` per channel prefix, shared helpers in `ipc/common.ts`). Add new handlers to the matching domain module.
 

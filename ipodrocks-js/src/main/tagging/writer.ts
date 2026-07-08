@@ -12,15 +12,23 @@ import type { ApeTags, ApeItem, WriteResult } from "./apev2/types";
 
 const COVER_ART_KEY = "Cover Art (Front)";
 
-function tagsToItems(tags: ApeTags): ApeItem[] {
+export function tagsToItems(tags: ApeTags): ApeItem[] {
   const items: ApeItem[] = [];
 
+  // APEv2 key names chosen to match MP3tag's conventions and to round-trip
+  // through music-metadata's (case-insensitive) APEv2 tag mapper.
   const textFields: Array<[keyof ApeTags, string]> = [
     ["title", "Title"],
     ["artist", "Artist"],
     ["album", "Album"],
+    ["albumArtist", "Album Artist"],
     ["genre", "Genre"],
     ["year", "Year"],
+    ["originalYear", "Originalyear"],
+    ["originalDate", "Originaldate"],
+    ["composer", "Composer"],
+    ["comment", "Comment"],
+    ["compilation", "Compilation"],
     ["track", "Track"],
     ["disc", "Disc"],
   ];

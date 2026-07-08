@@ -59,13 +59,20 @@ export function Select({
     if (disabled) return;
     if (!open && buttonRef.current) {
       const rect = buttonRef.current.getBoundingClientRect();
-      const spaceBelow = window.innerHeight - rect.bottom;
-      const dropdownMaxH = 224; // max-h-56 = 14rem = 224px
-      if (spaceBelow >= dropdownMaxH || spaceBelow >= 120) {
-        setDropdownStyle({ top: rect.bottom + 4, left: rect.left, width: rect.width });
-      } else {
-        setDropdownStyle({ bottom: window.innerHeight - rect.top + 4, left: rect.left, width: rect.width });
-      }
+      const GAP = 4; // gap between button and dropdown
+      const MARGIN = 8; // keep-away from viewport edge
+      const MAX_H = 224; // max-h-56 = 14rem = 224px
+      const spaceBelow = window.innerHeight - rect.bottom - GAP - MARGIN;
+      const spaceAbove = rect.top - GAP - MARGIN;
+      // Prefer opening downward; flip up only when the list can't fit fully
+      // below and there is more room above.
+      const openDown = spaceBelow >= MAX_H || spaceBelow >= spaceAbove;
+      const maxHeight = Math.max(Math.min(MAX_H, openDown ? spaceBelow : spaceAbove), 96);
+      setDropdownStyle(
+        openDown
+          ? { top: rect.bottom + GAP, left: rect.left, width: rect.width, maxHeight }
+          : { bottom: window.innerHeight - rect.top + GAP, left: rect.left, width: rect.width, maxHeight }
+      );
     }
     setOpen((o) => !o);
   }

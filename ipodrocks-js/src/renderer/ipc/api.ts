@@ -481,15 +481,6 @@ export interface AnalyzeResult {
   error?: string;
 }
 
-export async function analyzeDevicePlayback(
-  deviceId: number
-): Promise<AnalyzeResult> {
-  return window.api.invoke(
-    "genius:analyze",
-    deviceId
-  ) as Promise<AnalyzeResult>;
-}
-
 export async function getGeniusTypes(): Promise<GeniusTypeOption[]> {
   return window.api.invoke("genius:types") as Promise<GeniusTypeOption[]>;
 }

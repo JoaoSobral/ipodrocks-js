@@ -938,6 +938,7 @@ export function LibraryPanel() {
             )}
           </div>
           <Select
+            testId="shadow-codec-select"
             label="Codec Configuration"
             tooltip="All tracks in the shadow library will be converted to this codec and bitrate, creating a pre-encoded mirror of your primary library."
             options={[
