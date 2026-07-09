@@ -4,8 +4,10 @@
 
 ### Fixes
 
-- **Musepack selectable again in Create Shadow Library** — The codec dropdown could render its lower options past the bottom of the window, making Musepack (and other lower-listed codecs) impossible to click. Dropdowns now size themselves to the visible window and flip upward when there isn't enough room below, so every option stays on-screen and clickable.
+- **Musepack selectable in Create Shadow Library** — The codec dropdown could render its lower options past the bottom of the window, making Musepack (and other lower-listed codecs) impossible to click. Dropdowns now size themselves to the visible window and flip upward when there isn't enough room below, so every option stays on-screen and clickable.
 - **Musepack transcodes keep their tags** — Building a shadow library (or syncing to a device) in Musepack now preserves Album Artist, Year, Original Year, Disc, Composer, Comment, Compilation and embedded cover art, in addition to the title/artist/album/genre/track it already carried. Tags are read from the source file at conversion time — the same as the other codecs — so you no longer have to re-tag the output in MP3tag. This also fixes device-sync Musepack files previously being written with no tags at all.
+- **Album Artist and Disc Number now show in MP3tag** — Musepack files were writing these two tags under APEv2 key names (`Album Artist`, `Disc`) that MP3tag doesn't recognize, so they appeared blank there even though the data was present. They're now written as `ALBUMARTIST` and `DISCNUMBER`, the tokens MP3tag and other taggers expect. Existing files with the old keys are still read correctly.
+- **Musepack files scan into the library correctly** — Tagged Musepack (`.mpc`) files now show their real title, artist, album, track and disc instead of falling back to the filename and "Unknown Artist". The metadata library iPodRocks uses crashes when reading tags from Musepack files, so tags (and cover art) are now read with a built-in APEv2 reader, and the file's duration/bitrate/codec are read from the tag-stripped audio.
 
 ## [2.0.3] — 2026-07
 

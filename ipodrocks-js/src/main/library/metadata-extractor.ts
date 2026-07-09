@@ -7,9 +7,13 @@
 
 import path from "path";
 import { spawnSync } from "child_process";
-import { parseFile } from "music-metadata";
+import { parseFile, parseBuffer } from "music-metadata";
 import { normalizeKey, toCamelot } from "../harmonic/camelotWheel";
 import { getEncoderEnv } from "../utils/encoder-env";
+import { isMpcFile } from "../utils/audio-extensions";
+import { readApeTags } from "../tagging/reader";
+import { readAudioOnly } from "../tagging/mpc/strip";
+import type { ApeTags } from "../tagging/apev2/types";
 
 /** Tag metadata extracted from an audio file. */
 export interface TrackMetadata {
@@ -89,6 +93,11 @@ export class MetadataExtractor {
     filePath: string,
     contentType: string = "music"
   ): Promise<TrackMetadata> {
+    // music-metadata's parseFile throws (and detaches an unhandled rejection)
+    // on tagged SV8 Musepack files, so read MPC tags with our own APEv2 reader.
+    if (isMpcFile(filePath)) {
+      return this.extractMpcMetadata(filePath, contentType);
+    }
     try {
       const metadata = await parseFile(filePath);
       const { common } = metadata;
@@ -137,6 +146,11 @@ export class MetadataExtractor {
    * Reads TKEY and TBPM from ID3/native tags via music-metadata.
    */
   async extractAudioFeatures(filePath: string): Promise<AudioFeatures> {
+    // MPC carries its tags in APEv2, not ID3v2, so there's no TKEY/TBPM to read
+    // — and parseFile would throw (and detach an unhandled rejection) on it.
+    if (isMpcFile(filePath)) {
+      return { key: null, bpm: null, camelot: null };
+    }
     try {
       const metadata = await parseFile(filePath, {
         skipCovers: true,
@@ -177,6 +191,21 @@ export class MetadataExtractor {
    * @returns Duration, bitrate, codec, sample rate, and bits per sample
    */
   async extractAudioInfo(filePath: string): Promise<AudioInfo> {
+    // See extractMetadata: avoid parseFile on MPC. Parse the tag-stripped
+    // audio (bare SV8 parses fine) for format info, ffprobe as a last resort.
+    if (isMpcFile(filePath)) {
+      const info = await this.audioInfoFromMpc(filePath);
+      if (info) return info;
+      const fallback = this.extractAudioInfoViaFfprobe(filePath);
+      if (fallback) return fallback;
+      return {
+        duration: 0,
+        bitrate: 0,
+        bitsPerSample: null,
+        codec: "MPC",
+        sampleRate: 0,
+      };
+    }
     try {
       const metadata = await parseFile(filePath);
       const fmt = metadata.format;
@@ -301,6 +330,77 @@ export class MetadataExtractor {
         return { title, artist, album, genre, trackNumber, discNumber, showTitle: album, episodeNumber: trackNumber };
       }
       return { title, artist, album, genre, trackNumber, discNumber };
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Extract MPC tag metadata with our own APEv2 reader (bypassing the buggy
+   * parseFile). When the reader finds no tags, fall back to ffprobe — which can
+   * read the rarer ID3v2-in-MPC case — and finally to filename-based defaults.
+   */
+  private extractMpcMetadata(
+    filePath: string,
+    contentType: string
+  ): TrackMetadata {
+    const stem = path.basename(filePath, path.extname(filePath));
+
+    let ape: ApeTags = {};
+    try {
+      ape = readApeTags(filePath);
+    } catch {
+      /* fall through to ffprobe / defaults */
+    }
+
+    const hasAny =
+      ape.title || ape.artist || ape.album || ape.genre || ape.track || ape.disc;
+    if (!hasAny) {
+      const fallback = this.extractMetadataViaFfprobe(filePath, stem, contentType);
+      if (fallback) return fallback;
+    }
+
+    const title = ape.title || stem;
+    const artist = ape.artist || "Unknown Artist";
+    const album = ape.album || "Unknown Album";
+    const genre = ape.genre || "Unknown Genre";
+    const trackNumber = ape.track ?? "";
+    const discNumber = ape.disc ?? "";
+
+    if (contentType === "podcast" || contentType === "audiobook") {
+      return {
+        title,
+        artist,
+        album,
+        genre,
+        trackNumber,
+        discNumber,
+        showTitle: album,
+        episodeNumber: trackNumber,
+      };
+    }
+
+    return { title, artist, album, genre, trackNumber, discNumber };
+  }
+
+  /**
+   * Read MPC audio info by parsing the tag-stripped audio, used when
+   * music-metadata's SV8+APEv2 parse throws. Bare SV8 parses fine.
+   */
+  private async audioInfoFromMpc(filePath: string): Promise<AudioInfo | null> {
+    try {
+      const audio = readAudioOnly(filePath);
+      const { format: fmt } = await parseBuffer(audio, "audio/x-musepack");
+      const ext = path.extname(filePath).toLowerCase();
+      // MPC reports its format in `container` ("Musepack, SV8"), not `codec`.
+      const codec = this.normalizeCodec(fmt.codec ?? fmt.container ?? "", ext);
+      return {
+        duration: fmt.duration ?? 0,
+        bitrate: fmt.bitrate ?? 0,
+        bitsPerSample: this.extractBitDepth(fmt.bitsPerSample ?? null, codec),
+        codec,
+        sampleRate: fmt.sampleRate ?? 0,
+      };
     } catch {
       return null;
     }

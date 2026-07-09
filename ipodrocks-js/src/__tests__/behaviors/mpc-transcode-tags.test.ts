@@ -26,6 +26,7 @@ installElectronMock();
 import { isMpcencAvailable } from "../../main/utils/mpcenc";
 import { getFfmpegPath } from "../../main/utils/ffmpeg-path";
 import { convertWithCodec } from "../../main/sync/sync-conversion";
+import { MetadataExtractor } from "../../main/library/metadata-extractor";
 
 function ffmpegAvailable(): boolean {
   try {
@@ -84,13 +85,35 @@ describe.skipIf(!canRun)("FLAC → Musepack tag preservation", () => {
       return m ? m[1].trim() : undefined;
     };
 
-    // ffmpeg echoes the APEv2 key names as written (e.g. "Album Artist").
+    // ffmpeg echoes the APEv2 key names as written. Album artist and disc use
+    // the MP3tag-recognized tokens ALBUMARTIST / DISCNUMBER.
     expect(tag("Artist")).toBe("Test Artist");
     expect(tag("Album")).toBe("Test Album");
-    expect(tag("Album Artist")).toBe("Various Artists");
+    expect(tag("ALBUMARTIST")).toBe("Various Artists");
     expect(tag("Year")).toBe("2003");
     expect(tag("Originalyear")).toBe("1999");
     expect(tag("Track")).toBe("4");
-    expect(tag("Disc")).toBe("2");
+    expect(tag("DISCNUMBER")).toBe("2");
+  }, 30000);
+
+  it("scans the generated MPC back through the real MetadataExtractor", async () => {
+    // This is the exact library-scanner seam that regressed under the
+    // music-metadata SV8+APEv2 bug: unmocked, parseFile throws and the file
+    // used to degrade to filename/"Unknown Artist"/zero-duration. With the
+    // built-in APEv2 reader + tag-stripped parseBuffer fallback it recovers.
+    const ok = await convertWithCodec(srcFlac, destMpc, { codec: "mpc", quality: 5 });
+    expect(ok).toBe(true);
+
+    const extractor = new MetadataExtractor();
+    const meta = await extractor.extractMetadata(destMpc, "music");
+    expect(meta.title).toBe("Test Title");
+    expect(meta.artist).toBe("Test Artist");
+    expect(meta.album).toBe("Test Album");
+    expect(meta.trackNumber).toBe("4");
+    expect(meta.discNumber).toBe("2");
+
+    const info = await extractor.extractAudioInfo(destMpc);
+    expect(info.duration).toBeGreaterThan(0);
+    expect(info.codec).toBe("MPC");
   }, 30000);
 });

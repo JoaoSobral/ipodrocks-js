@@ -5,6 +5,8 @@ import * as path from "path";
 import { parseFile } from "music-metadata";
 import { getEncoderEnv } from "../utils/encoder-env";
 import { getFfmpegPath } from "../utils/ffmpeg-path";
+import { isMpcFile } from "../utils/audio-extensions";
+import { readApeTags } from "../tagging/reader";
 import type { ApeTags } from "../tagging/apev2/types";
 
 /** Metadata to write into converted files (e.g. MPC). */
@@ -405,6 +407,15 @@ export function sanitizeTagText(value: string): string {
  * any parse failure so a corrupt source still yields an (untagged) MPC.
  */
 export async function readSourceApeTags(srcPath: string): Promise<ApeTags> {
+  // music-metadata's parseFile throws (and detaches an unhandled rejection) on
+  // tagged SV8 MPC sources, so read APEv2 directly for Musepack inputs.
+  if (isMpcFile(srcPath)) {
+    try {
+      return readApeTags(srcPath);
+    } catch {
+      return {};
+    }
+  }
   try {
     const { common } = await parseFile(srcPath);
     const tags: ApeTags = {};

@@ -200,6 +200,17 @@ export class ShadowLibraryManager {
     return row ? this._rowToShadowLibrary(row) : undefined;
   }
 
+  /**
+   * At startup no build is running, so any library still marked 'building' was
+   * interrupted (crash/force-quit). Demote those to 'paused' so they show a
+   * consistent state and are picked up by the resume pass.
+   */
+  markInterruptedBuildsPaused(): void {
+    this.db.prepare(
+      "UPDATE shadow_libraries SET status = 'paused' WHERE status = 'building'"
+    ).run();
+  }
+
   createShadowLibrary(
     name: string,
     libPath: string,
@@ -282,14 +293,14 @@ export class ShadowLibraryManager {
       await yieldEventLoop();
 
       if (signal?.aborted) {
-        this.stmtSetStatus.run("ready", shadowLibId);
+        this.stmtSetStatus.run("paused", shadowLibId);
         progressCallback?.({
           shadowLibraryId: shadowLibId,
           processed: i,
           total,
           currentFile: "",
-          status: "cancelled",
-          logMessage: `Build cancelled (${converted} converted, ${skipped} skipped, ${errors} errors)`,
+          status: "paused",
+          logMessage: `Build paused (${converted} converted, ${skipped} skipped, ${errors} errors) — will resume on next launch`,
           logLevel: "info",
         });
         return;
@@ -434,7 +445,19 @@ export class ShadowLibraryManager {
         });
       }
     } catch (err) {
-      if (err instanceof SyncCancelled) throw err;
+      if (err instanceof SyncCancelled) {
+        this.stmtSetStatus.run("paused", shadowLibId);
+        progressCallback?.({
+          shadowLibraryId: shadowLibId,
+          processed: total,
+          total,
+          currentFile: "",
+          status: "paused",
+          logMessage: `Build paused during artwork copy — will resume on next launch`,
+          logLevel: "info",
+        });
+        throw err;
+      }
       progressCallback?.({
         shadowLibraryId: shadowLibId,
         processed: total,

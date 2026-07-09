@@ -565,7 +565,7 @@ export interface ShadowLibrary {
   totalBytes: number;
   /** When true, lossy codecs are encoded in variable-bitrate (VBR) mode. */
   vbrEnabled: boolean;
-  status: "pending" | "building" | "ready" | "error";
+  status: "pending" | "building" | "ready" | "error" | "paused";
   trackCount: number;
   createdAt: string;
 }
@@ -575,7 +575,7 @@ export interface ShadowBuildProgress {
   processed: number;
   total: number;
   currentFile: string;
-  status: "building" | "complete" | "error" | "cancelled";
+  status: "building" | "complete" | "error" | "cancelled" | "paused";
   logMessage?: string;
   logLevel?: "info" | "success" | "skip" | "error";
 }

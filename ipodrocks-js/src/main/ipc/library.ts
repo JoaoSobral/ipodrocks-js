@@ -1,4 +1,4 @@
-import { ipcMain } from "electron";
+import { ipcMain, type WebContents } from "electron";
 import { safe, getLibrary, validateFolderPath } from "./common";
 import { LibraryScanner } from "../library/library-scanner";
 import { getHarmonicPrefs } from "../utils/prefs";
@@ -241,4 +241,70 @@ export function registerLibraryHandlers(): void {
       return { cancelled: false };
     })
   );
+
+  ipcMain.handle(
+    "shadow:resumeBuild",
+    safe("shadow:resumeBuild", async (event, shadowLibId: number) => {
+      const lib = getLibrary();
+      const shadowLib = lib.getShadowLibraryById(shadowLibId);
+      if (!shadowLib) return { error: "Shadow library not found" };
+
+      activeShadowBuildAbort = new AbortController();
+      lib
+        .buildShadowLibrary(
+          shadowLibId,
+          (progress) => {
+            if (!event.sender.isDestroyed()) {
+              event.sender.send("shadow:buildProgress", progress);
+            }
+          },
+          activeShadowBuildAbort.signal
+        )
+        .catch((err) => {
+          console.error("[ipc] Shadow resume error:", err);
+        })
+        .finally(() => {
+          activeShadowBuildAbort = null;
+        });
+
+      return { started: true };
+    })
+  );
+}
+
+/**
+ * On startup, resume any shadow-library build that was interrupted (paused by
+ * the user, or left mid-build by a crash/force-quit). Interrupted 'building'
+ * rows are first demoted to 'paused', then every paused library is rebuilt
+ * sequentially in the background — resumption is cheap because already-synced
+ * tracks are skipped. Progress is streamed to the given window's webContents.
+ */
+export async function resumeInterruptedShadowBuilds(
+  webContents: WebContents
+): Promise<void> {
+  const lib = getLibrary();
+  lib.markInterruptedShadowBuildsPaused();
+
+  const paused = lib
+    .getShadowLibraries()
+    .filter((l) => l.status === "paused");
+
+  for (const sl of paused) {
+    activeShadowBuildAbort = new AbortController();
+    try {
+      await lib.buildShadowLibrary(
+        sl.id,
+        (progress) => {
+          if (!webContents.isDestroyed()) {
+            webContents.send("shadow:buildProgress", progress);
+          }
+        },
+        activeShadowBuildAbort.signal
+      );
+    } catch (err) {
+      console.error("[ipc] Shadow resume error:", err);
+    } finally {
+      activeShadowBuildAbort = null;
+    }
+  }
 }

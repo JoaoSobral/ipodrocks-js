@@ -341,7 +341,7 @@ CREATE TABLE IF NOT EXISTS shadow_libraries (
     name TEXT NOT NULL UNIQUE,
     path TEXT NOT NULL UNIQUE,
     codec_config_id INTEGER NOT NULL,
-    status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'building', 'ready', 'error')),
+    status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'building', 'ready', 'error', 'paused')),
     vbr_enabled BOOLEAN NOT NULL DEFAULT 0,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (codec_config_id) REFERENCES codec_configurations (id)

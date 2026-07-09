@@ -41,7 +41,7 @@ describe("tagging/writer tagsToItems", () => {
         "Title",
         "Artist",
         "Album",
-        "Album Artist",
+        "ALBUMARTIST",
         "Genre",
         "Year",
         "Originalyear",
@@ -50,16 +50,16 @@ describe("tagging/writer tagsToItems", () => {
         "Comment",
         "Compilation",
         "Track",
-        "Disc",
+        "DISCNUMBER",
       ])
     );
 
-    expect(itemValue(items, "Album Artist")).toBe("Various Artists");
+    expect(itemValue(items, "ALBUMARTIST")).toBe("Various Artists");
     expect(itemValue(items, "Year")).toBe("2003");
     expect(itemValue(items, "Originalyear")).toBe("1999");
     expect(itemValue(items, "Originaldate")).toBe("1999-05-01");
     expect(itemValue(items, "Composer")).toBe("A Composer, B Composer");
-    expect(itemValue(items, "Disc")).toBe("2");
+    expect(itemValue(items, "DISCNUMBER")).toBe("2");
   });
 
   it("omits empty and whitespace-only fields", () => {
@@ -72,7 +72,7 @@ describe("tagging/writer tagsToItems", () => {
     const keys = items.map((i) => i.key);
     expect(keys).toContain("Title");
     expect(keys).toContain("Year");
-    expect(keys).not.toContain("Album Artist");
+    expect(keys).not.toContain("ALBUMARTIST");
     expect(keys).not.toContain("Composer");
   });
 });
@@ -97,7 +97,7 @@ describe("tagging/writer writeTags round-trip", () => {
 
       const full = fs.readFileSync(file);
       // The APEv2 block is appended after the audio; its item keys appear verbatim.
-      expect(full.includes(Buffer.from("Album Artist", "ascii"))).toBe(true);
+      expect(full.includes(Buffer.from("ALBUMARTIST", "ascii"))).toBe(true);
       expect(full.includes(Buffer.from("Originalyear", "ascii"))).toBe(true);
 
       // Audio prefix is untouched.

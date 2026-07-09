@@ -265,6 +265,10 @@ export async function cancelShadowBuild(): Promise<{ cancelled: boolean }> {
   }>;
 }
 
+export async function resumeShadowBuild(id: number): Promise<unknown> {
+  return window.api.invoke("shadow:resumeBuild", id);
+}
+
 export function onShadowBuildProgress(
   cb: (progress: ShadowBuildProgress) => void,
 ): () => void {
