@@ -31,6 +31,7 @@ export class AppDatabase {
     this.migrateDeviceSyncPreferences();
     this.migrateDeviceSkipAlbumArtwork();
     this.migrateVbrEnabled();
+    this.migrateShadowPausedStatus();
   }
 
   /**
@@ -114,6 +115,51 @@ export class AppDatabase {
       } catch (err) {
         console.error(`[db] migration failed (migrateVbrEnabled:${table}):`, err);
       }
+    }
+  }
+
+  /**
+   * Widen the shadow_libraries.status CHECK constraint to allow 'paused' so a
+   * cancelled/interrupted build can be persisted as paused (and auto-resumed on
+   * next launch) instead of masquerading as a completed 'ready' library.
+   * SQLite cannot ALTER a CHECK, so the table is rebuilt. Skipped when the
+   * existing definition already allows 'paused' (fresh installs / already run).
+   */
+  private migrateShadowPausedStatus(): void {
+    if (!this.db) return;
+    try {
+      const row = this.db
+        .prepare(
+          "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'shadow_libraries'"
+        )
+        .get() as { sql: string } | undefined;
+      if (!row || row.sql.includes("'paused'")) return;
+
+      this.db.pragma("foreign_keys = OFF");
+      try {
+        this.db.transaction(() => {
+          this.db!.exec(`
+            CREATE TABLE shadow_libraries_new (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                path TEXT NOT NULL UNIQUE,
+                codec_config_id INTEGER NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'building', 'ready', 'error', 'paused')),
+                vbr_enabled BOOLEAN NOT NULL DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (codec_config_id) REFERENCES codec_configurations (id)
+            );
+            INSERT INTO shadow_libraries_new (id, name, path, codec_config_id, status, vbr_enabled, created_at)
+              SELECT id, name, path, codec_config_id, status, vbr_enabled, created_at FROM shadow_libraries;
+            DROP TABLE shadow_libraries;
+            ALTER TABLE shadow_libraries_new RENAME TO shadow_libraries;
+          `);
+        })();
+      } finally {
+        this.db.pragma("foreign_keys = ON");
+      }
+    } catch (err) {
+      console.error("[db] migration failed (migrateShadowPausedStatus):", err);
     }
   }
 

@@ -121,71 +121,6 @@ export function matchEventsToLibrary(
   return matched;
 }
 
-// -- analysis summary -----------------------------------------------------
-
-/**
- * Produce a high-level summary of matched play events.
- */
-export function buildAnalysisSummary(
-  allEvents: PlayEvent[],
-  matched: MatchedPlayEvent[]
-): AnalysisSummary {
-  const timestamps = allEvents.map((e) => e.timestamp).filter(Boolean);
-  const first = timestamps.length
-    ? new Date(timestamps.reduce((a, b) => (b < a ? b : a), Infinity) * 1000).toISOString()
-    : new Date().toISOString();
-  const last = timestamps.length
-    ? new Date(timestamps.reduce((a, b) => (b > a ? b : a), -Infinity) * 1000).toISOString()
-    : new Date().toISOString();
-
-  const artistCounts = new Map<string, number>();
-  const albumCounts = new Map<string, { artist: string; count: number }>();
-  const uniqueTracks = new Set<number>();
-
-  for (const m of matched) {
-    uniqueTracks.add(m.trackId);
-    artistCounts.set(m.artist, (artistCounts.get(m.artist) ?? 0) + 1);
-
-    const albumKey = `${m.artist}\0${m.album}`;
-    const cur = albumCounts.get(albumKey);
-    if (cur) {
-      cur.count += 1;
-    } else {
-      albumCounts.set(albumKey, { artist: m.artist, count: 1 });
-    }
-  }
-
-  let topArtist: AnalysisSummary["topArtist"] = null;
-  let maxArtist = 0;
-  for (const [name, count] of artistCounts) {
-    if (count > maxArtist) {
-      maxArtist = count;
-      topArtist = { name, playCount: count };
-    }
-  }
-
-  let topAlbum: AnalysisSummary["topAlbum"] = null;
-  let maxAlbum = 0;
-  for (const [key, val] of albumCounts) {
-    if (val.count > maxAlbum) {
-      maxAlbum = val.count;
-      const albumName = key.split("\0")[1] ?? "Unknown";
-      topAlbum = { name: albumName, artist: val.artist, playCount: val.count };
-    }
-  }
-
-  return {
-    totalPlays: allEvents.length,
-    matchedPlays: matched.length,
-    unmatchedPlays: allEvents.length - matched.length,
-    dateRange: { first, last },
-    topArtist,
-    topAlbum,
-    uniqueTracks: uniqueTracks.size,
-    uniqueArtists: artistCounts.size,
-  };
-}
-
 /**
  * Load MatchedPlayEvent[] from playback_logs for use with generateGeniusPlaylist.
  */
@@ -1207,22 +1142,6 @@ export function generateGeniusPlaylist(
     default:
       throw new Error(`Unknown genius playlist type: ${geniusType}`);
   }
-}
-
-/**
- * Return a list of unique artist names present in the matched events,
- * sorted by play count descending.  Used for the Deep Dive artist picker.
- */
-export function getArtistsFromEvents(
-  events: MatchedPlayEvent[]
-): Array<{ name: string; playCount: number }> {
-  const counts = new Map<string, number>();
-  for (const ev of events) {
-    counts.set(ev.artist, (counts.get(ev.artist) ?? 0) + 1);
-  }
-  return [...counts.entries()]
-    .map(([name, playCount]) => ({ name, playCount }))
-    .sort((a, b) => b.playCount - a.playCount);
 }
 
 /**

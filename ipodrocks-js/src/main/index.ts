@@ -1,7 +1,7 @@
 import { app, BrowserWindow, Menu, MenuItem } from "electron";
 import * as fs from "fs";
 import * as path from "path";
-import { registerIpcHandlers, getLibraryDb } from "./ipc";
+import { registerIpcHandlers, getLibraryDb, resumeInterruptedShadowBuilds } from "./ipc";
 import { openExternalUrl } from "./utils/external-url";
 import { registerMediaScheme, registerMediaProtocol } from "./player/media-protocol";
 import { cleanupPlayerTemp } from "./player/player-source";
@@ -150,6 +150,14 @@ app.whenReady().then(() => {
   backfillMissingCovers(getLibraryDb()).catch(() => {});
   const win = createWindow();
   attachContextMenu(win);
+
+  // Resume any shadow-library builds that were paused or interrupted (crash /
+  // force-quit) before the app was last closed. Runs in the background.
+  win.webContents.once("did-finish-load", () => {
+    resumeInterruptedShadowBuilds(win.webContents).catch((err) => {
+      console.error("[main] Shadow build resume failed:", err);
+    });
+  });
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {

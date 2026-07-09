@@ -25,6 +25,8 @@ function statusLabel(status: ShadowLibrary["status"]): string {
       return "Ready";
     case "building":
       return "Building";
+    case "paused":
+      return "Paused";
     case "pending":
       return "Pending";
     case "error":
@@ -39,6 +41,7 @@ function statusColor(status: ShadowLibrary["status"]): string {
     case "ready":
       return "text-success";
     case "building":
+    case "paused":
       return "text-warning";
     case "error":
       return "text-destructive";

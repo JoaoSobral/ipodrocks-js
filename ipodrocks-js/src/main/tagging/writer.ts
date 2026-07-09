@@ -12,17 +12,28 @@ import type { ApeTags, ApeItem, WriteResult } from "./apev2/types";
 
 const COVER_ART_KEY = "Cover Art (Front)";
 
-function tagsToItems(tags: ApeTags): ApeItem[] {
+export function tagsToItems(tags: ApeTags): ApeItem[] {
   const items: ApeItem[] = [];
 
+  // APEv2 key names chosen to match MP3tag / foobar2000 conventions. Note that
+  // album artist and disc use the *token* MP3tag expects — "ALBUMARTIST" (no
+  // space) and "DISCNUMBER" — not "Album Artist"/"Disc", which MP3tag does not
+  // recognize as those fields (it would show them as unknown custom tags). Case
+  // is irrelevant to readers (all match case-insensitively); the token is not.
   const textFields: Array<[keyof ApeTags, string]> = [
     ["title", "Title"],
     ["artist", "Artist"],
     ["album", "Album"],
+    ["albumArtist", "ALBUMARTIST"],
     ["genre", "Genre"],
     ["year", "Year"],
+    ["originalYear", "Originalyear"],
+    ["originalDate", "Originaldate"],
+    ["composer", "Composer"],
+    ["comment", "Comment"],
+    ["compilation", "Compilation"],
     ["track", "Track"],
-    ["disc", "Disc"],
+    ["disc", "DISCNUMBER"],
   ];
 
   for (const [field, key] of textFields) {

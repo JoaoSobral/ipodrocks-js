@@ -1,45 +1,15 @@
 import { ipcMain } from "electron";
-import { safe, getLibrary, getPlaylistCore, getDevicesCore } from "./common";
-import { isDeviceMountPathOnline } from "../devices/device-online";
-import { parseRockboxPlaybackLog } from "../playlists/rockbox-log-parser";
+import { safe, getLibrary, getPlaylistCore } from "./common";
 import {
-  buildAnalysisSummary,
   buildAnalysisSummaryFromDb,
-  generateGeniusPlaylist,
   generateGeniusPlaylistFromDb,
-  getArtistsFromEvents,
   getArtistsFromPlaybackStats,
   getAvailableGeniusTypes,
-  matchEventsToLibrary,
 } from "../playlists/genius-engine";
 import { logActivity } from "../activity/activity-logger";
-import type { GeniusGenerateOptions, MatchedPlayEvent } from "../../shared/types";
-
-/** In-memory cache of matched playback events keyed by device ID. */
-const geniusEventsCache = new Map<number, MatchedPlayEvent[]>();
+import type { GeniusGenerateOptions } from "../../shared/types";
 
 export function registerGeniusHandlers(): void {
-  ipcMain.handle(
-    "genius:analyze",
-    safe("genius:analyze", async (_event, deviceId: number) => {
-      const device = getDevicesCore().getDeviceById(deviceId);
-      if (!device) return { error: `Device ${deviceId} not found` };
-
-      if (!device.profile.devMode && !isDeviceMountPathOnline(device.mountPath)) {
-        return { offline: true, error: "Device not connected" };
-      }
-
-      const allEvents = parseRockboxPlaybackLog(device.mountPath);
-      const db = getLibrary().getConnection();
-      const matched = matchEventsToLibrary(allEvents, db);
-      geniusEventsCache.set(deviceId, matched);
-
-      const summary = buildAnalysisSummary(allEvents, matched);
-      const artists = getArtistsFromEvents(matched);
-      return { summary, artists };
-    })
-  );
-
   ipcMain.handle(
     "genius:getSummaryFromDb",
     safe("genius:getSummaryFromDb", async () => {
@@ -58,16 +28,11 @@ export function registerGeniusHandlers(): void {
     "genius:generate",
     safe("genius:generate", async (
       _event,
-      deviceId: number | null,
+      _deviceId: number | null,
       geniusType: string,
       opts: GeniusGenerateOptions
     ) => {
       const db = getLibrary().getConnection();
-      const cached =
-        deviceId != null ? geniusEventsCache.get(deviceId) : undefined;
-      if (cached && cached.length > 0) {
-        return generateGeniusPlaylist(geniusType, cached, db, opts);
-      }
       return generateGeniusPlaylistFromDb(geniusType, db, opts);
     })
   );

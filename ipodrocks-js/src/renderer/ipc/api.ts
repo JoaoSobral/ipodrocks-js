@@ -265,6 +265,10 @@ export async function cancelShadowBuild(): Promise<{ cancelled: boolean }> {
   }>;
 }
 
+export async function resumeShadowBuild(id: number): Promise<unknown> {
+  return window.api.invoke("shadow:resumeBuild", id);
+}
+
 export function onShadowBuildProgress(
   cb: (progress: ShadowBuildProgress) => void,
 ): () => void {
@@ -479,15 +483,6 @@ export interface AnalyzeResult {
   summary: AnalysisSummary;
   artists: Array<{ name: string; playCount: number }>;
   error?: string;
-}
-
-export async function analyzeDevicePlayback(
-  deviceId: number
-): Promise<AnalyzeResult> {
-  return window.api.invoke(
-    "genius:analyze",
-    deviceId
-  ) as Promise<AnalyzeResult>;
 }
 
 export async function getGeniusTypes(): Promise<GeniusTypeOption[]> {

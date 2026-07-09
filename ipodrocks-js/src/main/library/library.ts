@@ -245,6 +245,11 @@ export class Library {
     return this.shadowManager.deleteShadowLibrary(id, removeFiles);
   }
 
+  /** Demote any 'building' rows left over from a crash to 'paused' (startup). */
+  markInterruptedShadowBuildsPaused(): void {
+    this.shadowManager.markInterruptedBuildsPaused();
+  }
+
   async buildShadowLibrary(
     shadowLibId: number,
     progressCallback?: (progress: ShadowBuildProgress) => void,

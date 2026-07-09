@@ -2,8 +2,12 @@ import { ChildProcess, spawn } from "child_process";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
+import { parseFile } from "music-metadata";
 import { getEncoderEnv } from "../utils/encoder-env";
 import { getFfmpegPath } from "../utils/ffmpeg-path";
+import { isMpcFile } from "../utils/audio-extensions";
+import { readApeTags } from "../tagging/reader";
+import type { ApeTags } from "../tagging/apev2/types";
 
 /** Metadata to write into converted files (e.g. MPC). */
 export interface ConversionMetadata {
@@ -391,9 +395,97 @@ async function convertMusepack(
   }
 }
 
+/** Strip NULs/newlines and trim, so tag values are single-line and clean. */
+export function sanitizeTagText(value: string): string {
+  return String(value).replace(/\0/g, "").replace(/\r?\n/g, " ").trim();
+}
+
+/**
+ * Read tags directly from the source file and map them into APEv2 tag fields.
+ * This is the MPC equivalent of ffmpeg's `-map_metadata 0`: since the MPC path
+ * decodes through a tagless WAV, tags would otherwise be lost. Returns `{}` on
+ * any parse failure so a corrupt source still yields an (untagged) MPC.
+ */
+export async function readSourceApeTags(srcPath: string): Promise<ApeTags> {
+  // music-metadata's parseFile throws (and detaches an unhandled rejection) on
+  // tagged SV8 MPC sources, so read APEv2 directly for Musepack inputs.
+  if (isMpcFile(srcPath)) {
+    try {
+      return readApeTags(srcPath);
+    } catch {
+      return {};
+    }
+  }
+  try {
+    const { common } = await parseFile(srcPath);
+    const tags: ApeTags = {};
+    const set = (key: keyof ApeTags, value: string | undefined) => {
+      if (value == null) return;
+      const clean = sanitizeTagText(value);
+      if (clean !== "") (tags as Record<string, unknown>)[key] = clean;
+    };
+
+    set("title", common.title);
+    set("artist", common.artist);
+    set("album", common.album);
+    set("albumArtist", common.albumartist);
+    set("genre", common.genre?.[0]);
+    if (common.year != null && common.year > 0) set("year", String(common.year));
+    if (common.originalyear != null && common.originalyear > 0) {
+      set("originalYear", String(common.originalyear));
+    }
+    set("originalDate", common.originaldate);
+    set("composer", common.composer?.join(", "));
+    set("comment", common.comment?.[0]?.text);
+    if (common.compilation === true) tags.compilation = "1";
+    if (common.track?.no != null && common.track.no > 0) set("track", String(common.track.no));
+    if (common.disk?.no != null && common.disk.no > 0) set("disc", String(common.disk.no));
+
+    const pic = common.picture?.[0];
+    if (pic?.data && pic.data.length > 0) {
+      const format = (pic.format ?? "").toLowerCase();
+      if (format.includes("png") || format.includes("jpeg") || format.includes("jpg")) {
+        tags.coverArt = {
+          data: Buffer.from(pic.data),
+          mimeType: format.includes("png") ? "image/png" : "image/jpeg",
+        };
+      }
+    }
+
+    return tags;
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Build the APEv2 tag set for an MPC file: start from the source file's tags,
+ * then overlay the passed ConversionMetadata (DB values reflect user edits and
+ * win for the fields they cover).
+ */
+export function buildMpcApeTags(
+  sourceTags: ApeTags,
+  metadata: ConversionMetadata | undefined
+): ApeTags {
+  const tags: ApeTags = { ...sourceTags };
+  if (!metadata) return tags;
+
+  if (metadata.title) tags.title = sanitizeTagText(metadata.title);
+  if (metadata.artist) tags.artist = sanitizeTagText(metadata.artist);
+  if (metadata.album) tags.album = sanitizeTagText(metadata.album);
+  if (metadata.genre) tags.genre = sanitizeTagText(metadata.genre);
+  if (metadata.year != null && metadata.year > 0) tags.year = String(metadata.year);
+  if (metadata.trackNumber != null && metadata.trackNumber > 0) tags.track = String(metadata.trackNumber);
+  if (metadata.discNumber != null && metadata.discNumber > 0) tags.disc = String(metadata.discNumber);
+
+  return tags;
+}
+
 /**
  * Write metadata into an MPC file using APEv2 tags.
  * Uses the tagging module: strip existing tags, write new ones atomically.
+ * Tags are read from the source file (so albumArtist/year/originalYear/etc. are
+ * preserved) and merged with any explicit ConversionMetadata overrides.
  */
 async function writeMpcMetadata(
   mpcPath: string,
@@ -402,34 +494,28 @@ async function writeMpcMetadata(
   logCallback?: (line: string) => void,
   _signal?: AbortSignal
 ): Promise<boolean> {
-  if (!metadata) return true;
+  const tags = buildMpcApeTags(await readSourceApeTags(srcPath), metadata);
 
-  const tags: import("../tagging/apev2/types").ApeTags = {};
-  if (metadata.title) tags.title = String(metadata.title).replace(/\0/g, "").replace(/\r?\n/g, " ").trim();
-  if (metadata.artist) tags.artist = String(metadata.artist).replace(/\0/g, "").replace(/\r?\n/g, " ").trim();
-  if (metadata.album) tags.album = String(metadata.album).replace(/\0/g, "").replace(/\r?\n/g, " ").trim();
-  if (metadata.genre) tags.genre = String(metadata.genre).replace(/\0/g, "").replace(/\r?\n/g, " ").trim();
-  if (metadata.year != null && metadata.year > 0) tags.year = String(metadata.year);
-  if (metadata.trackNumber != null && metadata.trackNumber > 0) tags.track = String(metadata.trackNumber);
-  if (metadata.discNumber != null && metadata.discNumber > 0) tags.disc = String(metadata.discNumber);
-
-  const albumDir = path.dirname(srcPath);
-  const coverNames = ["cover.jpg", "cover.jpeg", "cover.png"];
-  for (const name of coverNames) {
-    const coverPath = path.join(albumDir, name);
-    try {
-      if (fs.existsSync(coverPath)) {
-        const data = fs.readFileSync(coverPath);
-        const ext = path.extname(name).toLowerCase();
-        tags.coverArt = {
-          data,
-          mimeType: ext === ".png" ? "image/png" : "image/jpeg",
-          filename: name,
-        };
-        break;
+  // Fall back to a folder cover image only when the source had no embedded art.
+  if (!tags.coverArt) {
+    const albumDir = path.dirname(srcPath);
+    const coverNames = ["cover.jpg", "cover.jpeg", "cover.png"];
+    for (const name of coverNames) {
+      const coverPath = path.join(albumDir, name);
+      try {
+        if (fs.existsSync(coverPath)) {
+          const data = fs.readFileSync(coverPath);
+          const ext = path.extname(name).toLowerCase();
+          tags.coverArt = {
+            data,
+            mimeType: ext === ".png" ? "image/png" : "image/jpeg",
+            filename: name,
+          };
+          break;
+        }
+      } catch {
+        /* skip if unreadable */
       }
-    } catch {
-      /* skip if unreadable */
     }
   }
 

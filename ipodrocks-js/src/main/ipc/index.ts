@@ -1,6 +1,6 @@
 import { getLibraryDb } from "./common";
 import { registerAppHandlers } from "./app";
-import { registerLibraryHandlers } from "./library";
+import { registerLibraryHandlers, resumeInterruptedShadowBuilds } from "./library";
 import { registerGeniusHandlers } from "./genius";
 import { registerDeviceHandlers } from "./devices";
 import { registerSyncHandlers } from "./sync";
@@ -13,7 +13,7 @@ import { registerPlayerHandlers } from "./player";
 import { registerPodcastHandlers } from "./podcasts";
 import { registerAudiobookHandlers } from "./audiobooks";
 
-export { getLibraryDb };
+export { getLibraryDb, resumeInterruptedShadowBuilds };
 
 /**
  * Registers every IPC handler, grouped by channel prefix into per-domain

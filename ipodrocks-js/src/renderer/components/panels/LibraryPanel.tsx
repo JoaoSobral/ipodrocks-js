@@ -35,6 +35,7 @@ import {
   deleteShadowLibrary,
   rebuildShadowLibrary,
   cancelShadowBuild,
+  resumeShadowBuild,
   onShadowBuildProgress,
   isMpcencAvailable,
   getMpcRemindDisabled,
@@ -183,6 +184,23 @@ export function LibraryPanel() {
     getCodecConfigs().then(setCodecConfigs).catch(console.error);
     isMpcencAvailable().then((r) => setMpcAvailable(r.available)).catch(() => setMpcAvailable(false));
     getMpcRemindDisabled().then((r) => setMpcRemindDisabledState(r.disabled)).catch(console.error);
+  }, []);
+
+  // Keep the shadow-library row badges in sync with builds running outside the
+  // modal flow (e.g. background auto-resume on startup). Refresh whenever a
+  // build reaches a terminal state.
+  useEffect(() => {
+    const unsub = onShadowBuildProgress((p) => {
+      if (
+        p.status === "complete" ||
+        p.status === "error" ||
+        p.status === "paused" ||
+        p.status === "cancelled"
+      ) {
+        getShadowLibraries().then(setShadowLibs).catch(console.error);
+      }
+    });
+    return unsub;
   }, []);
 
   useEffect(() => {
@@ -347,13 +365,10 @@ export function LibraryPanel() {
     [codecConfigs, mpcAvailable]
   );
 
-  async function handleCreateShadow() {
-    if (!shadowName || !shadowPath || shadowCodecConfigId == null) {
-      setShadowSubmitted(true);
-      return;
-    }
-    setShadowSubmitted(false);
-    setShowCreateShadow(false);
+  // Opens the build modal and subscribes to progress events, tearing the
+  // subscription down when the build reaches a terminal state (complete /
+  // error / cancelled / paused) and refreshing the row badges.
+  const startShadowBuildSubscription = useCallback(() => {
     setShowShadowBuild(true);
     setShadowBuildProgress(null);
     setShadowBuildLogs([]);
@@ -368,13 +383,25 @@ export function LibraryPanel() {
       if (
         p.status === "complete" ||
         p.status === "error" ||
-        p.status === "cancelled"
+        p.status === "cancelled" ||
+        p.status === "paused"
       ) {
         shadowBuildUnsubRef.current?.();
         shadowBuildUnsubRef.current = null;
+        getShadowLibraries().then(setShadowLibs).catch(console.error);
       }
     });
     shadowBuildUnsubRef.current = unsub;
+  }, [addShadowLog]);
+
+  async function handleCreateShadow() {
+    if (!shadowName || !shadowPath || shadowCodecConfigId == null) {
+      setShadowSubmitted(true);
+      return;
+    }
+    setShadowSubmitted(false);
+    setShowCreateShadow(false);
+    startShadowBuildSubscription();
     try {
       await createShadowLibrary(shadowName, shadowPath, shadowCodecConfigId, shadowVbr);
     } catch (err) {
@@ -400,27 +427,7 @@ export function LibraryPanel() {
   }
 
   async function handleRebuildShadow(id: number) {
-    setShowShadowBuild(true);
-    setShadowBuildProgress(null);
-    setShadowBuildLogs([]);
-
-    const unsub = onShadowBuildProgress((p) => {
-      setShadowBuildProgress(p);
-      if (p.logMessage) {
-        addShadowLog(p.logMessage, p.logLevel ?? "info");
-      } else if (p.currentFile) {
-        addShadowLog(`Converting: ${p.currentFile}`, "info");
-      }
-      if (
-        p.status === "complete" ||
-        p.status === "error" ||
-        p.status === "cancelled"
-      ) {
-        shadowBuildUnsubRef.current?.();
-        shadowBuildUnsubRef.current = null;
-      }
-    });
-    shadowBuildUnsubRef.current = unsub;
+    startShadowBuildSubscription();
     try {
       await rebuildShadowLibrary(id);
     } catch (err) {
@@ -429,7 +436,19 @@ export function LibraryPanel() {
     getShadowLibraries().then(setShadowLibs).catch(console.error);
   }
 
-  function handleCancelShadowBuild() {
+  async function handleResumeShadow(id: number) {
+    startShadowBuildSubscription();
+    try {
+      await resumeShadowBuild(id);
+    } catch (err) {
+      console.error("Shadow resume error:", err);
+    }
+    getShadowLibraries().then(setShadowLibs).catch(console.error);
+  }
+
+  // "Pause Build" — stops the current build; the library is persisted as
+  // paused and resumes automatically on next launch (or via the Resume button).
+  function handlePauseShadowBuild() {
     cancelShadowBuild().catch(console.error);
   }
 
@@ -606,7 +625,7 @@ export function LibraryPanel() {
                         variant={
                           sl.status === "ready"
                             ? "success"
-                            : sl.status === "building"
+                            : sl.status === "building" || sl.status === "paused"
                               ? "warning"
                               : sl.status === "error"
                                 ? "destructive"
@@ -618,7 +637,9 @@ export function LibraryPanel() {
                           ? "Synced"
                           : sl.status === "building"
                             ? "Building"
-                            : sl.status.toUpperCase()}
+                            : sl.status === "paused"
+                              ? "Paused"
+                              : sl.status.toUpperCase()}
                       </Badge>
                     </div>
                     <p className="text-[10px] text-muted-foreground truncate leading-tight">
@@ -627,6 +648,17 @@ export function LibraryPanel() {
                     </p>
                   </div>
                   <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                    {sl.status === "paused" && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="!p-1"
+                        onClick={() => handleResumeShadow(sl.id)}
+                        title="Resume build"
+                      >
+                        ▶
+                      </Button>
+                    )}
                     <Button
                       variant="ghost"
                       size="sm"
@@ -938,6 +970,7 @@ export function LibraryPanel() {
             )}
           </div>
           <Select
+            testId="shadow-codec-select"
             label="Codec Configuration"
             tooltip="All tracks in the shadow library will be converted to this codec and bitrate, creating a pre-encoded mirror of your primary library."
             options={[
@@ -1139,8 +1172,8 @@ export function LibraryPanel() {
             </Button>
             <div className="flex gap-2">
               {shadowBuildProgress?.status === "building" ? (
-                <Button variant="danger" size="sm" onClick={handleCancelShadowBuild}>
-                  Cancel Build
+                <Button variant="danger" size="sm" onClick={handlePauseShadowBuild}>
+                  Pause Build
                 </Button>
               ) : (
                 <Button onClick={() => setShowShadowBuild(false)}>Close</Button>
