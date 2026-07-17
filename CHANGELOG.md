@@ -1,5 +1,15 @@
 # Changelog
 
+## [2.0.5] — 2026-07
+
+### Fixes
+
+- **Genius playlists now generate for every type** — "Nostalgia" could never return any tracks because of an inverted date comparison, and time-based playlists ("Late Night Mood", "Time Capsule") could pick the wrong tracks depending on your computer's timezone, since Rockbox records play times in the device's local clock. These now use the device clock consistently, so Nostalgia works and the time windows line up with when you actually listened.
+
+### Improvements
+
+- **Genius picker explains locked types instead of hiding them** — Playlist types that need a longer listening history (Recent Favorites, Nostalgia, Time Capsule, Golden Era, Oldies) used to silently disappear when you didn't have enough playback data yet, which looked like they were broken. They now always appear, showing how much history they need versus how much you have, and the picker shows the span of playback history it found. Empty results also explain *why* (e.g. "no tracks were first played 36+ months ago") rather than a generic message.
+
 ## [2.0.4] — 2026-07
 
 ### Fixes

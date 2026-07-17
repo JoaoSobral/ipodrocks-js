@@ -130,6 +130,10 @@ export function PlaylistPanel() {
     Array<{ name: string; playCount: number }>
   >([]);
   const [geniusTypes, setGeniusTypes] = useState<GeniusTypeOption[]>([]);
+  const [geniusDataMonths, setGeniusDataMonths] = useState(0);
+  const [geniusFirstLogDate, setGeniusFirstLogDate] = useState<string | null>(
+    null
+  );
   const [geniusSelectedType, setGeniusSelectedType] = useState<string | null>(
     null
   );
@@ -357,8 +361,10 @@ export function PlaylistPanel() {
         setGeniusStep("idle");
         return;
       }
-      const types = await getGeniusTypes();
-      setGeniusTypes(types);
+      const typesRes = await getGeniusTypes();
+      setGeniusTypes(typesRes.types);
+      setGeniusDataMonths(typesRes.dataMonths);
+      setGeniusFirstLogDate(typesRes.firstLogDate);
       setGeniusStep("summary");
     } catch (err) {
       setGeniusError(err instanceof Error ? err.message : String(err));
@@ -393,8 +399,10 @@ export function PlaylistPanel() {
         setGeniusStep("idle");
         return;
       }
-      const types = await getGeniusTypes();
-      setGeniusTypes(types);
+      const typesRes = await getGeniusTypes();
+      setGeniusTypes(typesRes.types);
+      setGeniusDataMonths(typesRes.dataMonths);
+      setGeniusFirstLogDate(typesRes.firstLogDate);
       setGeniusStep("summary");
     } catch (err) {
       setGeniusError(err instanceof Error ? err.message : String(err));
@@ -403,6 +411,8 @@ export function PlaylistPanel() {
   }
 
   function handlePickType(typeKey: string) {
+    const info = geniusTypes.find((t) => t.value === typeKey);
+    if (info && info.available === false) return;
     setGeniusSelectedType(typeKey);
     setGeniusMaxTracks(25);
     setGeniusMinPlays(1);
@@ -841,24 +851,60 @@ export function PlaylistPanel() {
             </div>
           </Card>
 
+          {/* Playback-history context */}
+          <p className="text-[11px] text-muted-foreground">
+            {geniusDataMonths > 0
+              ? `Playback history: ~${geniusDataMonths} month${
+                  geniusDataMonths === 1 ? "" : "s"
+                }${
+                  geniusFirstLogDate
+                    ? ` (since ${new Date(
+                        geniusFirstLogDate
+                      ).toLocaleDateString()})`
+                    : ""
+                }. Some types unlock as your history grows.`
+              : "No playback history yet. Time-based types unlock as your history grows."}
+          </p>
+
           {/* Type picker grid */}
           <div className="grid grid-cols-4 gap-3">
-            {(Array.isArray(geniusTypes) ? geniusTypes : []).map((gt) => (
-              <button
-                key={gt.value}
-                type="button"
-                onClick={() => handlePickType(gt.value)}
-                className="text-left p-4 rounded-xl border border-border bg-muted/30 hover:bg-primary/10 hover:border-primary/30 transition-all cursor-pointer"
-              >
-                <div className="text-2xl mb-2">{gt.icon}</div>
-                <h4 className="text-sm font-semibold text-foreground">
-                  {gt.label}
-                </h4>
-                <p className="text-[11px] text-muted-foreground mt-1 leading-relaxed">
-                  {gt.description}
-                </p>
-              </button>
-            ))}
+            {(Array.isArray(geniusTypes) ? geniusTypes : []).map((gt) => {
+              const isAvailable = gt.available !== false;
+              return (
+                <button
+                  key={gt.value}
+                  type="button"
+                  disabled={!isAvailable}
+                  onClick={
+                    isAvailable ? () => handlePickType(gt.value) : undefined
+                  }
+                  title={
+                    isAvailable
+                      ? undefined
+                      : `Needs ≥${gt.minMonths} months of playback history — you have ${geniusDataMonths}`
+                  }
+                  className={
+                    isAvailable
+                      ? "text-left p-4 rounded-xl border border-border bg-muted/30 hover:bg-primary/10 hover:border-primary/30 transition-all cursor-pointer"
+                      : "text-left p-4 rounded-xl border border-border bg-muted/10 opacity-50 cursor-not-allowed"
+                  }
+                >
+                  <div className="text-2xl mb-2">{gt.icon}</div>
+                  <h4 className="text-sm font-semibold text-foreground">
+                    {gt.label}
+                  </h4>
+                  <p className="text-[11px] text-muted-foreground mt-1 leading-relaxed">
+                    {gt.description}
+                  </p>
+                  {!isAvailable && (
+                    <p className="text-[11px] text-amber-500 mt-2 leading-relaxed">
+                      Needs &ge;{gt.minMonths} months of playback history &mdash;
+                      you have {geniusDataMonths}
+                    </p>
+                  )}
+                </button>
+              );
+            })}
           </div>
 
           <div className="flex gap-2">

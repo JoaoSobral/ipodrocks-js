@@ -370,18 +370,47 @@ const GENIUS_TYPES: GeniusTypeOption[] = [
 const MS_PER_MONTH = 30 * 24 * 60 * 60 * 1000;
 
 /**
- * Get approximate months of playback data (from earliest to now).
+ * Get the span of playback data: how many (approximate) months separate the
+ * earliest matched playback-log entry from now, and the ISO date of that entry.
  */
-export function getPlaybackDataMonths(db: Database.Database): number {
+export function getPlaybackDataContext(
+  db: Database.Database
+): { dataMonths: number; firstLogDate: string | null } {
   const row = db
     .prepare(
       "SELECT MIN(timestamp_tick) as min_ts FROM playback_logs WHERE matched_track_id IS NOT NULL"
     )
     .get() as { min_ts: number | null };
-  if (row.min_ts == null) return 0;
+  if (row.min_ts == null) return { dataMonths: 0, firstLogDate: null };
   const now = Math.floor(Date.now() / 1000);
-  const months = (now - row.min_ts) * 1000 / MS_PER_MONTH;
-  return Math.max(0, Math.floor(months));
+  const months = ((now - row.min_ts) * 1000) / MS_PER_MONTH;
+  return {
+    dataMonths: Math.max(0, Math.floor(months)),
+    firstLogDate: new Date(row.min_ts * 1000).toISOString(),
+  };
+}
+
+/**
+ * Get approximate months of playback data (from earliest to now).
+ */
+export function getPlaybackDataMonths(db: Database.Database): number {
+  return getPlaybackDataContext(db).dataMonths;
+}
+
+/**
+ * Return every genius type annotated with whether it is currently available
+ * (its ``minMonths`` requirement is met by the playback-data span), plus the
+ * shared data context so the UI can explain why gated types are disabled.
+ */
+export function getGeniusTypesWithAvailability(
+  db: Database.Database
+): { types: GeniusTypeOption[]; dataMonths: number; firstLogDate: string | null } {
+  const { dataMonths, firstLogDate } = getPlaybackDataContext(db);
+  const types = GENIUS_TYPES.map((t) => ({
+    ...t,
+    available: t.minMonths == null || dataMonths >= t.minMonths,
+  }));
+  return { types, dataMonths, firstLogDate };
 }
 
 export function getAvailableGeniusTypes(
@@ -390,7 +419,7 @@ export function getAvailableGeniusTypes(
   const dataMonths = db ? getPlaybackDataMonths(db) : 0;
   return GENIUS_TYPES.filter(
     (t) => t.minMonths == null || dataMonths >= t.minMonths
-  );
+  ).map((t) => ({ ...t, available: true }));
 }
 
 // -- playlist generation --------------------------------------------------
@@ -737,7 +766,9 @@ function generateLateNight(
   const limit = opts.maxTracks ?? 25;
   const agg = aggregateByTrack(
     events.filter((ev) => {
-      const hour = new Date(ev.timestamp * 1000).getHours();
+      // Rockbox writes device local wall-clock time as a UTC epoch, so read
+      // the hour back with UTC accessors to recover the device-local hour.
+      const hour = new Date(ev.timestamp * 1000).getUTCHours();
       return hour >= 22 || hour < 5;
     })
   );
@@ -831,7 +862,7 @@ function generateNostalgia(
   const agg = aggregateByTrack(events);
   const filtered = [...agg.values()].filter((a) => {
     const firstTs = a.timestamps.reduce((x, y) => (y < x ? y : x), Infinity);
-    return firstTs >= endSec && firstTs < startSec;
+    return firstTs >= startSec && firstTs < endSec;
   });
   const tracks = filtered
     .sort((a, b) => b.playCount - a.playCount)
@@ -883,11 +914,13 @@ function generateTimeCapsule(
 ): PlaylistGenerationResult {
   const limit = opts.maxTracks ?? 25;
   const targetMonth = opts.targetMonth ?? 1;
-  const targetYear = opts.targetYear ?? new Date().getFullYear();
-  const startDate = new Date(targetYear, targetMonth - 1, 1);
-  const endDate = new Date(targetYear, targetMonth, 0, 23, 59, 59);
-  const startSec = Math.floor(startDate.getTime() / 1000);
-  const endSec = Math.floor(endDate.getTime() / 1000);
+  const targetYear = opts.targetYear ?? new Date().getUTCFullYear();
+  // Rockbox timestamps encode device local wall-clock time as a UTC epoch, so
+  // build the target month's boundaries in UTC to match the recorded values.
+  const startSec = Math.floor(Date.UTC(targetYear, targetMonth - 1, 1) / 1000);
+  const endSec = Math.floor(
+    Date.UTC(targetYear, targetMonth, 0, 23, 59, 59) / 1000
+  );
   const inRange = (ts: number) => ts >= startSec && ts <= endSec;
   const agg = aggregateByTrack(events);
   const filtered = [...agg.values()].filter((a) =>
@@ -897,7 +930,10 @@ function generateTimeCapsule(
     .sort((a, b) => b.playCount - a.playCount)
     .slice(0, limit)
     .map(aggToTrack);
-  const monthName = startDate.toLocaleString("default", { month: "long" });
+  const monthName = new Date(Date.UTC(targetYear, targetMonth - 1, 1)).toLocaleString(
+    "default",
+    { month: "long", timeZone: "UTC" }
+  );
   return {
     playlistName: `Time Capsule: ${monthName} ${targetYear}`,
     criteria: `Tracks played in ${monthName} ${targetYear}`,
@@ -1085,9 +1121,47 @@ export function generateGeniusPlaylistFromDb(
 }
 
 /**
+ * Explain why a filter-based genius type produced no tracks, referencing the
+ * span of playback data available. ``top_artist``/``top_album``/``deep_dive``
+ * already return their own specific reasons and are left untouched.
+ */
+function emptyReasonFor(geniusType: string, dataMonths: number): string | null {
+  const span =
+    dataMonths > 0
+      ? `Playback logging currently covers ~${dataMonths} month${
+          dataMonths === 1 ? "" : "s"
+        }.`
+      : "There is almost no playback history yet.";
+  switch (geniusType) {
+    case "most_played":
+      return `No tracks met the minimum play count. ${span}`;
+    case "favorites":
+      return `No tracks reached 85% average completion with enough plays. ${span}`;
+    case "skip_list":
+      return `No tracks fell below 25% average completion — nothing looks skipped. ${span}`;
+    case "late_night":
+      return `No tracks were played between 22:00 and 05:00 with high completion. ${span}`;
+    case "recently_discovered":
+      return `No single-play tracks were completed above 80%. ${span}`;
+    case "oldies":
+      return `No tracks were first played 36+ months ago. ${span}`;
+    case "nostalgia":
+      return `No tracks were first played 12–36 months ago. ${span}`;
+    case "recent_favorites":
+      return `No tracks played in the last 6 months reached 85% completion. ${span}`;
+    case "time_capsule":
+      return `No tracks were played in the selected month. ${span}`;
+    case "golden_era":
+      return `No tracks were played in the selected time range. ${span}`;
+    default:
+      return null;
+  }
+}
+
+/**
  * Generate a genius playlist from in-memory matched events.
  *
- * :param geniusType: One of the 8 algorithm keys.
+ * :param geniusType: One of the algorithm keys.
  * :param events: Matched play events (from ``matchEventsToLibrary``).
  * :param db: Open SQLite connection (for library queries).
  * :param opts: User-configurable generation options.
@@ -1112,6 +1186,24 @@ export function generateGeniusPlaylist(
     );
   }
 
+  const result = generateGeniusPlaylistByType(geniusType, events, db, opts);
+
+  // If a filter-based type came back empty, replace the generic criteria with
+  // a reason that names the data constraint responsible.
+  if (result.tracks.length === 0) {
+    const reason = emptyReasonFor(geniusType, getPlaybackDataMonths(db));
+    if (reason) result.criteria = reason;
+  }
+
+  return result;
+}
+
+function generateGeniusPlaylistByType(
+  geniusType: string,
+  events: MatchedPlayEvent[],
+  db: Database.Database,
+  opts: GeniusGenerateOptions
+): PlaylistGenerationResult {
   switch (geniusType) {
     case "most_played":
       return generateMostPlayed(events, opts);

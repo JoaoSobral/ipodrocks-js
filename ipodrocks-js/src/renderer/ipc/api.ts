@@ -15,6 +15,7 @@ import type {
   AlbumInfo,
   AnalysisSummary,
   GeniusTypeOption,
+  GeniusTypesResponse,
   GeniusGenerateOptions,
   PlaylistGenerationResult,
   ShadowLibrary,
@@ -58,6 +59,7 @@ export type {
   AlbumInfo,
   AnalysisSummary,
   GeniusTypeOption,
+  GeniusTypesResponse,
   GeniusGenerateOptions,
   PlaylistGenerationResult,
   ShadowLibrary,
@@ -485,8 +487,8 @@ export interface AnalyzeResult {
   error?: string;
 }
 
-export async function getGeniusTypes(): Promise<GeniusTypeOption[]> {
-  return window.api.invoke("genius:types") as Promise<GeniusTypeOption[]>;
+export async function getGeniusTypes(): Promise<GeniusTypesResponse> {
+  return window.api.invoke("genius:types") as Promise<GeniusTypesResponse>;
 }
 
 export async function generateGeniusPlaylist(

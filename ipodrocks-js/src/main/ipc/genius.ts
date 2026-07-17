@@ -4,7 +4,7 @@ import {
   buildAnalysisSummaryFromDb,
   generateGeniusPlaylistFromDb,
   getArtistsFromPlaybackStats,
-  getAvailableGeniusTypes,
+  getGeniusTypesWithAvailability,
 } from "../playlists/genius-engine";
 import { logActivity } from "../activity/activity-logger";
 import type { GeniusGenerateOptions } from "../../shared/types";
@@ -21,7 +21,9 @@ export function registerGeniusHandlers(): void {
 
   ipcMain.handle(
     "genius:types",
-    safe("genius:types", async () => getAvailableGeniusTypes(getLibrary().getConnection()))
+    safe("genius:types", async () =>
+      getGeniusTypesWithAvailability(getLibrary().getConnection())
+    )
   );
 
   ipcMain.handle(

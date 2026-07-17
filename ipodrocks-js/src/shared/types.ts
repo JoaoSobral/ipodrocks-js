@@ -247,6 +247,21 @@ export interface GeniusTypeOption {
   icon: string;
   /** Min months of playback data required (time-based types). */
   minMonths?: number;
+  /**
+   * Whether this type's ``minMonths`` requirement is met by the current
+   * playback-data span. When false the UI shows it disabled with an
+   * explanation instead of hiding it.
+   */
+  available?: boolean;
+}
+
+/** Response for the ``genius:types`` channel. */
+export interface GeniusTypesResponse {
+  types: GeniusTypeOption[];
+  /** Approximate months spanned by the playback log (0 when empty). */
+  dataMonths: number;
+  /** ISO date of the earliest matched playback-log entry, or null. */
+  firstLogDate: string | null;
 }
 
 // -- Genius / Rockbox playback log types ----------------------------------
