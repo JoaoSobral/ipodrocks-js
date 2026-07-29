@@ -9,7 +9,8 @@ import {
   SkippedTrack,
   compareLibraries,
 } from "./name-size-sync";
-import { ConversionSettings, updateExtension, estimateConvertedSize } from "./sync-conversion";
+import { ConversionSettings, updateExtension, estimateConvertedSize, isCancellationError } from "./sync-conversion";
+import { findOnDisk } from "../utils/normalize-path";
 import {
   CopyProgress,
   CopyToDeviceOptions,
@@ -392,7 +393,7 @@ export function analyzeContentType(
       compareOpts
     );
   } catch (err) {
-    if (err instanceof Error && err.message.includes("Cancelled")) {
+    if (isCancellationError(err)) {
       throw new SyncCancelled();
     }
     throw err;
@@ -464,7 +465,12 @@ export async function copyMissingTracks(
   const existingPaths: string[] = [];
   const missingFiles: string[] = [];
   for (const tp of missingPaths) {
-    if (fs.existsSync(tp)) {
+    // Stored paths are NFC; the on-disk name may be NFD on normalization-
+    // sensitive filesystems. Probe the resolved form but keep `tp` (NFC) as the
+    // key for destination naming and progress/DB lookups — otherwise perfectly
+    // present tracks get reported as missing and never reach copyToDevice,
+    // which does its own findOnDisk.
+    if (fs.existsSync(findOnDisk(tp))) {
       existingPaths.push(tp);
     } else {
       missingFiles.push(tp);
@@ -583,6 +589,8 @@ export interface ArtworkSyncResult {
   skipped: number;
   errors: number;
   totalCandidates: number;
+  /** Source album folders whose cover could not be generated. */
+  failedAlbums: string[];
 }
 
 /**
@@ -604,7 +612,7 @@ export async function copyAlbumArtworkToDevice(
   maxDim: number = DEFAULT_COVER_MAX_DIMENSION
 ): Promise<ArtworkSyncResult> {
   if (Object.keys(libraryTracks).length === 0) {
-    return { copied: 0, skipped: 0, errors: 0, totalCandidates: 0 };
+    return { copied: 0, skipped: 0, errors: 0, totalCandidates: 0, failedAlbums: [] };
   }
 
   // Per album source dir: device-relative album folder + a representative track.
@@ -629,6 +637,7 @@ export async function copyAlbumArtworkToDevice(
   let copied = 0;
   let skipped = 0;
   let errors = 0;
+  const failedAlbums: string[] = [];
 
   for (const [sourceDir, { deviceRelAlbum, firstTrack }] of albums) {
     if (cancelSignal?.aborted) throw new SyncCancelled();
@@ -643,8 +652,14 @@ export async function copyAlbumArtworkToDevice(
       signal: cancelSignal,
     });
 
+    // Whether a cover needs writing is only known after the skip check, so the
+    // total grows one item at a time alongside the processed count. The renderer
+    // raises totalItems only on "total"/"total_add" but advances processedItems
+    // on every "copy" event, so emitting one without the other pushes the bar
+    // past 100% (e.g. "48/40 copied").
     if (result === "written") {
       copied++;
+      progressCallback?.({ event: "total_add", path: "1" });
       progressCallback?.({
         event: "copy",
         path: destPath,
@@ -656,6 +671,8 @@ export async function copyAlbumArtworkToDevice(
       skipped++;
     } else {
       errors++;
+      failedAlbums.push(sourceDir);
+      progressCallback?.({ event: "total_add", path: "1" });
       progressCallback?.({
         event: "copy",
         path: sourceDir,
@@ -666,7 +683,7 @@ export async function copyAlbumArtworkToDevice(
     }
   }
 
-  return { copied, skipped, errors, totalCandidates: albums.size };
+  return { copied, skipped, errors, totalCandidates: albums.size, failedAlbums };
 }
 
 /**
@@ -706,7 +723,7 @@ export async function copyArtworkToShadowLibrary(
   maxDim: number = DEFAULT_COVER_MAX_DIMENSION
 ): Promise<ArtworkSyncResult> {
   if (allTracks.length === 0) {
-    return { copied: 0, skipped: 0, errors: 0, totalCandidates: 0 };
+    return { copied: 0, skipped: 0, errors: 0, totalCandidates: 0, failedAlbums: [] };
   }
 
   const albums = new Map<string, { albumRel: string; firstTrack: string }>();
@@ -727,6 +744,7 @@ export async function copyArtworkToShadowLibrary(
   let copied = 0;
   let skipped = 0;
   let errors = 0;
+  const failedAlbums: string[] = [];
 
   for (const [sourceDir, { albumRel, firstTrack }] of albums) {
     if (signal?.aborted) throw new SyncCancelled();
@@ -747,10 +765,11 @@ export async function copyArtworkToShadowLibrary(
       skipped++;
     } else {
       errors++;
+      failedAlbums.push(sourceDir);
     }
   }
 
-  return { copied, skipped, errors, totalCandidates: albums.size };
+  return { copied, skipped, errors, totalCandidates: albums.size, failedAlbums };
 }
 
 export async function runSync(
@@ -769,9 +788,12 @@ export async function runSync(
   extras: string[];
   missingFiles: string[];
   errors: number;
+  /** Album-artwork failures, counted apart from track/song-data failures. */
+  artworkErrors: number;
 }> {
   const { extraTrackPolicy, progressCallback, cancelSignal, skipAlbumArtwork, artworkMaxDimension, preloadedMtimes, profileCodecExtOverride, preserveFolderStructure } =
     options;
+  let artworkErrors = 0;
 
   progressCallback?.({ event: "log", message: `Comparing library with device (${contentType})...` });
 
@@ -858,7 +880,10 @@ export async function runSync(
       preserveFolderStructure,
       artworkMaxDimension ?? DEFAULT_COVER_MAX_DIMENSION
     );
-    // Artwork problems are advisory — never fail the whole sync over them.
+    // Artwork failures are counted separately from track failures: they surface
+    // as a sync failure of their own, but must never be mistaken for missing or
+    // corrupt song data, and must not gate track-dependent steps (playlists).
+    artworkErrors = artworkResult.errors;
     if (
       artworkResult.copied > 0 ||
       artworkResult.skipped > 0 ||
@@ -872,12 +897,29 @@ export async function runSync(
         parts.push(`${artworkResult.skipped} skipped`);
       }
       if (artworkResult.errors > 0) {
-        parts.push(`${artworkResult.errors} error(s)`);
+        parts.push(`${artworkResult.errors} failed`);
       }
       progressCallback?.({
         event: "log",
         message: `Album artwork: ${parts.join(", ")}.`,
       });
+    }
+    if (artworkResult.errors > 0) {
+      progressCallback?.({
+        event: "log",
+        message:
+          `ALBUM ARTWORK FAILED for ${artworkResult.errors} album folder(s) — ` +
+          `this is cover art only, not song data.` +
+          (errors === 0
+            ? " Every song file copied successfully."
+            : ` Track problems are reported separately (${errors} song error(s)).`),
+      });
+      for (const album of artworkResult.failedAlbums) {
+        progressCallback?.({
+          event: "log",
+          message: `  Album artwork failed: ${album}`,
+        });
+      }
     }
   }
 
@@ -886,11 +928,12 @@ export async function runSync(
   }
 
   return {
-    status: errors > 0 ? "error" : "completed",
+    status: errors > 0 || artworkErrors > 0 ? "error" : "completed",
     synced,
     removed: removedCount,
     extras: extraTrackPolicy !== "remove" ? analysis.extras : [],
     missingFiles,
     errors,
+    artworkErrors,
   };
 }

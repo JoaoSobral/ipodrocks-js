@@ -29,6 +29,7 @@ import {
   unsubscribe as audiobookUnsubscribeFn,
 } from "../audiobooks/audiobook-subscriptions";
 import { downloadCover as downloadAudiobookCover } from "../audiobooks/audiobook-cover";
+import { findDuplicateFileGroups } from "../library/duplicate-files";
 import { logActivity } from "../activity/activity-logger";
 import { invalidateAssistantCache } from "./assistantChat";
 import {
@@ -658,6 +659,45 @@ const library_scan: AiTool = {
   },
 };
 
+const library_find_duplicates: AiTool = {
+  name: "library_find_duplicates",
+  description:
+    "Find byte-identical duplicate audio files in the library — files whose contents hash the same, stored at two or more paths. This is what a library scan reports as 'Duplicates detected'. Read-only: it reports what it finds and deletes nothing.",
+  parameters: {
+    type: "object",
+    properties: {
+      limit: {
+        type: "number",
+        description: "Max duplicate groups to return (default 25, max 200).",
+      },
+    },
+  },
+  kind: "read",
+  summarize: () => "Find duplicate (byte-identical) files in the library",
+  async run(args, ctx) {
+    const requested = args.limit === undefined ? 25 : Number(args.limit);
+    const limit =
+      Number.isFinite(requested) && requested > 0
+        ? Math.min(Math.trunc(requested), 200)
+        : 25;
+
+    const groups = findDuplicateFileGroups(ctx.db);
+    return {
+      duplicateGroups: groups.length,
+      totalDuplicateFiles: groups.reduce((sum, g) => sum + g.paths.length, 0),
+      returned: Math.min(groups.length, limit),
+      groups: groups.slice(0, limit).map((g) => ({
+        copies: g.paths.length,
+        paths: g.paths,
+      })),
+      note:
+        groups.length === 0
+          ? "No byte-identical duplicates found."
+          : "Nothing was deleted. Removing a duplicate is the user's decision — they can delete the unwanted copy on disk and rescan.",
+    };
+  },
+};
+
 const podcast_add_by_url: AiTool = {
   name: "podcast_add_by_url",
   description: "Subscribe to a podcast using an RSS feed URL or a podcast website URL. No API key required. Works for any public podcast feed.",
@@ -812,6 +852,7 @@ export const AI_TOOLS: AiTool[] = [
   device_update_settings,
   device_sync,
   library_scan,
+  library_find_duplicates,
   podcast_download_now,
   podcast_delete_episodes,
   audiobook_search,

@@ -17,7 +17,14 @@ import * as path from "path";
 
 import { getFfmpegPath } from "../utils/ffmpeg-path";
 import { extractEmbeddedPicture } from "../utils/embedded-art";
+import { findOnDisk } from "../utils/normalize-path";
 import {
+  longestEdge,
+  readImageDimensions,
+  readImageDimensionsFromFile,
+} from "../utils/image-dimensions";
+import {
+  isCancellationError,
   makeSafeConversionTempPath,
   moveConvertedFile,
   runLoggedSubprocess,
@@ -26,6 +33,20 @@ import { SyncCancelled } from "./sync-core";
 
 /** Default max cover dimension in px. Conservative to keep iPods responsive. */
 export const DEFAULT_COVER_MAX_DIMENSION = 300;
+
+/**
+ * Wall-clock cap for a single cover conversion. Generous for real album art;
+ * bounds the damage from a decompression-bomb image, which ffmpeg must fully
+ * decode before the `scale` filter can shrink it.
+ */
+const COVER_FFMPEG_TIMEOUT_MS = 20_000;
+
+/**
+ * ffmpeg rounds the scaled output to even dimensions, so a regenerated cover
+ * can land a pixel or two off the requested bound. Treat anything within this
+ * tolerance as matching.
+ */
+const DIMENSION_TOLERANCE = 2;
 
 /** Folder-art basenames, in preference order (any casing on disk). */
 const FOLDER_ART_BASENAMES = ["cover", "folder", "front", "album"];
@@ -46,9 +67,17 @@ export async function findAlbumArtSource(
   albumDir: string,
   firstTrackPath: string
 ): Promise<CoverSource | null> {
+  // Both arguments are derived from DB-stored (NFC) track paths, but on
+  // normalization-sensitive filesystems (SMB/SAMBA, ext4) only the on-disk
+  // form resolves — see utils/normalize-path.ts. Resolve before any I/O, or
+  // cover generation silently finds nothing on exactly the mounts that
+  // motivated the NFC scheme in the first place.
+  const diskAlbumDir = findOnDisk(albumDir);
+  const diskTrackPath = findOnDisk(firstTrackPath);
+
   let entries: fs.Dirent[];
   try {
-    entries = fs.readdirSync(albumDir, { withFileTypes: true });
+    entries = fs.readdirSync(diskAlbumDir, { withFileTypes: true });
   } catch {
     entries = [];
   }
@@ -61,7 +90,7 @@ export async function findAlbumArtSource(
   for (const base of FOLDER_ART_BASENAMES) {
     const match = images.find((name) => path.parse(name).name.toLowerCase() === base);
     if (match) {
-      const full = path.join(albumDir, match);
+      const full = path.join(diskAlbumDir, match);
       return { kind: "file", path: full, mtimeMs: safeMtime(full) };
     }
   }
@@ -70,21 +99,21 @@ export async function findAlbumArtSource(
   if (images.length > 0) {
     let best: { name: string; size: number } | null = null;
     for (const name of images) {
-      const full = path.join(albumDir, name);
+      const full = path.join(diskAlbumDir, name);
       const size = safeSize(full);
       if (!best || size > best.size) best = { name, size };
     }
     if (best) {
-      const full = path.join(albumDir, best.name);
+      const full = path.join(diskAlbumDir, best.name);
       return { kind: "file", path: full, mtimeMs: safeMtime(full) };
     }
   }
 
   // Fall back to embedded art from the first track (also covers opus/ogg
   // targets, whose transcode drops embedded pictures).
-  const picture = await extractEmbeddedPicture(firstTrackPath);
+  const picture = await extractEmbeddedPicture(diskTrackPath);
   if (picture) {
-    return { kind: "embedded", data: picture.data, mtimeMs: safeMtime(firstTrackPath) };
+    return { kind: "embedded", data: picture.data, mtimeMs: safeMtime(diskTrackPath) };
   }
   return null;
 }
@@ -134,10 +163,15 @@ export async function generateRockboxCover(
   if (opts.signal?.aborted) throw new SyncCancelled();
   const maxDim = opts.maxDim ?? DEFAULT_COVER_MAX_DIMENSION;
 
-  // Skip if the destination cover is at least as new as the source.
+  // Skip only when the destination cover is at least as new as the source AND
+  // was generated at the size currently requested. Mtime alone is not enough:
+  // changing a device's artwork_max_dimension does not touch the source art, so
+  // every already-synced cover would silently keep its old size.
   try {
     const destStat = fs.statSync(destCoverPath);
-    if (destStat.mtimeMs >= source.mtimeMs) return "skipped";
+    if (destStat.mtimeMs >= source.mtimeMs && coverMatchesMaxDim(destCoverPath, source, maxDim)) {
+      return "skipped";
+    }
   } catch {
     /* no existing cover — generate */
   }
@@ -170,7 +204,9 @@ export async function generateRockboxCover(
     const code = await runLoggedSubprocess(
       buildCoverFfmpegArgs(srcFile, tmpDest, maxDim),
       opts.log,
-      opts.signal
+      opts.signal,
+      undefined,
+      COVER_FFMPEG_TIMEOUT_MS
     );
     if (code !== 0 || !fs.existsSync(tmpDest)) {
       throw new Error(`ffmpeg exited ${code}`);
@@ -178,8 +214,13 @@ export async function generateRockboxCover(
     moveConvertedFile(tmpDest, destCoverPath);
     return "written";
   } catch (err) {
-    if (err instanceof SyncCancelled) throw err;
     safeUnlink(tmpDest);
+    if (err instanceof SyncCancelled) throw err;
+    // runLoggedSubprocess signals abort with a plain Error("Cancelled") rather
+    // than SyncCancelled (it can't import it without a cycle). Without this,
+    // cancelling mid-ffmpeg fell through to the fallback below and kept writing
+    // covers after the user asked to stop.
+    if (isCancellationError(err)) throw new SyncCancelled();
     // Fallback: copy a source file verbatim (embedded-only sources can't).
     if (source.kind === "file") {
       try {
@@ -196,6 +237,48 @@ export async function generateRockboxCover(
   } finally {
     if (scratch) safeUnlink(scratch);
   }
+}
+
+/**
+ * Does an existing cover already reflect `maxDim`?
+ *
+ * A cover larger than the bound means the setting was lowered. A cover smaller
+ * than the bound is only stale if the source actually has pixels to spare —
+ * small source art is never upscaled, so it legitimately stays under the bound
+ * forever. When dimensions can't be read (unknown format), report a match so
+ * behaviour falls back to the plain mtime check rather than regenerating on
+ * every single sync.
+ */
+function coverMatchesMaxDim(
+  destCoverPath: string,
+  source: CoverSource,
+  maxDim: number
+): boolean {
+  const destLongest = longestEdge(readImageDimensionsFromFile(destCoverPath));
+  if (destLongest == null) return true;
+
+  if (destLongest > maxDim + DIMENSION_TOLERANCE) return false;
+
+  if (destLongest < maxDim - DIMENSION_TOLERANCE) {
+    const srcLongest = sourceLongestEdge(source);
+    if (srcLongest != null && srcLongest > destLongest + DIMENSION_TOLERANCE) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/** Longest edge of the source art, or null when it can't be determined. */
+function sourceLongestEdge(source: CoverSource): number | null {
+  if (source.kind === "file") {
+    return longestEdge(readImageDimensionsFromFile(source.path));
+  }
+  const buf = Buffer.from(
+    source.data.buffer,
+    source.data.byteOffset,
+    source.data.byteLength
+  );
+  return longestEdge(readImageDimensions(buf));
 }
 
 function safeMtime(p: string): number {

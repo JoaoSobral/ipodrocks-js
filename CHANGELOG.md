@@ -1,5 +1,26 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixes
+
+- **Album artwork is generated on network/SMB libraries again** — On shares that report filenames in a different Unicode form than iPodRocks stores (SAMBA/SMB, some Linux mounts), cover generation silently found nothing and no `cover.jpg` was written, even though the tracks themselves synced fine. Artwork lookup now resolves the on-disk name the same way track copying does.
+- **Tracks with Unicode names are no longer reported as missing during sync** — The pre-copy existence check compared the stored name rather than the on-disk name, so accented or non-Latin filenames on those same shares could be flagged "missing" and skipped even though they were present.
+- **Changing a device's artwork size now takes effect on existing albums** — Covers were only regenerated when the source image changed, so switching Artwork size (200/300/500/750 px) appeared to do nothing until an album's art was edited. Existing covers are now regenerated when they no longer match the selected size, while genuinely small source art is still left alone.
+- **Sync progress no longer overshoots** — Generated covers were counted as processed without being added to the total, so the progress bar could read past 100% (e.g. "48/40") and appear finished while tracks were still copying.
+- **Cancelling a sync stops artwork generation immediately** — A cancel during cover conversion was mistaken for a conversion failure, so iPodRocks fell back to copying the original image and kept writing covers after the user asked it to stop.
+- **More trash folders are excluded from scanning** — Deleted copies inside a bare `Trash` folder (the freedesktop.org location) or a NAS recycle bin (`#recycle` on Synology, `@Recycle` on QNAP) were still indexed as real tracks. Folders that merely contain the word, like "Trash Talk", are still scanned as normal.
+- **Artwork conversion can't hang a sync** — A malformed or extremely large image made ffmpeg run unbounded; cover conversion now gives up after 20 seconds and moves on.
+- **Duplicate reports handle unusual filenames** — Paths containing a newline no longer garble the "Duplicates detected" list.
+
+### Changes
+
+- **Artwork failures now fail the sync — and say so plainly** — Album artwork problems were previously advisory and left the sync reporting success, so a device could finish with no cover art and no indication anything went wrong. A sync with artwork failures is now reported as failed, but labelled unambiguously: the status reads "Failed — album artwork only", artwork failures are counted in their own "Artwork Errors" column separate from "Song Errors", and the summary states that cover art was affected while your song files copied fine. The sync log lists the specific album folders involved. Playlists are still written, since they depend on track data rather than artwork.
+
+### Improvements
+
+- **Rocksy can find duplicate files** — Asking "do I have duplicate songs?" now uses a dedicated read-only tool that lists byte-identical copies and their paths. It deletes nothing; removing a copy stays your decision.
+
 ## [2.1.0] — 2026-07
 
 ### Features

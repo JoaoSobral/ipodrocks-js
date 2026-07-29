@@ -106,6 +106,34 @@ test("scan keeps distinct same-title tracks and excludes trash copies", async ()
   expect(paths.some((p) => p.includes("Trash"))).toBe(false);
 });
 
+test("scan excludes trash folders that have no leading dot", async () => {
+  const window = await launched.app.firstWindow();
+  await window.waitForLoadState("domcontentloaded");
+
+  fs.writeFileSync(path.join(seedDir, "Keeper.mp3"), Buffer.from("keeper-bytes"));
+
+  // freedesktop.org puts the user trash at "Trash/files/" with no leading dot,
+  // and NAS shares add vendor names like "#recycle" at the share root.
+  for (const trashName of ["Trash", "#recycle", "@Recycle"]) {
+    const dir = path.join(seedDir, trashName, "files");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, "Deleted.mp3"), Buffer.from(`${trashName}-bytes`));
+  }
+
+  // A legitimate folder whose name merely contains "Trash" must still scan.
+  const bandDir = path.join(seedDir, "Trash Talk");
+  fs.mkdirSync(bandDir, { recursive: true });
+  fs.writeFileSync(path.join(bandDir, "Song.mp3"), Buffer.from("band-bytes"));
+
+  await scan(window);
+  const paths = await trackPaths(window);
+
+  expect(paths.some((p) => p.includes("Keeper.mp3"))).toBe(true);
+  expect(paths.some((p) => p.includes(path.join("Trash Talk", "Song.mp3")))).toBe(true);
+  expect(paths.some((p) => p.includes("Deleted.mp3"))).toBe(false);
+  expect(paths).toHaveLength(2);
+});
+
 test("scan keeps byte-identical duplicates and reports a duplicate warning", async () => {
   const window = await launched.app.firstWindow();
   await window.waitForLoadState("domcontentloaded");

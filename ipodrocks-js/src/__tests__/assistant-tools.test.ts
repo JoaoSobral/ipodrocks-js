@@ -436,3 +436,88 @@ describe("playlist_repair (write-safe)", () => {
     expect(getToolByName("playlist_repair")!.summarize({ playlist_id: 9 })).toContain("9");
   });
 });
+
+describe("library_find_duplicates (read)", () => {
+  const DUP_SQL_MATCH = "GROUP_CONCAT";
+
+  /** Build a db mock whose duplicate query returns the given concat rows. */
+  function makeDupDb(rows: { file_hash: string; paths: string; n: number }[]) {
+    return {
+      prepare: (sql: string) => ({
+        all: () => (sql.includes(DUP_SQL_MATCH) ? rows : []),
+        get: () => null,
+        run: vi.fn(),
+      }),
+    } as unknown as AiToolContext["db"];
+  }
+
+  it("is classified as a read tool so it runs inline without a confirm gate", () => {
+    expect(getToolByName("library_find_duplicates")!.kind).toBe("read");
+  });
+
+  it("is registered in the tool definitions Rocksy sees", () => {
+    const names = buildToolDefinitions().map((d) => d.function.name);
+    expect(names).toContain("library_find_duplicates");
+  });
+
+  it("reports duplicate groups with their paths", async () => {
+    const ctx = makeCtx({
+      db: makeDupDb([
+        { file_hash: "h1", paths: "/music/a.mp3\x1f/music/b.mp3", n: 2 },
+      ]),
+    });
+    const result = (await getToolByName("library_find_duplicates")!.run({}, ctx)) as {
+      duplicateGroups: number;
+      totalDuplicateFiles: number;
+      groups: Array<{ copies: number; paths: string[] }>;
+    };
+
+    expect(result.duplicateGroups).toBe(1);
+    expect(result.totalDuplicateFiles).toBe(2);
+    expect(result.groups[0].paths).toEqual(["/music/a.mp3", "/music/b.mp3"]);
+  });
+
+  it("reports cleanly when there are no duplicates", async () => {
+    const ctx = makeCtx({ db: makeDupDb([]) });
+    const result = (await getToolByName("library_find_duplicates")!.run({}, ctx)) as {
+      duplicateGroups: number;
+      groups: unknown[];
+      note: string;
+    };
+    expect(result.duplicateGroups).toBe(0);
+    expect(result.groups).toEqual([]);
+    expect(result.note).toContain("No byte-identical duplicates");
+  });
+
+  it("caps the number of returned groups", async () => {
+    const rows = Array.from({ length: 40 }, (_, i) => ({
+      file_hash: `h${i}`,
+      paths: `/music/${i}-a.mp3\x1f/music/${i}-b.mp3`,
+      n: 2,
+    }));
+    const ctx = makeCtx({ db: makeDupDb(rows) });
+    const result = (await getToolByName("library_find_duplicates")!.run({ limit: 5 }, ctx)) as {
+      duplicateGroups: number;
+      returned: number;
+      groups: unknown[];
+    };
+
+    // The full count is still reported so Rocksy can say how many exist.
+    expect(result.duplicateGroups).toBe(40);
+    expect(result.returned).toBe(5);
+    expect(result.groups).toHaveLength(5);
+  });
+
+  it("falls back to the default limit for a nonsense limit", async () => {
+    const rows = Array.from({ length: 30 }, (_, i) => ({
+      file_hash: `h${i}`,
+      paths: `/music/${i}.mp3\x1f/music/${i}-copy.mp3`,
+      n: 2,
+    }));
+    const ctx = makeCtx({ db: makeDupDb(rows) });
+    const result = (await getToolByName("library_find_duplicates")!.run({ limit: -3 }, ctx)) as {
+      returned: number;
+    };
+    expect(result.returned).toBe(25);
+  });
+});
