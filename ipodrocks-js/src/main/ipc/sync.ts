@@ -199,6 +199,7 @@ export function registerSyncHandlers(): void {
         extraTrackPolicy: opts.extraTrackPolicy,
         cancelSignal: syncSignal,
         skipAlbumArtwork: device.profile.skipAlbumArtwork === true,
+        artworkMaxDimension: device.profile.artworkMaxDimension,
         preserveFolderStructure,
         preloadedMtimes,
         profileCodecExtOverride: profileCodecExtOverride ?? undefined,

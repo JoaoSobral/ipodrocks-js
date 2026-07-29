@@ -15,6 +15,11 @@ import {
   CopyToDeviceOptions,
   copyToDevice,
 } from "./sync-executor";
+import {
+  DEFAULT_COVER_MAX_DIMENSION,
+  findAlbumArtSource,
+  generateRockboxCover,
+} from "./rockbox-cover";
 
 const PASSTHROUGH_CODECS = ["DIRECT COPY", "COPY", "NONE"] as const;
 
@@ -39,8 +44,10 @@ export interface RunSyncOptions {
   includePlaylists?: boolean;
   progressCallback?: ProgressCallback;
   cancelSignal?: AbortSignal;
-  /** When true, do not copy album artwork (*.jpg, *.png) to device. */
+  /** When true, do not generate/copy album artwork to device. */
   skipAlbumArtwork?: boolean;
+  /** Max dimension (px) for generated Rockbox cover.jpg. Defaults to 300. */
+  artworkMaxDimension?: number;
   /** F7: Pre-loaded path→mtime from content_hashes to avoid per-track fs.statSync. */
   preloadedMtimes?: Map<string, number>;
   /** Override profile codec extension for compare (e.g. shadow library codec when codecName is DIRECT COPY). */
@@ -571,8 +578,6 @@ export function removeExtraTracks(
   return { removed, bytesRemoved };
 }
 
-const ARTWORK_EXTENSIONS = [".jpg", ".jpeg", ".png"];
-
 export interface ArtworkSyncResult {
   copied: number;
   skipped: number;
@@ -581,29 +586,34 @@ export interface ArtworkSyncResult {
 }
 
 /**
- * Copy album artwork (*.jpg, *.png) from source album folders to device.
- * Skips unchanged files using size/mtime checks. Uses the same folder
- * structure as tracks (Artist/Album).
+ * Generate one Rockbox-compatible `cover.jpg` per album folder on the device.
+ *
+ * Rather than byte-copying every source image (progressive/oversized JPEGs load
+ * inconsistently on Rockbox and slow the device down), this picks the best
+ * source art per album — folder art or the first track's embedded picture — and
+ * re-encodes it to a small baseline JPEG via ffmpeg. See sync/rockbox-cover.ts.
  */
-export function copyAlbumArtworkToDevice(
+export async function copyAlbumArtworkToDevice(
   deviceContentPath: string,
   contentType: string,
   libraryTracks: Record<string, Record<string, unknown>>,
   libraryFolderPaths?: Map<number, string>,
   progressCallback?: ProgressCallback,
   cancelSignal?: AbortSignal,
-  preserveFolderStructure = false
-): ArtworkSyncResult {
+  preserveFolderStructure = false,
+  maxDim: number = DEFAULT_COVER_MAX_DIMENSION
+): Promise<ArtworkSyncResult> {
   if (Object.keys(libraryTracks).length === 0) {
     return { copied: 0, skipped: 0, errors: 0, totalCandidates: 0 };
   }
 
-  const sourceToDeviceRel = new Map<string, string>();
+  // Per album source dir: device-relative album folder + a representative track.
+  const albums = new Map<string, { deviceRelAlbum: string; firstTrack: string }>();
 
   for (const [trackPath, trackInfo] of Object.entries(libraryTracks)) {
     if (cancelSignal?.aborted) throw new SyncCancelled();
     const sourceDir = path.dirname(trackPath);
-    if (sourceToDeviceRel.has(sourceDir)) continue;
+    if (albums.has(sourceDir)) continue;
 
     const relPath = computeDeviceRelativePath(
       trackPath,
@@ -613,90 +623,28 @@ export function copyAlbumArtworkToDevice(
       preserveFolderStructure
     );
     const deviceRelAlbum = path.dirname(relPath).replace(/\\/g, "/");
-    sourceToDeviceRel.set(sourceDir, deviceRelAlbum);
-  }
-
-  const candidates: { srcPath: string; destPath: string }[] = [];
-
-  for (const [sourceDir, deviceRelAlbum] of sourceToDeviceRel) {
-    if (cancelSignal?.aborted) throw new SyncCancelled();
-    let entries: fs.Dirent[];
-    try {
-      entries = fs.readdirSync(sourceDir, { withFileTypes: true });
-    } catch {
-      continue;
-    }
-
-    for (const entry of entries) {
-      if (!entry.isFile()) continue;
-      const ext = path.extname(entry.name).toLowerCase();
-      if (!ARTWORK_EXTENSIONS.includes(ext)) continue;
-
-      const srcPath = path.join(sourceDir, entry.name);
-      const destPath = path.join(
-        deviceContentPath,
-        deviceRelAlbum,
-        entry.name
-      );
-      candidates.push({ srcPath, destPath });
-    }
+    albums.set(sourceDir, { deviceRelAlbum, firstTrack: trackPath });
   }
 
   let copied = 0;
   let skipped = 0;
   let errors = 0;
 
-  // First pass: pre-filter candidates so we only bump the total counter for
-  // artwork that actually needs to be copied. Artwork already on device with
-  // matching size is silently skipped (matches music-track behavior).
-  const toCopy: { srcPath: string; destPath: string }[] = [];
-  for (const { srcPath, destPath } of candidates) {
+  for (const [sourceDir, { deviceRelAlbum, firstTrack }] of albums) {
     if (cancelSignal?.aborted) throw new SyncCancelled();
-    let srcStat: fs.Stats;
-    try {
-      srcStat = fs.statSync(srcPath);
-    } catch {
-      errors++;
-      progressCallback?.({
-        event: "copy",
-        path: srcPath,
-        destination: destPath,
-        status: "error",
-        contentType: "artwork",
-      });
-      continue;
-    }
-    let destStat: fs.Stats | null = null;
-    try {
-      destStat = fs.statSync(destPath);
-    } catch {
-      /* destination missing, will copy */
-    }
-    if (destStat?.isFile() && destStat.size === srcStat.size) {
-      skipped++;
-      continue;
-    }
-    toCopy.push({ srcPath, destPath });
-  }
 
-  if (toCopy.length > 0) {
-    progressCallback?.({
-      event: "total_add",
-      path: String(toCopy.length),
+    const source = await findAlbumArtSource(sourceDir, firstTrack);
+    if (!source) continue;
+
+    const destPath = path.join(deviceContentPath, deviceRelAlbum, "cover.jpg");
+    const result = await generateRockboxCover(source, destPath, {
+      maxDim,
+      log: (message) => progressCallback?.({ event: "log", message }),
+      signal: cancelSignal,
     });
-  }
 
-  for (const { srcPath, destPath } of toCopy) {
-    if (cancelSignal?.aborted) throw new SyncCancelled();
-
-    try {
-      fs.mkdirSync(path.dirname(destPath), { recursive: true });
-      fs.copyFileSync(srcPath, destPath);
+    if (result === "written") {
       copied++;
-      progressCallback?.({
-        event: "log",
-        message: `Artwork copied: ${path.basename(destPath)}`,
-      });
       progressCallback?.({
         event: "copy",
         path: destPath,
@@ -704,11 +652,13 @@ export function copyAlbumArtworkToDevice(
         status: "copied",
         contentType: "artwork",
       });
-    } catch {
+    } else if (result === "skipped") {
+      skipped++;
+    } else {
       errors++;
       progressCallback?.({
         event: "copy",
-        path: srcPath,
+        path: sourceDir,
         destination: destPath,
         status: "error",
         contentType: "artwork",
@@ -716,12 +666,7 @@ export function copyAlbumArtworkToDevice(
     }
   }
 
-  return {
-    copied,
-    skipped,
-    errors,
-    totalCandidates: candidates.length,
-  };
+  return { copied, skipped, errors, totalCandidates: albums.size };
 }
 
 /**
@@ -748,114 +693,64 @@ function computeShadowAlbumRelPath(
 }
 
 /**
- * Copy album artwork (*.jpg, *.jpeg, *.png) from source library folders to a
- * shadow library root, mirroring the folder structure. Used for all shadow
- * libraries regardless of codec.
+ * Generate one Rockbox-compatible `cover.jpg` per album folder in a shadow
+ * library root, mirroring the source folder structure. Used for all shadow
+ * libraries regardless of codec. See sync/rockbox-cover.ts.
  */
-export function copyArtworkToShadowLibrary(
+export async function copyArtworkToShadowLibrary(
   allTracks: Track[],
   libraryFolderPaths: Map<number, string>,
   shadowRoot: string,
   progressCallback?: (msg: string) => void,
-  signal?: AbortSignal
-): ArtworkSyncResult {
+  signal?: AbortSignal,
+  maxDim: number = DEFAULT_COVER_MAX_DIMENSION
+): Promise<ArtworkSyncResult> {
   if (allTracks.length === 0) {
     return { copied: 0, skipped: 0, errors: 0, totalCandidates: 0 };
   }
 
-  const sourceDirToRel = new Map<string, string>();
+  const albums = new Map<string, { albumRel: string; firstTrack: string }>();
 
   for (const track of allTracks) {
     if (signal?.aborted) throw new SyncCancelled();
     const sourceDir = path.dirname(track.path);
-    if (sourceDirToRel.has(sourceDir)) continue;
+    if (albums.has(sourceDir)) continue;
 
     const albumRel = computeShadowAlbumRelPath(
       sourceDir,
       libraryFolderPaths,
       track.libraryFolderId
     );
-    sourceDirToRel.set(sourceDir, albumRel);
-  }
-
-  const candidates: { srcPath: string; destPath: string }[] = [];
-
-  for (const [sourceDir, albumRel] of sourceDirToRel) {
-    if (signal?.aborted) throw new SyncCancelled();
-    let entries: fs.Dirent[];
-    try {
-      entries = fs.readdirSync(sourceDir, { withFileTypes: true });
-    } catch {
-      progressCallback?.(
-        `Could not read album directory for artwork: ${sourceDir}`
-      );
-      continue;
-    }
-
-    for (const entry of entries) {
-      if (!entry.isFile()) continue;
-      const ext = path.extname(entry.name).toLowerCase();
-      if (!ARTWORK_EXTENSIONS.includes(ext)) continue;
-
-      const srcPath = path.join(sourceDir, entry.name);
-      const destPath = path.join(shadowRoot, albumRel, entry.name);
-      candidates.push({ srcPath, destPath });
-    }
-  }
-
-  if (
-    sourceDirToRel.size > 0 &&
-    candidates.length === 0 &&
-    progressCallback
-  ) {
-    progressCallback(
-      "No cover.jpg/cover.png/cover.jpeg found in any album folder."
-    );
+    albums.set(sourceDir, { albumRel, firstTrack: track.path });
   }
 
   let copied = 0;
   let skipped = 0;
   let errors = 0;
 
-  for (const { srcPath, destPath } of candidates) {
+  for (const [sourceDir, { albumRel, firstTrack }] of albums) {
     if (signal?.aborted) throw new SyncCancelled();
 
-    let srcStat: fs.Stats;
-    try {
-      srcStat = fs.statSync(srcPath);
-    } catch {
-      errors++;
-      continue;
-    }
+    const source = await findAlbumArtSource(sourceDir, firstTrack);
+    if (!source) continue;
 
-    let destStat: fs.Stats | null = null;
-    try {
-      destStat = fs.statSync(destPath);
-    } catch {
-      /* destination missing, will copy */
-    }
-
-    if (destStat?.isFile() && destStat.size === srcStat.size) {
-      skipped++;
-      continue;
-    }
-
-    try {
-      fs.mkdirSync(path.dirname(destPath), { recursive: true });
-      fs.copyFileSync(srcPath, destPath);
+    const destPath = path.join(shadowRoot, albumRel, "cover.jpg");
+    const result = await generateRockboxCover(source, destPath, {
+      maxDim,
+      log: progressCallback,
+      signal,
+    });
+    if (result === "written") {
       copied++;
-      progressCallback?.(`Artwork copied: ${path.basename(destPath)}`);
-    } catch {
+      progressCallback?.(`Artwork generated: ${path.basename(destPath)}`);
+    } else if (result === "skipped") {
+      skipped++;
+    } else {
       errors++;
     }
   }
 
-  return {
-    copied,
-    skipped,
-    errors,
-    totalCandidates: candidates.length,
-  };
+  return { copied, skipped, errors, totalCandidates: albums.size };
 }
 
 export async function runSync(
@@ -875,7 +770,7 @@ export async function runSync(
   missingFiles: string[];
   errors: number;
 }> {
-  const { extraTrackPolicy, progressCallback, cancelSignal, skipAlbumArtwork, preloadedMtimes, profileCodecExtOverride, preserveFolderStructure } =
+  const { extraTrackPolicy, progressCallback, cancelSignal, skipAlbumArtwork, artworkMaxDimension, preloadedMtimes, profileCodecExtOverride, preserveFolderStructure } =
     options;
 
   progressCallback?.({ event: "log", message: `Comparing library with device (${contentType})...` });
@@ -953,16 +848,17 @@ export async function runSync(
   );
 
   if (skipAlbumArtwork !== true && Object.keys(libraryTracks).length > 0) {
-    const artworkResult = copyAlbumArtworkToDevice(
+    const artworkResult = await copyAlbumArtworkToDevice(
       deviceContentPath,
       contentType,
       libraryTracks,
       libraryFolderPaths,
       progressCallback,
       cancelSignal,
-      preserveFolderStructure
+      preserveFolderStructure,
+      artworkMaxDimension ?? DEFAULT_COVER_MAX_DIMENSION
     );
-    errors += artworkResult.errors;
+    // Artwork problems are advisory — never fail the whole sync over them.
     if (
       artworkResult.copied > 0 ||
       artworkResult.skipped > 0 ||

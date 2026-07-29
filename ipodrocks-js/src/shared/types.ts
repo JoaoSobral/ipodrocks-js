@@ -105,6 +105,8 @@ export interface DeviceProfile extends Device {
   modelInternalValue: string | null;
   skipPlaybackLog?: boolean;
   skipAlbumArtwork?: boolean;
+  /** Max dimension (px) for the Rockbox cover.jpg generated on sync. */
+  artworkMaxDimension?: number;
   rockboxSmartPlaylists?: boolean;
   devMode?: boolean;
   autoPodcastsEnabled?: boolean;
@@ -557,6 +559,10 @@ export interface ScanResult {
   filesRemoved?: number;
   cancelled: boolean;
   errors?: string[];
+  /** Non-fatal advisories, e.g. byte-identical duplicate files detected. */
+  warnings?: string[];
+  /** Number of distinct-hash groups that had more than one copy on disk. */
+  duplicateFilesDetected?: number;
   addedTrackPaths?: string[];
   removedTrackPaths?: string[];
   removedTrackIds?: number[];

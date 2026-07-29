@@ -14,6 +14,7 @@ import {
   copyArtworkToShadowLibrary,
   SyncCancelled,
 } from "../sync/sync-core";
+import { findOnDisk } from "../utils/normalize-path";
 
 function computeDirectorySize(root: string): number {
   try {
@@ -409,7 +410,7 @@ export class ShadowLibraryManager {
     });
 
     try {
-      const artworkResult = copyArtworkToShadowLibrary(
+      const artworkResult = await copyArtworkToShadowLibrary(
         allTracks,
         libraryFolderPaths,
         lib.path,
@@ -534,7 +535,7 @@ export class ShadowLibraryManager {
       }
 
       try {
-        copyArtworkToShadowLibrary(
+        await copyArtworkToShadowLibrary(
           tracksToPropagate,
           libraryFolderPaths,
           lib.path,
@@ -651,7 +652,7 @@ export class ShadowLibraryManager {
     };
 
     const ok = await convertWithCodec(
-      track.path,
+      findOnDisk(track.path),
       destPath,
       settingsWithMeta,
       logCallback,

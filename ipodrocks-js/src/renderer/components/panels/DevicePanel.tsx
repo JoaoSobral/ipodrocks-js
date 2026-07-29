@@ -89,6 +89,7 @@ export function DevicePanel() {
   const [rockboxSmartPlaylists, setRockboxSmartPlaylists] = useState(false);
   const [autoPodcastsEnabled, setAutoPodcastsEnabled] = useState(false);
   const [skipAlbumArtwork, setSkipAlbumArtwork] = useState(false);
+  const [artworkMaxDimension, setArtworkMaxDimension] = useState(300);
   const [vbrEnabled, setVbrEnabled] = useState(false);
   const [devMode, setDevMode] = useState(false);
   const [musicFolder, setMusicFolder] = useState("Music");
@@ -152,6 +153,7 @@ export function DevicePanel() {
     setRockboxSmartPlaylists(false);
     setAutoPodcastsEnabled(false);
     setSkipAlbumArtwork(false);
+    setArtworkMaxDimension(300);
     setVbrEnabled(false);
     setDevMode(false);
     setMusicFolder("Music");
@@ -198,6 +200,7 @@ export function DevicePanel() {
 
     setPlaybackLogEnabled(!(device.skipPlaybackLog ?? false));
     setSkipAlbumArtwork(device.skipAlbumArtwork ?? false);
+    setArtworkMaxDimension(device.artworkMaxDimension ?? 300);
     setVbrEnabled(device.vbrEnabled ?? false);
     setRockboxSmartPlaylists(device.rockboxSmartPlaylists ?? false);
     setAutoPodcastsEnabled(device.autoPodcastsEnabled ?? false);
@@ -256,6 +259,7 @@ export function DevicePanel() {
       shadowLibraryId: resolvedShadowId,
       skipPlaybackLog: !playbackLogEnabled,
       skipAlbumArtwork,
+      artworkMaxDimension,
       vbrEnabled: transferMode === "transcode" ? vbrEnabled : false,
       rockboxSmartPlaylists,
       devMode,
@@ -826,9 +830,27 @@ export function DevicePanel() {
               />
               <span className="text-sm text-foreground flex items-center gap-1">
                 Skip album artwork
-                <InfoTooltip text="When enabled, album artwork files (cover.jpg, folder.jpg, etc.) are not copied to this device during sync. Useful for devices with limited storage." />
+                <InfoTooltip text="When enabled, no album artwork is generated for this device during sync. Useful for devices with limited storage." />
               </span>
             </label>
+            {!skipAlbumArtwork && (
+              <label className="flex items-center gap-2.5 pl-7">
+                <span className="text-sm text-foreground flex items-center gap-1">
+                  Artwork size
+                  <InfoTooltip text="A single Rockbox-compatible cover.jpg is generated per album and resized to this maximum dimension. Smaller art keeps iPods responsive; larger art can slow them down. 300 px is recommended for iPods." />
+                </span>
+                <select
+                  className="text-sm bg-input border border-border rounded px-2 py-1"
+                  value={artworkMaxDimension}
+                  onChange={(e) => setArtworkMaxDimension(Number(e.target.value))}
+                >
+                  <option value={200}>200 px</option>
+                  <option value={300}>300 px (recommended)</option>
+                  <option value={500}>500 px</option>
+                  <option value={750}>750 px</option>
+                </select>
+              </label>
+            )}
             <label className="flex items-center gap-2.5 cursor-pointer opacity-60">
               <input
                 type="checkbox"

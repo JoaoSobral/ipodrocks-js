@@ -14,7 +14,12 @@ import Database from "better-sqlite3";
 import { ScanProgress, ScanResult } from "../../shared/types";
 import { HashManager } from "./hash-manager";
 import { MetadataExtractor } from "./metadata-extractor";
-import { AUDIO_EXTENSIONS, isMacosMetadataFile } from "../utils/audio-extensions";
+import {
+  AUDIO_EXTENSIONS,
+  isMacosMetadataFile,
+  isTrashDirectory,
+} from "../utils/audio-extensions";
+import { normalizePath } from "../utils/normalize-path";
 
 /** Escape LIKE special chars (% _ \) so folder paths are safe in LIKE patterns. */
 function escapeLike(s: string): string {
@@ -69,7 +74,6 @@ export class LibraryScanner {
   private loadZeroDurationStmt: Database.Statement;
   private loadTrackPathsStmt: Database.Statement;
   private getTrackIdByPathStmt: Database.Statement;
-  private getTrackByArtistAlbumTitleStmt: Database.Statement;
   private updateTrackFeaturesStmt: Database.Statement;
 
   constructor(db: Database.Database) {
@@ -151,13 +155,6 @@ export class LibraryScanner {
     this.getTrackIdByPathStmt = db.prepare(
       "SELECT id FROM tracks WHERE path = ?"
     );
-    this.getTrackByArtistAlbumTitleStmt = db.prepare(
-      `SELECT id, path FROM tracks
-       WHERE artist_id IS NOT DISTINCT FROM ?
-         AND album_id IS NOT DISTINCT FROM ?
-         AND ((title IS NULL AND ? IS NULL) OR (title IS NOT NULL AND ? IS NOT NULL AND LOWER(title) = LOWER(?)))
-       LIMIT 1`
-    );
     this.updateTrackFeaturesStmt = db.prepare(
       "UPDATE tracks SET key = ?, bpm = ?, camelot = ?, features_scanned = 1 WHERE id = ?"
     );
@@ -180,16 +177,21 @@ export class LibraryScanner {
     options?: { scanHarmonicData?: boolean }
   ): Promise<ScanResult> {
     const scanHarmonicData = options?.scanHarmonicData !== false;
+    // `folder` (raw, as resolved from the OS) is used for all filesystem I/O;
+    // `folderKey` (NFC) is the canonical form used for every DB lookup so
+    // scans stay stable across Unicode normalization drift on SMB/network
+    // mounts. See utils/normalize-path.ts.
     const folder = path.resolve(folderPath.trim());
     if (!fs.existsSync(folder)) {
       return { filesAdded: 0, filesProcessed: 0, filesRemoved: 0, cancelled: false };
     }
+    const folderKey = normalizePath(folder);
 
-    const folderId = this.getOrCreateFolderId(folder, contentType);
-    const existingMtimes = this.loadExistingMtimes(folder);
-    const zeroDurationPaths = this.loadZeroDurationPaths(folder);
+    const folderId = this.getOrCreateFolderId(folderKey, contentType);
+    const existingMtimes = this.loadExistingMtimes(folderKey);
+    const zeroDurationPaths = this.loadZeroDurationPaths(folderKey);
     const audioFiles = this.collectAudioFiles(folder);
-    const audioFileSet = new Set(audioFiles);
+    const audioFileSet = new Set(audioFiles.map(normalizePath));
     const total = audioFiles.length;
     let filesProcessed = 0;
     let filesAdded = 0;
@@ -231,12 +233,15 @@ export class LibraryScanner {
           });
           continue;
         }
+        // NFC form used as the DB/comparison key; `filePath` (raw) stays the
+        // source of truth for filesystem reads below.
+        const dbPath = normalizePath(filePath);
         const mtimeMs = stat.mtimeMs;
-        const storedMtimeMs = existingMtimes.get(filePath);
+        const storedMtimeMs = existingMtimes.get(dbPath);
         if (
           storedMtimeMs != null &&
           Math.abs(storedMtimeMs - mtimeMs) < 1000 &&
-          !zeroDurationPaths.has(filePath)
+          !zeroDurationPaths.has(dbPath)
         ) {
           filesProcessed++;
           progressCallback?.({
@@ -248,7 +253,7 @@ export class LibraryScanner {
           continue;
         }
 
-        const isNew = !existingMtimes.has(filePath);
+        const isNew = !existingMtimes.has(dbPath);
 
         const metadataPromise = this.metadataExtractor.extractMetadata(
           filePath,
@@ -275,9 +280,9 @@ export class LibraryScanner {
           genre: metadata.genre,
         });
 
-        const didUpsert = this.upsertTrack({
-          path: filePath,
-          filename: path.basename(filePath),
+        this.upsertTrack({
+          path: dbPath,
+          filename: path.basename(dbPath),
           title: metadata.title,
           artist: metadata.artist,
           album: metadata.album,
@@ -296,18 +301,8 @@ export class LibraryScanner {
           showTitle: metadata.showTitle,
           episodeNumber: metadata.episodeNumber,
         });
-        if (!didUpsert) {
-          filesProcessed++;
-          progressCallback?.({
-            file: path.basename(filePath),
-            processed: filesProcessed,
-            total,
-            status: "skipped",
-          });
-          continue;
-        }
 
-        const trackRow = this.getTrackIdByPathStmt.get(filePath) as
+        const trackRow = this.getTrackIdByPathStmt.get(dbPath) as
           | { id: number }
           | undefined;
         if (trackRow && scanHarmonicData && contentType === "music") {
@@ -321,7 +316,7 @@ export class LibraryScanner {
 
         if (fileSize > 0 && mtimeMs > 0) {
           this.hashManager.storeHash({
-            filePath,
+            filePath: dbPath,
             contentHash: fileHash,
             metadataHash,
             fileSize,
@@ -333,9 +328,9 @@ export class LibraryScanner {
         filesProcessed++;
         if (isNew) {
           filesAdded++;
-          addedTrackPaths.push(filePath);
+          addedTrackPaths.push(dbPath);
         } else {
-          updatedTrackPaths.push(filePath);
+          updatedTrackPaths.push(dbPath);
         }
         progressCallback?.({
           file: path.basename(filePath),
@@ -358,15 +353,18 @@ export class LibraryScanner {
     }
 
     const existingTrackPaths = this.loadTrackPathsStmt
-      .all(escapeLike(folder) + "%") as { path: string }[];
+      .all(escapeLike(folderKey) + "%") as { path: string }[];
     const removedTrackPaths = existingTrackPaths
       .map((r) => r.path)
-      .filter((p) => !audioFileSet.has(p));
+      // Normalize DB rows defensively so pre-migration NFD rows still match
+      // the NFC-keyed on-disk set.
+      .filter((p) => !audioFileSet.has(normalizePath(p)));
 
     const { filesRemoved, removedTrackIds } =
       this.deleteRemovedTracks(removedTrackPaths);
 
-    this.deduplicateTracks();
+    const { warnings: duplicateWarnings, duplicateFilesDetected } =
+      this.detectDuplicateFiles(folderKey);
 
     progressCallback?.({
       file: "",
@@ -381,6 +379,8 @@ export class LibraryScanner {
       filesRemoved,
       cancelled: false,
       errors,
+      warnings: duplicateWarnings,
+      duplicateFilesDetected,
       addedTrackPaths,
       removedTrackPaths,
       removedTrackIds,
@@ -444,59 +444,36 @@ export class LibraryScanner {
   }
 
   /**
-   * Remove duplicate tracks: same (artist, album, title). Prefers the path
-   * that does NOT contain "Trash" (keeps main library over Trash). Runs
-   * after each scan to clean up any duplicates.
+   * Detect byte-identical duplicate files (same content hash) under the scanned
+   * folder and report them as warnings. Purely diagnostic — nothing is deleted;
+   * both copies remain in the library so the user can decide what to remove.
+   * Files whose hash could not be computed (empty hash) are ignored.
    */
-  private deduplicateTracks(): void {
-    const dupes = this.db.prepare(`
-      SELECT t.id FROM tracks t
-      WHERE EXISTS (
-        SELECT 1 FROM tracks t2
-        WHERE t2.artist_id IS NOT DISTINCT FROM t.artist_id
-          AND t2.album_id IS NOT DISTINCT FROM t.album_id
-          AND (
-            (t2.title IS NULL AND t.title IS NULL)
-            OR (t2.title IS NOT NULL AND t.title IS NOT NULL AND LOWER(t2.title) = LOWER(t.title))
-          )
-          AND t2.id != t.id
-          AND (
-            (t.path LIKE '%Trash%' AND t2.path NOT LIKE '%Trash%')
-            OR (
-              (t.path LIKE '%Trash%') = (t2.path LIKE '%Trash%')
-              AND t2.id < t.id
-            )
-          )
+  private detectDuplicateFiles(folder: string): {
+    warnings: string[];
+    duplicateFilesDetected: number;
+  } {
+    const groups = this.db
+      .prepare(
+        `SELECT file_hash, GROUP_CONCAT(path, '\n') AS paths, COUNT(*) AS n
+           FROM tracks
+          WHERE path LIKE ? ESCAPE '\\'
+            AND file_hash IS NOT NULL AND file_hash != ''
+          GROUP BY file_hash
+         HAVING n > 1`
       )
-    `).all() as { id: number }[];
+      .all(escapeLike(folder) + "%") as {
+      file_hash: string;
+      paths: string;
+      n: number;
+    }[];
 
-    if (dupes.length === 0) return;
+    const warnings = groups.map((g) => {
+      const paths = g.paths.split("\n");
+      return `Duplicate file content (${g.n} copies): ${paths.join(" | ")}`;
+    });
 
-    const deletePlaybackLogsStmt = this.db.prepare("DELETE FROM playback_logs WHERE matched_track_id = ?");
-    const deletePlaybackStatsStmt = this.db.prepare("DELETE FROM playback_stats WHERE track_id = ?");
-    const deleteShadowStmt = this.db.prepare("DELETE FROM shadow_tracks WHERE source_track_id = ?");
-    const getPathStmt = this.db.prepare("SELECT path FROM tracks WHERE id = ?");
-    const deleteHashStmt = this.db.prepare("DELETE FROM content_hashes WHERE file_path = ?");
-    const deleteTrackStmt = this.db.prepare("DELETE FROM tracks WHERE id = ?");
-
-    this.db.pragma("foreign_keys = OFF");
-    try {
-      this.db.transaction(() => {
-        for (const row of dupes) {
-          deletePlaybackLogsStmt.run(row.id);
-          deletePlaybackStatsStmt.run(row.id);
-          deleteShadowStmt.run(row.id);
-          const pathRow = getPathStmt.get(row.id) as { path: string } | undefined;
-          if (pathRow) {
-            deleteHashStmt.run(pathRow.path);
-          }
-          deleteTrackStmt.run(row.id);
-        }
-        this.cleanupOrphanedEntities();
-      })();
-    } finally {
-      this.db.pragma("foreign_keys = ON");
-    }
+    return { warnings, duplicateFilesDetected: groups.length };
   }
 
   /** Remove albums, artists, genres, codecs with no referencing tracks. */
@@ -578,6 +555,9 @@ export class LibraryScanner {
       for (const entry of entries) {
         const full = path.join(current, entry.name);
         if (entry.isDirectory()) {
+          // Skip trash/recycle-bin folders: a deleted copy of a track inside
+          // a scanned folder must not be indexed as a real library track.
+          if (isTrashDirectory(entry.name)) continue;
           walk(full);
         } else if (
           entry.isFile() &&
@@ -592,16 +572,20 @@ export class LibraryScanner {
     return files;
   }
 
-  /** Load paths of tracks with duration=0 so they are always re-scanned. */
-  private loadZeroDurationPaths(folder: string): Set<string> {
-    const pattern = escapeLike(folder) + "%";
+  /**
+   * Load paths of tracks with duration=0 so they are always re-scanned.
+   * `folderKey` is NFC; returned paths are keyed NFC so lookups match the
+   * scanner's normalized keys even for pre-migration NFD rows.
+   */
+  private loadZeroDurationPaths(folderKey: string): Set<string> {
+    const pattern = escapeLike(folderKey) + "%";
     const rows = this.loadZeroDurationStmt.all(pattern) as { path: string }[];
-    return new Set(rows.map((r) => r.path));
+    return new Set(rows.map((r) => normalizePath(r.path)));
   }
 
   /** Load path → last_modified (ms) from content_hashes for mtime-based skip. */
-  private loadExistingMtimes(folder: string): Map<string, number> {
-    const pattern = escapeLike(folder) + "%";
+  private loadExistingMtimes(folderKey: string): Map<string, number> {
+    const pattern = escapeLike(folderKey) + "%";
     const rows = this.loadMtimesStmt.all(pattern) as {
       file_path: string;
       last_modified: string;
@@ -609,7 +593,7 @@ export class LibraryScanner {
     const map = new Map<string, number>();
     for (const r of rows) {
       const ms = new Date(r.last_modified).getTime();
-      if (!Number.isNaN(ms)) map.set(r.file_path, ms);
+      if (!Number.isNaN(ms)) map.set(normalizePath(r.file_path), ms);
     }
     return map;
   }
@@ -902,27 +886,14 @@ export class LibraryScanner {
   }
 
   /**
-   * Resolve foreign keys and upsert a track row.
-   * Skips if a track with same (artist, album, title) already exists at a
-   * different path (prevents duplicates from Trash or multiple folders).
-   * @returns false if skipped as duplicate, true if upserted
+   * Resolve foreign keys and upsert a track row. Track identity is the file
+   * path (tracks.path UNIQUE); distinct files are never collapsed by metadata.
    */
-  private upsertTrack(data: TrackUpsertData): boolean {
+  private upsertTrack(data: TrackUpsertData): void {
     const artistId = this.getOrCreateArtistId(data.artist);
     const albumId = this.getOrCreateAlbumId(data.album, artistId);
     const genreId = this.getOrCreateGenreId(data.genre);
     const codecId = this.getOrCreateCodecId(data.codec);
-
-    const existing = this.getTrackByArtistAlbumTitleStmt.get(
-      artistId,
-      albumId,
-      data.title ?? null,
-      data.title ?? null,
-      data.title ?? null
-    ) as { id: number; path: string } | undefined;
-    if (existing && existing.path !== data.path) {
-      return false;
-    }
 
     const trackNumber = this.parseIntField(data.trackNumber);
     const discNumber = this.parseIntField(data.discNumber);
@@ -953,6 +924,5 @@ export class LibraryScanner {
       showTitle: data.showTitle ?? null,
       episodeNumber,
     });
-    return true;
   }
 }

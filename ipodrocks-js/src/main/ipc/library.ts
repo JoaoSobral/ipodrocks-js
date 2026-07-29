@@ -22,6 +22,8 @@ export function registerLibraryHandlers(): void {
       let totalRemoved = 0;
 
       const allErrors: string[] = [];
+      const allWarnings: string[] = [];
+      let totalDuplicateFiles = 0;
       const allAdded: string[] = [];
       const allUpdated: string[] = [];
       const allRemovedIds: number[] = [];
@@ -43,6 +45,8 @@ export function registerLibraryHandlers(): void {
           totalProcessed += result.filesProcessed;
           totalRemoved += result.filesRemoved ?? 0;
           if (result.errors?.length) allErrors.push(...result.errors);
+          if (result.warnings?.length) allWarnings.push(...result.warnings);
+          totalDuplicateFiles += result.duplicateFilesDetected ?? 0;
           if (result.addedTrackPaths?.length) allAdded.push(...result.addedTrackPaths);
           if (result.updatedTrackPaths?.length) allUpdated.push(...result.updatedTrackPaths);
           if (result.removedTrackIds?.length) allRemovedIds.push(...result.removedTrackIds);
@@ -53,6 +57,8 @@ export function registerLibraryHandlers(): void {
               filesRemoved: totalRemoved,
               cancelled: true,
               errors: allErrors,
+              warnings: allWarnings,
+              duplicateFilesDetected: totalDuplicateFiles,
             };
           }
         }
@@ -75,6 +81,8 @@ export function registerLibraryHandlers(): void {
           filesRemoved: totalRemoved,
           cancelled: false,
           errors: allErrors,
+          warnings: allWarnings,
+          duplicateFilesDetected: totalDuplicateFiles,
         };
       } finally {
         activeScanAbort = null;

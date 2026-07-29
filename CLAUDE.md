@@ -21,7 +21,6 @@ These are confirmed reuse/efficiency issues found during `src/main/` review. Add
 |---|---|---|
 | Reuse | `ipc/devices.ts` + `ipc/sync.ts` | Device track map building (music/podcast/audiobook) repeated 3× |
 | Reuse | `library-scanner.ts` / `library-core.ts` | `get-or-create` pattern for artist/album/genre duplicated |
-| Reuse | `database.ts` + `library-scanner.ts` | Track deduplication logic lives in both |
 | Efficiency | `library-scanner.ts:641` | `INSERT OR IGNORE` then `SELECT` — reverse to `SELECT` first |
 | Efficiency | `metadata-extractor.ts:141` | `parseFile()` called twice per track |
 | Efficiency | `playback-log-ingest.ts:90` | Full library aggregation on every ingest — should be incremental |

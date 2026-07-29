@@ -200,7 +200,7 @@ function buildProfileCommand(
 }
 
 
-function runLoggedSubprocess(
+export function runLoggedSubprocess(
   cmd: string[],
   logCallback?: (line: string) => void,
   signal?: AbortSignal,
