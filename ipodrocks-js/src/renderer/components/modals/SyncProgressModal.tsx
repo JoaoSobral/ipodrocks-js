@@ -16,8 +16,11 @@ interface RecentItem {
 
 export interface SyncCompleteResult {
   synced: number;
-  skipped: number;
+  /** Track/song-data failures only. Album artwork is counted separately. */
   errors: number;
+  skipped: number;
+  /** Album-artwork failures. Never song data — cover art only. */
+  artworkErrors: number;
   status: "success" | "error" | "warning";
   skippedBreakdown: {
     music: number;
@@ -97,6 +100,8 @@ export function SyncProgressModal({
   const [finished, setFinished] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [cancelled, setCancelled] = useState(false);
+  /** Album-artwork failures, reported apart from song-data failures. */
+  const [artworkErrors, setArtworkErrors] = useState(0);
   const [elapsedSec, setElapsedSec] = useState(0);
 
   const listRef = useRef<HTMLDivElement>(null);
@@ -210,6 +215,7 @@ export function SyncProgressModal({
     setFinished(false);
     setError(null);
     setCancelled(false);
+    setArtworkErrors(0);
     setElapsedSec(0);
     hasReceivedTotalRef.current = false;
 
@@ -222,7 +228,7 @@ export function SyncProgressModal({
     progressUnsubRef.current = unsub;
 
     startSync(opts)
-      .then((result: { synced?: number; removed?: number; errors?: number; error?: string }) => {
+      .then((result: { synced?: number; removed?: number; errors?: number; artworkErrors?: number; error?: string }) => {
         setFinished(true);
         const errMsg = result?.error != null ? String(result.error) : "";
         const isCancelled = errMsg.toLowerCase().includes("cancelled");
@@ -233,12 +239,28 @@ export function SyncProgressModal({
         }
         const synced = result?.synced ?? 0;
         const errors = result?.errors ?? 0;
+        const artworkErrors = isCancelled ? 0 : result?.artworkErrors ?? 0;
         const totalSkipped = processedItemsRef.current - copiedItemsRef.current;
+        setArtworkErrors(artworkErrors);
+
+        // Artwork failures fail the sync, but they are cover art only — never
+        // song data — so they get their own count and their own wording.
+        const status: SyncCompleteResult["status"] = isCancelled
+          ? "warning"
+          : errors > 0
+            ? synced > 0
+              ? "warning"
+              : "error"
+            : artworkErrors > 0
+              ? "error"
+              : "success";
+
         onCompleteRef.current?.({
           synced,
           skipped: totalSkipped,
           errors: isCancelled ? 0 : errors || (errMsg ? 1 : 0),
-          status: isCancelled ? "warning" : errors > 0 ? (synced > 0 ? "warning" : "error") : "success",
+          artworkErrors,
+          status,
           skippedBreakdown: { ...skippedByTypeRef.current },
         });
       })
@@ -255,6 +277,7 @@ export function SyncProgressModal({
           synced: 0,
           skipped: 0,
           errors: isCancelled ? 0 : 1,
+          artworkErrors: 0,
           status: "error",
           skippedBreakdown: { ...skippedByTypeRef.current },
         });
@@ -420,6 +443,12 @@ export function SyncProgressModal({
                   skippedByType.playlist > 0 && `${skippedByType.playlist} playlists`,
                 ].filter(Boolean).join(", ")}
               </div>
+            )}
+            {artworkErrors > 0 && (
+              <p className="mt-2 text-center text-xs font-medium text-destructive">
+                Album artwork failed for {artworkErrors} album{artworkErrors === 1 ? "" : "s"} — cover
+                art only. Your song files copied successfully.
+              </p>
             )}
             {cancelled && (
               <p className="mt-2 text-center text-xs text-warning">Sync was cancelled</p>

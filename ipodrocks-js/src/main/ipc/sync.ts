@@ -217,7 +217,8 @@ export function registerSyncHandlers(): void {
         extras: string[];
         missingFiles: string[];
         errors: number;
-      } = { status: "completed", synced: 0, removed: 0, extras: [], missingFiles: [], errors: 0 };
+        artworkErrors: number;
+      } = { status: "completed", synced: 0, removed: 0, extras: [], missingFiles: [], errors: 0, artworkErrors: 0 };
 
       const willRunMusic = Object.keys(musicLibraryTracks).length > 0;
       const willRunPodcast = Object.keys(podcastLibraryTracks).length > 0;
@@ -331,6 +332,7 @@ export function registerSyncHandlers(): void {
         result.synced += musicResult.synced;
         result.removed += musicResult.removed;
         result.errors += musicResult.errors;
+        result.artworkErrors += musicResult.artworkErrors;
         result.extras = [...result.extras, ...musicResult.extras];
         result.missingFiles = [...result.missingFiles, ...musicResult.missingFiles];
       }
@@ -359,6 +361,7 @@ export function registerSyncHandlers(): void {
         result.synced += podcastResult.synced;
         result.removed += podcastResult.removed;
         result.errors += podcastResult.errors;
+        result.artworkErrors += podcastResult.artworkErrors;
         result.extras = [...result.extras, ...podcastResult.extras];
         result.missingFiles = [...result.missingFiles, ...podcastResult.missingFiles];
       }
@@ -387,6 +390,7 @@ export function registerSyncHandlers(): void {
         result.synced += audiobookResult.synced;
         result.removed += audiobookResult.removed;
         result.errors += audiobookResult.errors;
+        result.artworkErrors += audiobookResult.artworkErrors;
         result.extras = [...result.extras, ...audiobookResult.extras];
         result.missingFiles = [...result.missingFiles, ...audiobookResult.missingFiles];
       }
@@ -457,7 +461,7 @@ export function registerSyncHandlers(): void {
         }
       }
 
-      if (result.errors > 0) result.status = "error";
+      if (result.errors > 0 || result.artworkErrors > 0) result.status = "error";
 
       const shouldWritePlaylists =
         result.errors === 0 &&

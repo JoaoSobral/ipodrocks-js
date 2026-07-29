@@ -11,7 +11,10 @@ export interface SyncResults {
   synced: number;
   skipped: number;
   removed: number;
+  /** Track/song-data failures only. */
   errors: number;
+  /** Album-artwork failures — cover art only, never song data. */
+  artworkErrors: number;
   status: "success" | "error" | "warning";
 }
 

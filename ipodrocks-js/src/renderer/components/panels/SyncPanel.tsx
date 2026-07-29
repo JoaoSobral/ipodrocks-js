@@ -855,6 +855,7 @@ export function SyncPanel() {
               skipped: r.skipped,
               removed: 0,
               errors: r.errors,
+              artworkErrors: r.artworkErrors,
               status: r.status,
             });
           }}
@@ -872,15 +873,20 @@ export function SyncPanel() {
                 color: statusColors[results.status],
               }}
             >
-              {statusLabels[results.status]}
+              {/* Artwork-only failures still read as failed, but must not imply
+                  that any song data failed to copy. */}
+              {results.errors === 0 && results.artworkErrors > 0
+                ? "Failed — album artwork only"
+                : statusLabels[results.status]}
             </span>
           </div>
-          <div className="grid grid-cols-4 gap-4">
+          <div className="grid grid-cols-5 gap-4">
             {[
               { label: "Synced", value: results.synced, color: "var(--success)" },
               { label: "Skipped", value: results.skipped, color: "var(--muted-foreground)" },
               { label: "Removed", value: results.removed, color: "var(--warning)" },
-              { label: "Errors", value: results.errors, color: "var(--destructive)" },
+              { label: "Song Errors", value: results.errors, color: "var(--destructive)" },
+              { label: "Artwork Errors", value: results.artworkErrors, color: "var(--destructive)" },
             ].map((stat) => (
               <div key={stat.label} className="text-center">
                 <p className="text-xl font-bold" style={{ color: stat.color }}>
@@ -890,6 +896,16 @@ export function SyncPanel() {
               </div>
             ))}
           </div>
+          {results.artworkErrors > 0 && (
+            <p className="mt-3 text-xs text-destructive">
+              Album artwork could not be generated for {results.artworkErrors} album
+              {results.artworkErrors === 1 ? "" : "s"}. This affects cover art only —
+              {results.errors === 0
+                ? " every song file copied successfully."
+                : " see Song Errors above for track problems."}{" "}
+              Check the sync log for the album folders involved.
+            </p>
+          )}
         </Card>
       )}
     </div>

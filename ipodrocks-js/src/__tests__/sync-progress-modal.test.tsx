@@ -18,10 +18,16 @@ import type { SyncOptions, SyncProgress } from "@shared/types";
 // ---- Mock the renderer IPC api ----
 
 let progressCb: ((p: SyncProgress) => void) | null = null;
-let resolveStartSync: ((r: { synced?: number; errors?: number; error?: string }) => void) | null = null;
+type StartSyncResult = {
+  synced?: number;
+  errors?: number;
+  artworkErrors?: number;
+  error?: string;
+};
+let resolveStartSync: ((r: StartSyncResult) => void) | null = null;
 const startSyncMock = vi.fn(
   (_opts?: SyncOptions) =>
-    new Promise<{ synced?: number; errors?: number; error?: string }>((resolve) => {
+    new Promise<StartSyncResult>((resolve) => {
       resolveStartSync = resolve;
     }),
 );
@@ -48,7 +54,7 @@ function emit(p: Record<string, unknown>) {
   });
 }
 
-async function finishSync(result: { synced?: number; errors?: number; error?: string }) {
+async function finishSync(result: StartSyncResult) {
   await act(async () => {
     resolveStartSync?.(result);
     await Promise.resolve();
@@ -136,5 +142,97 @@ describe("SyncProgressModal completion messaging", () => {
     await waitFor(() => expect(screen.getByText("Sync was cancelled.")).toBeInTheDocument());
     expect(screen.queryByText("Nothing to sync — device up to date.")).not.toBeInTheDocument();
     expect(screen.queryByText("Processed")).not.toBeInTheDocument();
+  });
+});
+
+describe("SyncProgressModal album-artwork failures", () => {
+  beforeEach(() => {
+    progressCb = null;
+    resolveStartSync = null;
+    startSyncMock.mockClear();
+    cancelSyncMock.mockClear();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** Drive one processed item so the summary card renders. */
+  function emitOneCopiedTrack() {
+    emit({ event: "total", path: "1" });
+    emit({ event: "copy", path: "/music/song.mp3", status: "copied", contentType: "music" });
+  }
+
+  it("names album artwork explicitly and clears song data of blame", async () => {
+    render(<SyncProgressModal open onClose={() => {}} syncOptions={SYNC_OPTIONS} />);
+    emitOneCopiedTrack();
+    await finishSync({ synced: 1, errors: 0, artworkErrors: 2 });
+
+    await waitFor(() => {
+      expect(screen.getByText(/Album artwork failed for 2 albums/i)).toBeTruthy();
+    });
+    // The wording must not let the user think tracks were lost.
+    expect(screen.getByText(/song files copied successfully/i)).toBeTruthy();
+  });
+
+  it("uses the singular form for a single failed album", async () => {
+    render(<SyncProgressModal open onClose={() => {}} syncOptions={SYNC_OPTIONS} />);
+    emitOneCopiedTrack();
+    await finishSync({ synced: 1, errors: 0, artworkErrors: 1 });
+
+    await waitFor(() => {
+      expect(screen.getByText(/Album artwork failed for 1 album\b/i)).toBeTruthy();
+    });
+  });
+
+  it("reports a failure status when only artwork failed", async () => {
+    const onComplete = vi.fn();
+    render(
+      <SyncProgressModal open onClose={() => {}} syncOptions={SYNC_OPTIONS} onComplete={onComplete} />
+    );
+    emitOneCopiedTrack();
+    await finishSync({ synced: 1, errors: 0, artworkErrors: 3 });
+
+    await waitFor(() => expect(onComplete).toHaveBeenCalled());
+    expect(onComplete.mock.calls[0][0]).toMatchObject({
+      status: "error",
+      errors: 0,
+      artworkErrors: 3,
+    });
+  });
+
+  it("keeps artwork failures out of the song-error count", async () => {
+    const onComplete = vi.fn();
+    render(
+      <SyncProgressModal open onClose={() => {}} syncOptions={SYNC_OPTIONS} onComplete={onComplete} />
+    );
+    emitOneCopiedTrack();
+    await finishSync({ synced: 4, errors: 2, artworkErrors: 5 });
+
+    await waitFor(() => expect(onComplete).toHaveBeenCalled());
+    const result = onComplete.mock.calls[0][0];
+    expect(result.errors).toBe(2);
+    expect(result.artworkErrors).toBe(5);
+  });
+
+  it("says nothing about artwork when none failed", async () => {
+    render(<SyncProgressModal open onClose={() => {}} syncOptions={SYNC_OPTIONS} />);
+    emitOneCopiedTrack();
+    await finishSync({ synced: 1, errors: 0, artworkErrors: 0 });
+
+    await waitFor(() => expect(screen.queryByText(/Album artwork failed/i)).toBeNull());
+  });
+
+  it("does not blame artwork when the sync was cancelled", async () => {
+    const onComplete = vi.fn();
+    render(
+      <SyncProgressModal open onClose={() => {}} syncOptions={SYNC_OPTIONS} onComplete={onComplete} />
+    );
+    emitOneCopiedTrack();
+    await finishSync({ synced: 1, artworkErrors: 4, error: "Sync cancelled by user." });
+
+    await waitFor(() => expect(onComplete).toHaveBeenCalled());
+    expect(onComplete.mock.calls[0][0]).toMatchObject({ status: "warning", artworkErrors: 0 });
+    expect(screen.queryByText(/Album artwork failed/i)).toBeNull();
   });
 });

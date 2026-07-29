@@ -13,6 +13,10 @@
 - **Artwork conversion can't hang a sync** — A malformed or extremely large image made ffmpeg run unbounded; cover conversion now gives up after 20 seconds and moves on.
 - **Duplicate reports handle unusual filenames** — Paths containing a newline no longer garble the "Duplicates detected" list.
 
+### Changes
+
+- **Artwork failures now fail the sync — and say so plainly** — Album artwork problems were previously advisory and left the sync reporting success, so a device could finish with no cover art and no indication anything went wrong. A sync with artwork failures is now reported as failed, but labelled unambiguously: the status reads "Failed — album artwork only", artwork failures are counted in their own "Artwork Errors" column separate from "Song Errors", and the summary states that cover art was affected while your song files copied fine. The sync log lists the specific album folders involved. Playlists are still written, since they depend on track data rather than artwork.
+
 ### Improvements
 
 - **Rocksy can find duplicate files** — Asking "do I have duplicate songs?" now uses a dedicated read-only tool that lists byte-identical copies and their paths. It deletes nothing; removing a copy stays your decision.
