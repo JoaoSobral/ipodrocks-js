@@ -20,11 +20,11 @@ import {
   isTrashDirectory,
 } from "../utils/audio-extensions";
 import { normalizePath } from "../utils/normalize-path";
-
-/** Escape LIKE special chars (% _ \) so folder paths are safe in LIKE patterns. */
-function escapeLike(s: string): string {
-  return s.replace(/[%_\\]/g, (c) => "\\" + c);
-}
+import { escapeLike } from "../utils/sql-like";
+import {
+  findDuplicateFileGroups,
+  formatDuplicateWarnings,
+} from "./duplicate-files";
 
 interface TrackUpsertData {
   path: string;
@@ -453,27 +453,11 @@ export class LibraryScanner {
     warnings: string[];
     duplicateFilesDetected: number;
   } {
-    const groups = this.db
-      .prepare(
-        `SELECT file_hash, GROUP_CONCAT(path, '\n') AS paths, COUNT(*) AS n
-           FROM tracks
-          WHERE path LIKE ? ESCAPE '\\'
-            AND file_hash IS NOT NULL AND file_hash != ''
-          GROUP BY file_hash
-         HAVING n > 1`
-      )
-      .all(escapeLike(folder) + "%") as {
-      file_hash: string;
-      paths: string;
-      n: number;
-    }[];
-
-    const warnings = groups.map((g) => {
-      const paths = g.paths.split("\n");
-      return `Duplicate file content (${g.n} copies): ${paths.join(" | ")}`;
-    });
-
-    return { warnings, duplicateFilesDetected: groups.length };
+    const groups = findDuplicateFileGroups(this.db, folder);
+    return {
+      warnings: formatDuplicateWarnings(groups),
+      duplicateFilesDetected: groups.length,
+    };
   }
 
   /** Remove albums, artists, genres, codecs with no referencing tracks. */

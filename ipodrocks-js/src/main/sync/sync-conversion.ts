@@ -200,11 +200,22 @@ function buildProfileCommand(
 }
 
 
+/**
+ * `runLoggedSubprocess` rejects with a plain `Error("Cancelled")` on abort — it
+ * cannot construct a `SyncCancelled` without importing sync-core, which would
+ * create a module cycle. Callers must therefore recognise cancellation by
+ * message rather than by type.
+ */
+export function isCancellationError(err: unknown): boolean {
+  return err instanceof Error && err.message === "Cancelled";
+}
+
 export function runLoggedSubprocess(
   cmd: string[],
   logCallback?: (line: string) => void,
   signal?: AbortSignal,
-  env?: NodeJS.ProcessEnv
+  env?: NodeJS.ProcessEnv,
+  timeoutMs?: number
 ): Promise<number> {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
@@ -223,11 +234,30 @@ export function runLoggedSubprocess(
       return;
     }
 
+    let timer: NodeJS.Timeout | undefined;
+
     const onAbort = (): void => {
+      if (timer) clearTimeout(timer);
       proc.kill("SIGTERM");
       reject(new Error("Cancelled"));
     };
     signal?.addEventListener("abort", onAbort, { once: true });
+
+    const cleanup = (): void => {
+      signal?.removeEventListener("abort", onAbort);
+      if (timer) clearTimeout(timer);
+    };
+
+    // Optional watchdog. A malformed or maliciously oversized input (e.g. a
+    // decompression-bomb cover image) can make ffmpeg allocate and spin for a
+    // very long time before any output filter applies, which would otherwise
+    // hang the whole sync with no way out but user cancellation.
+    if (timeoutMs != null && timeoutMs > 0) {
+      timer = setTimeout(() => {
+        proc.kill("SIGKILL");
+        logCallback?.(`Timed out after ${timeoutMs}ms: ${cmd[0]}`);
+      }, timeoutMs);
+    }
 
     const handleOutput = (data: Buffer): void => {
       const lines = data.toString("utf-8").split(/\r?\n/);
@@ -241,12 +271,12 @@ export function runLoggedSubprocess(
     proc.stderr?.on("data", handleOutput);
 
     proc.on("error", (err) => {
-      signal?.removeEventListener("abort", onAbort);
+      cleanup();
       reject(err);
     });
 
     proc.on("close", (code) => {
-      signal?.removeEventListener("abort", onAbort);
+      cleanup();
       resolve(code ?? 1);
     });
   });

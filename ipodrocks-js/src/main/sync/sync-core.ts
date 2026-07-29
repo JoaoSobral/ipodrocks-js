@@ -9,7 +9,8 @@ import {
   SkippedTrack,
   compareLibraries,
 } from "./name-size-sync";
-import { ConversionSettings, updateExtension, estimateConvertedSize } from "./sync-conversion";
+import { ConversionSettings, updateExtension, estimateConvertedSize, isCancellationError } from "./sync-conversion";
+import { findOnDisk } from "../utils/normalize-path";
 import {
   CopyProgress,
   CopyToDeviceOptions,
@@ -392,7 +393,7 @@ export function analyzeContentType(
       compareOpts
     );
   } catch (err) {
-    if (err instanceof Error && err.message.includes("Cancelled")) {
+    if (isCancellationError(err)) {
       throw new SyncCancelled();
     }
     throw err;
@@ -464,7 +465,12 @@ export async function copyMissingTracks(
   const existingPaths: string[] = [];
   const missingFiles: string[] = [];
   for (const tp of missingPaths) {
-    if (fs.existsSync(tp)) {
+    // Stored paths are NFC; the on-disk name may be NFD on normalization-
+    // sensitive filesystems. Probe the resolved form but keep `tp` (NFC) as the
+    // key for destination naming and progress/DB lookups — otherwise perfectly
+    // present tracks get reported as missing and never reach copyToDevice,
+    // which does its own findOnDisk.
+    if (fs.existsSync(findOnDisk(tp))) {
       existingPaths.push(tp);
     } else {
       missingFiles.push(tp);
@@ -643,8 +649,14 @@ export async function copyAlbumArtworkToDevice(
       signal: cancelSignal,
     });
 
+    // Whether a cover needs writing is only known after the skip check, so the
+    // total grows one item at a time alongside the processed count. The renderer
+    // raises totalItems only on "total"/"total_add" but advances processedItems
+    // on every "copy" event, so emitting one without the other pushes the bar
+    // past 100% (e.g. "48/40 copied").
     if (result === "written") {
       copied++;
+      progressCallback?.({ event: "total_add", path: "1" });
       progressCallback?.({
         event: "copy",
         path: destPath,
@@ -656,6 +668,7 @@ export async function copyAlbumArtworkToDevice(
       skipped++;
     } else {
       errors++;
+      progressCallback?.({ event: "total_add", path: "1" });
       progressCallback?.({
         event: "copy",
         path: sourceDir,

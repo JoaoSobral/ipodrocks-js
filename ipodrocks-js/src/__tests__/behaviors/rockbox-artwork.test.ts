@@ -21,6 +21,7 @@ import {
   findAlbumArtSource,
   generateRockboxCover,
 } from "../../main/sync/rockbox-cover";
+import { SyncCancelled } from "../../main/sync/sync-core";
 
 function ffmpegAvailable(): boolean {
   try {
@@ -132,6 +133,61 @@ describe.skipIf(!canRun)("Rockbox cover generation", () => {
     );
     expect(result).toBe("written");
     expect(fs.readFileSync(dest).toString()).toBe("not a real image");
+  });
+
+  it("regenerates when the max dimension is raised", async () => {
+    const src = makeImage("resize-up.png", "1000x1000");
+    const dest = path.join(workDir, "AlbumF", "cover.jpg");
+    const source = { kind: "file" as const, path: src, mtimeMs: fs.statSync(src).mtimeMs };
+
+    expect(await generateRockboxCover(source, dest, { maxDim: 200 })).toBe("written");
+    expect(inspectJpeg(fs.readFileSync(dest)).width).toBeLessThanOrEqual(202);
+
+    // The source art is untouched, so an mtime-only freshness check would skip
+    // here and silently leave the cover at the old size.
+    expect(await generateRockboxCover(source, dest, { maxDim: 500 })).toBe("written");
+    const resized = inspectJpeg(fs.readFileSync(dest));
+    expect(resized.width).toBeGreaterThan(300);
+    expect(resized.width).toBeLessThanOrEqual(502);
+  });
+
+  it("regenerates when the max dimension is lowered", async () => {
+    const src = makeImage("resize-down.png", "1000x1000");
+    const dest = path.join(workDir, "AlbumG", "cover.jpg");
+    const source = { kind: "file" as const, path: src, mtimeMs: fs.statSync(src).mtimeMs };
+
+    expect(await generateRockboxCover(source, dest, { maxDim: 750 })).toBe("written");
+    expect(await generateRockboxCover(source, dest, { maxDim: 200 })).toBe("written");
+    expect(inspectJpeg(fs.readFileSync(dest)).width).toBeLessThanOrEqual(202);
+  });
+
+  it("still skips a small source that can never reach the max dimension", async () => {
+    const src = makeImage("tiny.png", "150x150");
+    const dest = path.join(workDir, "AlbumH", "cover.jpg");
+    const source = { kind: "file" as const, path: src, mtimeMs: fs.statSync(src).mtimeMs };
+
+    expect(await generateRockboxCover(source, dest, { maxDim: 300 })).toBe("written");
+    // 150px art is never upscaled, so it legitimately stays under 300px — this
+    // must not regenerate on every single sync.
+    expect(await generateRockboxCover(source, dest, { maxDim: 300 })).toBe("skipped");
+  });
+
+  it("propagates cancellation instead of falling back to a verbatim copy", async () => {
+    const src = makeImage("cancel.png", "1200x1200");
+    const dest = path.join(workDir, "AlbumI", "cover.jpg");
+    const controller = new AbortController();
+
+    const pending = generateRockboxCover(
+      { kind: "file", path: src, mtimeMs: fs.statSync(src).mtimeMs },
+      dest,
+      { maxDim: 300, signal: controller.signal }
+    );
+    controller.abort();
+
+    // ffmpeg rejects with a plain Error("Cancelled"); it must surface as
+    // SyncCancelled rather than being swallowed into the fallback copy.
+    await expect(pending).rejects.toBeInstanceOf(SyncCancelled);
+    expect(fs.existsSync(dest)).toBe(false);
   });
 
   it("prefers a folder-art file named cover/folder/front over others", async () => {
