@@ -209,6 +209,7 @@ CREATE TABLE IF NOT EXISTS devices (
     rockbox_smart_playlists BOOLEAN NOT NULL DEFAULT 0,
     dev_mode BOOLEAN NOT NULL DEFAULT 0,
     skip_album_artwork BOOLEAN NOT NULL DEFAULT 0,
+    artwork_max_dimension INTEGER NOT NULL DEFAULT 300,
     vbr_enabled BOOLEAN NOT NULL DEFAULT 0,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (default_transfer_mode_id) REFERENCES device_transfer_modes (id),

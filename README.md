@@ -100,6 +100,7 @@ If you really like iPodRocks and want to keep it caffeinated, you can buy me a c
 - **Create playlists by talking** — Ask the assistant to make a Smart or Genius playlist in plain English: "Make me a rock playlist with 30 tracks" or "Create a late night favorites playlist from my listening history" — it handles the rest
 - **Manage podcasts & audiobooks by talking** — "Subscribe to Syntax", "Add this RSS feed", "Find audiobooks by Jules Verne", "What audiobooks do I have?"
 - **Fix broken playlists** — "Which playlists have missing songs?" then "Repair that one" — Rocksy lists and repairs broken playlists for you
+- **Adjust device settings** — "Make my iPod's album art smaller" or "turn off artwork for my iPod" — Rocksy updates the device's artwork size or skip setting for you
 - **Smart memory management** — Up to 40 permanently pinned memories that survive the rolling history limit. Say "forget about that" or "actually my name is X" to update or remove memories
 - Markdown rendering, copy-paste friendly
 
@@ -122,12 +123,14 @@ If you really like iPodRocks and want to keep it caffeinated, you can buy me a c
 ### Sync & Conversion
 - **Full or custom sync** — Pick albums, artists, genres, playlists
 - FFmpeg conversion with metadata preserved
+- **Rockbox-compatible album art** — Generates a single baseline-JPEG `cover.jpg` per album folder, resized to a per-device maximum (default 300 px so iPods stay responsive), so artwork loads reliably on Rockbox. Uses folder art or embedded artwork as the source; no extra software required
 - Live progress feedback
 
 ### More
 - **M3U8 export** — Playlists for any player
 - **Dark & light themes** — Gmail-like light mode
 - **Library scanning** — MP3, FLAC, AAC, OGG, Opus, WavPack, Musepack, WAV, AIFF, and more
+- **Unicode-safe scanning** — Handles accented and non-Latin filenames consistently, including on SMB/SAMBA network shares
 
 ---
 
@@ -201,6 +204,7 @@ If `mpcenc` is not on your PATH, iPodRocks will prompt when you select Musepack.
 
 - Add multiple devices with custom folder layouts
 - Configure codec per device (direct copy, MP3, AAC, Musepack, etc.)
+- Choose the generated album-art size per device (200–750 px; default 300 px keeps iPods responsive), or turn artwork off entirely
 - Use shadow libraries for devices that need pre-converted files
 - Check device status: synced tracks, orphan files, and sync history
 

@@ -514,11 +514,13 @@ Tool usage rules (CRITICAL):
 - User asks about their devices → call \`device_list\`.
 - User asks to sync a device / "sync my iPod" → call \`device_list\` first to get the device ID, then call \`device_sync\`.
 - User asks to remove or delete a device → call \`device_list\` first, then call \`device_remove\`.
+- User asks to change a device's album-artwork setting or cover size (e.g. "make the artwork smaller", "my iPod is slow with big covers", "turn off artwork for my iPod", "use 300px covers") → call \`device_list\` first, then \`device_update_settings\`. Recommend 300px for iPods so they stay responsive.
 - User asks to scan the library / "scan for new music" / "rescan" → call \`library_scan\`.
 - User asks about playlists with missing/broken songs, or "why does my playlist show wrong count", or "fix my playlist" → call \`playlist_list_broken\` first to see which playlists are affected, then call \`playlist_repair\` on the ones the user confirms (or all if they say "fix all"). Only smart playlists can be rebuilt from rules; for others, Repair removes the missing tracks.
 - NEVER say "I can't search for podcasts" or "I can't browse the internet" — you have \`podcast_search\` for exactly this purpose.
 - NEVER say "I can't sync devices" or "I don't have a sync tool" — you have \`device_sync\`.
 - NEVER say "I can't delete or remove a device" — you have \`device_remove\`.
+- NEVER say "I can't change device settings" or "I can't adjust artwork" — you have \`device_update_settings\` for album-artwork skipping and cover size.
 - NEVER say "I can't fix or repair playlists" — you have \`playlist_list_broken\` and \`playlist_repair\`.
 - NEVER say "I can't scan the library" — you have \`library_scan\`.
 - NEVER tell the user to manually find an RSS feed — use \`podcast_search\` for name-based search, or \`podcast_add_by_url\` if they have a specific URL.

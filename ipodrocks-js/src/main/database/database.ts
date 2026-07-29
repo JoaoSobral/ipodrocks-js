@@ -2,6 +2,7 @@ import Database from "better-sqlite3";
 import { app } from "electron";
 import path from "path";
 import { SCHEMA_SQL } from "./schema";
+import { migrateNfcPaths } from "./nfc-path-migration";
 
 export class AppDatabase {
   private db: Database.Database | null = null;
@@ -24,14 +25,30 @@ export class AppDatabase {
     this.migrateAssistantChat();
     this.migrateDropRedundantIndexes();
     this.migrateCaseInsensitiveEntities();
-    this.migrateDeduplicateTracks();
     this.migrateRatings();
     this.migratePodcasts();
     this.migratePodcastSource();
     this.migrateDeviceSyncPreferences();
     this.migrateDeviceSkipAlbumArtwork();
+    this.migrateDeviceArtworkMaxDimension();
     this.migrateVbrEnabled();
     this.migrateShadowPausedStatus();
+    this.migrateNfcPaths();
+  }
+
+  /**
+   * Normalize all stored library paths to Unicode NFC (issue: files with
+   * Unicode names on SMB/SAMBA mounts were repeatedly added/removed because
+   * NFC/NFD forms compared unequal). One-time, flag-guarded. See
+   * database/nfc-path-migration.ts.
+   */
+  private migrateNfcPaths(): void {
+    if (!this.db) return;
+    try {
+      migrateNfcPaths(this.db);
+    } catch (err) {
+      console.error("[db] migration failed (migrateNfcPaths):", err);
+    }
   }
 
   /**
@@ -92,6 +109,27 @@ export class AppDatabase {
       }
     } catch (err) {
       console.error("[db] migration failed (migrateDeviceSkipAlbumArtwork):", err);
+    }
+  }
+
+  /**
+   * Add the artwork_max_dimension column to devices for existing databases.
+   * Defaults to 300 px — conservative so iPods stay responsive with generated
+   * cover.jpg files.
+   */
+  private migrateDeviceArtworkMaxDimension(): void {
+    if (!this.db) return;
+    try {
+      const rows = this.db
+        .prepare("PRAGMA table_info(devices)")
+        .all() as { name: string }[];
+      if (!new Set(rows.map((r) => r.name)).has("artwork_max_dimension")) {
+        this.db
+          .prepare("ALTER TABLE devices ADD COLUMN artwork_max_dimension INTEGER NOT NULL DEFAULT 300")
+          .run();
+      }
+    } catch (err) {
+      console.error("[db] migration failed (migrateDeviceArtworkMaxDimension):", err);
     }
   }
 
@@ -285,110 +323,6 @@ export class AppDatabase {
       DROP TABLE albums;
       ALTER TABLE albums_new RENAME TO albums;
     `);
-  }
-
-  /**
-   * Remove duplicate tracks: same (artist, album, title). These three define
-   * uniqueness. Title comparison is case-insensitive. Keeps the one with
-   * MIN(id), deletes the rest. Runs once per migration flag.
-   */
-  private migrateDeduplicateTracks(): void {
-    if (!this.db) return;
-    try {
-    const done = this.db
-      .prepare("SELECT value FROM app_settings WHERE key = 'migrate_deduplicate_tracks_prefer_main_done'")
-      .get() as { value: string } | undefined;
-    if (done?.value === "1") return;
-
-    const dupes = this.db.prepare(`
-      SELECT t.id FROM tracks t
-      WHERE EXISTS (
-        SELECT 1 FROM tracks t2
-        WHERE t2.artist_id IS NOT DISTINCT FROM t.artist_id
-          AND t2.album_id IS NOT DISTINCT FROM t.album_id
-          AND (
-            (t2.title IS NULL AND t.title IS NULL)
-            OR (t2.title IS NOT NULL AND t.title IS NOT NULL AND LOWER(t2.title) = LOWER(t.title))
-          )
-          AND t2.id != t.id
-          AND (
-            (t.path LIKE '%Trash%' AND t2.path NOT LIKE '%Trash%')
-            OR (
-              (t.path LIKE '%Trash%') = (t2.path LIKE '%Trash%')
-              AND t2.id < t.id
-            )
-          )
-      )
-    `).all() as { id: number }[];
-
-    const deletePlaybackLogsStmt = this.db.prepare("DELETE FROM playback_logs WHERE matched_track_id = ?");
-    const deletePlaybackStatsStmt = this.db.prepare("DELETE FROM playback_stats WHERE track_id = ?");
-    const deleteShadowStmt = this.db.prepare("DELETE FROM shadow_tracks WHERE source_track_id = ?");
-    const getPathStmt = this.db.prepare("SELECT path FROM tracks WHERE id = ?");
-    const deleteHashStmt = this.db.prepare("DELETE FROM content_hashes WHERE file_path = ?");
-    const deleteTrackStmt = this.db.prepare("DELETE FROM tracks WHERE id = ?");
-
-    this.db.pragma("foreign_keys = OFF");
-    try {
-      this.db.transaction(() => {
-        for (const row of dupes) {
-          deletePlaybackLogsStmt.run(row.id);
-          deletePlaybackStatsStmt.run(row.id);
-          deleteShadowStmt.run(row.id);
-          const pathRow = getPathStmt.get(row.id) as { path: string } | undefined;
-          if (pathRow) {
-            deleteHashStmt.run(pathRow.path);
-          }
-          deleteTrackStmt.run(row.id);
-        }
-
-        const orphanAlbumIds = this.db!.prepare(
-          "SELECT id FROM albums WHERE id NOT IN (SELECT DISTINCT album_id FROM tracks WHERE album_id IS NOT NULL)"
-        ).all() as { id: number }[];
-        const orphanArtistIds = this.db!.prepare(
-          `SELECT id FROM artists WHERE id NOT IN (
-            SELECT artist_id FROM albums UNION SELECT artist_id FROM tracks WHERE artist_id IS NOT NULL
-          )`
-        ).all() as { id: number }[];
-        const orphanGenreIds = this.db!.prepare(
-          "SELECT id FROM genres WHERE id NOT IN (SELECT DISTINCT genre_id FROM tracks WHERE genre_id IS NOT NULL)"
-        ).all() as { id: number }[];
-
-        const albumIds = orphanAlbumIds.map((r) => r.id);
-        const artistIds = orphanArtistIds.map((r) => r.id);
-        const genreIds = orphanGenreIds.map((r) => r.id);
-        const idsToNull = [...albumIds, ...artistIds, ...genreIds];
-
-        if (idsToNull.length > 0) {
-          const placeholders = idsToNull.map(() => "?").join(",");
-          this.db!.prepare(
-            `UPDATE sync_rules SET target_id = NULL WHERE target_id IN (${placeholders})`
-          ).run(...idsToNull);
-        }
-
-        if (albumIds.length > 0) {
-          const ph = albumIds.map(() => "?").join(",");
-          this.db!.prepare(`DELETE FROM albums WHERE id IN (${ph})`).run(...albumIds);
-        }
-        if (artistIds.length > 0) {
-          const ph = artistIds.map(() => "?").join(",");
-          this.db!.prepare(`DELETE FROM artists WHERE id IN (${ph})`).run(...artistIds);
-        }
-        if (genreIds.length > 0) {
-          const ph = genreIds.map(() => "?").join(",");
-          this.db!.prepare(`DELETE FROM genres WHERE id IN (${ph})`).run(...genreIds);
-        }
-
-        this.db!.prepare(
-          "INSERT OR REPLACE INTO app_settings (key, value, updated_at) VALUES ('migrate_deduplicate_tracks_prefer_main_done', '1', CURRENT_TIMESTAMP)"
-        ).run();
-      })();
-    } finally {
-      this.db.pragma("foreign_keys = ON");
-    }
-    } catch (err) {
-      console.error("[db] migration failed (migrateDeduplicateTracks):", err);
-    }
   }
 
   /** F13: Drop redundant explicit indexes on columns that already have implicit UNIQUE indexes. */

@@ -560,6 +560,62 @@ const device_remove: AiTool = {
   },
 };
 
+const device_update_settings: AiTool = {
+  name: "device_update_settings",
+  description:
+    "Update a device's sync settings. Supports toggling album-artwork generation (skip_album_artwork) and choosing the generated cover.jpg size (artwork_max_dimension: 200, 300, 500, or 750 px; 300 is recommended for iPods so they stay responsive).",
+  parameters: {
+    type: "object",
+    properties: {
+      device_id: { type: "number", description: "Device ID (from device_list)" },
+      skip_album_artwork: {
+        type: "boolean",
+        description: "When true, no album artwork is generated for this device during sync.",
+      },
+      artwork_max_dimension: {
+        type: "number",
+        enum: [200, 300, 500, 750],
+        description: "Max dimension (px) of the generated cover.jpg. 300 recommended for iPods.",
+      },
+    },
+    required: ["device_id"],
+  },
+  kind: "write-safe",
+  summarize: (a) => {
+    const parts: string[] = [];
+    if (a.skip_album_artwork !== undefined) parts.push(`skip artwork = ${a.skip_album_artwork}`);
+    if (a.artwork_max_dimension !== undefined) parts.push(`artwork size = ${a.artwork_max_dimension}px`);
+    return `Update device #${a.device_id} settings (${parts.join(", ") || "no changes"})`;
+  },
+  async run(args, ctx) {
+    const deviceId = Number(args.device_id);
+    if (!Number.isInteger(deviceId) || deviceId <= 0) throw new Error("Invalid device_id");
+    const device = ctx.getDevicesCore().getDeviceById(deviceId);
+    if (!device) throw new Error(`Device #${deviceId} not found`);
+
+    const updates: Record<string, unknown> = {};
+    if (args.skip_album_artwork !== undefined) {
+      updates.skipAlbumArtwork = !!args.skip_album_artwork;
+    }
+    if (args.artwork_max_dimension !== undefined) {
+      const dim = Number(args.artwork_max_dimension);
+      if (![200, 300, 500, 750].includes(dim)) {
+        throw new Error("artwork_max_dimension must be one of 200, 300, 500, 750");
+      }
+      updates.artworkMaxDimension = dim;
+    }
+    if (Object.keys(updates).length === 0) {
+      throw new Error("No settings provided to update");
+    }
+
+    const ok = ctx.getDevicesCore().updateDevice(deviceId, updates);
+    if (!ok) throw new Error(`Failed to update device #${deviceId}`);
+    invalidateAssistantCache();
+    logActivity(ctx.db, "update_device", `AI updated settings for device: ${device.profile.name}`);
+    return { updated: true, name: device.profile.name, ...updates };
+  },
+};
+
 const device_sync: AiTool = {
   name: "device_sync",
   description: "Start a sync for a device using its saved sync preferences. Opens the Sync panel where you can watch progress.",
@@ -753,6 +809,7 @@ export const AI_TOOLS: AiTool[] = [
   podcast_add_by_url,
   device_check,
   device_remove,
+  device_update_settings,
   device_sync,
   library_scan,
   podcast_download_now,

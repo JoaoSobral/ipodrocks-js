@@ -18,3 +18,21 @@ export function isMpcFile(filePath: string): boolean {
 export function isMacosMetadataFile(name: string): boolean {
   return name.startsWith("._");
 }
+
+// Trash / recycle-bin directory names. A scanned folder may contain a deleted
+// copy of a track (e.g. inside ".Trash-1000/files/…"); we must not index those
+// copies as real library tracks. Matched by EXACT directory name (not a
+// substring) so legitimate folders like "Trash Talk/" are still scanned.
+const TRASH_DIR_NAMES = new Set([
+  ".trashes",
+  "$recycle.bin",
+  "recycler",
+  "recycled",
+]);
+
+export function isTrashDirectory(name: string): boolean {
+  const lower = name.toLowerCase();
+  // ".Trash", ".Trashes", ".Trash-1000" (Linux XDG per-uid trash)
+  if (/^\.trash(es)?(-\d+)?$/.test(lower)) return true;
+  return TRASH_DIR_NAMES.has(lower);
+}

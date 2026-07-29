@@ -1,6 +1,8 @@
 import * as fs from "fs";
 import * as path from "path";
 
+import { findOnDisk } from "../utils/normalize-path";
+
 import { ConversionSettings, convertWithCodec, convertWithFfmpeg, updateExtension } from "./sync-conversion";
 import { appendSyncError } from "./sync-error-log";
 
@@ -101,7 +103,12 @@ export async function copyToDevice(
   for (const srcPath of trackPaths) {
     if (cancelSignal?.aborted) return;
 
-    if (!fs.existsSync(srcPath)) {
+    // Track paths are stored NFC-normalized; on normalization-sensitive
+    // filesystems the on-disk name may be NFD. Resolve to the readable form
+    // for the actual copy/convert, but keep `srcPath` (NFC) for dest naming
+    // and progress/DB keys.
+    const diskSrc = findOnDisk(srcPath);
+    if (!fs.existsSync(diskSrc)) {
       logCallback?.(`Warning: Source file not found: ${srcPath}`);
       progressCallback?.({ srcPath, destPath: null, status: "missing" });
       continue;
@@ -134,12 +141,12 @@ export async function copyToDevice(
     }
 
     if (!shouldConvert) {
-      copyJobs.push({ src: srcPath, dest });
+      copyJobs.push({ src: diskSrc, dest });
       continue;
     }
 
     const hasCodec = conversionSettings != null && "codec" in conversionSettings;
-    convertJobs.push({ src: srcPath, dest, hasCodec, settings: conversionSettings, profile });
+    convertJobs.push({ src: diskSrc, dest, hasCodec, settings: conversionSettings, profile });
   }
 
   if (copyJobs.length > 0) {

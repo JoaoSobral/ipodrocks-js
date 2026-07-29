@@ -40,6 +40,7 @@ interface DeviceRow {
   model_internal_value: string | null;
   skip_playback_log: number;
   skip_album_artwork: number;
+  artwork_max_dimension: number;
   rockbox_smart_playlists: number;
   dev_mode: number;
   auto_podcasts_enabled: number;
@@ -51,7 +52,7 @@ const DEVICES_QUERY = `
          d.audiobook_folder, d.playlist_folder, d.description, d.last_sync_date, d.total_synced_items, d.last_sync_count,
          d.default_transfer_mode_id, d.default_codec_config_id, d.model_id,
          d.override_bitrate, d.override_quality, d.override_bits,
-         d.partial_sync_enabled, d.skip_playback_log, d.skip_album_artwork, d.rockbox_smart_playlists, d.dev_mode,
+         d.partial_sync_enabled, d.skip_playback_log, d.skip_album_artwork, d.artwork_max_dimension, d.rockbox_smart_playlists, d.dev_mode,
          d.auto_podcasts_enabled, d.vbr_enabled, d.source_library_type, d.shadow_library_id,
          dtm.name as transfer_mode_name,
          cc.name as codec_config_name, cc.bitrate_value, cc.quality_value,
@@ -85,6 +86,7 @@ const ALLOWED_UPDATE_FIELDS = new Set([
   "shadow_library_id",
   "skip_playback_log",
   "skip_album_artwork",
+  "artwork_max_dimension",
   "rockbox_smart_playlists",
   "dev_mode",
   "auto_podcasts_enabled",
@@ -112,11 +114,25 @@ const FIELD_MAP: Record<string, string> = {
   shadowLibraryId: "shadow_library_id",
   skipPlaybackLog: "skip_playback_log",
   skipAlbumArtwork: "skip_album_artwork",
+  artworkMaxDimension: "artwork_max_dimension",
   rockboxSmartPlaylists: "rockbox_smart_playlists",
   devMode: "dev_mode",
   autoPodcastsEnabled: "auto_podcasts_enabled",
   vbrEnabled: "vbr_enabled",
 };
+
+/** Allowed generated-cover dimensions (px). 300 default keeps iPods responsive. */
+export const ARTWORK_MAX_DIMENSIONS = [200, 300, 500, 750] as const;
+const DEFAULT_ARTWORK_MAX_DIMENSION = 300;
+
+/** Clamp an incoming value to one of the allowed cover dimensions. */
+function sanitizeArtworkMaxDimension(value: unknown): number {
+  const n = Math.round(Number(value));
+  if (!Number.isFinite(n)) return DEFAULT_ARTWORK_MAX_DIMENSION;
+  return (ARTWORK_MAX_DIMENSIONS as readonly number[]).includes(n)
+    ? n
+    : DEFAULT_ARTWORK_MAX_DIMENSION;
+}
 
 export class DevicesCore {
   private db: Database.Database;
@@ -216,6 +232,8 @@ export class DevicesCore {
       const normalized =
         dbField === "mount_path"
           ? sanitizeMountPath(value)
+          : dbField === "artwork_max_dimension"
+          ? sanitizeArtworkMaxDimension(value)
           : dbField === "partial_sync_enabled" || dbField === "skip_playback_log" || dbField === "skip_album_artwork" || dbField === "rockbox_smart_playlists" || dbField === "dev_mode" || dbField === "auto_podcasts_enabled" || dbField === "vbr_enabled"
           ? (value ? 1 : 0)
           : value;
@@ -363,6 +381,7 @@ export class DevicesCore {
       modelInternalValue: row.model_internal_value,
       skipPlaybackLog: !!(row.skip_playback_log ?? 0),
       skipAlbumArtwork: !!(row.skip_album_artwork ?? 0),
+      artworkMaxDimension: sanitizeArtworkMaxDimension(row.artwork_max_dimension),
       rockboxSmartPlaylists: !!(row.rockbox_smart_playlists ?? 0),
       devMode: !!(row.dev_mode ?? 0),
       autoPodcastsEnabled: !!(row.auto_podcasts_enabled ?? 0),

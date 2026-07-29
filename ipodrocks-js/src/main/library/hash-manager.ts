@@ -2,6 +2,8 @@ import * as crypto from "crypto";
 import * as fs from "fs";
 import Database from "better-sqlite3";
 
+import { normalizePath } from "../utils/normalize-path";
+
 /**
  * Represents a content hash record for fast file comparison.
  */
@@ -144,7 +146,9 @@ export class HashManager {
    * @returns ContentHash or null if not found
    */
   getHash(filePath: string): ContentHash | null {
-    const row = this.stmtGetHash.get(filePath) as ContentHashRow | undefined;
+    const row = this.stmtGetHash.get(normalizePath(filePath)) as
+      | ContentHashRow
+      | undefined;
     if (!row) return null;
     return this._rowToContentHash(row);
   }
@@ -158,7 +162,7 @@ export class HashManager {
   storeHash(hash: ContentHash): boolean {
     try {
       this.stmtUpsertHash.run(
-        hash.filePath,
+        normalizePath(hash.filePath),
         hash.contentHash,
         hash.metadataHash,
         hash.fileSize,
@@ -178,7 +182,7 @@ export class HashManager {
    * @returns true if a row was deleted
    */
   removeHash(filePath: string): boolean {
-    const info = this.stmtDeleteHash.run(filePath);
+    const info = this.stmtDeleteHash.run(normalizePath(filePath));
     return info.changes > 0;
   }
 

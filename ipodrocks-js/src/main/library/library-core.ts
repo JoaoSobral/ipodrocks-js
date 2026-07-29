@@ -1,6 +1,7 @@
 import Database from "better-sqlite3";
 import path from "path";
 import { LibraryFolder, Track } from "../../shared/types";
+import { normalizePath } from "../utils/normalize-path";
 
 type ContentType = "music" | "podcast" | "audiobook";
 
@@ -208,7 +209,7 @@ export class LibraryCore {
     if (!VALID_CONTENT_TYPES.has(contentType)) {
       throw new Error("contentType must be 'music', 'podcast', or 'audiobook'");
     }
-    const resolved = path.resolve(folderPath);
+    const resolved = normalizePath(path.resolve(folderPath));
     const info = this.stmtInsertFolder.run(name, resolved, contentType);
     return Number(info.lastInsertRowid);
   }
@@ -227,7 +228,7 @@ export class LibraryCore {
     if (!VALID_CONTENT_TYPES.has(contentType)) {
       throw new Error("contentType must be 'music', 'podcast', or 'audiobook'");
     }
-    const resolved = path.resolve(folderPath);
+    const resolved = normalizePath(path.resolve(folderPath));
     const info = this.db
       .prepare(
         "UPDATE library_folders SET name = ?, path = ?, content_type = ? WHERE id = ?"
@@ -309,6 +310,7 @@ export class LibraryCore {
     fileHash: string,
     metadataHash: string | null = null
   ): void {
+    const dbPath = normalizePath(trackPath);
     const doUpsert = this.db.transaction(() => {
       const artistId = this._getOrCreateArtist(artistName);
       const albumId = this._getOrCreateAlbum(albumTitle, artistId);
@@ -316,7 +318,7 @@ export class LibraryCore {
       const codecId = this._getCodecId(codecName);
 
       this.stmtUpsertTrack.run(
-        trackPath,
+        dbPath,
         filename,
         title,
         trackNumber,
@@ -382,7 +384,7 @@ export class LibraryCore {
    * @returns Track or undefined if not found
    */
   getTrackByPath(trackPath: string): Track | undefined {
-    const row = this.stmtGetTrackByPath.get(trackPath) as
+    const row = this.stmtGetTrackByPath.get(normalizePath(trackPath)) as
       | TrackRow
       | undefined;
     return row ? this._rowToTrack(row) : undefined;
@@ -394,15 +396,16 @@ export class LibraryCore {
    * @returns true if the track was deleted
    */
   deleteTrack(trackPath: string): boolean {
+    const dbPath = normalizePath(trackPath);
     const row = this.db
       .prepare("SELECT id FROM tracks WHERE path = ?")
-      .get(trackPath) as { id: number } | undefined;
+      .get(dbPath) as { id: number } | undefined;
     if (!row) return false;
 
     const trackId = row.id;
     this.db.prepare("DELETE FROM playback_logs WHERE matched_track_id = ?").run(trackId);
     this.db.prepare("DELETE FROM playback_stats WHERE track_id = ?").run(trackId);
-    const info = this.stmtDeleteTrack.run(trackPath);
+    const info = this.stmtDeleteTrack.run(dbPath);
     return info.changes > 0;
   }
 

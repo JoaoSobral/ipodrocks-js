@@ -197,6 +197,23 @@ export function ScanProgressModal({ open, onClose, folders }: ScanProgressModalP
                 </ErrorBox>
               </div>
             )}
+            {result.warnings && result.warnings.length > 0 && (
+              <div className="mt-3 rounded-md border border-warning/40 bg-warning/10 p-2">
+                <p className="text-xs font-semibold mb-2 text-warning">
+                  Duplicates detected ({result.warnings.length})
+                </p>
+                <p className="text-xs text-muted-foreground mb-2">
+                  These files have identical content but different paths. Both
+                  are kept in your library — remove the extra copies on disk if
+                  you don't want them.
+                </p>
+                <ul className="max-h-32 overflow-y-auto text-xs text-foreground space-y-1 font-mono">
+                  {result.warnings.map((line) => (
+                    <li key={line} className="truncate">{line}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </div>
         )}
 

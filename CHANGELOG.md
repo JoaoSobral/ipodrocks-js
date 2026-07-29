@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.1.0] — 2026-07
+
+### Features
+
+- **Rockbox-compatible album artwork** — Cover art loading on Rockbox used to be inconsistent because iPodRocks copied whatever image files it found verbatim, and Rockbox can only reliably display baseline (non-progressive) JPEGs within tight memory limits. iPodRocks now generates a single, clean `cover.jpg` per album folder during sync: it picks the best source art (a `cover`/`folder`/`front`/`album` image, else the largest image in the folder, else the track's embedded artwork) and re-encodes it to a small baseline JPEG using the bundled ffmpeg — no extra software required. This also restores artwork for Opus/Ogg transcodes, whose embedded art was previously dropped. Covers regenerate only when the source changes, so re-syncs stay fast.
+- **Per-device artwork size** — Each device now has an "Artwork size" setting (200 / 300 / 500 / 750 px). The default is **300 px**, which keeps iPods responsive — larger covers can noticeably slow them down. Rocksy can change this for you too (e.g. "make my iPod's covers smaller" or "turn off artwork for my iPod").
+
+### Fixes
+
+- **Files with Unicode names on network/SMB shares are scanned reliably** — Libraries mounted over SAMBA/SMB (and some macOS setups) can report filenames in a different Unicode form (NFC vs NFD) than a previous scan stored, which made iPodRocks fail to recognize those files — tracks with accented or non-Latin names were repeatedly re-added and removed, or went missing, and clearing the scan cache didn't help. All library paths are now normalized to a single canonical form, so these files scan once and stay put. A one-time database cleanup runs on upgrade to reconcile any duplicate entries the old behavior created; **if Unicode-named tracks were missing, run a scan to restore them.**
+- **Library scan no longer drops distinct tracks** — The scanner used to treat any two files sharing the same artist, album and title as duplicates and silently keep only one — even when they were genuinely different songs. This lost tracks on multi-disc albums with repeated titles ("Intro", "Interlude", untitled tracks), classical movements, and same-title remixes, and clearing the scan cache never brought them back. Track identity is now the file itself: every distinct file is kept, and deleted copies inside a folder's Trash/recycle bin are excluded from scanning instead of collapsing your real tracks. **If tracks went missing from your library, run a scan to restore them.** Byte-identical copies of the same file are now reported in the scan summary (both are kept) rather than one being silently deleted.
+
 ## [2.0.5] — 2026-07
 
 ### Fixes

@@ -1,8 +1,6 @@
 import * as fs from "fs";
 import * as path from "path";
-import { parseFile } from "music-metadata";
-import { isMpcFile } from "../utils/audio-extensions";
-import { readApeTags } from "../tagging/reader";
+import { extractEmbeddedPicture } from "../utils/embedded-art";
 
 const COVER_BASENAMES = ["cover.jpg", "cover.jpeg", "cover.png"];
 
@@ -35,26 +33,7 @@ export async function ensureShowCoverArt(
 ): Promise<{ written: string } | null> {
   if (showFolderHasCover(showDir)) return null;
 
-  let picture: { data: Uint8Array; format: string } | undefined;
-  if (isMpcFile(sourceAudioPath)) {
-    // music-metadata's parseFile throws on tagged SV8 MPC — read the embedded
-    // cover with our own APEv2 reader instead.
-    try {
-      const cover = readApeTags(sourceAudioPath).coverArt;
-      if (cover) picture = { data: cover.data, format: cover.mimeType };
-    } catch (err) {
-      console.warn(`[podcasts] cover extract: read failed for ${sourceAudioPath}:`, err);
-      return null;
-    }
-  } else {
-    try {
-      const metadata = await parseFile(sourceAudioPath, { duration: false });
-      picture = metadata.common.picture?.[0];
-    } catch (err) {
-      console.warn(`[podcasts] cover extract: read failed for ${sourceAudioPath}:`, err);
-      return null;
-    }
-  }
+  const picture = await extractEmbeddedPicture(sourceAudioPath);
   if (!picture) return null;
 
   const ext = pickExtension(picture.format);
