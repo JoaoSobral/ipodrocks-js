@@ -305,8 +305,12 @@ export async function getDevices(): Promise<DeviceProfile[]> {
   return window.api.invoke("device:list") as Promise<DeviceProfile[]>;
 }
 
-export async function addDevice(config: AddDeviceConfig): Promise<DeviceProfile> {
-  return window.api.invoke("device:add", config) as Promise<DeviceProfile>;
+export async function addDevice(
+  config: AddDeviceConfig
+): Promise<DeviceProfile | { error: string }> {
+  return window.api.invoke("device:add", config) as Promise<
+    DeviceProfile | { error: string }
+  >;
 }
 
 export async function updateDevice(
