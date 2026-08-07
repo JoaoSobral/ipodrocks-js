@@ -1,5 +1,11 @@
 # Changelog
 
+## [2.1.1] — 2026-08
+
+### Fixes
+
+- **Package Build ARM64 Signature** — Fixed the packaged build signature that was failing to open the package giving an error as "damage packaged"
+
 ## [2.1.0] — 2026-07
 
 ### Features
