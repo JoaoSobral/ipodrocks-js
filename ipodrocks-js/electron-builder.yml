@@ -4,6 +4,8 @@ productName: iPodRocks
 directories:
   output: out
   buildResources: resources
+# Ad-hoc sign + seal the macOS bundle so Gatekeeper doesn't report "damaged".
+afterSign: scripts/adhoc-sign-mac.js
 files:
   - dist/**/*
   - node_modules/**/*
@@ -25,6 +27,12 @@ mac:
   target:
     - zip
   category: public.app-category.music
+  # Ad-hoc signing only (no Developer ID). Keep hardened runtime off so the
+  # unsigned/ad-hoc build runs without notarization.
+  hardenedRuntime: false
+  gatekeeperAssess: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
 win:
   target:
     - portable

@@ -57,6 +57,13 @@ jobs:
       - name: Build ${{ matrix.target }} installer
         run: npm run ${{ matrix.dist-script }}
 
+      - name: Verify macOS code signature seal
+        if: startsWith(matrix.os, 'macos')
+        run: |
+          APP=$(find out -maxdepth 2 -name '*.app' -print -quit)
+          echo "Verifying $APP"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
