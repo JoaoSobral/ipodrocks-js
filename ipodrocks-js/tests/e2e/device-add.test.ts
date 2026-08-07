@@ -38,6 +38,14 @@ test("rejected add (filesystem root) shows an error instead of closing silently"
   // Navigate to the Devices panel via the sidebar.
   await window.locator('button:has-text("Devices"), a:has-text("Devices")').first().click();
 
+  // On hosts without `mpcenc` (e.g. CI runners), DevicePanel auto-opens an
+  // "MPC unavailable" reminder on first mount, whose backdrop blocks every
+  // other click. Dismiss it if it appears before driving the form.
+  const mpcModalClose = window.locator('div[role="dialog"]:has-text("Musepack (MPC) unavailable") button[title="Close"]');
+  if (await mpcModalClose.isVisible({ timeout: 2_000 }).catch(() => false)) {
+    await mpcModalClose.click();
+  }
+
   // Open the Add Device modal.
   await window.locator('button:has-text("+ Add Device")').first().click();
 
