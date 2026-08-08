@@ -33,7 +33,7 @@ import { findDuplicateFileGroups } from "../library/duplicate-files";
 import { logActivity } from "../activity/activity-logger";
 import { invalidateAssistantCache } from "./assistantChat";
 import {
-  getAvailableGeniusTypes,
+  getGeniusTypesWithAvailability,
   generateGeniusPlaylistFromDb,
 } from "../playlists/genius-engine";
 
@@ -264,7 +264,7 @@ const playlist_create_smart: AiTool = {
 
 const playlist_create_genius: AiTool = {
   name: "playlist_create_genius",
-  description: "Create a Genius playlist based on listening history (most played, favorites, late night, etc.).",
+  description: "Create a Genius playlist based on listening history (most played, favorites, hidden gems, etc.).",
   parameters: {
     type: "object",
     properties: {
@@ -275,10 +275,6 @@ const playlist_create_genius: AiTool = {
       },
       max_tracks: { type: "number", description: "Maximum tracks (default 25)" },
       artist: { type: "string", description: "For deep_dive type: the artist name" },
-      target_month: { type: "number", description: "For time_capsule: month (1-12)" },
-      target_year: { type: "number", description: "For time_capsule: year (e.g. 2022)" },
-      range_start_months_ago: { type: "number", description: "For golden_era: start of range in months ago" },
-      range_end_months_ago: { type: "number", description: "For golden_era: end of range in months ago" },
     },
     required: ["name", "genius_type"],
   },
@@ -289,18 +285,25 @@ const playlist_create_genius: AiTool = {
     const geniusType = String(args.genius_type ?? "");
     if (!name || !geniusType) throw new Error("name and genius_type are required");
 
-    const validTypes = getAvailableGeniusTypes(ctx.db).map((t) => t.value);
-    if (!validTypes.includes(geniusType)) {
-      throw new Error(`Invalid genius_type "${geniusType}". Valid values: ${validTypes.join(", ")}`);
+    // Distinguish "no such type" from "real type, currently unavailable" —
+    // collapsing them makes the model retry with invented type names instead
+    // of relaying the actual blocker (e.g. an unset device clock) to the user.
+    const allTypes = getGeniusTypesWithAvailability(ctx.db).types;
+    const match = allTypes.find((t) => t.value === geniusType);
+    if (!match) {
+      throw new Error(
+        `Invalid genius_type "${geniusType}". Valid values: ${allTypes.map((t) => t.value).join(", ")}`
+      );
+    }
+    if (match.available === false) {
+      throw new Error(
+        `The "${geniusType}" playlist type is unavailable right now. ${match.unavailableReason ?? ""}`.trim()
+      );
     }
 
     const opts = {
       maxTracks: args.max_tracks ? Number(args.max_tracks) : 25,
       artist: args.artist ? String(args.artist) : undefined,
-      targetMonth: args.target_month ? Number(args.target_month) : undefined,
-      targetYear: args.target_year ? Number(args.target_year) : undefined,
-      rangeStartMonthsAgo: args.range_start_months_ago ? Number(args.range_start_months_ago) : undefined,
-      rangeEndMonthsAgo: args.range_end_months_ago ? Number(args.range_end_months_ago) : undefined,
     };
 
     const result = generateGeniusPlaylistFromDb(geniusType, ctx.db, opts);

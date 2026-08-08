@@ -247,23 +247,34 @@ export interface GeniusTypeOption {
   label: string;
   description: string;
   icon: string;
-  /** Min months of playback data required (time-based types). */
-  minMonths?: number;
   /**
-   * Whether this type's ``minMonths`` requirement is met by the current
-   * playback-data span. When false the UI shows it disabled with an
-   * explanation instead of hiding it.
+   * Whether this type reads absolute wall-clock time from the device RTC.
+   * Rockbox timestamps are only as good as the clock the user set on the
+   * device, so these types are gated on the clock looking plausible.
+   */
+  requiresDeviceClock?: boolean;
+  /**
+   * Whether this type can currently produce a meaningful result. When false
+   * the UI shows it disabled with ``unavailableReason`` instead of hiding it.
    */
   available?: boolean;
+  /** Why the type is unavailable. Set only when ``available`` is false. */
+  unavailableReason?: string;
 }
 
 /** Response for the ``genius:types`` channel. */
 export interface GeniusTypesResponse {
   types: GeniusTypeOption[];
-  /** Approximate months spanned by the playback log (0 when empty). */
+  /** Approximate months spanned by the plausible playback log (0 when none). */
   dataMonths: number;
-  /** ISO date of the earliest matched playback-log entry, or null. */
+  /** ISO date of the earliest plausible matched playback-log entry, or null. */
   firstLogDate: string | null;
+  /** Matched playback-log rows, regardless of timestamp plausibility. */
+  totalMatched: number;
+  /** Matched rows whose timestamp is outside the plausible range. */
+  implausibleCount: number;
+  /** Whether the device clock looks correctly set. */
+  clockValid: boolean;
 }
 
 // -- Genius / Rockbox playback log types ----------------------------------
@@ -300,15 +311,8 @@ export interface AnalysisSummary {
 export interface GeniusGenerateOptions {
   maxTracks?: number;
   minPlays?: number;
+  /** For deep_dive: the artist to pull library tracks for. */
   artist?: string;
-  /** For time_capsule: target month (1-12). */
-  targetMonth?: number;
-  /** For time_capsule: target year. */
-  targetYear?: number;
-  /** For golden_era: range start (months ago from now). */
-  rangeStartMonthsAgo?: number;
-  /** For golden_era: range end (months ago from now). */
-  rangeEndMonthsAgo?: number;
 }
 
 export interface SavantIntent {

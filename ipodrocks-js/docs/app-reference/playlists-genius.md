@@ -7,8 +7,8 @@ Genius playlists are built from your Rockbox playback history. They help you red
 - **Load from database** — Use playback history already stored (from a previous device check or sync).
 - **Recheck device** — Read `playback.log` from the selected device to refresh history.
 - **Analysis summary** — Shows total plays, matched plays, and a brief summary of your listening.
-- **Genius types** — Most Played, Favorites, Skip List, Top Artist, Top Album, Late Night, Recently Discovered, Deep Dive, Oldies, Nostalgia, Recent Favorites, Time Capsule, Golden Era. Each has different rules (play count, completion rate, date range, etc.). Some types (e.g. Oldies, Nostalgia) require enough playback history (12+ or 36+ months).
-- **Configure** — Set track limit, minimum plays, artist pick, date range, etc. depending on the type.
+- **Genius types** — Top Rated, Hidden Gems, Most Played, Favorites, Skip List, Recently Discovered, Top Artist, Top Album, Top Genre, Deep Dive, Finish the Album, and Late Night. Each has different rules (rating, play count, completion rate, time of day).
+- **Configure** — Set track limit, minimum plays, or artist pick, depending on the type.
 - **Generate** — Build the playlist and preview before saving.
 - **Save** — Save as a playlist with a name.
 

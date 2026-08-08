@@ -219,11 +219,22 @@ describe("playlist_create_smart (write-safe)", () => {
 describe("playlist_create_genius (write-safe)", () => {
   it("throws for unknown genius_type", async () => {
     const ctx = makeCtx();
-    // getAvailableGeniusTypes queries the DB; our minimal mock causes it to
-    // fail or return [] — either way an invalid genius_type must be rejected.
+    // getGeniusTypesWithAvailability queries the DB; our minimal mock causes it
+    // to fail or return [] — either way an invalid genius_type must be rejected.
     await expect(
       getToolByName("playlist_create_genius")!.run({ name: "Test", genius_type: "bogus" }, ctx)
     ).rejects.toThrow();
+  });
+
+  it("rejects a removed time-window genius_type", async () => {
+    const ctx = makeCtx();
+    // These types were removed because the device RTC cannot supply the
+    // multi-year history they need; they must not silently resurface.
+    for (const dead of ["oldies", "nostalgia", "time_capsule", "golden_era", "recent_favorites"]) {
+      await expect(
+        getToolByName("playlist_create_genius")!.run({ name: "Test", genius_type: dead }, ctx)
+      ).rejects.toThrow();
+    }
   });
 });
 

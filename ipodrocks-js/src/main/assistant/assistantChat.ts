@@ -510,6 +510,9 @@ Tool usage rules (CRITICAL):
 - User asks to subscribe to a podcast → call \`podcast_search\` first (if you don't already have the feed), then call \`podcast_subscribe\`.
 - User gives an RSS feed URL, podcast website URL, or says "subscribe using this link/URL" → call \`podcast_add_by_url\` with that URL immediately. No API key needed.
 - User asks to create a playlist → call \`playlist_create_smart\` or \`playlist_create_genius\`. Get genre/artist/album IDs via \`library_list_genres/artists/albums\` first if you need them.
+- User asks for music they own but never listen to / "stuff I've forgotten" / "never played" → call \`playlist_create_genius\` with genius_type \`hidden_gems\`. It needs no playback history.
+- User asks for albums they started but never finished → call \`playlist_create_genius\` with genius_type \`finish_album\`. For their favourite genre → \`top_genre\`.
+- If \`playlist_create_genius\` reports a type is unavailable, relay the reason verbatim — do not retry with a different genius_type. The usual cause is an unset device clock, which the user fixes on the iPod under Settings → General Settings → System → Time & Date.
 - User asks about their podcasts / subscriptions → call \`podcast_list_subscriptions\`.
 - User asks about their devices → call \`device_list\`.
 - User asks to sync a device / "sync my iPod" → call \`device_list\` first to get the device ID, then call \`device_sync\`.
@@ -771,10 +774,6 @@ export function parseActionTags(reply: string): {
         maxTracks?: number;
         minPlays?: number;
         artist?: string;
-        targetMonth?: number;
-        targetYear?: number;
-        rangeStartMonthsAgo?: number;
-        rangeEndMonthsAgo?: number;
       };
       if (parsed.name && parsed.geniusType) {
         geniusPlaylist = {
@@ -784,10 +783,6 @@ export function parseActionTags(reply: string): {
             maxTracks: parsed.maxTracks,
             minPlays: parsed.minPlays,
             artist: parsed.artist,
-            targetMonth: parsed.targetMonth,
-            targetYear: parsed.targetYear,
-            rangeStartMonthsAgo: parsed.rangeStartMonthsAgo,
-            rangeEndMonthsAgo: parsed.rangeEndMonthsAgo,
           },
         };
       }
