@@ -11,6 +11,7 @@
 
 - **Shadow library builds recognise Unicode-named files correctly** — On filesystems that store accented or non-Latin filenames in a different Unicode form than the database recorded (common on SMB/SAMBA shares and some macOS setups), a shadow library could fail to see the file it had already produced and re-encode it on every rebuild. Those files are now matched regardless of Unicode form.
 - **Track bitrate is read from the audio itself, not the whole file** — A track's bitrate was measured across the entire file including embedded cover art, so a song with a large cover could be reported as substantially higher-bitrate than it is. It is now read from the audio stream.
+- **Embedded cover art is no longer lost on Opus files with large artwork** — Opus tracks whose embedded cover is big enough to be split across the file's internal pages could not be read by the tag reader, which logged `[embedded-art] read failed … Offset is outside the bounds of the DataView` and quietly dropped the artwork. The files were never damaged — iPodRocks now falls back to reading the cover with the bundled ffmpeg, so these albums keep their art on your device instead of syncing without a cover. Track titles and other tags were unaffected.
 ## [2.1.1] — 2026-08
 
 ### Fixes
