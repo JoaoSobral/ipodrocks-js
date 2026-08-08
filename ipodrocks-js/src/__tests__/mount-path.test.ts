@@ -32,8 +32,19 @@ describe("sanitizeMountPath", () => {
     expect(() => sanitizeMountPath("/Volumes/IPOD\0evil")).toThrow(/invalid/i);
   });
 
-  it("rejects a bare filesystem root (mirror-delete safety)", () => {
-    const root = path.parse(process.cwd()).root; // "/" on posix, "C:\\" on win
-    expect(() => sanitizeMountPath(root)).toThrow(/root/i);
+  it("rejects a bare POSIX filesystem root (mirror-delete safety)", () => {
+    expect(() => sanitizeMountPath("/", "linux")).toThrow(/root/i);
+    expect(() => sanitizeMountPath("/", "darwin")).toThrow(/root/i);
+  });
+
+  // Regression: issue #98 — on Windows an iPod/Rockbox device mounts at its
+  // drive root (E:\), which must be accepted. Mirror sync only deletes inside
+  // the Music/Podcasts/Audiobooks subfolders, so a drive root is safe.
+  it("accepts a Windows drive root", () => {
+    expect(sanitizeMountPath("E:\\", "win32")).toBe("E:\\");
+    expect(sanitizeMountPath("D:\\", "win32")).toBe("D:\\");
+    expect(sanitizeMountPath("  E:\\  ", "win32")).toBe("E:\\");
+    // A subfolder under a drive root is likewise fine.
+    expect(sanitizeMountPath("E:\\Music", "win32")).toBe("E:\\Music");
   });
 });

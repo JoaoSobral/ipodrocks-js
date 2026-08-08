@@ -140,14 +140,8 @@ export function PlaylistPanel() {
   const [geniusMaxTracks, setGeniusMaxTracks] = useState(25);
   const [geniusMinPlays, setGeniusMinPlays] = useState(1);
   const [geniusArtistPick, setGeniusArtistPick] = useState("");
-  const [geniusTargetMonth, setGeniusTargetMonth] = useState(
-    () => new Date().getMonth() + 1
-  );
-  const [geniusTargetYear, setGeniusTargetYear] = useState(
-    () => new Date().getFullYear()
-  );
-  const [geniusRangeStart, setGeniusRangeStart] = useState(48);
-  const [geniusRangeEnd, setGeniusRangeEnd] = useState(24);
+  const [geniusClockValid, setGeniusClockValid] = useState(true);
+  const [geniusTotalMatched, setGeniusTotalMatched] = useState(0);
   const [geniusPreview, setGeniusPreview] =
     useState<PlaylistGenerationResult | null>(null);
   const [geniusError, setGeniusError] = useState<string | null>(null);
@@ -365,6 +359,8 @@ export function PlaylistPanel() {
       setGeniusTypes(typesRes.types);
       setGeniusDataMonths(typesRes.dataMonths);
       setGeniusFirstLogDate(typesRes.firstLogDate);
+      setGeniusClockValid(typesRes.clockValid);
+      setGeniusTotalMatched(typesRes.totalMatched);
       setGeniusStep("summary");
     } catch (err) {
       setGeniusError(err instanceof Error ? err.message : String(err));
@@ -403,6 +399,8 @@ export function PlaylistPanel() {
       setGeniusTypes(typesRes.types);
       setGeniusDataMonths(typesRes.dataMonths);
       setGeniusFirstLogDate(typesRes.firstLogDate);
+      setGeniusClockValid(typesRes.clockValid);
+      setGeniusTotalMatched(typesRes.totalMatched);
       setGeniusStep("summary");
     } catch (err) {
       setGeniusError(err instanceof Error ? err.message : String(err));
@@ -417,10 +415,6 @@ export function PlaylistPanel() {
     setGeniusMaxTracks(25);
     setGeniusMinPlays(1);
     setGeniusArtistPick(geniusArtists[0]?.name ?? "");
-    setGeniusTargetMonth(new Date().getMonth() + 1);
-    setGeniusTargetYear(new Date().getFullYear());
-    setGeniusRangeStart(48);
-    setGeniusRangeEnd(24);
     setGeniusStep("configuring");
   }
 
@@ -438,22 +432,6 @@ export function PlaylistPanel() {
           artist:
             geniusSelectedType === "deep_dive"
               ? geniusArtistPick
-              : undefined,
-          targetMonth:
-            geniusSelectedType === "time_capsule"
-              ? geniusTargetMonth
-              : undefined,
-          targetYear:
-            geniusSelectedType === "time_capsule"
-              ? geniusTargetYear
-              : undefined,
-          rangeStartMonthsAgo:
-            geniusSelectedType === "golden_era"
-              ? geniusRangeStart
-              : undefined,
-          rangeEndMonthsAgo:
-            geniusSelectedType === "golden_era"
-              ? geniusRangeEnd
               : undefined,
         }
       );
@@ -852,19 +830,40 @@ export function PlaylistPanel() {
           </Card>
 
           {/* Playback-history context */}
-          <p className="text-[11px] text-muted-foreground">
-            {geniusDataMonths > 0
-              ? `Playback history: ~${geniusDataMonths} month${
-                  geniusDataMonths === 1 ? "" : "s"
-                }${
-                  geniusFirstLogDate
-                    ? ` (since ${new Date(
-                        geniusFirstLogDate
-                      ).toLocaleDateString()})`
-                    : ""
-                }. Some types unlock as your history grows.`
-              : "No playback history yet. Time-based types unlock as your history grows."}
-          </p>
+          {!geniusClockValid && geniusTotalMatched > 0 ? (
+            <div className="text-[11px] rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 leading-relaxed">
+              <p className="text-amber-600 dark:text-amber-400 font-medium">
+                &#9888; Your device clock is not set correctly.
+              </p>
+              <p className="text-muted-foreground mt-1">
+                {geniusTotalMatched} play
+                {geniusTotalMatched === 1 ? " is" : "s are"} recorded, but
+                Rockbox stamped {geniusTotalMatched === 1 ? "it" : "them"} with
+                the device&rsquo;s own clock, which is wrong &mdash; so times of
+                day cannot be trusted. Set it on the iPod under{" "}
+                <span className="font-medium text-foreground">
+                  Settings &rarr; General Settings &rarr; System &rarr; Time
+                  &amp; Date
+                </span>
+                , then play some music and re-check the device. Playlists based
+                on play counts and completion are unaffected.
+              </p>
+            </div>
+          ) : (
+            <p className="text-[11px] text-muted-foreground">
+              {geniusDataMonths > 0
+                ? `Playback history: ~${geniusDataMonths} month${
+                    geniusDataMonths === 1 ? "" : "s"
+                  }${
+                    geniusFirstLogDate
+                      ? ` (since ${new Date(
+                          geniusFirstLogDate
+                        ).toLocaleDateString()})`
+                      : ""
+                  }.`
+                : "No playback history yet."}
+            </p>
+          )}
 
           {/* Type picker grid */}
           <div className="grid grid-cols-4 gap-3">
@@ -878,11 +877,7 @@ export function PlaylistPanel() {
                   onClick={
                     isAvailable ? () => handlePickType(gt.value) : undefined
                   }
-                  title={
-                    isAvailable
-                      ? undefined
-                      : `Needs ≥${gt.minMonths} months of playback history — you have ${geniusDataMonths}`
-                  }
+                  title={isAvailable ? undefined : gt.unavailableReason}
                   className={
                     isAvailable
                       ? "text-left p-4 rounded-xl border border-border bg-muted/30 hover:bg-primary/10 hover:border-primary/30 transition-all cursor-pointer"
@@ -898,8 +893,7 @@ export function PlaylistPanel() {
                   </p>
                   {!isAvailable && (
                     <p className="text-[11px] text-amber-500 mt-2 leading-relaxed">
-                      Needs &ge;{gt.minMonths} months of playback history &mdash;
-                      you have {geniusDataMonths}
+                      {gt.unavailableReason ?? "Currently unavailable"}
                     </p>
                   )}
                 </button>
@@ -928,8 +922,6 @@ export function PlaylistPanel() {
         geniusSelectedType === "most_played" ||
         geniusSelectedType === "favorites";
       const showArtistPicker = geniusSelectedType === "deep_dive";
-      const showTimeCapsule = geniusSelectedType === "time_capsule";
-      const showGoldenEra = geniusSelectedType === "golden_era";
 
       return (
         <div className="flex flex-col gap-4">
@@ -1004,78 +996,6 @@ export function PlaylistPanel() {
                   value={geniusArtistPick}
                   onChange={(v) => setGeniusArtistPick(v)}
                 />
-              )}
-
-              {showTimeCapsule && (
-                <div className="grid grid-cols-2 gap-3">
-                  <Select
-                    label="Month"
-                    options={[
-                      { value: "1", label: "January" },
-                      { value: "2", label: "February" },
-                      { value: "3", label: "March" },
-                      { value: "4", label: "April" },
-                      { value: "5", label: "May" },
-                      { value: "6", label: "June" },
-                      { value: "7", label: "July" },
-                      { value: "8", label: "August" },
-                      { value: "9", label: "September" },
-                      { value: "10", label: "October" },
-                      { value: "11", label: "November" },
-                      { value: "12", label: "December" },
-                    ]}
-                    value={String(geniusTargetMonth)}
-                    onChange={(v) => setGeniusTargetMonth(Number(v) || 1)}
-                  />
-                  <Input
-                    label="Year"
-                    type="number"
-                    min={1990}
-                    max={new Date().getFullYear() + 1}
-                    value={String(geniusTargetYear)}
-                    onChange={(e) =>
-                      setGeniusTargetYear(
-                        Number(e.target.value) || new Date().getFullYear()
-                      )
-                    }
-                  />
-                </div>
-              )}
-
-              {showGoldenEra && (
-                <div className="space-y-3">
-                  <div>
-                    <Label>
-                      Range: {geniusRangeEnd}{"\u2013"}{geniusRangeStart} months ago
-                    </Label>
-                    <div className="flex gap-2 items-center">
-                      <input
-                        type="range"
-                        min={6}
-                        max={120}
-                        value={geniusRangeEnd}
-                        onChange={(e) =>
-                          setGeniusRangeEnd(Number(e.target.value))
-                        }
-                        className="flex-1 accent-primary"
-                      />
-                      <span className="text-xs w-8">{geniusRangeEnd}m</span>
-                    </div>
-                    <div className="flex gap-2 items-center mt-1">
-                      <input
-                        type="range"
-                        min={6}
-                        max={120}
-                        value={geniusRangeStart}
-                        onChange={(e) =>
-                          setGeniusRangeStart(Number(e.target.value))
-                        }
-                        className="flex-1 accent-primary"
-                      />
-                      <span className="text-xs w-8">{geniusRangeStart}m</span>
-                    </div>
-                  </div>
-                </div>
               )}
 
               <div className="flex gap-2 pt-2">

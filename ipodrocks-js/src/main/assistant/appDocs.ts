@@ -102,18 +102,27 @@ Rockbox dynamic mode (tagnavi): when enabled on the device profile, smart playli
 ---
 
 ### Genius Playlists
-Built from Rockbox playback history (from playback.log). Requires at least one device with playback log enabled.
+Built from Rockbox playback history (from playback.log). Most types require at least one device with playback log enabled.
 
 Genius types:
-  Most Played, Favorites, Skip List, Top Artist, Top Album, Late Night (after midnight plays)
-  Recently Discovered, Deep Dive (single artist focus)
-  Oldies, Nostalgia, Recent Favorites, Time Capsule, Golden Era (require 12–36+ months of history)
+  Top Rated (from Rockbox star ratings — needs no playback history)
+  Hidden Gems (library tracks never played — needs no playback history)
+  Most Played, Favorites, Skip List, Recently Discovered
+  Top Artist, Top Album, Top Genre, Deep Dive (single artist focus)
+  Finish the Album (unheard tracks from albums started but never finished)
+  Late Night (22:00–05:00 plays — requires the device clock to be set correctly)
+
+Device clock: Rockbox stamps each play using the iPod's own clock. If that clock is
+wrong (an unset RTC reports the year 2000), Late Night is disabled, because times of
+day cannot be trusted. Fix it on the device under Settings → General Settings →
+System → Time & Date. Every other type uses play counts and completion rates, so
+they stay correct regardless of the clock.
 
 How to use:
 1. Add a device and enable "Read playback log" in Devices.
 2. Load from Database (if already synced before) or Recheck device for playback.log (reads from device).
 3. Wait for analysis. Check the summary (total plays, matched plays).
-4. Pick a Genius type and configure options (track limit, min plays, artist, date range, etc.).
+4. Pick a Genius type and configure options (track limit, min plays, artist).
 5. Generate → preview → Save with a name.
 
 Playback history is stored in the database after first load; you can generate playlists without the device connected afterward.

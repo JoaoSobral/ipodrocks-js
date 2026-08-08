@@ -75,7 +75,7 @@ If you really like iPodRocks and want to keep it caffeinated, you can buy me a c
 ### Smart & Genius Playlists
 - **Multi-select Smart playlist builder** — Pick any combination of genres, artists, and albums in a single 3-column modal. Cross-type AND, within-type OR. Live "~N tracks" preview updates as you tick.
 - **Star-rated playlists** — Both Smart and Genius support a `top_rated` strategy that surfaces tracks rated 4★+ (Rockbox 0–10 ≥ 8). Smart variant works even before any device log is ingested.
-- **Genius from playback logs** — Rediscovery, Forgotten Gems, Most Played, Favorites, Deep Dive, and more. Star ratings from your library now flow into every Genius algorithm.
+- **Genius from playback logs** — Most Played, Favorites, Skip List, Hidden Gems, Top Genre, Finish the Album, Deep Dive, and more. Star ratings from your library now flow into every Genius algorithm.
 - **Rockbox-native smart playlists (tagnavi)** — Per-device opt-in: Smart playlists are written as live, auto-updating Rockbox tagtree entries in `.rockbox/tagnavi_custom.config` instead of frozen `.m3u` snapshots. Other playlist kinds still write `.m3u`.
 - **Playlists as a library filter** — Filter the Library track list down to any playlist's members with a Playlist `<select>` in the filter row; full playlist management lives in the Playlists panel.
 - **Broken-playlist detection & repair** — When a re-scan removes tracks, playlists that still reference them are flagged (warning banner, badges, and a sync gate). Repair drops the dangling items and renumbers; Smart playlists can also be Rebuilt from their rules. A sync gate offers one-click "Repair all & continue".

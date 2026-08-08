@@ -6,7 +6,9 @@ let cachedFfmpegPath: string | null = null;
 
 export function getFfmpegPath(): string {
   if (cachedFfmpegPath) return cachedFfmpegPath;
-  if (app.isPackaged && process.resourcesPath) {
+  // `app` is undefined outside a GUI Electron process (e.g. ELECTRON_RUN_AS_NODE
+  // tooling), where the bundled-resources branch does not apply anyway.
+  if (app?.isPackaged && process.resourcesPath) {
     const name = process.platform === "win32" ? "ffmpeg.exe" : "ffmpeg";
     const candidate = path.join(process.resourcesPath, "ffmpeg", name);
     if (fs.existsSync(candidate)) {

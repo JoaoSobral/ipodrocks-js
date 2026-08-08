@@ -207,7 +207,9 @@ export class MetadataExtractor {
       };
     }
     try {
-      const metadata = await parseFile(filePath);
+      // Format info only — decoding embedded artwork here is pure waste, and
+      // this runs for every file on every scan.
+      const metadata = await parseFile(filePath, { skipCovers: true });
       const fmt = metadata.format;
       const ext = path.extname(filePath).toLowerCase();
 
@@ -287,7 +289,11 @@ export class MetadataExtractor {
       const ext = path.extname(filePath).toLowerCase();
       const codec = this.normalizeCodec(stream.codec_name ?? "", ext);
       const durationStr = fmt.duration ?? stream.duration;
-      const bitrateStr = fmt.bit_rate ?? stream.bit_rate;
+      // Prefer the audio stream's bitrate: format.bit_rate counts everything in
+      // the container, including embedded cover art, which on a large cover can
+      // overstate a track's bitrate by tens of kbps. Some formats (Opus) report
+      // no per-stream bitrate at all, hence the fallback.
+      const bitrateStr = stream.bit_rate ?? fmt.bit_rate;
       const info: AudioInfo = {
         duration: durationStr ? parseFloat(durationStr) : 0,
         bitrate: bitrateStr ? parseInt(bitrateStr, 10) : 0,

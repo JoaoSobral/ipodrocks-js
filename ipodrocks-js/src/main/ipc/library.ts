@@ -1,3 +1,4 @@
+import path from "path";
 import { ipcMain, type WebContents } from "electron";
 import { safe, getLibrary, validateFolderPath } from "./common";
 import { LibraryScanner } from "../library/library-scanner";
@@ -173,6 +174,23 @@ export function registerLibraryHandlers(): void {
       if ("error" in validated) return { error: validated.error };
 
       const lib = getLibrary();
+
+      // name and path are both UNIQUE. Say so in words — the raw constraint
+      // message ("UNIQUE constraint failed: shadow_libraries.path") tells the
+      // user nothing about what to do.
+      const existing = lib.getShadowLibraries();
+      const samePath = existing.find(
+        (l) => path.resolve(l.path) === path.resolve(validated.path)
+      );
+      if (samePath) {
+        return {
+          error: `"${samePath.name}" already uses this folder. Rebuild it instead — a rebuild reuses files that are already correctly encoded.`,
+        };
+      }
+      if (existing.some((l) => l.name.trim() === config.name?.trim())) {
+        return { error: `A shadow library named "${config.name}" already exists.` };
+      }
+
       const id = lib.createShadowLibrary(
         config.name,
         validated.path,

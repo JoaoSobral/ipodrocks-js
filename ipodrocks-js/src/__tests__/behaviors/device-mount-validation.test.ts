@@ -58,14 +58,34 @@ describe("device mount-path validation", () => {
     expect("id" in res && res.id).toBeGreaterThan(0);
   });
 
-  itDb("rejects a filesystem root as the mount path", async () => {
-    const root = path.parse(device.mountPath).root;
-    const res = await session.invoke<{ error?: string }>("device:add", {
-      name: "RootDevice",
-      mountPath: root,
-    });
-    expect(res.error).toMatch(/root/i);
-  });
+  // POSIX only: `/` is never a real device mount and must be rejected. On
+  // Windows a drive root IS a legitimate iPod mount (issue #98), covered below.
+  it.skipIf(!canRunDbTests || process.platform === "win32")(
+    "rejects a POSIX filesystem root as the mount path",
+    async () => {
+      const root = path.parse(device.mountPath).root;
+      const res = await session.invoke<{ error?: string }>("device:add", {
+        name: "RootDevice",
+        mountPath: root,
+      });
+      expect(res.error).toMatch(/root/i);
+    }
+  );
+
+  // Regression (issue #98): a Windows drive root (e.g. E:\ / C:\) is accepted,
+  // since mirror sync only deletes within the content subfolders.
+  it.skipIf(!canRunDbTests || process.platform !== "win32")(
+    "accepts a Windows drive root as the mount path",
+    async () => {
+      const root = path.parse(device.mountPath).root; // e.g. "C:\\"
+      const res = await session.invoke<{ id?: number; error?: string }>(
+        "device:add",
+        { name: "DriveRootDevice", mountPath: root }
+      );
+      expect(res.error).toBeUndefined();
+      expect(res.id).toBeGreaterThan(0);
+    }
+  );
 
   itDb("rejects an empty mount path", async () => {
     const res = await session.invoke<{ error?: string }>("device:add", {

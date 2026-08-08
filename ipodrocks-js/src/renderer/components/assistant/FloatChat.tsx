@@ -39,9 +39,17 @@ export function FloatChat() {
     const unsubScan = window.api.on("assistant:triggerLibraryScan", () => {
       useUIStore.getState().setPendingLibraryScan(true);
     });
+    const unsubShadow = window.api.on(
+      "assistant:triggerShadowRebuild",
+      (...args: unknown[]) => {
+        const payload = args[0] as { shadowLibraryId: number };
+        useUIStore.getState().setPendingShadowRebuildId(payload.shadowLibraryId);
+      }
+    );
     return () => {
       unsubSync();
       unsubScan();
+      unsubShadow();
     };
   }, []);
 

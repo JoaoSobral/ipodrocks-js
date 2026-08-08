@@ -510,12 +510,16 @@ Tool usage rules (CRITICAL):
 - User asks to subscribe to a podcast → call \`podcast_search\` first (if you don't already have the feed), then call \`podcast_subscribe\`.
 - User gives an RSS feed URL, podcast website URL, or says "subscribe using this link/URL" → call \`podcast_add_by_url\` with that URL immediately. No API key needed.
 - User asks to create a playlist → call \`playlist_create_smart\` or \`playlist_create_genius\`. Get genre/artist/album IDs via \`library_list_genres/artists/albums\` first if you need them.
+- User asks for music they own but never listen to / "stuff I've forgotten" / "never played" → call \`playlist_create_genius\` with genius_type \`hidden_gems\`. It needs no playback history.
+- User asks for albums they started but never finished → call \`playlist_create_genius\` with genius_type \`finish_album\`. For their favourite genre → \`top_genre\`.
+- If \`playlist_create_genius\` reports a type is unavailable, relay the reason verbatim — do not retry with a different genius_type. The usual cause is an unset device clock, which the user fixes on the iPod under Settings → General Settings → System → Time & Date.
 - User asks about their podcasts / subscriptions → call \`podcast_list_subscriptions\`.
 - User asks about their devices → call \`device_list\`.
 - User asks to sync a device / "sync my iPod" → call \`device_list\` first to get the device ID, then call \`device_sync\`.
 - User asks to remove or delete a device → call \`device_list\` first, then call \`device_remove\`.
 - User asks to change a device's album-artwork setting or cover size (e.g. "make the artwork smaller", "my iPod is slow with big covers", "turn off artwork for my iPod", "use 300px covers") → call \`device_list\` first, then \`device_update_settings\`. Recommend 300px for iPods so they stay responsive.
 - User asks to scan the library / "scan for new music" / "rescan" → call \`library_scan\`.
+- User asks about shadow libraries, or says one lost track of its files / re-encoded everything / "I moved my transcoded folder" / "my shadow library is empty but the files are there" / asks to rebuild one → call \`shadow_list\` first to get the id, then \`shadow_rebuild\`. Reassure them: a rebuild adopts files that are already correctly encoded instead of re-encoding them, so it is usually quick and only the missing or mismatched tracks are converted.
 - User asks about duplicates ("do I have duplicate songs?", "find duplicates", "what did the scan mean by duplicates detected?", "clean up my library") → call \`library_find_duplicates\`. It reports byte-identical copies and deletes nothing; tell the user which paths are duplicated and let them choose what to remove.
 - User asks about playlists with missing/broken songs, or "why does my playlist show wrong count", or "fix my playlist" → call \`playlist_list_broken\` first to see which playlists are affected, then call \`playlist_repair\` on the ones the user confirms (or all if they say "fix all"). Only smart playlists can be rebuilt from rules; for others, Repair removes the missing tracks.
 - NEVER say "I can't search for podcasts" or "I can't browse the internet" — you have \`podcast_search\` for exactly this purpose.
@@ -524,6 +528,7 @@ Tool usage rules (CRITICAL):
 - NEVER say "I can't change device settings" or "I can't adjust artwork" — you have \`device_update_settings\` for album-artwork skipping and cover size.
 - NEVER say "I can't fix or repair playlists" — you have \`playlist_list_broken\` and \`playlist_repair\`.
 - NEVER say "I can't scan the library" — you have \`library_scan\`.
+- NEVER say "I can't rebuild a shadow library" or "you'll have to recreate it manually" — you have \`shadow_list\` and \`shadow_rebuild\`.
 - NEVER say "I can't find duplicates" or "I can't check for duplicate files" — you have \`library_find_duplicates\`.
 - NEVER tell the user to manually find an RSS feed — use \`podcast_search\` for name-based search, or \`podcast_add_by_url\` if they have a specific URL.
 - User asks to find, search, or look up a LibriVox or public-domain audiobook → call \`audiobook_search\` immediately.
@@ -769,10 +774,6 @@ export function parseActionTags(reply: string): {
         maxTracks?: number;
         minPlays?: number;
         artist?: string;
-        targetMonth?: number;
-        targetYear?: number;
-        rangeStartMonthsAgo?: number;
-        rangeEndMonthsAgo?: number;
       };
       if (parsed.name && parsed.geniusType) {
         geniusPlaylist = {
@@ -782,10 +783,6 @@ export function parseActionTags(reply: string): {
             maxTracks: parsed.maxTracks,
             minPlays: parsed.minPlays,
             artist: parsed.artist,
-            targetMonth: parsed.targetMonth,
-            targetYear: parsed.targetYear,
-            rangeStartMonthsAgo: parsed.rangeStartMonthsAgo,
-            rangeEndMonthsAgo: parsed.rangeEndMonthsAgo,
           },
         };
       }

@@ -9,6 +9,8 @@ interface UIState {
   setPendingSyncDeviceId: (id: number | null) => void;
   pendingLibraryScan: boolean;
   setPendingLibraryScan: (v: boolean) => void;
+  pendingShadowRebuildId: number | null;
+  setPendingShadowRebuildId: (id: number | null) => void;
 }
 
 export const useUIStore = create<UIState>((set) => ({
@@ -20,4 +22,6 @@ export const useUIStore = create<UIState>((set) => ({
   setPendingSyncDeviceId: (id) => set({ pendingSyncDeviceId: id }),
   pendingLibraryScan: false,
   setPendingLibraryScan: (v) => set({ pendingLibraryScan: v }),
+  pendingShadowRebuildId: null,
+  setPendingShadowRebuildId: (id) => set({ pendingShadowRebuildId: id }),
 }));

@@ -355,6 +355,11 @@ CREATE TABLE IF NOT EXISTS shadow_tracks (
     shadow_path TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'synced', 'error')),
     error_message TEXT,
+    -- Stat of the shadow file as we last wrote/verified it. NULL means
+    -- "unknown" (row predates these columns) — the reconcile pass trusts such
+    -- rows and backfills the baseline rather than re-probing every file.
+    file_size INTEGER,
+    mtime INTEGER,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (shadow_library_id) REFERENCES shadow_libraries (id) ON DELETE CASCADE,

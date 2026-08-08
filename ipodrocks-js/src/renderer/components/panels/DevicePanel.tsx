@@ -1,4 +1,5 @@
 import { useEffect, useState, useMemo, useRef, useCallback } from "react";
+import { toast } from "sonner";
 
 import { Card } from "../common/Card";
 import { Button } from "../common/Button";
@@ -267,7 +268,10 @@ export function DevicePanel() {
 
     if (editingDeviceId !== null) {
       const result = await updateDevice(editingDeviceId, payload);
-      if ("error" in result) return;
+      if ("error" in result) {
+        toast.error(result.error);
+        return;
+      }
       await podcastSetDeviceAutoPodcasts(editingDeviceId, autoPodcastsEnabled);
       if (isDefault) {
         await setDefaultDevice(editingDeviceId);
@@ -275,6 +279,10 @@ export function DevicePanel() {
       }
     } else {
       const device = await addDevice(payload);
+      if ("error" in device) {
+        toast.error(device.error);
+        return;
+      }
       if (device?.id) {
         await podcastSetDeviceAutoPodcasts(device.id, autoPodcastsEnabled);
       }

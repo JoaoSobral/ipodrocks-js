@@ -33,7 +33,7 @@ import { findDuplicateFileGroups } from "../library/duplicate-files";
 import { logActivity } from "../activity/activity-logger";
 import { invalidateAssistantCache } from "./assistantChat";
 import {
-  getAvailableGeniusTypes,
+  getGeniusTypesWithAvailability,
   generateGeniusPlaylistFromDb,
 } from "../playlists/genius-engine";
 
@@ -264,7 +264,7 @@ const playlist_create_smart: AiTool = {
 
 const playlist_create_genius: AiTool = {
   name: "playlist_create_genius",
-  description: "Create a Genius playlist based on listening history (most played, favorites, late night, etc.).",
+  description: "Create a Genius playlist based on listening history (most played, favorites, hidden gems, etc.).",
   parameters: {
     type: "object",
     properties: {
@@ -275,10 +275,6 @@ const playlist_create_genius: AiTool = {
       },
       max_tracks: { type: "number", description: "Maximum tracks (default 25)" },
       artist: { type: "string", description: "For deep_dive type: the artist name" },
-      target_month: { type: "number", description: "For time_capsule: month (1-12)" },
-      target_year: { type: "number", description: "For time_capsule: year (e.g. 2022)" },
-      range_start_months_ago: { type: "number", description: "For golden_era: start of range in months ago" },
-      range_end_months_ago: { type: "number", description: "For golden_era: end of range in months ago" },
     },
     required: ["name", "genius_type"],
   },
@@ -289,18 +285,25 @@ const playlist_create_genius: AiTool = {
     const geniusType = String(args.genius_type ?? "");
     if (!name || !geniusType) throw new Error("name and genius_type are required");
 
-    const validTypes = getAvailableGeniusTypes(ctx.db).map((t) => t.value);
-    if (!validTypes.includes(geniusType)) {
-      throw new Error(`Invalid genius_type "${geniusType}". Valid values: ${validTypes.join(", ")}`);
+    // Distinguish "no such type" from "real type, currently unavailable" —
+    // collapsing them makes the model retry with invented type names instead
+    // of relaying the actual blocker (e.g. an unset device clock) to the user.
+    const allTypes = getGeniusTypesWithAvailability(ctx.db).types;
+    const match = allTypes.find((t) => t.value === geniusType);
+    if (!match) {
+      throw new Error(
+        `Invalid genius_type "${geniusType}". Valid values: ${allTypes.map((t) => t.value).join(", ")}`
+      );
+    }
+    if (match.available === false) {
+      throw new Error(
+        `The "${geniusType}" playlist type is unavailable right now. ${match.unavailableReason ?? ""}`.trim()
+      );
     }
 
     const opts = {
       maxTracks: args.max_tracks ? Number(args.max_tracks) : 25,
       artist: args.artist ? String(args.artist) : undefined,
-      targetMonth: args.target_month ? Number(args.target_month) : undefined,
-      targetYear: args.target_year ? Number(args.target_year) : undefined,
-      rangeStartMonthsAgo: args.range_start_months_ago ? Number(args.range_start_months_ago) : undefined,
-      rangeEndMonthsAgo: args.range_end_months_ago ? Number(args.range_end_months_ago) : undefined,
     };
 
     const result = generateGeniusPlaylistFromDb(geniusType, ctx.db, opts);
@@ -659,6 +662,69 @@ const library_scan: AiTool = {
   },
 };
 
+const shadow_list: AiTool = {
+  name: "shadow_list",
+  description:
+    "List the user's shadow libraries (pre-transcoded mirrors of the primary library) with their id, path, codec, status and track count. Use this to find a shadow library's id before rebuilding it.",
+  parameters: { type: "object", properties: {} },
+  kind: "read",
+  summarize: () => "List shadow libraries",
+  async run(_args, ctx) {
+    const libs = ctx.getLibrary().getShadowLibraries();
+    return {
+      ok: true,
+      count: libs.length,
+      shadowLibraries: libs.map((l) => ({
+        id: l.id,
+        name: l.name,
+        path: l.path,
+        codec: l.codecName,
+        bitrate: l.codecBitrateValue,
+        status: l.status,
+        trackCount: l.trackCount,
+      })),
+    };
+  },
+};
+
+const shadow_rebuild: AiTool = {
+  name: "shadow_rebuild",
+  description:
+    "Rebuild a shadow library. Files already on disk that are correctly encoded are adopted rather than re-encoded, so this is the right fix when a shadow library lost track of its files but the transcoded folder is intact. Use shadow_list first to get the id.",
+  parameters: {
+    type: "object",
+    properties: {
+      shadowLibraryId: {
+        type: "number",
+        description: "The id of the shadow library to rebuild (from shadow_list).",
+      },
+    },
+    required: ["shadowLibraryId"],
+  },
+  kind: "write-destructive",
+  summarize: (args) =>
+    `Rebuild shadow library #${(args as { shadowLibraryId?: number }).shadowLibraryId}`,
+  async run(args, ctx) {
+    const { shadowLibraryId } = args as { shadowLibraryId?: number };
+    if (typeof shadowLibraryId !== "number") {
+      return { ok: false, error: "shadowLibraryId is required" };
+    }
+    const lib = ctx.getLibrary().getShadowLibraries().find((l) => l.id === shadowLibraryId);
+    if (!lib) return { ok: false, error: `No shadow library with id ${shadowLibraryId}` };
+
+    const { BrowserWindow } = await import("electron");
+    const win = BrowserWindow.getAllWindows()[0];
+    if (win) {
+      win.webContents.send("assistant:triggerShadowRebuild", { shadowLibraryId });
+    }
+    return {
+      ok: true,
+      shadowLibraryName: lib.name,
+      message: `Rebuilding "${lib.name}" — I've opened the Library panel so you can watch the progress. Files already encoded correctly are adopted instead of re-encoded, so this is usually quick.`,
+    };
+  },
+};
+
 const library_find_duplicates: AiTool = {
   name: "library_find_duplicates",
   description:
@@ -852,6 +918,8 @@ export const AI_TOOLS: AiTool[] = [
   device_update_settings,
   device_sync,
   library_scan,
+  shadow_list,
+  shadow_rebuild,
   library_find_duplicates,
   podcast_download_now,
   podcast_delete_episodes,

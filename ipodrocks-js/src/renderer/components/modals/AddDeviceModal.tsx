@@ -60,6 +60,12 @@ export function AddDeviceModal({ open, onClose }: AddDeviceModalProps) {
         audiobookFolder: audiobookFolder.trim() || "Audiobooks",
         playlistFolder: playlistFolder.trim() || "Playlists",
       });
+      // The main-process `safe()` wrapper returns validation failures as data
+      // ({ error }) rather than rejecting, so surface it instead of closing.
+      if (device && "error" in device) {
+        setError(device.error);
+        return;
+      }
       if (autoPodcastsEnabled && device && "id" in device) {
         const { podcastSetDeviceAutoPodcasts } = await import("@renderer/ipc/api");
         await podcastSetDeviceAutoPodcasts(device.id, true);

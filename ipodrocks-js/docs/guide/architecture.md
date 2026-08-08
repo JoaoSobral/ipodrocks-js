@@ -54,7 +54,7 @@ A track's rating can change in two places — your library and your device — s
 |---|---|
 | **PlaylistCore** | CRUD for all playlist types; export to Rockbox playlist files. |
 | **SmartPlaylists** | Rule-based playlists (genre/artist/album/etc.), with optional Rockbox tagnavi mode. |
-| **GeniusEngine** | Builds playlists from playback history using graph-based scoring (Most Played, Forgotten Gems, and others). |
+| **GeniusEngine** | Builds playlists from playback history and library metadata (Most Played, Hidden Gems, Top Genre, and others). Gates time-of-day types on the device clock looking plausible. |
 | **PlaybackLogIngest** | Parses Rockbox `playback.log` files off the device into `playback_logs` and `playback_stats`. |
 
 ### AI (Savant and Rocksy)

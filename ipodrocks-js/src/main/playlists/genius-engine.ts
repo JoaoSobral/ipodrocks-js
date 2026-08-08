@@ -179,12 +179,24 @@ function loadMatchedEventsFromDb(
 export function buildAnalysisSummaryFromDb(
   db: Database.Database
 ): AnalysisSummary {
+  const nowSec = Math.floor(Date.now() / 1000);
+  // Bound the range to plausible timestamps so a device with an unset clock
+  // does not report a listening history that starts in the year 2000.
   const totalRow = db
     .prepare(
-      "SELECT COUNT(*) as c, MIN(timestamp_tick) as first_ts, MAX(timestamp_tick) as last_ts " +
-        "FROM playback_logs WHERE matched_track_id IS NOT NULL"
+      `SELECT COUNT(*) as c,
+              MIN(CASE WHEN timestamp_tick >= ? AND timestamp_tick <= ?
+                       THEN timestamp_tick END) as first_ts,
+              MAX(CASE WHEN timestamp_tick >= ? AND timestamp_tick <= ?
+                       THEN timestamp_tick END) as last_ts
+       FROM playback_logs WHERE matched_track_id IS NOT NULL`
     )
-    .get() as { c: number; first_ts: number | null; last_ts: number | null };
+    .get(
+      MIN_PLAUSIBLE_TS,
+      nowSec + FUTURE_SLACK_SEC,
+      MIN_PLAUSIBLE_TS,
+      nowSec + FUTURE_SLACK_SEC
+    ) as { c: number; first_ts: number | null; last_ts: number | null };
 
   const totalPlays = totalRow.c ?? 0;
   const first =
@@ -315,6 +327,7 @@ const GENIUS_TYPES: GeniusTypeOption[] = [
     description:
       "Tracks played between 22:00\u201305:00 with high completion",
     icon: "\uD83C\uDF19",
+    requiresDeviceClock: true,
   },
   {
     value: "recently_discovered",
@@ -331,95 +344,190 @@ const GENIUS_TYPES: GeniusTypeOption[] = [
     icon: "\uD83D\uDD01",
   },
   {
-    value: "oldies",
-    label: "Oldies",
-    description: "Tracks first played 36+ months ago, ordered by play count",
-    icon: "\uD83C\uDFB5",
-    minMonths: 36,
+    value: "hidden_gems",
+    label: "Hidden Gems",
+    description: "Tracks in your library you have never played",
+    icon: "\uD83D\uDC8E",
   },
   {
-    value: "nostalgia",
-    label: "Nostalgia",
-    description: "First played 12\u201336 months ago, ordered by play count",
-    icon: "\uD83C\uDFA7",
-    minMonths: 12,
+    value: "top_genre",
+    label: "Top Genre",
+    description: "All library tracks in your most-played genre",
+    icon: "\uD83C\uDFB8",
   },
   {
-    value: "recent_favorites",
-    label: "Recent Favorites",
-    description: "Last played in last 6 months with high completion",
-    icon: "\uD83D\uDC9C",
-    minMonths: 6,
-  },
-  {
-    value: "time_capsule",
-    label: "Time Capsule",
-    description: "Tracks from a specific month/year you pick",
-    icon: "\u23F0",
-    minMonths: 24,
-  },
-  {
-    value: "golden_era",
-    label: "Golden Era",
-    description: "Most played in a time range (e.g. 24\u201348 months ago)",
-    icon: "\uD83C\uDFC6",
-    minMonths: 24,
+    value: "finish_album",
+    label: "Finish the Album",
+    description:
+      "Tracks you have not heard from albums you started but never finished",
+    icon: "\uD83D\uDCC0",
   },
 ];
 
 const MS_PER_MONTH = 30 * 24 * 60 * 60 * 1000;
 
 /**
- * Get the span of playback data: how many (approximate) months separate the
- * earliest matched playback-log entry from now, and the ISO date of that entry.
+ * Earliest timestamp we treat as a real play.
+ *
+ * Rockbox reads the play time off the device RTC, which starts at (or resets
+ * to) the year 2000 whenever the clock is unset or the battery fully drains.
+ * Anything before 2010 is a clock that was never set, not a real listen.
+ */
+const MIN_PLAUSIBLE_TS = Math.floor(Date.UTC(2010, 0, 1) / 1000);
+
+/**
+ * How far ahead of the host clock a device timestamp may legitimately sit.
+ *
+ * Rockbox writes device *local* wall-clock time as a UTC epoch, so a device
+ * set to a far-eastern timezone reads genuinely ahead of true UTC. One day of
+ * slack covers every real offset \u2014 do not tighten this to ``now``.
+ */
+const FUTURE_SLACK_SEC = 24 * 60 * 60;
+
+/** Minimum plausible rows before we trust the device clock at all. */
+const MIN_PLAUSIBLE_ROWS = 20;
+
+/** Fraction of rows that must be plausible before we trust the clock. */
+const MIN_PLAUSIBLE_FRACTION = 0.5;
+
+/** Whether a raw device timestamp (epoch seconds) looks like a real play. */
+function isPlausibleTimestamp(tsSec: number, nowSec: number): boolean {
+  return tsSec >= MIN_PLAUSIBLE_TS && tsSec <= nowSec + FUTURE_SLACK_SEC;
+}
+
+/** Playback-data context, including how trustworthy the device clock looks. */
+export interface PlaybackClockContext {
+  /** Approximate months spanned by the *plausible* rows (0 when none). */
+  dataMonths: number;
+  /** ISO date of the earliest *plausible* matched row, or null. */
+  firstLogDate: string | null;
+  /** Matched rows, regardless of timestamp plausibility. */
+  totalMatched: number;
+  /** Matched rows with a plausible timestamp. */
+  plausibleCount: number;
+  /** Matched rows with an implausible timestamp. */
+  implausibleCount: number;
+  /** Whether the device clock looks correctly set. */
+  clockValid: boolean;
+}
+
+/**
+ * Classify the playback log by timestamp plausibility.
+ *
+ * ``dataMonths``/``firstLogDate`` are derived from plausible rows only, so a
+ * device with an unset clock does not appear to have decades of history.
+ * ``totalMatched`` counts every matched row, so callers can still tell the
+ * difference between "no plays recorded" and "plays recorded under a bad
+ * clock" — never key user-facing copy off ``dataMonths`` alone.
  */
 export function getPlaybackDataContext(
   db: Database.Database
-): { dataMonths: number; firstLogDate: string | null } {
+): PlaybackClockContext {
+  const nowSec = Math.floor(Date.now() / 1000);
   const row = db
     .prepare(
-      "SELECT MIN(timestamp_tick) as min_ts FROM playback_logs WHERE matched_track_id IS NOT NULL"
+      `SELECT COUNT(*) AS total,
+              SUM(CASE WHEN timestamp_tick >= ? AND timestamp_tick <= ?
+                       THEN 1 ELSE 0 END) AS plausible,
+              MIN(CASE WHEN timestamp_tick >= ? AND timestamp_tick <= ?
+                       THEN timestamp_tick END) AS min_valid_ts
+       FROM playback_logs
+       WHERE matched_track_id IS NOT NULL`
     )
-    .get() as { min_ts: number | null };
-  if (row.min_ts == null) return { dataMonths: 0, firstLogDate: null };
-  const now = Math.floor(Date.now() / 1000);
-  const months = ((now - row.min_ts) * 1000) / MS_PER_MONTH;
+    .get(
+      MIN_PLAUSIBLE_TS,
+      nowSec + FUTURE_SLACK_SEC,
+      MIN_PLAUSIBLE_TS,
+      nowSec + FUTURE_SLACK_SEC
+    ) as {
+    total: number;
+    plausible: number | null;
+    min_valid_ts: number | null;
+  };
+
+  const totalMatched = row.total ?? 0;
+  const plausibleCount = row.plausible ?? 0;
+  const implausibleCount = totalMatched - plausibleCount;
+
+  // Mirrors the mass-zero rating guard in sync/rating-merge.ts: require both a
+  // floor and a majority so one stray good row cannot vouch for the clock.
+  const clockValid =
+    plausibleCount >= MIN_PLAUSIBLE_ROWS &&
+    plausibleCount / totalMatched >= MIN_PLAUSIBLE_FRACTION;
+
+  const dataMonths =
+    row.min_valid_ts == null
+      ? 0
+      : Math.max(
+          0,
+          Math.floor(((nowSec - row.min_valid_ts) * 1000) / MS_PER_MONTH)
+        );
+
   return {
-    dataMonths: Math.max(0, Math.floor(months)),
-    firstLogDate: new Date(row.min_ts * 1000).toISOString(),
+    dataMonths,
+    firstLogDate:
+      row.min_valid_ts == null
+        ? null
+        : new Date(row.min_valid_ts * 1000).toISOString(),
+    totalMatched,
+    plausibleCount,
+    implausibleCount,
+    clockValid,
   };
 }
 
 /**
- * Get approximate months of playback data (from earliest to now).
+ * Get approximate months of trustworthy playback data (earliest to now).
  */
 export function getPlaybackDataMonths(db: Database.Database): number {
   return getPlaybackDataContext(db).dataMonths;
 }
 
-/**
- * Return every genius type annotated with whether it is currently available
- * (its ``minMonths`` requirement is met by the playback-data span), plus the
- * shared data context so the UI can explain why gated types are disabled.
- */
-export function getGeniusTypesWithAvailability(
-  db: Database.Database
-): { types: GeniusTypeOption[]; dataMonths: number; firstLogDate: string | null } {
-  const { dataMonths, firstLogDate } = getPlaybackDataContext(db);
-  const types = GENIUS_TYPES.map((t) => ({
-    ...t,
-    available: t.minMonths == null || dataMonths >= t.minMonths,
-  }));
-  return { types, dataMonths, firstLogDate };
+/** Reason shown when a clock-dependent type cannot run. */
+function deviceClockReason(ctx: PlaybackClockContext): string {
+  if (ctx.totalMatched === 0) {
+    return "No playback history yet — connect your device and check for playback.log data.";
+  }
+  return (
+    "Your device clock is not set correctly, so times of day are unreliable. " +
+    "Set it in Rockbox under Settings → General Settings → System → Time & Date, " +
+    "then play some music and re-check the device."
+  );
 }
 
+/**
+ * Annotate every genius type with whether it can currently produce a
+ * meaningful result, alongside the shared playback/clock context so the UI can
+ * explain any that are disabled.
+ */
+function annotateGeniusTypes(db: Database.Database): {
+  types: GeniusTypeOption[];
+} & PlaybackClockContext {
+  const ctx = getPlaybackDataContext(db);
+  const types = GENIUS_TYPES.map((t) => {
+    const available = !t.requiresDeviceClock || ctx.clockValid;
+    return available
+      ? { ...t, available: true }
+      : { ...t, available: false, unavailableReason: deviceClockReason(ctx) };
+  });
+  return { types, ...ctx };
+}
+
+/**
+ * Every genius type, including unavailable ones (the UI disables rather than
+ * hides them), plus the playback/clock context behind that decision.
+ */
+export function getGeniusTypesWithAvailability(db: Database.Database): {
+  types: GeniusTypeOption[];
+} & PlaybackClockContext {
+  return annotateGeniusTypes(db);
+}
+
+/** Only the genius types that can run right now. */
 export function getAvailableGeniusTypes(
-  db?: Database.Database
+  db: Database.Database
 ): GeniusTypeOption[] {
-  const dataMonths = db ? getPlaybackDataMonths(db) : 0;
-  return GENIUS_TYPES.filter(
-    (t) => t.minMonths == null || dataMonths >= t.minMonths
-  ).map((t) => ({ ...t, available: true }));
+  return annotateGeniusTypes(db).types.filter((t) => t.available !== false);
 }
 
 // -- playlist generation --------------------------------------------------
@@ -490,38 +598,39 @@ function aggToTrack(a: TrackAggregation): PlaylistTrack {
 }
 
 /**
- * Fetch all library tracks for a given artist name.
+ * Shared column list for library-track lookups.
+ *
+ * Play counts come from ``playback_stats.total_plays``, never from
+ * ``tracks.play_count`` — that column exists in the schema but is never
+ * written, so reading it reports every track as unplayed.
  */
-function getLibraryTracksByArtist(
-  db: Database.Database,
-  artistName: string
-): PlaylistTrack[] {
-  const rows = db
-    .prepare(
-      `SELECT t.id, t.path, t.filename, t.title,
-              a.name AS artist, al.title AS album,
-              g.name AS genre, t.duration, t.play_count, t.rating
-       FROM tracks t
-       LEFT JOIN artists a ON t.artist_id = a.id
-       LEFT JOIN albums al ON t.album_id = al.id
-       LEFT JOIN genres g ON t.genre_id = g.id
-       WHERE a.name = ? AND t.content_type = 'music'
-       ORDER BY t.title`
-    )
-    .all(artistName) as Array<{
-    id: number;
-    path: string;
-    filename: string;
-    title: string | null;
-    artist: string | null;
-    album: string | null;
-    genre: string | null;
-    duration: number | null;
-    play_count: number | null;
-    rating: number | null;
-  }>;
+const LIB_TRACK_SELECT = `
+  SELECT t.id, t.path, t.filename, t.title, t.track_number, t.disc_number,
+         a.name AS artist, al.title AS album, g.name AS genre,
+         t.duration, t.rating,
+         COALESCE(ps.total_plays, 0) AS play_count
+  FROM tracks t
+  LEFT JOIN artists a ON t.artist_id = a.id
+  LEFT JOIN albums al ON t.album_id = al.id
+  LEFT JOIN genres g ON t.genre_id = g.id
+  LEFT JOIN playback_stats ps ON ps.track_id = t.id
+`;
 
-  return rows.map((r) => ({
+interface LibTrackRow {
+  id: number;
+  path: string;
+  filename: string;
+  title: string | null;
+  artist: string | null;
+  album: string | null;
+  genre: string | null;
+  duration: number | null;
+  play_count: number | null;
+  rating: number | null;
+}
+
+function rowToPlaylistTrack(r: LibTrackRow): PlaylistTrack {
+  return {
     id: r.id,
     path: r.path,
     filename: r.filename,
@@ -532,7 +641,24 @@ function getLibraryTracksByArtist(
     duration: r.duration ?? 0,
     playCount: r.play_count ?? 0,
     rating: r.rating ?? null,
-  }));
+  };
+}
+
+/**
+ * Fetch all library tracks for a given artist name.
+ */
+function getLibraryTracksByArtist(
+  db: Database.Database,
+  artistName: string
+): PlaylistTrack[] {
+  const rows = db
+    .prepare(
+      `${LIB_TRACK_SELECT}
+       WHERE a.name = ? AND t.content_type = 'music'
+       ORDER BY t.title`
+    )
+    .all(artistName) as LibTrackRow[];
+  return rows.map(rowToPlaylistTrack);
 }
 
 /**
@@ -545,41 +671,30 @@ function getLibraryTracksByAlbum(
 ): PlaylistTrack[] {
   const rows = db
     .prepare(
-      `SELECT t.id, t.path, t.filename, t.title,
-              a.name AS artist, al.title AS album,
-              g.name AS genre, t.duration, t.play_count, t.rating
-       FROM tracks t
-       LEFT JOIN artists a ON t.artist_id = a.id
-       LEFT JOIN albums al ON t.album_id = al.id
-       LEFT JOIN genres g ON t.genre_id = g.id
+      `${LIB_TRACK_SELECT}
        WHERE al.title = ? AND a.name = ? AND t.content_type = 'music'
        ORDER BY t.track_number, t.title`
     )
-    .all(albumTitle, artistName) as Array<{
-    id: number;
-    path: string;
-    filename: string;
-    title: string | null;
-    artist: string | null;
-    album: string | null;
-    genre: string | null;
-    duration: number | null;
-    play_count: number | null;
-    rating: number | null;
-  }>;
+    .all(albumTitle, artistName) as LibTrackRow[];
+  return rows.map(rowToPlaylistTrack);
+}
 
-  return rows.map((r) => ({
-    id: r.id,
-    path: r.path,
-    filename: r.filename,
-    title: r.title ?? r.filename,
-    artist: r.artist ?? "Unknown",
-    album: r.album ?? "Unknown",
-    genre: r.genre ?? "Unknown",
-    duration: r.duration ?? 0,
-    playCount: r.play_count ?? 0,
-    rating: r.rating ?? null,
-  }));
+/**
+ * Fetch all library tracks for a given genre id, most-played first.
+ */
+function getLibraryTracksByGenre(
+  db: Database.Database,
+  genreId: number
+): PlaylistTrack[] {
+  const rows = db
+    .prepare(
+      `${LIB_TRACK_SELECT}
+       WHERE t.genre_id = ? AND t.content_type = 'music'
+       ORDER BY play_count DESC, a.name, al.title,
+                t.disc_number, t.track_number`
+    )
+    .all(genreId) as LibTrackRow[];
+  return rows.map(rowToPlaylistTrack);
 }
 
 // -- the 8 algorithms -----------------------------------------------------
@@ -764,8 +879,14 @@ function generateLateNight(
   opts: GeniusGenerateOptions
 ): PlaylistGenerationResult {
   const limit = opts.maxTracks ?? 25;
+  const nowSec = Math.floor(Date.now() / 1000);
   const agg = aggregateByTrack(
     events.filter((ev) => {
+      // This is the only generator that reads an absolute wall-clock hour, so
+      // it is also the only one that must drop rows logged under an unset
+      // device clock. Do not push this filter up into the shared event load —
+      // the count/completion-based types stay correct under a wrong clock.
+      if (!isPlausibleTimestamp(ev.timestamp, nowSec)) return false;
       // Rockbox writes device local wall-clock time as a UTC epoch, so read
       // the hour back with UTC accessors to recover the device-local hour.
       const hour = new Date(ev.timestamp * 1000).getUTCHours();
@@ -823,167 +944,6 @@ function generateRecentlyDiscovered(
   };
 }
 
-function generateOldies(
-  events: MatchedPlayEvent[],
-  opts: GeniusGenerateOptions,
-  db: Database.Database
-): PlaylistGenerationResult {
-  const limit = opts.maxTracks ?? 25;
-  const nowSec = Math.floor(Date.now() / 1000);
-  const cutoffSec = nowSec - 36 * 30 * 24 * 3600;
-  const agg = aggregateByTrack(events);
-  const filtered = [...agg.values()].filter((a) => {
-    const firstTs = a.timestamps.reduce((x, y) => (y < x ? y : x), Infinity);
-    return firstTs < cutoffSec;
-  });
-  const tracks = filtered
-    .sort((a, b) => b.playCount - a.playCount)
-    .slice(0, limit)
-    .map(aggToTrack);
-  return {
-    playlistName: "Oldies",
-    criteria: "Tracks first played 36+ months ago, by play count",
-    tracks,
-    generatedAt: new Date().toISOString(),
-    type: "genius",
-    subtype: "oldies",
-  };
-}
-
-function generateNostalgia(
-  events: MatchedPlayEvent[],
-  opts: GeniusGenerateOptions,
-  db: Database.Database
-): PlaylistGenerationResult {
-  const limit = opts.maxTracks ?? 25;
-  const nowSec = Math.floor(Date.now() / 1000);
-  const startSec = nowSec - 36 * 30 * 24 * 3600;
-  const endSec = nowSec - 12 * 30 * 24 * 3600;
-  const agg = aggregateByTrack(events);
-  const filtered = [...agg.values()].filter((a) => {
-    const firstTs = a.timestamps.reduce((x, y) => (y < x ? y : x), Infinity);
-    return firstTs >= startSec && firstTs < endSec;
-  });
-  const tracks = filtered
-    .sort((a, b) => b.playCount - a.playCount)
-    .slice(0, limit)
-    .map(aggToTrack);
-  return {
-    playlistName: "Nostalgia",
-    criteria: "First played 12\u201336 months ago, by play count",
-    tracks,
-    generatedAt: new Date().toISOString(),
-    type: "genius",
-    subtype: "nostalgia",
-  };
-}
-
-function generateRecentFavorites(
-  events: MatchedPlayEvent[],
-  opts: GeniusGenerateOptions
-): PlaylistGenerationResult {
-  const limit = opts.maxTracks ?? 25;
-  const nowSec = Math.floor(Date.now() / 1000);
-  const cutoffSec = nowSec - 6 * 30 * 24 * 3600;
-  const agg = aggregateByTrack(events);
-  const filtered = [...agg.values()].filter((a) => {
-    const lastTs = a.timestamps.reduce((x, y) => (y > x ? y : x), -Infinity);
-    const avgComp = avgCompletion(a.completionRatios);
-    return lastTs >= cutoffSec && avgComp >= 0.85;
-  });
-  const tracks = filtered
-    .sort(
-      (a, b) =>
-        avgCompletion(b.completionRatios) - avgCompletion(a.completionRatios)
-    )
-    .slice(0, limit)
-    .map(aggToTrack);
-  return {
-    playlistName: "Recent Favorites",
-    criteria: "Last played in last 6 months, avg completion \u2265 85%",
-    tracks,
-    generatedAt: new Date().toISOString(),
-    type: "genius",
-    subtype: "recent_favorites",
-  };
-}
-
-function generateTimeCapsule(
-  events: MatchedPlayEvent[],
-  opts: GeniusGenerateOptions
-): PlaylistGenerationResult {
-  const limit = opts.maxTracks ?? 25;
-  const targetMonth = opts.targetMonth ?? 1;
-  const targetYear = opts.targetYear ?? new Date().getUTCFullYear();
-  // Rockbox timestamps encode device local wall-clock time as a UTC epoch, so
-  // build the target month's boundaries in UTC to match the recorded values.
-  const startSec = Math.floor(Date.UTC(targetYear, targetMonth - 1, 1) / 1000);
-  const endSec = Math.floor(
-    Date.UTC(targetYear, targetMonth, 0, 23, 59, 59) / 1000
-  );
-  const inRange = (ts: number) => ts >= startSec && ts <= endSec;
-  const agg = aggregateByTrack(events);
-  const filtered = [...agg.values()].filter((a) =>
-    a.timestamps.some(inRange)
-  );
-  const tracks = filtered
-    .sort((a, b) => b.playCount - a.playCount)
-    .slice(0, limit)
-    .map(aggToTrack);
-  const monthName = new Date(Date.UTC(targetYear, targetMonth - 1, 1)).toLocaleString(
-    "default",
-    { month: "long", timeZone: "UTC" }
-  );
-  return {
-    playlistName: `Time Capsule: ${monthName} ${targetYear}`,
-    criteria: `Tracks played in ${monthName} ${targetYear}`,
-    tracks,
-    generatedAt: new Date().toISOString(),
-    type: "genius",
-    subtype: "time_capsule",
-  };
-}
-
-function generateGoldenEra(
-  events: MatchedPlayEvent[],
-  opts: GeniusGenerateOptions
-): PlaylistGenerationResult {
-  const limit = opts.maxTracks ?? 25;
-  const endMonths = opts.rangeEndMonthsAgo ?? 24;
-  const startMonths = opts.rangeStartMonthsAgo ?? 48;
-  const nowSec = Math.floor(Date.now() / 1000);
-  const startSec = nowSec - startMonths * 30 * 24 * 3600;
-  const endSec = nowSec - endMonths * 30 * 24 * 3600;
-  const inRange = (ts: number) => ts >= startSec && ts <= endSec;
-  const agg = aggregateByTrack(events);
-  const playCountInRange = new Map<number, number>();
-  for (const a of agg.values()) {
-    const count = a.timestamps.filter(inRange).length;
-    if (count > 0) {
-      playCountInRange.set(a.trackId, count);
-    }
-  }
-  const filtered = [...agg.values()].filter((a) =>
-    playCountInRange.has(a.trackId)
-  );
-  const tracks = filtered
-    .sort(
-      (a, b) =>
-        (playCountInRange.get(b.trackId) ?? 0) -
-        (playCountInRange.get(a.trackId) ?? 0)
-    )
-    .slice(0, limit)
-    .map(aggToTrack);
-  return {
-    playlistName: "Golden Era",
-    criteria: `Most played ${endMonths}\u2013${startMonths} months ago`,
-    tracks,
-    generatedAt: new Date().toISOString(),
-    type: "genius",
-    subtype: "golden_era",
-  };
-}
-
 function generateDeepDive(
   events: MatchedPlayEvent[],
   opts: GeniusGenerateOptions,
@@ -1031,7 +991,7 @@ function generateDeepDive(
   };
 }
 
-// -- top_rated: DB-driven, no play history required -----------------------
+// -- top_rated / hidden_gems: DB-driven, no play history required ---------
 
 function generateTopRated(
   db: Database.Database,
@@ -1042,44 +1002,14 @@ function generateTopRated(
 
   const rows = db
     .prepare(
-      `SELECT t.id, t.path, t.filename, t.title,
-              a.name AS artist, al.title AS album,
-              g.name AS genre, t.duration, t.rating,
-              COALESCE(ps.total_plays, 0) AS play_count
-       FROM tracks t
-       LEFT JOIN artists a ON t.artist_id = a.id
-       LEFT JOIN albums al ON t.album_id = al.id
-       LEFT JOIN genres g ON t.genre_id = g.id
-       LEFT JOIN playback_stats ps ON ps.track_id = t.id
+      `${LIB_TRACK_SELECT}
        WHERE t.content_type = 'music' AND t.rating IS NOT NULL AND t.rating >= ?
        ORDER BY t.rating DESC, play_count DESC
        LIMIT ?`
     )
-    .all(minRating, limit) as Array<{
-    id: number;
-    path: string;
-    filename: string;
-    title: string | null;
-    artist: string | null;
-    album: string | null;
-    genre: string | null;
-    duration: number | null;
-    rating: number;
-    play_count: number;
-  }>;
+    .all(minRating, limit) as LibTrackRow[];
 
-  const tracks: PlaylistTrack[] = rows.map((r) => ({
-    id: r.id,
-    path: r.path,
-    filename: r.filename,
-    title: r.title ?? r.filename,
-    artist: r.artist ?? "Unknown",
-    album: r.album ?? "Unknown",
-    genre: r.genre ?? "Unknown",
-    duration: r.duration ?? 0,
-    rating: r.rating,
-    playCount: r.play_count,
-  }));
+  const tracks = rows.map(rowToPlaylistTrack);
 
   return {
     playlistName: "Top Rated",
@@ -1088,6 +1018,150 @@ function generateTopRated(
     generatedAt: new Date().toISOString(),
     type: "genius",
     subtype: "top_rated",
+  };
+}
+
+/**
+ * Library tracks that have never been played.
+ *
+ * Membership is tested against ``playback_logs`` rather than
+ * ``playback_stats``: the stats table is rebuilt with ``INSERT OR REPLACE``
+ * and never prunes, so it can lag the log. Rating-first ordering surfaces
+ * music the user already liked enough to rate but never got round to, and the
+ * ``RANDOM()`` tiebreak stops the result being alphabetical by artist.
+ */
+function generateHiddenGems(
+  db: Database.Database,
+  opts: GeniusGenerateOptions
+): PlaylistGenerationResult {
+  const limit = opts.maxTracks ?? 25;
+
+  const rows = db
+    .prepare(
+      `${LIB_TRACK_SELECT}
+       WHERE t.content_type = 'music'
+         AND NOT EXISTS (
+           SELECT 1 FROM playback_logs pl WHERE pl.matched_track_id = t.id
+         )
+       ORDER BY (t.rating IS NULL), t.rating DESC, RANDOM()
+       LIMIT ?`
+    )
+    .all(limit) as LibTrackRow[];
+
+  const tracks = rows.map(rowToPlaylistTrack);
+
+  return {
+    playlistName: "Hidden Gems",
+    criteria: `${tracks.length} tracks from your library you have never played`,
+    tracks,
+    generatedAt: new Date().toISOString(),
+    type: "genius",
+    subtype: "hidden_gems",
+  };
+}
+
+/**
+ * All library tracks in the most-played genre.
+ *
+ * The winner is picked in SQL with an inner join on ``genres`` so untagged
+ * tracks cannot win the vote — unlike the string-keyed top_artist/top_album
+ * tallies, which can crown a literal "Unknown".
+ */
+function generateTopGenre(
+  opts: GeniusGenerateOptions,
+  db: Database.Database
+): PlaylistGenerationResult {
+  const limit = opts.maxTracks ?? 25;
+
+  const top = db
+    .prepare(
+      `SELECT t.genre_id AS gid, g.name AS name, COUNT(*) AS plays
+       FROM playback_logs pl
+       JOIN tracks t ON t.id = pl.matched_track_id AND t.content_type = 'music'
+       JOIN genres g ON g.id = t.genre_id
+       GROUP BY t.genre_id
+       ORDER BY plays DESC, g.name
+       LIMIT 1`
+    )
+    .get() as { gid: number; name: string; plays: number } | undefined;
+
+  if (!top) {
+    return emptyResult("No genre data in playback log", "top_genre");
+  }
+
+  const tracks = getLibraryTracksByGenre(db, top.gid).slice(0, limit);
+
+  return {
+    playlistName: `Top Genre: ${top.name}`,
+    criteria: `All library tracks tagged ${top.name} (${top.plays} plays)`,
+    tracks,
+    generatedAt: new Date().toISOString(),
+    type: "genius",
+    subtype: "top_genre",
+  };
+}
+
+/**
+ * Unplayed tracks from albums that were started but never finished, ordered
+ * closest-to-complete first.
+ *
+ * ``album_id IS NOT NULL`` is essential: the column is nullable, and without
+ * the guard every album-less track collapses into one giant bogus "album"
+ * that dominates the result. The ``total_tracks >= 3`` floor keeps out noise —
+ * including compilations, which ``albums UNIQUE(title, artist_id)`` splits
+ * into one-track rows when each track carries a different artist.
+ */
+function generateFinishAlbum(
+  opts: GeniusGenerateOptions,
+  db: Database.Database
+): PlaylistGenerationResult {
+  const limit = opts.maxTracks ?? 25;
+
+  const rows = db
+    .prepare(
+      `WITH album_progress AS (
+         SELECT t.album_id AS album_id,
+                COUNT(*) AS total_tracks,
+                SUM(CASE WHEN EXISTS (
+                      SELECT 1 FROM playback_logs pl
+                      WHERE pl.matched_track_id = t.id
+                    ) THEN 1 ELSE 0 END) AS played_tracks
+         FROM tracks t
+         WHERE t.content_type = 'music' AND t.album_id IS NOT NULL
+         GROUP BY t.album_id
+       )
+       SELECT t.id, t.path, t.filename, t.title, t.track_number, t.disc_number,
+              a.name AS artist, al.title AS album, g.name AS genre,
+              t.duration, t.rating,
+              COALESCE(ps.total_plays, 0) AS play_count
+       FROM tracks t
+       JOIN album_progress ap ON ap.album_id = t.album_id
+       LEFT JOIN artists a ON t.artist_id = a.id
+       LEFT JOIN albums al ON t.album_id = al.id
+       LEFT JOIN genres g ON t.genre_id = g.id
+       LEFT JOIN playback_stats ps ON ps.track_id = t.id
+       WHERE t.content_type = 'music'
+         AND ap.played_tracks > 0
+         AND ap.played_tracks < ap.total_tracks
+         AND ap.total_tracks >= 3
+         AND NOT EXISTS (
+           SELECT 1 FROM playback_logs pl WHERE pl.matched_track_id = t.id
+         )
+       ORDER BY (CAST(ap.played_tracks AS REAL) / ap.total_tracks) DESC,
+                al.title, t.disc_number, t.track_number
+       LIMIT ?`
+    )
+    .all(limit) as LibTrackRow[];
+
+  const tracks = rows.map(rowToPlaylistTrack);
+
+  return {
+    playlistName: "Finish the Album",
+    criteria: `${tracks.length} unheard tracks from albums you started but never finished`,
+    tracks,
+    generatedAt: new Date().toISOString(),
+    type: "genius",
+    subtype: "finish_album",
   };
 }
 
@@ -1122,37 +1196,61 @@ export function generateGeniusPlaylistFromDb(
 
 /**
  * Explain why a filter-based genius type produced no tracks, referencing the
- * span of playback data available. ``top_artist``/``top_album``/``deep_dive``
- * already return their own specific reasons and are left untouched.
+ * playback data available. ``top_artist``/``top_album``/``top_genre``/
+ * ``deep_dive`` already return their own specific reasons and are left
+ * untouched.
+ *
+ * Two different spans, because the constraint differs by type. Count- and
+ * completion-based types care only about how many plays exist, so blaming the
+ * device clock there would be nonsense; ``late_night`` is the one type whose
+ * emptiness a bad clock genuinely explains. Neither is keyed off
+ * ``dataMonths`` — a device with an unset clock has plenty of plays but zero
+ * trustworthy months, and telling that user they have "almost no playback
+ * history" is simply wrong.
  */
-function emptyReasonFor(geniusType: string, dataMonths: number): string | null {
-  const span =
-    dataMonths > 0
-      ? `Playback logging currently covers ~${dataMonths} month${
-          dataMonths === 1 ? "" : "s"
-        }.`
-      : "There is almost no playback history yet.";
+function emptyReasonFor(
+  geniusType: string,
+  ctx: PlaybackClockContext
+): string | null {
+  const volumeSpan =
+    ctx.totalMatched === 0
+      ? "There is no playback history yet."
+      : `Only ${ctx.totalMatched} play${
+          ctx.totalMatched === 1 ? " is" : "s are"
+        } recorded so far.`;
+
+  let clockSpan: string;
+  if (ctx.totalMatched === 0) {
+    clockSpan = "There is no playback history yet.";
+  } else if (!ctx.clockValid) {
+    clockSpan =
+      `${ctx.totalMatched} plays are recorded, but the device clock is not ` +
+      "set correctly, so their times of day cannot be used. Set it in Rockbox " +
+      "under Settings → General Settings → System → Time & Date.";
+  } else {
+    clockSpan = `Playback logging currently covers ~${ctx.dataMonths} month${
+      ctx.dataMonths === 1 ? "" : "s"
+    }.`;
+  }
+
   switch (geniusType) {
     case "most_played":
-      return `No tracks met the minimum play count. ${span}`;
+      return `No tracks met the minimum play count. ${volumeSpan}`;
     case "favorites":
-      return `No tracks reached 85% average completion with enough plays. ${span}`;
+      return `No tracks reached 85% average completion with enough plays. ${volumeSpan}`;
     case "skip_list":
-      return `No tracks fell below 25% average completion — nothing looks skipped. ${span}`;
+      return `No tracks fell below 25% average completion — nothing looks skipped. ${volumeSpan}`;
     case "late_night":
-      return `No tracks were played between 22:00 and 05:00 with high completion. ${span}`;
+      return `No tracks were played between 22:00 and 05:00 with high completion. ${clockSpan}`;
     case "recently_discovered":
-      return `No single-play tracks were completed above 80%. ${span}`;
-    case "oldies":
-      return `No tracks were first played 36+ months ago. ${span}`;
-    case "nostalgia":
-      return `No tracks were first played 12–36 months ago. ${span}`;
-    case "recent_favorites":
-      return `No tracks played in the last 6 months reached 85% completion. ${span}`;
-    case "time_capsule":
-      return `No tracks were played in the selected month. ${span}`;
-    case "golden_era":
-      return `No tracks were played in the selected time range. ${span}`;
+      return `No single-play tracks were completed above 80%. ${volumeSpan}`;
+    case "hidden_gems":
+      return "Every track in your library has been played at least once.";
+    case "finish_album":
+      return (
+        "No part-finished albums found — you have either completed every album " +
+        "you started, or not played enough of one yet."
+      );
     default:
       return null;
   }
@@ -1173,9 +1271,19 @@ export function generateGeniusPlaylist(
   db: Database.Database,
   opts: GeniusGenerateOptions = {}
 ): PlaylistGenerationResult {
-  // top_rated is purely DB-driven — no play history required
+  // top_rated and hidden_gems are purely DB-driven — they read library
+  // metadata and the absence of plays, so they must run before the
+  // "no playback history" guard rather than being blocked by it.
   if (geniusType === "top_rated") {
     return generateTopRated(db, opts);
+  }
+  if (geniusType === "hidden_gems") {
+    const gems = generateHiddenGems(db, opts);
+    if (gems.tracks.length === 0) {
+      const reason = emptyReasonFor(geniusType, getPlaybackDataContext(db));
+      if (reason) gems.criteria = reason;
+    }
+    return gems;
   }
 
   if (!events.length) {
@@ -1191,7 +1299,7 @@ export function generateGeniusPlaylist(
   // If a filter-based type came back empty, replace the generic criteria with
   // a reason that names the data constraint responsible.
   if (result.tracks.length === 0) {
-    const reason = emptyReasonFor(geniusType, getPlaybackDataMonths(db));
+    const reason = emptyReasonFor(geniusType, getPlaybackDataContext(db));
     if (reason) result.criteria = reason;
   }
 
@@ -1221,16 +1329,10 @@ function generateGeniusPlaylistByType(
       return generateRecentlyDiscovered(events, opts);
     case "deep_dive":
       return generateDeepDive(events, opts, db);
-    case "oldies":
-      return generateOldies(events, opts, db);
-    case "nostalgia":
-      return generateNostalgia(events, opts, db);
-    case "recent_favorites":
-      return generateRecentFavorites(events, opts);
-    case "time_capsule":
-      return generateTimeCapsule(events, opts);
-    case "golden_era":
-      return generateGoldenEra(events, opts);
+    case "top_genre":
+      return generateTopGenre(opts, db);
+    case "finish_album":
+      return generateFinishAlbum(opts, db);
     default:
       throw new Error(`Unknown genius playlist type: ${geniusType}`);
   }
