@@ -1,4 +1,5 @@
 import { useEffect, useState, useMemo, useRef, useCallback } from "react";
+import { toast } from "sonner";
 import { FixedSizeList as List } from "react-window";
 import { RatingStars } from "../RatingStars";
 import { formatDuration, formatSize, formatBitrate, formatShadowCodecLabel, formatShadowCodecAndBitrate, formatShadowSize } from "../../utils/format";
@@ -406,12 +407,42 @@ export function LibraryPanel() {
     }
     setShadowSubmitted(false);
     setShowCreateShadow(false);
+
+    // Subscribe before the call: shadow:create starts the build before it
+    // returns, so waiting for the round-trip would drop the first log lines.
     startShadowBuildSubscription();
+
+    // The main-process `safe()` wrapper reports failures as data ({ error })
+    // rather than rejecting, so `catch` alone would let a rejected create show
+    // a progress modal for a build that never started.
+    const abandonBuildModal = () => {
+      shadowBuildUnsubRef.current?.();
+      shadowBuildUnsubRef.current = null;
+      setShowShadowBuild(false);
+      setShowCreateShadow(true); // let the user correct the form
+    };
+
+    let created: Awaited<ReturnType<typeof createShadowLibrary>>;
     try {
-      await createShadowLibrary(shadowName, shadowPath, shadowCodecConfigId, shadowVbr);
+      created = await createShadowLibrary(
+        shadowName,
+        shadowPath,
+        shadowCodecConfigId,
+        shadowVbr
+      );
     } catch (err) {
       console.error("Shadow create error:", err);
+      abandonBuildModal();
+      toast.error(err instanceof Error ? err.message : "Could not create shadow library");
+      return;
     }
+
+    if (created && "error" in created) {
+      abandonBuildModal();
+      toast.error(created.error);
+      return;
+    }
+
     setShadowName("");
     setShadowPath("");
     setShadowCodecConfigId(null);

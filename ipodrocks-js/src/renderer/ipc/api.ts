@@ -239,13 +239,15 @@ export async function createShadowLibrary(
   path: string,
   codecConfigId: number,
   vbrEnabled = false,
-): Promise<ShadowLibrary> {
+): Promise<ShadowLibrary | { error: string }> {
+  // The main-process `safe()` wrapper returns failures as data, not a
+  // rejection — callers must check for `error` rather than rely on catch.
   return window.api.invoke("shadow:create", {
     name,
     path,
     codecConfigId,
     vbrEnabled,
-  }) as Promise<ShadowLibrary>;
+  }) as Promise<ShadowLibrary | { error: string }>;
 }
 
 export async function deleteShadowLibrary(

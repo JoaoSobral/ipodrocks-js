@@ -230,6 +230,66 @@ test("recreating a shadow library over intact files adopts them instead of re-en
   expect(rebuilt?.trackCount).toBe(2);
 });
 
+// `safe()` reports failures as data ({ error }), not a rejection, so a rejected
+// create used to be discarded silently — the form closed and a build-progress
+// modal opened for a build that never started.
+test("creating a second shadow library at the same path is refused with a usable message", async () => {
+  const window = await readyWindow();
+  await seedLibrary(window);
+
+  const first = await createAndBuild(window, "Dup A", shadowDir, "MP3");
+  expect(first.finalLog).toContain("Build complete");
+
+  // A real, distinct folder, so the duplicate-name attempt is rejected on the
+  // name rather than on path validation.
+  const otherDir = path.join(rootDir, "shadow-other");
+  fs.mkdirSync(otherDir, { recursive: true });
+
+  const result = await window.evaluate(
+    async ({ shadowPath, otherPath, existingName }) => {
+      const api = (window as unknown as {
+        api: { invoke: (c: string, ...a: unknown[]) => Promise<unknown> };
+      }).api;
+      const configs = (await api.invoke("device:getCodecConfigs")) as Array<{
+        id: number;
+        codec_name: string;
+      }>;
+      const mp3 = configs.find((c) => (c.codec_name ?? "").toUpperCase() === "MP3");
+
+      const samePath = (await api.invoke("shadow:create", {
+        name: "Dup B",
+        path: shadowPath,
+        codecConfigId: mp3!.id,
+        vbrEnabled: false,
+      })) as { id?: number; error?: string };
+
+      const sameName = (await api.invoke("shadow:create", {
+        name: existingName,
+        path: otherPath,
+        codecConfigId: mp3!.id,
+        vbrEnabled: false,
+      })) as { id?: number; error?: string };
+
+      const all = (await api.invoke("shadow:getAll")) as Array<{ id: number }>;
+      return { samePath, sameName, count: all.length };
+    },
+    { shadowPath: shadowDir, otherPath: otherDir, existingName: "Dup A" }
+  );
+
+  expect(result.samePath.error).toBeTruthy();
+  expect(result.samePath.id).toBeUndefined();
+  // Names the offender and says what to do — not "UNIQUE constraint failed".
+  expect(result.samePath.error).toContain("Dup A");
+  expect(result.samePath.error).toMatch(/rebuild/i);
+  expect(result.samePath.error).not.toMatch(/UNIQUE constraint/i);
+
+  expect(result.sameName.error).toMatch(/already exists/i);
+  expect(result.sameName.error).not.toMatch(/UNIQUE constraint/i);
+
+  // Neither rejected attempt created anything.
+  expect(result.count).toBe(1);
+});
+
 test("only the missing track is re-encoded when part of the folder is intact", async () => {
   const window = await readyWindow();
   await seedLibrary(window);
