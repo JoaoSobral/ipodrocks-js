@@ -69,11 +69,14 @@ describe.skipIf(!canRun)("embedded art — ffmpeg fallback", () => {
     };
 
     // Random pixels so the PNG stays large — a flat colour would compress to a
-    // few hundred bytes and not resemble real cover art.
+    // few hundred bytes and not resemble real cover art. Generated with
+    // ffmpeg's own lavfi noise source (geq + random()) rather than reading
+    // /dev/urandom, which doesn't exist on Windows CI runners.
     const cover = path.join(workDir, "cover.png");
     run(
-      ["-y", "-v", "error", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", "400x400",
-       "-i", "/dev/urandom", "-frames:v", "1", cover],
+      ["-y", "-v", "error", "-f", "lavfi",
+       "-i", "color=c=black:s=400x400,geq=random(1)*255:random(2)*255:random(3)*255",
+       "-frames:v", "1", cover],
       "cover"
     );
     coverBytes = fs.statSync(cover).size;
