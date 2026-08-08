@@ -597,6 +597,12 @@ export interface ShadowBuildProgress {
   total: number;
   currentFile: string;
   status: "building" | "complete" | "error" | "cancelled" | "paused";
+  /**
+   * Which stage of the build this frame belongs to. Absent means "convert",
+   * so pre-existing emitters keep their meaning. The reconcile stage runs
+   * before any encoding and sweeps processed/total on its own.
+   */
+  phase?: "reconcile" | "convert" | "artwork";
   logMessage?: string;
   logLevel?: "info" | "success" | "skip" | "error";
 }

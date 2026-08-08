@@ -144,6 +144,8 @@ export function LibraryPanel() {
   } | null>(null);
   const openSettings = useUIStore((s) => s.openSettings);
   const pendingLibraryScan = useUIStore((s) => s.pendingLibraryScan);
+  const pendingShadowRebuildId = useUIStore((s) => s.pendingShadowRebuildId);
+  const setPendingShadowRebuildId = useUIStore((s) => s.setPendingShadowRebuildId);
   const setPendingLibraryScan = useUIStore((s) => s.setPendingLibraryScan);
   const [conflictCount, setConflictCount] = useState(0);
   const [conflictsModalOpen, setConflictsModalOpen] = useState(false);
@@ -378,7 +380,10 @@ export function LibraryPanel() {
       if (p.logMessage) {
         addShadowLog(p.logMessage, p.logLevel ?? "info");
       } else if (p.currentFile) {
-        addShadowLog(`Converting: ${p.currentFile}`, "info");
+        addShadowLog(
+          `${p.phase === "reconcile" ? "Checking" : "Converting"}: ${p.currentFile}`,
+          "info"
+        );
       }
       if (
         p.status === "complete" ||
@@ -445,6 +450,16 @@ export function LibraryPanel() {
     }
     getShadowLibraries().then(setShadowLibs).catch(console.error);
   }
+
+  // Rocksy asks for the rebuild; the panel runs it, so the user gets the
+  // progress modal rather than a silent background job.
+  useEffect(() => {
+    if (pendingShadowRebuildId == null) return;
+    const id = pendingShadowRebuildId;
+    setPendingShadowRebuildId(null);
+    handleRebuildShadow(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingShadowRebuildId, setPendingShadowRebuildId]);
 
   // "Pause Build" — stops the current build; the library is persisted as
   // paused and resumes automatically on next launch (or via the Resume button).
@@ -1084,6 +1099,16 @@ export function LibraryPanel() {
         className="max-w-xl"
       >
         <div className="flex flex-col gap-4">
+          {/* A build checks existing files before it encodes anything, so the
+              bar sweeps once per stage. Name the stage or the reset looks
+              like a glitch. */}
+          {shadowBuildProgress?.status === "building" && (
+            <p className="text-xs text-muted-foreground">
+              {shadowBuildProgress.phase === "reconcile"
+                ? "Step 1 of 2 — checking existing files"
+                : "Step 2 of 2 — converting"}
+            </p>
+          )}
           <ProgressBar
             value={
               shadowBuildProgress && shadowBuildProgress.total > 0
@@ -1107,7 +1132,11 @@ export function LibraryPanel() {
               {shadowBuildProgress?.status === "error"
                 ? "Build failed"
                 : shadowBuildProgress?.currentFile
-                  ? `Converting: ${shadowBuildProgress.currentFile}`
+                  ? `${
+                      shadowBuildProgress.phase === "reconcile"
+                        ? "Checking"
+                        : "Converting"
+                    }: ${shadowBuildProgress.currentFile}`
                   : "Preparing…"}
             </span>
             <span className="tabular-nums shrink-0">

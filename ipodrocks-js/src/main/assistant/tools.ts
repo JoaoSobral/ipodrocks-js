@@ -659,6 +659,69 @@ const library_scan: AiTool = {
   },
 };
 
+const shadow_list: AiTool = {
+  name: "shadow_list",
+  description:
+    "List the user's shadow libraries (pre-transcoded mirrors of the primary library) with their id, path, codec, status and track count. Use this to find a shadow library's id before rebuilding it.",
+  parameters: { type: "object", properties: {} },
+  kind: "read",
+  summarize: () => "List shadow libraries",
+  async run(_args, ctx) {
+    const libs = ctx.getLibrary().getShadowLibraries();
+    return {
+      ok: true,
+      count: libs.length,
+      shadowLibraries: libs.map((l) => ({
+        id: l.id,
+        name: l.name,
+        path: l.path,
+        codec: l.codecName,
+        bitrate: l.codecBitrateValue,
+        status: l.status,
+        trackCount: l.trackCount,
+      })),
+    };
+  },
+};
+
+const shadow_rebuild: AiTool = {
+  name: "shadow_rebuild",
+  description:
+    "Rebuild a shadow library. Files already on disk that are correctly encoded are adopted rather than re-encoded, so this is the right fix when a shadow library lost track of its files but the transcoded folder is intact. Use shadow_list first to get the id.",
+  parameters: {
+    type: "object",
+    properties: {
+      shadowLibraryId: {
+        type: "number",
+        description: "The id of the shadow library to rebuild (from shadow_list).",
+      },
+    },
+    required: ["shadowLibraryId"],
+  },
+  kind: "write-destructive",
+  summarize: (args) =>
+    `Rebuild shadow library #${(args as { shadowLibraryId?: number }).shadowLibraryId}`,
+  async run(args, ctx) {
+    const { shadowLibraryId } = args as { shadowLibraryId?: number };
+    if (typeof shadowLibraryId !== "number") {
+      return { ok: false, error: "shadowLibraryId is required" };
+    }
+    const lib = ctx.getLibrary().getShadowLibraries().find((l) => l.id === shadowLibraryId);
+    if (!lib) return { ok: false, error: `No shadow library with id ${shadowLibraryId}` };
+
+    const { BrowserWindow } = await import("electron");
+    const win = BrowserWindow.getAllWindows()[0];
+    if (win) {
+      win.webContents.send("assistant:triggerShadowRebuild", { shadowLibraryId });
+    }
+    return {
+      ok: true,
+      shadowLibraryName: lib.name,
+      message: `Rebuilding "${lib.name}" — I've opened the Library panel so you can watch the progress. Files already encoded correctly are adopted instead of re-encoded, so this is usually quick.`,
+    };
+  },
+};
+
 const library_find_duplicates: AiTool = {
   name: "library_find_duplicates",
   description:
@@ -852,6 +915,8 @@ export const AI_TOOLS: AiTool[] = [
   device_update_settings,
   device_sync,
   library_scan,
+  shadow_list,
+  shadow_rebuild,
   library_find_duplicates,
   podcast_download_now,
   podcast_delete_episodes,

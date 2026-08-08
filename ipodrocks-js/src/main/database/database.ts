@@ -33,7 +33,38 @@ export class AppDatabase {
     this.migrateDeviceArtworkMaxDimension();
     this.migrateVbrEnabled();
     this.migrateShadowPausedStatus();
+    this.migrateShadowTrackStat();
     this.migrateNfcPaths();
+  }
+
+  /**
+   * Add file_size + mtime to shadow_tracks so the reconcile pre-pass can trust
+   * an existing row without re-probing the file it points at.
+   *
+   * Left nullable on purpose: NULL means "written before these columns
+   * existed". Reconcile backfills those from a stat instead of forcing a full
+   * re-probe of every previously-built shadow library on first upgrade.
+   */
+  private migrateShadowTrackStat(): void {
+    if (!this.db) return;
+    try {
+      const rows = this.db
+        .prepare("PRAGMA table_info(shadow_tracks)")
+        .all() as { name: string }[];
+      const names = new Set(rows.map((r) => r.name));
+      if (!names.has("file_size")) {
+        this.db
+          .prepare("ALTER TABLE shadow_tracks ADD COLUMN file_size INTEGER")
+          .run();
+      }
+      if (!names.has("mtime")) {
+        this.db
+          .prepare("ALTER TABLE shadow_tracks ADD COLUMN mtime INTEGER")
+          .run();
+      }
+    } catch (err) {
+      console.error("[db] migration failed (migrateShadowTrackStat):", err);
+    }
   }
 
   /**

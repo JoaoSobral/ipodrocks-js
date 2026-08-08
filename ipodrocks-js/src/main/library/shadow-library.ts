@@ -14,7 +14,27 @@ import {
   copyArtworkToShadowLibrary,
   SyncCancelled,
 } from "../sync/sync-core";
-import { findOnDisk } from "../utils/normalize-path";
+import { findOnDisk, normalizePath } from "../utils/normalize-path";
+import { MetadataExtractor } from "./metadata-extractor";
+import {
+  audioMatchesCodecConfig,
+  canSkipProbe,
+  emptyReconcileResult,
+  UNRECONCILABLE_CODECS,
+  type CodecMatchTarget,
+  type MatchResult,
+  type ShadowReconcileResult,
+} from "./shadow-reconcile";
+
+/**
+ * Tracks classified between event-loop yields during reconcile phase 1. The
+ * work per track is a single synchronous stat, so yielding on every one would
+ * cost more than the check itself.
+ */
+const RECONCILE_YIELD_EVERY = 50;
+
+/** Pending row writes buffered before a transaction flush. */
+const RECONCILE_FLUSH_EVERY = 500;
 
 function computeDirectorySize(root: string): number {
   try {
@@ -74,6 +94,9 @@ interface ShadowTrackRow {
   shadow_path: string;
   status: string;
   error_message: string | null;
+  /** Stat of the shadow file as last written/verified; NULL predates these columns. */
+  file_size: number | null;
+  mtime: number | null;
 }
 
 interface CodecConfigRow {
@@ -112,7 +135,11 @@ export class ShadowLibraryManager {
   private stmtDelete: Database.Statement;
   private stmtSetStatus: Database.Statement;
   private stmtInsertTrack: Database.Statement;
+  private stmtInsertSyncedTrack: Database.Statement;
+  private stmtUpdateTrackStat: Database.Statement;
   private stmtDeleteTrackBySource: Database.Statement;
+  private stmtDeleteTrackById: Database.Statement;
+  private stmtGetLibPathAndCodec: Database.Statement;
   private stmtGetTrackBySource: Database.Statement;
   private stmtGetCodecConfig: Database.Statement;
   private stmtGetShadowTracksByLib: Database.Statement;
@@ -167,9 +194,32 @@ export class ShadowLibraryManager {
 
     this.stmtGetTrackBySource = db.prepare(
       `SELECT id, shadow_library_id, source_track_id, shadow_path,
-              status, error_message
+              status, error_message, file_size, mtime
        FROM shadow_tracks
        WHERE shadow_library_id = ? AND source_track_id = ?`
+    );
+
+    // Used by the reconcile pass to adopt a verified file, and by a successful
+    // convert to record the stat baseline that lets the next pass trust it.
+    this.stmtInsertSyncedTrack = db.prepare(
+      `INSERT OR REPLACE INTO shadow_tracks
+       (shadow_library_id, source_track_id, shadow_path, status, error_message,
+        file_size, mtime, updated_at)
+       VALUES (?, ?, ?, 'synced', NULL, ?, ?, CURRENT_TIMESTAMP)`
+    );
+
+    this.stmtUpdateTrackStat = db.prepare(
+      `UPDATE shadow_tracks
+       SET file_size = ?, mtime = ?, updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`
+    );
+
+    this.stmtDeleteTrackById = db.prepare(
+      "DELETE FROM shadow_tracks WHERE id = ?"
+    );
+
+    this.stmtGetLibPathAndCodec = db.prepare(
+      "SELECT path, codec_config_id, vbr_enabled FROM shadow_libraries WHERE id = ?"
     );
 
     this.stmtGetCodecConfig = db.prepare(
@@ -182,7 +232,7 @@ export class ShadowLibraryManager {
 
     this.stmtGetShadowTracksByLib = db.prepare(
       `SELECT id, shadow_library_id, source_track_id, shadow_path,
-              status, error_message
+              status, error_message, file_size, mtime
        FROM shadow_tracks WHERE shadow_library_id = ?`
     );
   }
@@ -255,6 +305,276 @@ export class ShadowLibraryManager {
   }
 
   // ------------------------------------------------------------------
+  // Reconcile
+  // ------------------------------------------------------------------
+
+  /**
+   * Adopt shadow files that are already on disk, before any encoding starts.
+   *
+   * Recreating a shadow library over intact files (lost DB row, reinstall)
+   * otherwise re-encodes the entire library, because the skip test in
+   * `_transcodeTrack` is keyed on a `shadow_tracks` row that the new library id
+   * does not have. This pass seeds those rows for files that verify, and drops
+   * rows whose file has since vanished so they are re-encoded rather than
+   * wrongly skipped.
+   *
+   * Deliberately does not enumerate the shadow folder — it only stats the
+   * destination each source track would be written to. Stray files are
+   * therefore never touched, and the common case (empty folder) costs one
+   * `existsSync` per track with no probes and no writes.
+   */
+  async reconcileShadowLibrary(
+    shadowLibId: number,
+    allTracks: Track[],
+    libraryFolderPaths: Map<number, string>,
+    progressCallback?: (progress: ShadowBuildProgress) => void,
+    signal?: AbortSignal
+  ): Promise<ShadowReconcileResult> {
+    const result = emptyReconcileResult();
+    const total = allTracks.length;
+
+    // Read the three columns this needs directly: getShadowLibraryById walks
+    // the whole shadow folder synchronously to compute a size we never use.
+    const lib = this.stmtGetLibPathAndCodec.get(shadowLibId) as
+      | { path: string; codec_config_id: number; vbr_enabled: number }
+      | undefined;
+    if (!lib) throw new Error(`Shadow library ${shadowLibId} not found`);
+
+    const codecConfig = this.stmtGetCodecConfig.get(
+      lib.codec_config_id
+    ) as CodecConfigRow | undefined;
+    if (!codecConfig) throw new Error("Codec configuration not found");
+
+    const target: CodecMatchTarget = {
+      codecName: codecConfig.codec_name,
+      bitrateKbps: codecConfig.bitrate_value,
+      qualityValue: codecConfig.quality_value,
+      vbrEnabled: !!lib.vbr_enabled,
+      sourceDurationSec: null,
+    };
+
+    // Guard: an unreachable root (unmounted drive) would otherwise look like
+    // "every file is gone" and wipe the whole library's rows in one sweep.
+    const root = this._statOnDisk(lib.path);
+    if (root === null || !root.isDirectory()) {
+      result.skipped = true;
+      progressCallback?.({
+        shadowLibraryId: shadowLibId,
+        processed: 0,
+        total,
+        currentFile: "",
+        status: "building",
+        phase: "reconcile",
+        logMessage: `Skipping existing-file check — ${lib.path} is not reachable`,
+        logLevel: "error",
+      });
+      return result;
+    }
+
+    // Guard: DIRECT COPY / Unknown have no deterministic encoder mapping, so
+    // nothing on disk can be verified against them.
+    if (UNRECONCILABLE_CODECS.has(target.codecName.trim().toUpperCase())) {
+      result.skipped = true;
+      return result;
+    }
+
+    const rowsByTrack = new Map<number, ShadowTrackRow>();
+    for (const row of this.stmtGetShadowTracksByLib.all(
+      shadowLibId
+    ) as ShadowTrackRow[]) {
+      rowsByTrack.set(row.source_track_id, row);
+    }
+
+    const yieldEventLoop = (): Promise<void> =>
+      new Promise((resolve) => setImmediate(resolve));
+
+    /** Files to open, because their stat is unknown or has changed. */
+    const candidates: {
+      track: Track;
+      destPath: string;
+      row: ShadowTrackRow | undefined;
+    }[] = [];
+
+    const pendingAdopt: [number, string, number | null, number | null][] = [];
+    const pendingStat: [number | null, number | null, number][] = [];
+    const pendingDrop: number[] = [];
+
+    const flush = (): void => {
+      if (
+        pendingAdopt.length === 0 &&
+        pendingStat.length === 0 &&
+        pendingDrop.length === 0
+      ) {
+        return;
+      }
+      this.db.transaction(() => {
+        for (const a of pendingAdopt) {
+          this.stmtInsertSyncedTrack.run(shadowLibId, a[0], a[1], a[2], a[3]);
+        }
+        for (const s of pendingStat) this.stmtUpdateTrackStat.run(s[0], s[1], s[2]);
+        for (const id of pendingDrop) this.stmtDeleteTrackById.run(id);
+      })();
+      pendingAdopt.length = 0;
+      pendingStat.length = 0;
+      pendingDrop.length = 0;
+    };
+
+    const maybeFlush = (): void => {
+      if (
+        pendingAdopt.length + pendingStat.length + pendingDrop.length >=
+        RECONCILE_FLUSH_EVERY
+      ) {
+        flush();
+      }
+    };
+
+    // ---- Phase 1: classify. Synchronous stat only, so yield in batches. ----
+    for (let i = 0; i < allTracks.length; i++) {
+      if (i % RECONCILE_YIELD_EVERY === 0) {
+        await yieldEventLoop();
+        if (signal?.aborted) {
+          flush();
+          result.cancelled = true;
+          return result;
+        }
+        if (i > 0) {
+          progressCallback?.({
+            shadowLibraryId: shadowLibId,
+            processed: i,
+            total,
+            currentFile: "",
+            status: "building",
+            phase: "reconcile",
+          });
+        }
+      }
+
+      const track = allTracks[i];
+      const row = rowsByTrack.get(track.id);
+      const destPath = path.join(
+        lib.path,
+        this._computeShadowRelPath(track, codecConfig, libraryFolderPaths)
+      );
+      const st = this._statOnDisk(destPath);
+
+      if (st === null) {
+        // File absent. A row pointing at it is stale — drop it so the track is
+        // re-encoded instead of being skipped as already-synced.
+        if (row) {
+          pendingDrop.push(row.id);
+          result.dropped++;
+          maybeFlush();
+        }
+        continue;
+      }
+
+      const sameRow = row && this._samePath(row.shadow_path, destPath);
+
+      if (sameRow && row.status === "synced") {
+        if (row.file_size == null || row.mtime == null) {
+          // Written before the stat columns existed. We produced this file
+          // ourselves, so trust it and just record the baseline.
+          pendingStat.push([st.size, Math.floor(st.mtimeMs), row.id]);
+          result.backfilled++;
+          maybeFlush();
+          continue;
+        }
+        if (row.file_size === st.size && row.mtime === Math.floor(st.mtimeMs)) {
+          result.verified++;
+          continue;
+        }
+      }
+
+      // Unknown file, or one that changed under us — it has to be opened.
+      candidates.push({ track, destPath, row });
+    }
+
+    if (candidates.length === 0) {
+      flush();
+      return result;
+    }
+
+    // ---- Phase 2: probe. Real async I/O, so yielding each turn is free. ----
+    const extractor = new MetadataExtractor();
+
+    for (let i = 0; i < candidates.length; i++) {
+      await yieldEventLoop();
+      if (signal?.aborted) {
+        flush();
+        result.cancelled = true;
+        return result;
+      }
+
+      const { track, destPath, row } = candidates[i];
+
+      progressCallback?.({
+        shadowLibraryId: shadowLibId,
+        processed: Math.min(total, i + 1),
+        total,
+        currentFile: track.filename,
+        status: "building",
+        phase: "reconcile",
+      });
+
+      const st = this._statOnDisk(destPath);
+      if (st === null) continue; // vanished between the two phases
+
+      const trackTarget: CodecMatchTarget = {
+        ...target,
+        sourceDurationSec: track.duration > 0 ? track.duration : null,
+      };
+
+      let verdict: MatchResult;
+      if (canSkipProbe(trackTarget)) {
+        // MPC: opening the file means a synchronous whole-file read, and the
+        // unambiguous .mpc destination already tells us as much as a probe.
+        verdict = { ok: true };
+      } else {
+        const info = await extractor.extractAudioInfo(findOnDisk(destPath));
+        result.probed++;
+        verdict = audioMatchesCodecConfig(info, trackTarget);
+      }
+
+      if (verdict.ok) {
+        if (row && this._samePath(row.shadow_path, destPath) && row.status === "synced") {
+          pendingStat.push([st.size, Math.floor(st.mtimeMs), row.id]);
+          result.verified++;
+        } else {
+          pendingAdopt.push([
+            track.id,
+            destPath,
+            st.size,
+            Math.floor(st.mtimeMs),
+          ]);
+          result.adopted++;
+        }
+      } else {
+        // Wrong format at our destination. Leave the file alone — the encoder
+        // overwrites it — but drop any row claiming it is good.
+        if (row) {
+          pendingDrop.push(row.id);
+          result.dropped++;
+        }
+        result.rejected++;
+        progressCallback?.({
+          shadowLibraryId: shadowLibId,
+          processed: Math.min(total, i + 1),
+          total,
+          currentFile: track.filename,
+          status: "building",
+          phase: "reconcile",
+          logMessage: `Will re-encode ${track.filename} — ${verdict.reason}`,
+          logLevel: "skip",
+        });
+      }
+      maybeFlush();
+    }
+
+    flush();
+    return result;
+  }
+
+  // ------------------------------------------------------------------
   // Build
   // ------------------------------------------------------------------
 
@@ -280,6 +600,48 @@ export class ShadowLibraryManager {
 
     this.stmtSetStatus.run("building", shadowLibId);
     const total = allTracks.length;
+
+    // Adopt whatever is already correctly encoded on disk before spending any
+    // CPU. Cheap when there is nothing to adopt.
+    const rec = await this.reconcileShadowLibrary(
+      shadowLibId,
+      allTracks,
+      libraryFolderPaths,
+      progressCallback,
+      signal
+    );
+
+    if (rec.cancelled) {
+      this.stmtSetStatus.run("paused", shadowLibId);
+      progressCallback?.({
+        shadowLibraryId: shadowLibId,
+        processed: 0,
+        total,
+        currentFile: "",
+        status: "paused",
+        phase: "reconcile",
+        logMessage: "Build paused while checking existing files — will resume on next launch",
+        logLevel: "info",
+      });
+      return;
+    }
+
+    if (rec.adopted > 0 || rec.dropped > 0 || rec.rejected > 0) {
+      const parts: string[] = [];
+      if (rec.adopted > 0) parts.push(`${rec.adopted} adopted`);
+      if (rec.dropped > 0) parts.push(`${rec.dropped} stale entries removed`);
+      if (rec.rejected > 0) parts.push(`${rec.rejected} mismatched (will re-encode)`);
+      progressCallback?.({
+        shadowLibraryId: shadowLibId,
+        processed: total,
+        total,
+        currentFile: "",
+        status: "building",
+        phase: "reconcile",
+        logMessage: `Reconciled existing files — ${parts.join(", ")}`,
+        logLevel: "info",
+      });
+    }
 
     const settings = this._buildConversionSettings(codecConfig, lib.vbrEnabled);
 
@@ -478,9 +840,9 @@ export class ShadowLibraryManager {
       total,
       currentFile: "",
       status: hasErrors ? "error" : "complete",
-      logMessage: hasErrors
-        ? `Build failed — ${converted} converted, ${skipped} skipped, ${errors} errors`
-        : `Build complete — ${converted} converted, ${skipped} skipped, ${errors} errors`,
+      logMessage: `${hasErrors ? "Build failed" : "Build complete"} — ${converted} converted, ${skipped} skipped${
+        rec.adopted > 0 ? ` (${rec.adopted} adopted)` : ""
+      }, ${errors} errors`,
       logLevel: hasErrors ? "error" : "info",
     });
   }
@@ -616,6 +978,25 @@ export class ShadowLibraryManager {
   // Private helpers
   // ------------------------------------------------------------------
 
+  /**
+   * Compare two shadow paths for identity. Stored paths are NFC (the DB
+   * convention) while a path we just joined may carry whatever form the source
+   * filename had, so a raw `===` misses matches on decomposed filenames.
+   */
+  private _samePath(a: string, b: string): boolean {
+    return normalizePath(a) === normalizePath(b);
+  }
+
+  /** Stat a stored path, resolving NFC↔NFD on disk. Null when absent. */
+  private _statOnDisk(p: string): fs.Stats | null {
+    if (!p) return null;
+    try {
+      return fs.statSync(findOnDisk(p));
+    } catch {
+      return null;
+    }
+  }
+
   private async _transcodeTrack(
     track: Track,
     lib: ShadowLibrary,
@@ -636,10 +1017,13 @@ export class ShadowLibraryManager {
       lib.id,
       track.id
     ) as ShadowTrackRow | undefined;
+    // Compare through _samePath / _statOnDisk rather than raw string + existsSync:
+    // the reconcile pass seeds NFC-normalized paths, and on a filesystem that
+    // stores NFD the raw check would miss both and re-encode everything.
     if (
       existing?.status === "synced" &&
-      existing.shadow_path === destPath &&
-      fs.existsSync(destPath)
+      this._samePath(existing.shadow_path, destPath) &&
+      this._statOnDisk(destPath) !== null
     ) {
       return "skipped";
     }
@@ -660,12 +1044,15 @@ export class ShadowLibraryManager {
     );
 
     if (ok) {
-      this.stmtInsertTrack.run(
+      // Record the stat baseline so a later reconcile can trust this row
+      // without re-opening the file.
+      const st = this._statOnDisk(destPath);
+      this.stmtInsertSyncedTrack.run(
         lib.id,
         track.id,
         destPath,
-        "synced",
-        null
+        st?.size ?? null,
+        st ? Math.floor(st.mtimeMs) : null
       );
       return "converted";
     } else {

@@ -1,5 +1,17 @@
 # Changelog
 
+## [Unreleased]
+
+### Features
+
+- **Shadow libraries reuse transcoded files that are already on disk** — Recreating a shadow library over a folder that still holds its transcoded files (after a reinstall, a profile reset, or losing the library entry) used to re-encode every track from scratch and overwrite byte-equivalent files, which could take hours. Before encoding anything, iPodRocks now checks each file it is about to write: if one is already there and genuinely matches the library's codec and length, it is adopted instead of re-encoded. Mixed folders work per track — only what is missing or doesn't match gets converted, and the build reports how many were adopted. Verification is by codec and duration rather than file name alone, so an AAC file is never mistaken for an Apple Lossless one (both use `.m4a`), and truncated or half-written files are re-encoded rather than kept. Files in the folder that don't belong to your library are left untouched.
+- **Rocksy can list and rebuild shadow libraries** — Ask "which shadow libraries do I have?" or "rebuild my MP3 library" and Rocksy can now do it, opening the Library panel so you can watch the progress. Because rebuilding adopts correctly-encoded files, it is the quick fix when a shadow library loses track of a folder that is otherwise intact.
+
+### Fixes
+
+- **Shadow library builds recognise Unicode-named files correctly** — On filesystems that store accented or non-Latin filenames in a different Unicode form than the database recorded (common on SMB/SAMBA shares and some macOS setups), a shadow library could fail to see the file it had already produced and re-encode it on every rebuild. Those files are now matched regardless of Unicode form.
+- **Track bitrate is read from the audio itself, not the whole file** — A track's bitrate was measured across the entire file including embedded cover art, so a song with a large cover could be reported as substantially higher-bitrate than it is. It is now read from the audio stream.
+
 ## [2.1.0] — 2026-07
 
 ### Features
