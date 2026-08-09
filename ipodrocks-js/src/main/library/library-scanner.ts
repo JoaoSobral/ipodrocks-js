@@ -481,9 +481,20 @@ export class LibraryScanner {
         "SELECT id FROM genres WHERE id NOT IN (SELECT DISTINCT genre_id FROM tracks WHERE genre_id IS NOT NULL)"
       )
       .all() as { id: number }[];
+    // A codec absent from the scanned library isn't necessarily unused: it may
+    // still be a shadow library's or device's transcode *target* (via
+    // codec_configurations.codec_id), which by design is rarely the codec any
+    // primary-library track is actually stored in — e.g. an MPC shadow library
+    // built from a FLAC source means no track ever has codec_id = MPC. Deleting
+    // that codecs row here (with FK enforcement off for this transaction, see
+    // above) orphaned codec_configurations/shadow_libraries rows that pointed
+    // at it, which then vanished from the app's own listings — see
+    // https://github.com/JoaoSobral/ipodrocks-js/issues/105.
     const orphanCodecIds = this.db
       .prepare(
-        "SELECT id FROM codecs WHERE id NOT IN (SELECT DISTINCT codec_id FROM tracks WHERE codec_id IS NOT NULL)"
+        `SELECT id FROM codecs
+         WHERE id NOT IN (SELECT DISTINCT codec_id FROM tracks WHERE codec_id IS NOT NULL)
+           AND id NOT IN (SELECT DISTINCT codec_id FROM codec_configurations)`
       )
       .all() as { id: number }[];
 

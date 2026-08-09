@@ -578,8 +578,10 @@ export interface ShadowLibrary {
   name: string;
   path: string;
   codecConfigId: number;
-  codecConfigName: string;
-  codecName: string;
+  /** Null when codecConfigMissing — the row's codec_config_id no longer resolves. */
+  codecConfigName: string | null;
+  /** Null when codecConfigMissing — the row's codec_config_id no longer resolves. */
+  codecName: string | null;
   /** Bitrate in kbps (e.g. 320), or null if codec uses quality/bits. */
   codecBitrateValue: number | null;
   /** Quality value (e.g. MPC Q5), or null. */
@@ -593,6 +595,13 @@ export interface ShadowLibrary {
   status: "pending" | "building" | "ready" | "error" | "paused";
   trackCount: number;
   createdAt: string;
+  /**
+   * True when codec_config_id no longer resolves to a codec_configurations
+   * row (e.g. lost across a downgrade/upgrade). The row still exists and
+   * still blocks its name/path for new libraries, but can't be built —
+   * codecConfigName/codecName are null and the only valid action is delete.
+   */
+  codecConfigMissing: boolean;
 }
 
 export interface ShadowBuildProgress {

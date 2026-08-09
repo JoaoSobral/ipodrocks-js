@@ -241,6 +241,13 @@ export class Library {
     );
   }
 
+  findConflictingShadowLibrary(
+    name: string,
+    libPath: string
+  ): { field: "path" | "name"; name: string } | undefined {
+    return this.shadowManager.findConflictingLibrary(name, libPath);
+  }
+
   deleteShadowLibrary(id: number, removeFiles = true): boolean {
     return this.shadowManager.deleteShadowLibrary(id, removeFiles);
   }

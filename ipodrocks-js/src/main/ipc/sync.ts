@@ -179,7 +179,7 @@ export function registerSyncHandlers(): void {
           for (const [folderId] of libraryFolderPaths) {
             libraryFolderPaths.set(folderId, shadowLib.path);
           }
-          profileCodecExtOverride = getProfileCodecExt(shadowLib.codecName);
+          profileCodecExtOverride = getProfileCodecExt(shadowLib.codecName ?? "");
         }
       }
 

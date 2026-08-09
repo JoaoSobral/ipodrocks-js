@@ -682,6 +682,10 @@ const shadow_list: AiTool = {
         bitrate: l.codecBitrateValue,
         status: l.status,
         trackCount: l.trackCount,
+        // When true, this library's codec configuration no longer exists
+        // (e.g. lost across a downgrade/upgrade) — it can't be rebuilt, only
+        // deleted and recreated at the same folder to adopt its files back.
+        codecConfigMissing: l.codecConfigMissing,
       })),
     };
   },
@@ -711,6 +715,12 @@ const shadow_rebuild: AiTool = {
     }
     const lib = ctx.getLibrary().getShadowLibraries().find((l) => l.id === shadowLibraryId);
     if (!lib) return { ok: false, error: `No shadow library with id ${shadowLibraryId}` };
+    if (lib.codecConfigMissing) {
+      return {
+        ok: false,
+        error: `"${lib.name}" has lost its codec configuration and can't be rebuilt. Call shadow_delete with keepFiles: true, then create a new shadow library with the same name and folder — the existing files will be adopted automatically instead of re-encoded.`,
+      };
+    }
 
     const { BrowserWindow } = await import("electron");
     const win = BrowserWindow.getAllWindows()[0];
@@ -721,6 +731,56 @@ const shadow_rebuild: AiTool = {
       ok: true,
       shadowLibraryName: lib.name,
       message: `Rebuilding "${lib.name}" — I've opened the Library panel so you can watch the progress. Files already encoded correctly are adopted instead of re-encoded, so this is usually quick.`,
+    };
+  },
+};
+
+const shadow_delete: AiTool = {
+  name: "shadow_delete",
+  description:
+    "Delete a shadow library's database entry. Pass keepFiles: true to leave its transcoded files on disk and only remove the database entry — the right choice before recreating a shadow library at the same folder, since the existing files are then adopted instead of re-encoded. This is also the fix when a shadow library's codec configuration was lost (codecConfigMissing in shadow_list) and it can no longer be rebuilt. Use shadow_list first to get the id.",
+  parameters: {
+    type: "object",
+    properties: {
+      shadowLibraryId: {
+        type: "number",
+        description: "The id of the shadow library to delete (from shadow_list).",
+      },
+      keepFiles: {
+        type: "boolean",
+        description:
+          "When true, leaves the transcoded files on disk and only deletes the database entry. Defaults to false (deletes the files too).",
+      },
+    },
+    required: ["shadowLibraryId"],
+  },
+  kind: "write-destructive",
+  summarize: (args) => {
+    const a = args as { shadowLibraryId?: number; keepFiles?: boolean };
+    return `Delete shadow library #${a.shadowLibraryId}${a.keepFiles ? " (keeping its files on disk)" : " and its files"}`;
+  },
+  async run(args, ctx) {
+    const { shadowLibraryId, keepFiles } = args as {
+      shadowLibraryId?: number;
+      keepFiles?: boolean;
+    };
+    if (typeof shadowLibraryId !== "number") {
+      return { ok: false, error: "shadowLibraryId is required" };
+    }
+    const library = ctx.getLibrary();
+    const lib = library.getShadowLibraries().find((l) => l.id === shadowLibraryId);
+    if (!lib) return { ok: false, error: `No shadow library with id ${shadowLibraryId}` };
+
+    const deleted = library.deleteShadowLibrary(shadowLibraryId, !keepFiles);
+    if (!deleted) {
+      return { ok: false, error: `Failed to delete shadow library #${shadowLibraryId}` };
+    }
+
+    return {
+      ok: true,
+      message: keepFiles
+        ? `Deleted "${lib.name}"'s database entry and kept its files on disk. Create a new shadow library with the same name and folder to adopt them instead of re-encoding.`
+        : `Deleted "${lib.name}" and its transcoded files.`,
     };
   },
 };
@@ -920,6 +980,7 @@ export const AI_TOOLS: AiTool[] = [
   library_scan,
   shadow_list,
   shadow_rebuild,
+  shadow_delete,
   library_find_duplicates,
   podcast_download_now,
   podcast_delete_episodes,

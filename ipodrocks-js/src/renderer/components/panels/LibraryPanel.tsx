@@ -669,32 +669,41 @@ export function LibraryPanel() {
                       </p>
                       <Badge
                         variant={
-                          sl.status === "ready"
-                            ? "success"
-                            : sl.status === "building" || sl.status === "paused"
-                              ? "warning"
-                              : sl.status === "error"
-                                ? "destructive"
-                                : "muted"
+                          sl.codecConfigMissing
+                            ? "destructive"
+                            : sl.status === "ready"
+                              ? "success"
+                              : sl.status === "building" || sl.status === "paused"
+                                ? "warning"
+                                : sl.status === "error"
+                                  ? "destructive"
+                                  : "muted"
                         }
                         className="shrink-0 !text-[8px] !px-1 !py-0"
                       >
-                        {sl.status === "ready"
-                          ? "Synced"
-                          : sl.status === "building"
-                            ? "Building"
-                            : sl.status === "paused"
-                              ? "Paused"
-                              : sl.status.toUpperCase()}
+                        {sl.codecConfigMissing
+                          ? "Broken"
+                          : sl.status === "ready"
+                            ? "Synced"
+                            : sl.status === "building"
+                              ? "Building"
+                              : sl.status === "paused"
+                                ? "Paused"
+                                : sl.status.toUpperCase()}
                       </Badge>
                     </div>
                     <p className="text-[10px] text-muted-foreground truncate leading-tight">
                       {sl.path} · {sl.trackCount} tracks
                       {" · "}{formatShadowSize(sl.totalBytes)}
                     </p>
+                    {sl.codecConfigMissing && (
+                      <p className="text-[10px] text-destructive truncate leading-tight">
+                        Codec configuration missing — delete and recreate at this folder to adopt its files.
+                      </p>
+                    )}
                   </div>
                   <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                    {sl.status === "paused" && (
+                    {sl.status === "paused" && !sl.codecConfigMissing && (
                       <Button
                         variant="ghost"
                         size="sm"
@@ -705,15 +714,17 @@ export function LibraryPanel() {
                         ▶
                       </Button>
                     )}
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="!p-1"
-                      onClick={() => handleRebuildShadow(sl.id)}
-                      title="Rebuild"
-                    >
-                      ⟳
-                    </Button>
+                    {!sl.codecConfigMissing && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="!p-1"
+                        onClick={() => handleRebuildShadow(sl.id)}
+                        title="Rebuild"
+                      >
+                        ⟳
+                      </Button>
+                    )}
                     <Button
                       variant="ghost"
                       size="sm"

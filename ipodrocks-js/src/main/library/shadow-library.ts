@@ -78,8 +78,9 @@ interface ShadowLibraryRow {
   status: string;
   vbr_enabled: number;
   created_at: string;
-  codec_config_name: string;
-  codec_name: string;
+  // Null when codec_config_id no longer resolves — see the LEFT JOIN below.
+  codec_config_name: string | null;
+  codec_name: string | null;
   bitrate_value: number | null;
   quality_value: number | null;
   bits_per_sample: number | null;
@@ -143,10 +144,19 @@ export class ShadowLibraryManager {
   private stmtGetTrackBySource: Database.Statement;
   private stmtGetCodecConfig: Database.Statement;
   private stmtGetShadowTracksByLib: Database.Statement;
+  private stmtFindByPath: Database.Statement;
+  private stmtFindByName: Database.Statement;
 
   constructor(db: Database.Database) {
     this.db = db;
 
+    // LEFT JOIN deliberately: a row whose codec_config_id no longer resolves
+    // (lost across a downgrade/upgrade, or any other FK drift) must still be
+    // returned here rather than silently vanish. An INNER JOIN made such rows
+    // invisible to the whole app — including the shadow:create duplicate
+    // check — while their name/path UNIQUE constraints kept blocking new
+    // libraries, surfacing as a raw "UNIQUE constraint failed" the user had
+    // no way to act on. See _rowToShadowLibrary for how the gap is reported.
     const baseQuery = `
       SELECT sl.id, sl.name, sl.path, sl.codec_config_id, sl.status,
              sl.vbr_enabled, sl.created_at, cc.name as codec_config_name,
@@ -160,8 +170,8 @@ export class ShadowLibraryManager {
              (SELECT COUNT(*) FROM shadow_tracks st
               WHERE st.shadow_library_id = sl.id) as track_count
       FROM shadow_libraries sl
-      JOIN codec_configurations cc ON sl.codec_config_id = cc.id
-      JOIN codecs c ON cc.codec_id = c.id
+      LEFT JOIN codec_configurations cc ON sl.codec_config_id = cc.id
+      LEFT JOIN codecs c ON cc.codec_id = c.id
     `;
 
     this.stmtGetAll = db.prepare(baseQuery + " ORDER BY sl.name");
@@ -235,6 +245,15 @@ export class ShadowLibraryManager {
               status, error_message, file_size, mtime
        FROM shadow_tracks WHERE shadow_library_id = ?`
     );
+
+    // Deliberately against the raw table, not the codec-config-joined
+    // getShadowLibraries() — see findConflictingLibrary().
+    this.stmtFindByPath = db.prepare(
+      "SELECT id, name, path FROM shadow_libraries WHERE path = ?"
+    );
+    this.stmtFindByName = db.prepare(
+      "SELECT id, name, path FROM shadow_libraries WHERE name = ?"
+    );
   }
 
   // ------------------------------------------------------------------
@@ -260,6 +279,32 @@ export class ShadowLibraryManager {
     this.db.prepare(
       "UPDATE shadow_libraries SET status = 'paused' WHERE status = 'building'"
     ).run();
+  }
+
+  /**
+   * Look up a row that would collide with (name, libPath) on the table's
+   * UNIQUE(name) / UNIQUE(path) constraints. Queries shadow_libraries
+   * directly — not via getShadowLibraries()'s codec-config join — so a row
+   * whose codec_config_id no longer resolves (invisible to that listing) is
+   * still caught here and reported with a usable message, instead of
+   * reaching the raw INSERT and failing with "UNIQUE constraint failed".
+   */
+  findConflictingLibrary(
+    name: string,
+    libPath: string
+  ): { field: "path" | "name"; name: string } | undefined {
+    const resolvedPath = path.resolve(libPath);
+    const byPath = this.stmtFindByPath.get(resolvedPath) as
+      | { id: number; name: string; path: string }
+      | undefined;
+    if (byPath) return { field: "path", name: byPath.name };
+
+    const byName = this.stmtFindByName.get(name.trim()) as
+      | { id: number; name: string; path: string }
+      | undefined;
+    if (byName) return { field: "name", name: byName.name };
+
+    return undefined;
   }
 
   createShadowLibrary(
@@ -1125,6 +1170,7 @@ export class ShadowLibraryManager {
       status: row.status as ShadowLibrary["status"],
       trackCount: row.track_count,
       createdAt: row.created_at,
+      codecConfigMissing: row.codec_config_name === null,
     };
   }
 }

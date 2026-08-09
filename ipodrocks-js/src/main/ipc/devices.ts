@@ -196,7 +196,7 @@ export function registerDeviceHandlers(): void {
           for (const [folderId] of libraryFolderPaths) {
             libraryFolderPaths.set(folderId, shadowLib.path);
           }
-          profileCodecExt = getProfileCodecExt(shadowLib.codecName);
+          profileCodecExt = getProfileCodecExt(shadowLib.codecName ?? "");
         }
       }
 
