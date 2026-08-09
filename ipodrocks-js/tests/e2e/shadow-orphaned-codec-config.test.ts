@@ -1,7 +1,12 @@
 /**
- * E2E — a shadow library whose codec configuration was lost (e.g. across a
- * downgrade/upgrade round trip that dropped or renumbered codec_configurations
- * rows) must not vanish from the app or silently block recreation.
+ * E2E — a shadow library whose codec configuration was lost must not vanish
+ * from the app or silently block recreation. The app always runs with
+ * `foreign_keys = ON`, so a shadow_libraries.codec_config_id can only end up
+ * dangling through a connection with FK enforcement off — the same pattern
+ * this codebase's own table-rebuild migrations use (e.g.
+ * migrateShadowPausedStatus's DROP/RENAME), so a future migration that
+ * touches codec_configurations the same way, or an old one from before a
+ * downgrade/upgrade round trip, could plausibly leave a row like this.
  *
  * Before this fix, getShadowLibraries() INNER JOINed against
  * codec_configurations/codecs, so a row whose codec_config_id no longer
@@ -24,7 +29,7 @@
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
-import Database from "better-sqlite3";
+import { execFileSync } from "child_process";
 import { test, expect, type Page } from "@playwright/test";
 import { launchApp, type LaunchedApp } from "./electron-launcher";
 
@@ -112,19 +117,53 @@ async function createEmptyShadowLib(
 
 /**
  * Corrupt the row's codec_config_id directly in the on-disk db, the same
- * failure mode a lost/renumbered codec_configurations row produces — the app
- * must be closed to nothing else while the file is open in WAL mode, so a
- * short-lived second connection is safe here.
+ * failure mode a lost/renumbered codec_configurations row produces. Done in
+ * a short-lived subprocess (db is WAL-mode, so a second connection is safe
+ * alongside the running app) rather than requiring better-sqlite3 in this
+ * test process directly: the compiled addon here may be built against
+ * Electron's Node ABI (electron-rebuild), which plain `node` — what runs
+ * this Playwright test file — can't load. Running it through Electron's own
+ * Node runtime sidesteps that without needing anything reinstalled; it must
+ * be a separate process from Playwright's own electron.launch() (used by
+ * launchApp()) since ELECTRON_RUN_AS_NODE on that call breaks Electron's CDP
+ * flags.
  */
 function orphanCodecConfig(userDataDir: string, shadowLibId: number): void {
   const dbPath = path.join(userDataDir, "ipodrock.db");
-  const db = new Database(dbPath);
-  db.pragma("busy_timeout = 5000");
-  db.prepare("UPDATE shadow_libraries SET codec_config_id = ? WHERE id = ?").run(
-    999999,
-    shadowLibId
+  const projectRoot = path.resolve(__dirname, "..", "..");
+  const electronBin = path.join(projectRoot, "node_modules", ".bin", "electron");
+  const scriptDir = fs.mkdtempSync(path.join(os.tmpdir(), "ipr-orphan-script-"));
+  const scriptPath = path.join(scriptDir, "orphan.js");
+  fs.writeFileSync(
+    scriptPath,
+    `
+    const Database = require("better-sqlite3");
+    const db = new Database(process.argv[2]);
+    db.pragma("busy_timeout = 5000");
+    // The app always runs with foreign_keys = ON, so codec_config_id can only
+    // end up pointing nowhere via a connection that (like this codebase's own
+    // table-rebuild migrations, e.g. migrateShadowPausedStatus) has FK
+    // enforcement off — never through the app's normal write paths.
+    db.pragma("foreign_keys = OFF");
+    db.prepare("UPDATE shadow_libraries SET codec_config_id = ? WHERE id = ?")
+      .run(999999, Number(process.argv[3]));
+    db.close();
+    `
   );
-  db.close();
+  try {
+    execFileSync(electronBin, [scriptPath, dbPath, String(shadowLibId)], {
+      env: {
+        ...process.env,
+        ELECTRON_RUN_AS_NODE: "1",
+        // scriptPath lives outside the project tree, so better-sqlite3
+        // won't resolve via the normal node_modules walk-up.
+        NODE_PATH: path.join(projectRoot, "node_modules"),
+      },
+      stdio: "pipe",
+    });
+  } finally {
+    fs.rmSync(scriptDir, { recursive: true, force: true });
+  }
 }
 
 interface ShadowLibDto {
