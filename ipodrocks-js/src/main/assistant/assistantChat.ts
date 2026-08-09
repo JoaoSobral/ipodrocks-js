@@ -348,6 +348,9 @@ function buildDevicesContext(db: Database.Database): string {
 }
 
 function buildShadowLibrariesContext(db: Database.Database): string {
+  // LEFT JOIN: a row whose codec_config_id no longer resolves must still be
+  // reported (as broken) rather than silently missing from Rocksy's context —
+  // see the matching fix in shadow-library.ts's getShadowLibraries().
   const libs = db
     .prepare(
       `SELECT sl.id, sl.name, sl.path, sl.status, sl.created_at,
@@ -358,8 +361,8 @@ function buildShadowLibrariesContext(db: Database.Database): string {
               (SELECT COUNT(*) FROM shadow_tracks st
                WHERE st.shadow_library_id = sl.id) as total_tracks
        FROM shadow_libraries sl
-       JOIN codec_configurations cc ON sl.codec_config_id = cc.id
-       JOIN codecs co ON cc.codec_id = co.id
+       LEFT JOIN codec_configurations cc ON sl.codec_config_id = cc.id
+       LEFT JOIN codecs co ON cc.codec_id = co.id
        ORDER BY sl.id`
     )
     .all() as Array<{
@@ -368,8 +371,8 @@ function buildShadowLibrariesContext(db: Database.Database): string {
     path: string;
     status: string;
     created_at: string;
-    codec_config_name: string;
-    codec_name: string;
+    codec_config_name: string | null;
+    codec_name: string | null;
     bitrate_value: number | null;
     quality_value: number | null;
     bits_per_sample: number | null;
@@ -396,9 +399,15 @@ function buildShadowLibrariesContext(db: Database.Database): string {
       getDevicesUsing.all(sl.id) as Array<{ name: string }>
     ).map((d) => d.name);
     lines.push("", `### Shadow Library: ${sl.name}`);
-    lines.push(
-      `- Codec: ${sl.codec_name} / ${sl.codec_config_name}${bitrateLabel ? ` (${bitrateLabel})` : ""}`
-    );
+    if (sl.codec_config_name === null) {
+      lines.push(
+        `- Codec configuration MISSING (id no longer exists) — this library can't be rebuilt. Delete it (shadow_delete, keepFiles: true) and recreate at the same folder to adopt its files.`
+      );
+    } else {
+      lines.push(
+        `- Codec: ${sl.codec_name} / ${sl.codec_config_name}${bitrateLabel ? ` (${bitrateLabel})` : ""}`
+      );
+    }
     lines.push(`- Path: ${sl.path}`);
     lines.push(
       `- Status: ${sl.status} (${sl.synced_tracks}/${sl.total_tracks} tracks synced)`
@@ -520,6 +529,8 @@ Tool usage rules (CRITICAL):
 - User asks to change a device's album-artwork setting or cover size (e.g. "make the artwork smaller", "my iPod is slow with big covers", "turn off artwork for my iPod", "use 300px covers") → call \`device_list\` first, then \`device_update_settings\`. Recommend 300px for iPods so they stay responsive.
 - User asks to scan the library / "scan for new music" / "rescan" → call \`library_scan\`.
 - User asks about shadow libraries, or says one lost track of its files / re-encoded everything / "I moved my transcoded folder" / "my shadow library is empty but the files are there" / asks to rebuild one → call \`shadow_list\` first to get the id, then \`shadow_rebuild\`. Reassure them: a rebuild adopts files that are already correctly encoded instead of re-encoding them, so it is usually quick and only the missing or mismatched tracks are converted.
+- If \`shadow_list\` shows \`codecConfigMissing: true\` for a shadow library, or \`shadow_rebuild\` fails saying it "can't be rebuilt" — its codec configuration is gone and rebuilding is not possible. Don't retry \`shadow_rebuild\`. Tell the user, then call \`shadow_delete\` with \`keepFiles: true\` (confirm with them first since it's destructive) and have them create a new shadow library with the same name and folder — the existing files are adopted automatically instead of re-encoded.
+- User asks to delete or remove a shadow library → call \`shadow_list\` first to get the id, then \`shadow_delete\`. Ask whether they want to keep the transcoded files on disk (\`keepFiles: true\`) before confirming — this matters if they plan to recreate the shadow library at the same folder afterward.
 - User asks about duplicates ("do I have duplicate songs?", "find duplicates", "what did the scan mean by duplicates detected?", "clean up my library") → call \`library_find_duplicates\`. It reports byte-identical copies and deletes nothing; tell the user which paths are duplicated and let them choose what to remove.
 - User asks about playlists with missing/broken songs, or "why does my playlist show wrong count", or "fix my playlist" → call \`playlist_list_broken\` first to see which playlists are affected, then call \`playlist_repair\` on the ones the user confirms (or all if they say "fix all"). Only smart playlists can be rebuilt from rules; for others, Repair removes the missing tracks.
 - NEVER say "I can't search for podcasts" or "I can't browse the internet" — you have \`podcast_search\` for exactly this purpose.
@@ -529,6 +540,7 @@ Tool usage rules (CRITICAL):
 - NEVER say "I can't fix or repair playlists" — you have \`playlist_list_broken\` and \`playlist_repair\`.
 - NEVER say "I can't scan the library" — you have \`library_scan\`.
 - NEVER say "I can't rebuild a shadow library" or "you'll have to recreate it manually" — you have \`shadow_list\` and \`shadow_rebuild\`.
+- NEVER say "I can't delete a shadow library" — you have \`shadow_delete\`.
 - NEVER say "I can't find duplicates" or "I can't check for duplicate files" — you have \`library_find_duplicates\`.
 - NEVER tell the user to manually find an RSS feed — use \`podcast_search\` for name-based search, or \`podcast_add_by_url\` if they have a specific URL.
 - User asks to find, search, or look up a LibriVox or public-domain audiobook → call \`audiobook_search\` immediately.

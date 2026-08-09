@@ -1,4 +1,3 @@
-import path from "path";
 import { ipcMain, type WebContents } from "electron";
 import { safe, getLibrary, validateFolderPath } from "./common";
 import { LibraryScanner } from "../library/library-scanner";
@@ -177,17 +176,17 @@ export function registerLibraryHandlers(): void {
 
       // name and path are both UNIQUE. Say so in words — the raw constraint
       // message ("UNIQUE constraint failed: shadow_libraries.path") tells the
-      // user nothing about what to do.
-      const existing = lib.getShadowLibraries();
-      const samePath = existing.find(
-        (l) => path.resolve(l.path) === path.resolve(validated.path)
-      );
-      if (samePath) {
-        return {
-          error: `"${samePath.name}" already uses this folder. Rebuild it instead — a rebuild reuses files that are already correctly encoded.`,
-        };
-      }
-      if (existing.some((l) => l.name.trim() === config.name?.trim())) {
+      // user nothing about what to do. Checked against the raw table (not
+      // getShadowLibraries()) so a row whose codec config was lost — invisible
+      // to that joined listing — still gets caught here instead of reaching
+      // the INSERT and throwing that raw message anyway.
+      const conflict = lib.findConflictingShadowLibrary(config.name, validated.path);
+      if (conflict) {
+        if (conflict.field === "path") {
+          return {
+            error: `"${conflict.name}" already uses this folder — manage it from the shadow libraries list instead of creating a new one (rebuild reuses files already encoded; delete if it's stuck).`,
+          };
+        }
         return { error: `A shadow library named "${config.name}" already exists.` };
       }
 
@@ -233,6 +232,14 @@ export function registerLibraryHandlers(): void {
       const lib = getLibrary();
       const shadowLib = lib.getShadowLibraryById(shadowLibId);
       if (!shadowLib) return { error: "Shadow library not found" };
+      // buildShadowLibrary() would throw "Codec configuration not found" here,
+      // but that rejection is only console.error'd below — the user would see
+      // nothing happen. Report it up front instead.
+      if (shadowLib.codecConfigMissing) {
+        return {
+          error: `"${shadowLib.name}" has lost its codec configuration and can't be rebuilt. Delete it and create a new shadow library at the same folder — the existing files will be adopted automatically.`,
+        };
+      }
 
       activeShadowBuildAbort = new AbortController();
       lib
@@ -274,6 +281,11 @@ export function registerLibraryHandlers(): void {
       const lib = getLibrary();
       const shadowLib = lib.getShadowLibraryById(shadowLibId);
       if (!shadowLib) return { error: "Shadow library not found" };
+      if (shadowLib.codecConfigMissing) {
+        return {
+          error: `"${shadowLib.name}" has lost its codec configuration and can't be resumed. Delete it and create a new shadow library at the same folder — the existing files will be adopted automatically.`,
+        };
+      }
 
       activeShadowBuildAbort = new AbortController();
       lib

@@ -435,7 +435,7 @@ export function SyncPanel() {
         (s) => s.id === selectedDevice.shadowLibraryId
       );
       const shadowLabel = shadow
-        ? `${shadow.name} (${shadow.codecName})`
+        ? `${shadow.name} (${shadow.codecName ?? "config missing"})`
         : `Shadow #${selectedDevice.shadowLibraryId}`;
       return { mode: "Direct Copy", source: shadowLabel, color: "#a78bfa" };
     }
