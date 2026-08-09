@@ -72,13 +72,14 @@ If you really like iPodRocks and want to keep it caffeinated, you can buy me a c
 - **Per-device icons** — iPod Classic, Nano, and Mini get their own artwork; other devices each get a distinct generic Rockbox icon so cards are easy to tell apart at a glance
 - **Live connection indicator** — A prominent green/red dot on each device card shows whether the mount path is currently reachable
 
-### Smart & Genius Playlists
+### Classic, Smart & Genius Playlists
+- **Classic playlists — hand-pick your own songs** — Tick songs straight from your library in a virtualized picker with search plus artist/album/genre filters. **Your selection persists across every filter change**, so you can build one playlist out of several different searches. Tick order is play order, up to 500 songs. Classic is also the only playlist type you can **edit** after creating — reopen the picker with your songs already ticked.
 - **Multi-select Smart playlist builder** — Pick any combination of genres, artists, and albums in a single 3-column modal. Cross-type AND, within-type OR. Live "~N tracks" preview updates as you tick.
 - **Star-rated playlists** — Both Smart and Genius support a `top_rated` strategy that surfaces tracks rated 4★+ (Rockbox 0–10 ≥ 8). Smart variant works even before any device log is ingested.
 - **Genius from playback logs** — Most Played, Favorites, Skip List, Hidden Gems, Top Genre, Finish the Album, Deep Dive, and more. Star ratings from your library now flow into every Genius algorithm.
 - **Rockbox-native smart playlists (tagnavi)** — Per-device opt-in: Smart playlists are written as live, auto-updating Rockbox tagtree entries in `.rockbox/tagnavi_custom.config` instead of frozen `.m3u` snapshots. Other playlist kinds still write `.m3u`.
 - **Playlists as a library filter** — Filter the Library track list down to any playlist's members with a Playlist `<select>` in the filter row; full playlist management lives in the Playlists panel.
-- **Broken-playlist detection & repair** — When a re-scan removes tracks, playlists that still reference them are flagged (warning banner, badges, and a sync gate). Repair drops the dangling items and renumbers; Smart playlists can also be Rebuilt from their rules. A sync gate offers one-click "Repair all & continue".
+- **Playlists self-heal on every scan** — Delete music from disk and your playlists follow: each library scan (and folder removal) drops songs that no longer exist, closes up the track numbering, and **re-resolves Smart playlists from their rules** so they also pick up newly scanned matches — track limit preserved. A scan that finds no tracks at all is skipped rather than emptying everything. Manual Repair/Rebuild and the sync gate's "Repair all & continue" remain for anything that goes wrong outside a scan.
 
 ### Savant Playlists — AI-Powered
 - **Mood Chat** — Describe your vibe in plain English; get a tailored playlist
@@ -97,9 +98,9 @@ If you really like iPodRocks and want to keep it caffeinated, you can buy me a c
 - **Chat** — Ask about your library, playlists, artists, and get recommendations
 - **Persistent memory** — The assistant remembers important things you tell it across sessions (up to 40 pinned memories). Say "always remember my name is Pedro" or "don't forget I love jazz" and it will carry that context every time you open the app
 - **Rolling conversation history** — Keeps the last 100 exchanges as hidden context so the assistant stays informed without cluttering your chat
-- **Create playlists by talking** — Ask the assistant to make a Smart or Genius playlist in plain English: "Make me a rock playlist with 30 tracks" or "Create a late night favorites playlist from my listening history" — it handles the rest
+- **Create playlists by talking** — Ask the assistant to make a playlist in plain English: "Make me a rock playlist with 30 tracks", "Create a late night favorites playlist from my listening history", or name the songs directly — "make me a playlist with Heroes, Starman and Life on Mars" — and Rocksy looks each one up and builds a Classic playlist. It can also add to, remove from, or rename an existing Classic playlist
 - **Manage podcasts & audiobooks by talking** — "Subscribe to Syntax", "Add this RSS feed", "Find audiobooks by Jules Verne", "What audiobooks do I have?"
-- **Fix broken playlists** — "Which playlists have missing songs?" then "Repair that one" — Rocksy lists and repairs broken playlists for you
+- **Fix broken playlists** — Playlists now repair themselves on every library scan, but you can still ask "Which playlists have missing songs?" and Rocksy will check and fix anything left over
 - **Adjust device settings** — "Make my iPod's album art smaller" or "turn off artwork for my iPod" — Rocksy updates the device's artwork size or skip setting for you
 - **Smart memory management** — Up to 40 permanently pinned memories that survive the rolling history limit. Say "forget about that" or "actually my name is X" to update or remove memories
 - Markdown rendering, copy-paste friendly
@@ -186,7 +187,7 @@ If `mpcenc` is not on your PATH, iPodRocks will prompt when you select Musepack.
 
 1. **Add library folder** — Open **Library**, click **Add Folder**, and choose your music root folder (for example, `/home/user/Music`). iPodRocks scans all subfolders recursively for audio files. Important to have your audio with tags
 2. **Add device** — Open **Devices**, click **+ Add Device**, and pick the **root mount path of the device** (for example, `/media/ipod`). The app will automatically create `music`, `podcasts`, and `audiobooks` folders on the device if they do not exist.
-3. **Create playlists** (optional) — Open **Playlists** for smart, genius, or Savant playlists.
+3. **Create playlists** (optional) — Open **Playlists** for Classic (hand-picked), Smart, Genius, or Savant playlists.
 4. **Sync** — Open **Sync**, select your device, choose full or custom sync, and click **Start Sync**.
 
 ---
@@ -210,12 +211,13 @@ If `mpcenc` is not on your PATH, iPodRocks will prompt when you select Musepack.
 
 ### Playlists
 
+- **Classic** — Hand-picked: tick the songs you want, in the order you want them (max 500). Search and filter by artist/album/genre without losing your selection. The only playlist type you can edit afterwards
 - **Smart** — Rule-based (genre, artist, album) with track limits, multi-select 3-column builder, and a `top_rated` strategy for 4★+ tracks
 - **Genius** — From Rockbox playback logs; analyze device first. Includes a `top_rated` Genius type that works without any play history
 - **Savant** — AI-generated from mood (requires OpenRouter API key in Settings); rating-aware curation
 - **Tagnavi mode** — Enable "Rockbox smart playlists (tagnavi)" on a device to sync Smart playlists as live, auto-updating Rockbox tagtree entries instead of static `.m3u` files
-- **Via Rocksy** — Ask the chat to create a Smart or Genius playlist for you in plain English. Rocksy knows your genres, artists, albums, and listening history and builds the playlist instantly
-- **Broken playlists** — Playlists that reference deleted tracks are flagged after a re-scan; Repair, Rebuild (Smart), or Delete them, or use the sync gate's "Repair all & continue"
+- **Via Rocksy** — Ask the chat to create a playlist in plain English. Name specific songs and Rocksy looks each one up and builds a Classic playlist; describe genres or history and it builds a Smart or Genius one. It can edit Classic playlists too
+- **Automatic upkeep** — Deleted songs are removed from every playlist on the next library scan, and Smart playlists are re-resolved from their rules. Manual Repair, Rebuild (Smart), and the sync gate's "Repair all & continue" are still available
 
 ### Auto Podcasts
 

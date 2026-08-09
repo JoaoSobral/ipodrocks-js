@@ -390,8 +390,15 @@ export class LibraryScanner {
 
   /**
    * Delete tracks by path from DB (tracks, content_hashes, playback_logs,
-   * playback_stats). Cleans up orphaned albums/artists/genres/codecs.
+   * playback_stats, playlist_items). Cleans up orphaned albums/artists/genres/codecs.
    * Returns the number of tracks deleted and their IDs (for shadow propagation).
+   *
+   * Every dependent table has to be cleaned by hand here: this transaction runs
+   * with `foreign_keys = OFF` (see below), so the ON DELETE CASCADE declared on
+   * `playlist_items.track_id` never fires. Forgetting one leaves orphan rows —
+   * exactly how playlists ended up holding songs that no longer existed, and
+   * the same shape of bug as the codec_configurations orphaning in
+   * cleanupOrphanedEntities() below.
    */
   private deleteRemovedTracks(
     paths: string[]
@@ -418,6 +425,9 @@ export class LibraryScanner {
     const deletePlaybackStatsStmt = this.db.prepare(
       "DELETE FROM playback_stats WHERE track_id = ?"
     );
+    const deletePlaylistItemsStmt = this.db.prepare(
+      "DELETE FROM playlist_items WHERE track_id = ?"
+    );
 
     let deleted = 0;
     this.db.pragma("foreign_keys = OFF");
@@ -429,6 +439,7 @@ export class LibraryScanner {
             deletePlaybackLogsStmt.run(trackId);
             deletePlaybackStatsStmt.run(trackId);
             deleteShadowStmt.run(trackId);
+            deletePlaylistItemsStmt.run(trackId);
           }
           deleteHashStmt.run(p);
           const info = deleteTrackStmt.run(p);

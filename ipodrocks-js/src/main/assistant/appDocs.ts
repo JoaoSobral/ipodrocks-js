@@ -54,7 +54,7 @@ Use shadow libraries for pre-transcoded sync (faster, avoids on-the-fly conversi
 
 Playback log — enable "Read playback log" on the device profile to ingest Rockbox's playback.log for Genius playlists and listening stats.
 
-Rockbox smart playlists (tagnavi) — when enabled on a device profile, smart playlists sync as live Rockbox tagnavi database queries instead of static .m3u files. Genius, Savant, and Custom playlists always sync as .m3u. After syncing, reboot the device and run Database → Initialize Now in Rockbox for entries to appear. After the first init, updates are automatic if tagcache_autoupdate is on.
+Rockbox smart playlists (tagnavi) — when enabled on a device profile, smart playlists sync as live Rockbox tagnavi database queries instead of static .m3u files. Classic, Genius, and Savant playlists always sync as .m3u — they are static track selections with no rules to translate. After syncing, reboot the device and run Database → Initialize Now in Rockbox for entries to appear. After the first init, updates are automatic if tagcache_autoupdate is on.
 
 Orphans — files on device not in library. Controlled by Orphan Policy (Remove/Keep/Prompt) in the Sync panel.
 Codec mismatches — old-codec files on device are removed and replaced when syncing with Orphan Policy set to Remove.
@@ -80,12 +80,26 @@ After sync with tagnavi smart playlists: reboot device and run Database → Init
 ---
 
 ### Playlists — Overview
-Four tabs: All, Smart, Genius, Savant.
+Five tabs: All, Classic, Smart, Genius, Savant.
 
 All — view, create, delete, and export all playlists. Click a playlist to see its tracks. Export as M3U8.
+Classic — hand-picked songs chosen by the user, up to 500. The only editable playlist type. Syncs as .m3u.
 Smart — rule-based playlists (genre, artist, album + track limit). Syncs as .m3u or live tagnavi.
 Genius — from Rockbox playback history (Most Played, Favorites, Late Night, etc.). Syncs as .m3u.
 Savant — AI-generated from mood (requires OpenRouter API key). Syncs as .m3u.
+
+Playlists stay in sync with the library automatically: after every library scan or folder removal, songs that no longer exist on disk are dropped from every playlist, and smart playlists are re-resolved from their rules so they also pick up newly scanned tracks. Users do not need to click Repair.
+
+---
+
+### Classic Playlists
+Hand-picked playlists — the user chooses each song themselves.
+
+How to create: Playlists → + Create Playlist → Classic → name it → tick songs in the track picker → Create playlist.
+
+The picker searches by title/artist/album and filters by artist, album, and genre. The selection is kept while filtering and searching, so a playlist can be assembled from several different searches. Songs play in the order they were ticked. Maximum 500 songs; music only (no podcasts or audiobooks).
+
+Editing: open a Classic playlist and click "Edit tracks" to reopen the picker with the current songs pre-ticked. Saving replaces the whole track list. Classic is currently the only playlist type with an edit UI.
 
 ---
 
@@ -94,7 +108,7 @@ Filter by genre, artist, or album with a track limit.
 
 How to create: pick rule type (By genre/artist/album) → select values (multi-select supported) → set track limit or check "No limit" → Create → name it.
 
-Smart playlists are not live-updating — recreate to refresh when the library changes.
+Smart playlists refresh themselves on every library scan — they are re-resolved from their rules, so newly scanned matching tracks appear and deleted ones disappear without any user action. The saved track limit is preserved across those rebuilds.
 Multiple values of the same type = OR. Different rule types = AND.
 
 Rockbox dynamic mode (tagnavi): when enabled on the device profile, smart playlists sync as live Rockbox tagnavi entries. After first sync: run Database → Initialize Now in Rockbox, then reboot the device. Only artist, album, and genre rules translate to tagnavi.

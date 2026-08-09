@@ -164,7 +164,7 @@ One per primary tab in the sidebar.
 | **LibraryPanel** | Folders, scans, track list. |
 | **DevicePanel** | Add/edit devices, codec configuration, online checks. |
 | **SyncPanel** | Pick what to sync and run it. |
-| **PlaylistPanel** | Smart, Genius, Savant tabs. |
+| **PlaylistPanel** | Classic, Smart, Genius, Savant tabs. The Classic track picker lives in `components/playlists/`. |
 | **AutoPodcastsPanel** | Subscribe to shows (search or by URL) and configure per-device auto-sync. |
 | **AutoAudiobooksPanel** | Browse and subscribe to free LibriVox audiobooks ("Extra Audiobooks" tab). |
 | **SettingsPanel** | OpenRouter, harmonic analysis, codecs, podcasts. |

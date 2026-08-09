@@ -185,6 +185,28 @@ export function ScanProgressModal({ open, onClose, folders }: ScanProgressModalP
             {result.cancelled && (
               <p className="mt-2 text-center text-xs text-warning">Scan was cancelled</p>
             )}
+            {result.playlistsUpdated &&
+              (result.playlistsUpdated.prunedItems > 0 ||
+                result.playlistsUpdated.rebuiltSmart > 0) && (
+                <p className="mt-2 text-center text-xs text-muted-foreground">
+                  Playlists updated automatically —{" "}
+                  {result.playlistsUpdated.prunedItems > 0 && (
+                    <>
+                      removed {result.playlistsUpdated.prunedItems} missing song
+                      {result.playlistsUpdated.prunedItems === 1 ? "" : "s"} from{" "}
+                      {result.playlistsUpdated.prunedPlaylists} playlist
+                      {result.playlistsUpdated.prunedPlaylists === 1 ? "" : "s"}
+                      {result.playlistsUpdated.rebuiltSmart > 0 ? "; " : ""}
+                    </>
+                  )}
+                  {result.playlistsUpdated.rebuiltSmart > 0 && (
+                    <>
+                      rebuilt {result.playlistsUpdated.rebuiltSmart} smart playlist
+                      {result.playlistsUpdated.rebuiltSmart === 1 ? "" : "s"}
+                    </>
+                  )}
+                </p>
+              )}
             {result.errors && result.errors.length > 0 && (
               <div className="mt-3">
                 <ErrorBox>

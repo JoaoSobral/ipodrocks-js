@@ -18,7 +18,7 @@ If your device runs Rockbox firmware, you can configure it to receive smart play
 
 - During sync, smart playlists are written to `<device>/.rockbox/tagnavi_user.config` as tagnavi query entries that are evaluated live against the device's tag database.
 - Smart-playlist `.m3u` files are no longer written to the device's Playlists folder; any leftover ones from prior syncs are cleaned up under the configured Orphan Policy.
-- Other playlist kinds (Custom, Genius, Savant) still write `.m3u` — see below for why.
+- Other playlist kinds (Classic, Genius, Savant) still write `.m3u` — see below for why.
 - Inside Rockbox, the entries appear at the bottom of the main **Database** menu (one entry per smart playlist, named after the playlist).
 
 Only `artist`, `album`, and `genre` rules translate cleanly. Multiple values for the same rule type are OR'd (Rockbox `@` operator with pipe-separated values); different rule types are also OR'd, mirroring the desktop's smart-playlist track query.
@@ -36,7 +36,7 @@ If a smart-playlist entry appears in the menu but is empty when opened, the most
 
 Tagnavi entries are **live database queries**, not file lists. A Smart playlist rule like "genre = Rock, limit 50" translates directly to a tagnavi expression that Rockbox evaluates against its tag database every time you open it — so if you add new Rock tracks to the device, the playlist updates automatically.
 
-Genius, Savant, and Custom playlists are **static track selections** made at a point in time. Genius picks tracks based on play history and scoring; Savant uses AI and harmonic sequencing; Custom is hand-curated. None of these have a metadata expression that could reproduce the original selection on the device. The right format for a static track list is `.m3u`, which is an exact record of which files belong. Embedding a 50-track file list inside a tagnavi config line would be strictly worse — same data, harder to read, breaks if any path changes.
+Classic, Genius, and Savant playlists are **static track selections** made at a point in time. Genius picks tracks based on play history and scoring; Savant uses AI and harmonic sequencing; Classic is hand-curated song by song. None of these have a metadata expression that could reproduce the original selection on the device. The right format for a static track list is `.m3u`, which is an exact record of which files belong. Embedding a 50-track file list inside a tagnavi config line would be strictly worse — same data, harder to read, breaks if any path changes.
 
 ## How to work with it
 
@@ -44,4 +44,10 @@ Genius, Savant, and Custom playlists are **static track selections** made at a p
 2. Pick one or more values from the dropdown (loaded from your library).
 3. Set the track limit or check "No limit".
 4. Click **Create** and give the playlist a name.
-5. The playlist appears in the All tab. Re-create it to refresh when your library changes (Smart playlists are not live-updating).
+5. The playlist appears in the All tab.
+
+## Keeping up with your library
+
+Smart playlists refresh themselves. Every library scan re-resolves them from their rules, so newly scanned matching tracks appear and deleted ones disappear without you doing anything — and the track limit you set is preserved across those rebuilds. See [Playlists — Overview](./playlists.md#playlists-stay-in-sync-with-your-library).
+
+If you change your mind about the *rules* themselves, create a new playlist — rules can't be edited after creation.

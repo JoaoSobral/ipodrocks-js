@@ -438,6 +438,23 @@ export async function createPlaylist(config: {
   return window.api.invoke("playlist:create", config) as Promise<Playlist>;
 }
 
+/** Create a Classic playlist from a hand-picked, ordered list of track ids. */
+export async function createClassicPlaylist(config: {
+  name: string;
+  trackIds: number[];
+}): Promise<Playlist> {
+  return window.api.invoke("playlist:createClassic", config) as Promise<Playlist>;
+}
+
+/** Replace a Classic playlist's name and tracks. `trackIds` replaces, not appends. */
+export async function updateClassicPlaylist(config: {
+  playlistId: number;
+  name: string;
+  trackIds: number[];
+}): Promise<Playlist> {
+  return window.api.invoke("playlist:updateClassic", config) as Promise<Playlist>;
+}
+
 export async function deletePlaylist(id: number): Promise<void> {
   await window.api.invoke("playlist:delete", id);
 }

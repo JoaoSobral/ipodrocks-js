@@ -58,6 +58,10 @@ export default defineConfig({
                 { text: "Overview", link: "/app-reference/playlists" },
                 { text: "All Playlists", link: "/app-reference/playlists-all" },
                 {
+                  text: "Classic Playlists",
+                  link: "/app-reference/playlists-classic",
+                },
+                {
                   text: "Smart Playlists",
                   link: "/app-reference/playlists-smart",
                 },
