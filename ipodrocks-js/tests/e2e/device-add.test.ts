@@ -39,11 +39,20 @@ test("rejected add (filesystem root) shows an error instead of closing silently"
   await window.locator('button:has-text("Devices"), a:has-text("Devices")').first().click();
 
   // On hosts without `mpcenc` (e.g. CI runners), DevicePanel auto-opens an
-  // "MPC unavailable" reminder on first mount, whose backdrop blocks every
-  // other click. Dismiss it if it appears before driving the form.
-  const mpcModalClose = window.locator('div[role="dialog"]:has-text("Musepack (MPC) unavailable") button[title="Close"]');
-  if (await mpcModalClose.isVisible({ timeout: 2_000 }).catch(() => false)) {
-    await mpcModalClose.click();
+  // "MPC unavailable" reminder once its two mount-time IPC round trips
+  // (isMpcencAvailable, getMpcRemindDisabled) resolve, and its backdrop
+  // blocks every other click. `isVisible()` does not poll — it was racing
+  // those IPC calls and losing on slower CI/xvfb runners, so the modal was
+  // popping in mid-click on "+ Add Device" instead of being dismissed first.
+  // `waitFor()` actually polls, so wait for the modal to settle one way or
+  // the other before deciding whether to dismiss it.
+  const mpcModal = window.locator('div[role="dialog"]:has-text("Musepack (MPC) unavailable")');
+  const mpcModalAppeared = await mpcModal
+    .waitFor({ state: "visible", timeout: 8_000 })
+    .then(() => true)
+    .catch(() => false);
+  if (mpcModalAppeared) {
+    await mpcModal.locator('button[title="Close"]').click();
   }
 
   // Open the Add Device modal.

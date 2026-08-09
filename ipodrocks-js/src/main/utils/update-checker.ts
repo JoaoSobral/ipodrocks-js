@@ -62,6 +62,26 @@ export function shouldAutoCheck(
   return now >= snoozeUntil;
 }
 
+/** Total update checks (auto + manual, combined) allowed per rolling window. */
+export const UPDATE_CHECK_RATE_LIMIT = 4;
+export const UPDATE_CHECK_WINDOW_MS = 60 * 60 * 1000;
+
+/**
+ * Decides whether another update check is allowed under a rolling-window
+ * rate limit, given the timestamps of prior checks. Pure — the caller owns
+ * persisting the returned (pruned) timestamps.
+ */
+export function checkRateLimit(
+  timestamps: number[],
+  now: number,
+  limit: number = UPDATE_CHECK_RATE_LIMIT,
+  windowMs: number = UPDATE_CHECK_WINDOW_MS
+): { allowed: boolean; timestamps: number[] } {
+  const recent = timestamps.filter((t) => now - t < windowMs);
+  if (recent.length >= limit) return { allowed: false, timestamps: recent };
+  return { allowed: true, timestamps: [...recent, now] };
+}
+
 /**
  * Fetch CHANGELOG.md from the GitHub main branch. Returns the raw markdown
  * body, or `null` on any failure (network, non-200, timeout). Subsequent

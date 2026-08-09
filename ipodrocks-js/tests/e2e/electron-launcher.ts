@@ -18,13 +18,27 @@ export interface LaunchedApp {
   cleanup: () => Promise<void>;
 }
 
-export async function launchApp(extraEnv?: Record<string, string>): Promise<LaunchedApp> {
+export async function launchApp(
+  extraEnv?: Record<string, string>,
+  opts?: { seedPrefs?: Record<string, unknown> }
+): Promise<LaunchedApp> {
   if (!fs.existsSync(APP_ENTRY)) {
     throw new Error(
       `Built app not found at ${APP_ENTRY}. Run "npm run build" before "npx playwright test".`
     );
   }
   const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "ipr-e2e-"));
+  if (opts?.seedPrefs) {
+    // Pre-populate main-process prefs (see src/main/utils/prefs.ts) before
+    // Electron starts, so a test can start from non-default state (e.g. an
+    // already-exhausted update-check rate limit) without driving the UI
+    // through it first.
+    fs.writeFileSync(
+      path.join(userDataDir, "ipodrocks-prefs.json"),
+      JSON.stringify(opts.seedPrefs, null, 2),
+      "utf-8"
+    );
+  }
   const app = await electron.launch({
     args: [APP_ENTRY, `--user-data-dir=${userDataDir}`],
     env: {

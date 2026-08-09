@@ -24,6 +24,8 @@ interface Prefs {
   harmonic?: HarmonicPrefs;
   /** Unix ms timestamp — auto update check is suppressed until this time. */
   updateSnoozeUntil?: number;
+  /** Unix ms timestamps of recent update checks (auto + manual), capping requests/hour. */
+  updateCheckTimestamps?: number[];
   podcastIndexConfig?: { apiKey: string; apiSecret: string };
   /** Encrypted Podcast Index API key (base64). */
   _encPodcastIndexApiKey?: string;
@@ -203,6 +205,16 @@ export function setUpdateSnoozeUntil(ts: number | null): void {
   } else {
     prefs.updateSnoozeUntil = ts;
   }
+  writePrefs(prefs);
+}
+
+export function getUpdateCheckTimestamps(): number[] {
+  return readPrefs().updateCheckTimestamps ?? [];
+}
+
+export function setUpdateCheckTimestamps(timestamps: number[]): void {
+  const prefs = readPrefs();
+  prefs.updateCheckTimestamps = timestamps;
   writePrefs(prefs);
 }
 

@@ -7,12 +7,15 @@ import {
   setMpcRemindDisabled,
   getUpdateSnoozeUntil,
   setUpdateSnoozeUntil,
+  getUpdateCheckTimestamps,
+  setUpdateCheckTimestamps,
 } from "../utils/prefs";
 import {
   fetchLatestRelease,
   fetchChangelogMarkdown,
   compareVersions,
   shouldAutoCheck,
+  checkRateLimit,
 } from "../utils/update-checker";
 import { extractChangelogSection } from "../utils/changelog-parser";
 
@@ -46,6 +49,13 @@ export function registerAppHandlers(): void {
           return { current, latest: current, updateAvailable: false, snoozed: true };
         }
       }
+      // Cap auto + manual checks combined at 4/hour so this app instance
+      // can't burn through GitHub's unauthenticated 60/hour rate limit.
+      const rate = checkRateLimit(getUpdateCheckTimestamps(), Date.now());
+      if (!rate.allowed) {
+        return { current, latest: current, updateAvailable: false, error: "rate-limited" };
+      }
+      setUpdateCheckTimestamps(rate.timestamps);
       try {
         const release = await fetchLatestRelease();
         const latest = release.tagName.replace(/^v/, "");

@@ -24,6 +24,7 @@ type UpdateState =
   | { status: "checking" }
   | { status: "upToDate" }
   | { status: "error" }
+  | { status: "rateLimited" }
   | { status: "available"; result: CheckForUpdatesResult };
 
 export function WelcomePanel() {
@@ -38,6 +39,8 @@ export function WelcomePanel() {
       setUpdateState({ status: "available", result });
     } else if (result.snoozed) {
       setUpdateState({ status: "idle" });
+    } else if (result.error === "rate-limited") {
+      setUpdateState(auto ? { status: "idle" } : { status: "rateLimited" });
     } else if (result.error) {
       setUpdateState(auto ? { status: "idle" } : { status: "error" });
     } else {
@@ -70,7 +73,11 @@ export function WelcomePanel() {
             size="sm"
             onClick={handleCheckForUpdates}
             disabled={updateState.status === "checking"}
-            title="Check for updates"
+            title={
+              updateState.status === "rateLimited"
+                ? "Checked too many times this hour — try again later"
+                : "Check for updates"
+            }
             style={{ backgroundColor: "#1a73e8", color: "#fff" }}
           >
             {updateState.status === "checking" && (
@@ -91,6 +98,8 @@ export function WelcomePanel() {
               ? "✓ Up to date"
               : updateState.status === "error"
               ? "Could not check"
+              : updateState.status === "rateLimited"
+              ? "Try again later"
               : "Check for updates"}
           </Button>
         </div>
