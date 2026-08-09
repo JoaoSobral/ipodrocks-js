@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.1.3] — 2026-08
+
+### Fixes
+
+- **Shadow libraries no longer stop working after a library scan** — This is the cause behind shadow libraries disappearing from the Library panel and refusing to be recreated. At the end of a scan that removed any track, iPodRocks tidied up codecs it believed were no longer in use — but it judged "in use" purely by what your **music library** contains, and a **shadow library's codec is a conversion target**, which is normally a format none of your original files are in. A Musepack shadow library built from an all-FLAC library was the clearest case: nothing in the library was Musepack, so Musepack was treated as unused and removed, taking the shadow library's settings down with it. The shadow library then vanished from the Library panel, and trying to create it again failed with `UNIQUE constraint failed: shadow_libraries.path` (or `.name`), because the old entry was still there — just invisible. Codecs that any shadow library or device profile is configured to convert to are now kept regardless of what your library holds, so every conversion format stays available no matter what you have scanned.
+- **A shadow library that lost its codec settings is now shown instead of disappearing** — Previously such an entry was hidden everywhere in the app while still occupying its name and folder, so nothing explained why creating a replacement kept failing. It now appears in the Library panel marked **Broken**, with a note that it must be deleted and recreated. Rebuild and Resume are hidden for it (they cannot work without codec settings) and say so clearly if triggered another way; Delete remains available. **If your Musepack or other shadow library is affected by the bug above, delete the Broken entry and create it again pointing at the same folder — your transcoded files are reused rather than re-encoded, so this is quick.**
+- **Clearer message when a shadow library's folder or name is already taken** — The check that produces the plain-language "already uses this folder" message now also sees entries whose codec settings are missing, so a clash with one of those explains itself instead of surfacing the raw `UNIQUE constraint failed` database error.
+
+### Features
+
+- **Rocksy can delete shadow libraries** — Ask to remove one and Rocksy can do it, after confirming with you. It offers to keep the transcoded files on disk, which is what you want before recreating a shadow library at the same folder — the existing files are then adopted instead of re-encoded. Rocksy also recognises a shadow library whose codec settings are missing and will walk you through deleting and recreating it rather than trying to rebuild it.
+
 ## [2.1.2] — 2026-08
 
 ### Features
@@ -20,6 +32,7 @@
 ### Changes
 
 - **Five Genius playlist types removed** — "Oldies", "Nostalgia", "Recent Favorites", "Time Capsule" and "Golden Era" have been retired. All five needed two to four years of continuously accurate play dates, and the only source for those dates is the clock on the iPod itself — which resets whenever the battery fully drains, and is wrong on any device where it was never set. Rather than leave playlist types that quietly return everything, nothing, or the wrong thing depending on your device's clock, they are gone. The nine remaining history-based types, plus the three new ones, rely on play counts, completion rates, ratings and tags, all of which stay correct no matter what the device clock says. Any of these playlists you already saved are untouched and still sync normally.
+
 ## [2.1.1] — 2026-08
 
 ### Fixes
