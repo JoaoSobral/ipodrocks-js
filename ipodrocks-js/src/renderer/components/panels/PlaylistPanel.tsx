@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useMemo, useState, useCallback } from "react";
 
 import { Card } from "../common/Card";
 import { Button } from "../common/Button";
@@ -8,6 +8,7 @@ import { Select } from "../common/Select";
 import { Modal } from "../common/Modal";
 import { BackfillProgressModal } from "../modals/BackfillProgressModal";
 import { SavantInlineChat } from "../savant/SavantInlineChat";
+import { ClassicPlaylistForm } from "../playlists/ClassicPlaylistForm";
 import { EmptyState } from "../common/EmptyState";
 import { Spinner } from "../common/Spinner";
 import { ErrorBox } from "../common/ErrorBox";
@@ -17,6 +18,7 @@ import { Badge } from "../common/Badge";
 import { useDeviceStore } from "../../stores/device-store";
 import { useSavantStore } from "../../stores/savant-store";
 import { useUIStore } from "../../stores/ui-store";
+import { useLibraryStore } from "../../stores/library-store";
 import {
   getPlaylists,
   getPlaylistTracks,
@@ -54,7 +56,7 @@ import type {
   GenerateSavantResult,
 } from "../../ipc/api";
 
-type Tab = "all" | "smart" | "genius" | "savant";
+type Tab = "all" | "classic" | "smart" | "genius" | "savant";
 
 type GeniusStep =
   | "idle"
@@ -95,8 +97,30 @@ export function PlaylistPanel() {
   const [showCreate, setShowCreate] = useState(false);
   /** Which playlist kind the user picked from the Create chooser. */
   const [createKind, setCreateKind] = useState<
-    "smart" | "genius" | "savant" | null
+    "classic" | "smart" | "genius" | "savant" | null
   >(null);
+
+  // -- classic (hand-picked) create/edit state ----------------------------
+  const libraryTracks = useLibraryStore((s) => s.tracks);
+  const libraryLoading = useLibraryStore((s) => s.loading);
+  const fetchLibraryTracks = useLibraryStore((s) => s.fetchTracks);
+  /** Playlist being edited, or null when the Classic flow is creating. */
+  const [editingClassicId, setEditingClassicId] = useState<number | null>(null);
+  /**
+   * Editing is launched from the detail view, which returns early — before the
+   * create modal is rendered — so it needs its own open flag and modal.
+   */
+  const [showClassicEdit, setShowClassicEdit] = useState(false);
+  const [classicInitialName, setClassicInitialName] = useState("");
+  const [classicInitialIds, setClassicInitialIds] = useState<number[]>([]);
+  /** Classic playlists are music-only, matching every other playlist type. */
+  const classicPickerTracks = useMemo(
+    () =>
+      (Array.isArray(libraryTracks) ? libraryTracks : []).filter(
+        (t) => t.contentType === "music"
+      ),
+    [libraryTracks]
+  );
 
   // -- smart create state -------------------------------------------------
   const [newName, setNewName] = useState("");
@@ -558,11 +582,63 @@ export function PlaylistPanel() {
     setSavantKeyData(keyData);
   }
 
+  /** Display name without the storage prefix (`classic_My Mix` → `My Mix`). */
+  function stripTypePrefix(name: string): string {
+    return name.replace(/^(classic|smart|genius|savant)_/, "");
+  }
+
+  /** Open the Classic picker to build a new playlist. */
+  function openClassicCreate() {
+    setEditingClassicId(null);
+    setClassicInitialName("");
+    setClassicInitialIds([]);
+    setCreateKind("classic");
+    void fetchLibraryTracks();
+  }
+
+  /**
+   * Open the Classic picker pre-filled with an existing playlist. The already
+   * loaded `tracks` are in playlist order, so no extra read is needed.
+   */
+  function openClassicEdit(playlist: Playlist) {
+    setEditingClassicId(playlist.id);
+    setClassicInitialName(stripTypePrefix(playlist.name));
+    setClassicInitialIds((Array.isArray(tracks) ? tracks : []).map((t) => t.id));
+    setShowClassicEdit(true);
+    void fetchLibraryTracks();
+  }
+
+  function closeClassicEdit() {
+    setShowClassicEdit(false);
+    setEditingClassicId(null);
+    setClassicInitialName("");
+    setClassicInitialIds([]);
+  }
+
+  async function handleClassicSaved(saved: Playlist) {
+    const wasEditing = editingClassicId !== null;
+    if (showClassicEdit) closeClassicEdit();
+    else closeCreateModal();
+    await fetchAll();
+    // Keep the user where they were: refresh the detail view after an edit.
+    if (wasEditing && selectedId === saved.id) {
+      setTracksLoading(true);
+      try {
+        setTracks(await getPlaylistTracks(saved.id));
+      } finally {
+        setTracksLoading(false);
+      }
+    }
+  }
+
   function closeCreateModal() {
     setShowCreate(false);
     setCreateKind(null);
     setGeniusError(null);
     setPlaylistSubmitted(false);
+    setEditingClassicId(null);
+    setClassicInitialName("");
+    setClassicInitialIds([]);
     if (createKind === "smart") {
       setSelectedGenreIds(new Set());
       setSelectedArtistIds(new Set());
@@ -609,7 +685,16 @@ export function PlaylistPanel() {
             {selectedPlaylist.name}
           </h3>
           <Badge variant="primary">{selectedPlaylist.typeName}</Badge>
-          <div className="ml-auto">
+          <div className="ml-auto flex items-center gap-2">
+            {selectedPlaylist.typeName === "classic" && (
+              <Button
+                size="sm"
+                onClick={() => openClassicEdit(selectedPlaylist)}
+                data-testid="classic-edit-tracks"
+              >
+                Edit tracks
+              </Button>
+            )}
             <Button size="sm" onClick={() => handleExport(selectedId)}>
               Export M3U
             </Button>
@@ -661,6 +746,27 @@ export function PlaylistPanel() {
             </>
           )}
         </Card>
+
+        {/* Edit modal lives here too: the detail view returns before the
+            create modal further down is ever rendered. */}
+        <Modal
+          open={showClassicEdit}
+          onClose={closeClassicEdit}
+          wide
+          width="max-w-5xl"
+          title="Edit Classic Playlist"
+        >
+          <ClassicPlaylistForm
+            key={`edit-${editingClassicId ?? "none"}`}
+            tracks={classicPickerTracks}
+            tracksLoading={libraryLoading}
+            editingId={editingClassicId}
+            initialName={classicInitialName}
+            initialSelectedIds={classicInitialIds}
+            onSaved={handleClassicSaved}
+            onCancel={closeClassicEdit}
+          />
+        </Modal>
       </div>
     );
   }
@@ -1378,7 +1484,7 @@ export function PlaylistPanel() {
 
       {/* Tabs */}
       <div className="flex gap-1 p-1 rounded-lg bg-muted/30 w-fit">
-        {(["all", "smart", "genius", "savant"] as Tab[]).map((tab) => (
+        {(["all", "classic", "smart", "genius", "savant"] as Tab[]).map((tab) => (
           <button
             key={tab}
             className={`px-4 py-1.5 rounded-md text-xs font-medium transition-colors cursor-default capitalize ${
@@ -1399,12 +1505,20 @@ export function PlaylistPanel() {
         </div>
       ) : filtered.length === 0 ? (
         <EmptyState
-          icon={activeTab === "savant" ? "🎯" : "≡"}
-          title={activeTab === "savant" ? "No Savant playlists" : "No playlists"}
+          icon={activeTab === "savant" ? "🎯" : activeTab === "classic" ? "★" : "≡"}
+          title={
+            activeTab === "savant"
+              ? "No Savant playlists"
+              : activeTab === "classic"
+                ? "No Classic playlists"
+                : "No playlists"
+          }
           description={
             activeTab === "savant"
               ? "Create an AI-curated Savant playlist to get started"
-              : "Create a smart, genius, or savant playlist to get started"
+              : activeTab === "classic"
+                ? "Hand-pick your own songs to build a Classic playlist"
+                : "Create a classic, smart, genius, or savant playlist to get started"
           }
           action={
             <Button
@@ -1412,6 +1526,7 @@ export function PlaylistPanel() {
               size="sm"
               onClick={() => {
                 if (activeTab === "savant") setCreateKind("savant");
+                else if (activeTab === "classic") openClassicCreate();
                 setShowCreate(true);
               }}
             >
@@ -1431,7 +1546,9 @@ export function PlaylistPanel() {
                       ? "✨"
                       : p.typeName === "savant"
                         ? "🎯"
-                        : "≡"}
+                        : p.typeName === "classic"
+                          ? "★"
+                          : "≡"}
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
@@ -1496,13 +1613,13 @@ export function PlaylistPanel() {
         </div>
       )}
 
-      {/* Create Playlist Modal: choice → Smart / Genius / Savant flow */}
+      {/* Create Playlist Modal: choice → Classic / Smart / Genius / Savant flow */}
       <Modal
         open={showCreate}
         onClose={closeCreateModal}
-        wide={createKind === "genius" || createKind === "savant" || createKind === "smart"}
+        wide={createKind !== null}
         width={
-          createKind === "savant"
+          createKind === "savant" || createKind === "classic"
             ? "max-w-5xl"
             : createKind === "genius"
               ? "max-w-4xl"
@@ -1513,11 +1630,15 @@ export function PlaylistPanel() {
         title={
           createKind === null
             ? "Create Playlist"
-            : createKind === "smart"
-              ? "Create Smart Playlist"
-              : createKind === "genius"
-                ? "Create Genius Playlist"
-                : "Create Savant Playlist"
+            : createKind === "classic"
+              ? editingClassicId !== null
+                ? "Edit Classic Playlist"
+                : "Create Classic Playlist"
+              : createKind === "smart"
+                ? "Create Smart Playlist"
+                : createKind === "genius"
+                  ? "Create Genius Playlist"
+                  : "Create Savant Playlist"
         }
       >
         <div className="space-y-4">
@@ -1526,13 +1647,27 @@ export function PlaylistPanel() {
               <p className="text-sm text-muted-foreground">
                 Choose the type of playlist to create.
               </p>
-              <div className="flex flex-col sm:flex-row gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  onClick={openClassicCreate}
+                  className="p-4 rounded-xl border border-border bg-muted/30 hover:bg-primary/10 hover:border-primary/30 transition-all text-left cursor-pointer"
+                  data-testid="create-classic-card"
+                >
+                  <div className="text-2xl mb-2">★</div>
+                  <h4 className="text-sm font-semibold text-foreground">
+                    Classic Playlist
+                  </h4>
+                  <p className="text-[11px] text-muted-foreground mt-1">
+                    Hand-pick the songs yourself, in the order you want them.
+                  </p>
+                </button>
                 <button
                   type="button"
                   onClick={() => {
                     setCreateKind("smart");
                   }}
-                  className="flex-1 p-4 rounded-xl border border-border bg-muted/30 hover:bg-primary/10 hover:border-primary/30 transition-all text-left cursor-pointer"
+                  className="p-4 rounded-xl border border-border bg-muted/30 hover:bg-primary/10 hover:border-primary/30 transition-all text-left cursor-pointer"
                 >
                   <div className="text-2xl mb-2">≡</div>
                   <h4 className="text-sm font-semibold text-foreground">
@@ -1550,7 +1685,7 @@ export function PlaylistPanel() {
                     setGeniusError(null);
                     fetchDevices();
                   }}
-                  className="flex-1 p-4 rounded-xl border border-border bg-muted/30 hover:bg-primary/10 hover:border-primary/30 transition-all text-left cursor-pointer"
+                  className="p-4 rounded-xl border border-border bg-muted/30 hover:bg-primary/10 hover:border-primary/30 transition-all text-left cursor-pointer"
                 >
                   <div className="text-2xl mb-2">✨</div>
                   <h4 className="text-sm font-semibold text-foreground">
@@ -1563,7 +1698,7 @@ export function PlaylistPanel() {
                 <button
                   type="button"
                   onClick={() => setCreateKind("savant")}
-                  className="flex-1 p-4 rounded-xl border border-border bg-muted/30 hover:bg-primary/10 hover:border-primary/30 transition-all text-left cursor-pointer"
+                  className="p-4 rounded-xl border border-border bg-muted/30 hover:bg-primary/10 hover:border-primary/30 transition-all text-left cursor-pointer"
                 >
                   <div className="text-2xl mb-2">🎯</div>
                   <h4 className="text-sm font-semibold text-foreground">
@@ -1578,6 +1713,17 @@ export function PlaylistPanel() {
                 <Button onClick={closeCreateModal}>Cancel</Button>
               </div>
             </>
+          ) : createKind === "classic" ? (
+            <ClassicPlaylistForm
+              key={editingClassicId ?? "new"}
+              tracks={classicPickerTracks}
+              tracksLoading={libraryLoading}
+              editingId={editingClassicId}
+              initialName={classicInitialName}
+              initialSelectedIds={classicInitialIds}
+              onSaved={handleClassicSaved}
+              onCancel={closeCreateModal}
+            />
           ) : createKind === "genius" ? (
             <>
               {renderGeniusFlow()}

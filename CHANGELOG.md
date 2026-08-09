@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.2.0] — 2026-08
+
+### Features
+
+- **Classic playlists — pick your own songs** — A new playlist type for when you know exactly what you want. Go to **Playlists → + Create Playlist → Classic**, name it, and tick songs straight from your library. The picker searches by title, artist or album and filters by artist, album and genre, and — this is the point — **your selection is kept while you search and filter**, so you can tick three songs from one search, clear it, filter to another genre, tick four more, and end up with all seven. Songs play in the order you ticked them, up to 500 per playlist. Classic playlists are also the first type you can **edit** after creating: open one and click **Edit tracks** to reopen the picker with your songs already ticked. They sync to your device as `.m3u`, like Genius and Savant playlists.
+- **Rocksy can build and edit Classic playlists** — Name the songs you want ("make me a playlist with Heroes, Starman and Life on Mars") and Rocksy looks each one up and builds the playlist. It can also add songs to, remove songs from, or rename an existing Classic playlist — that one asks you to confirm first, since it replaces the whole track list.
+
+### Fixes
+
+- **Playlists no longer keep songs you have deleted** — If you removed music from disk, your playlists went on referencing it: the track count stayed wrong, a "broken playlists" warning appeared in the Library panel, and the only fix was noticing it and clicking **Repair** by hand. The cause was in the library scanner, which deletes tracks with the database's foreign-key enforcement switched off and cleaned up every dependent record *except* playlist entries — so those were left behind on every scan that removed a file. Playlist entries are now cleaned up with the rest, and beyond that **every playlist is reconciled automatically after each library scan and after removing a library folder**: missing songs are dropped, track numbering is closed up, and **smart playlists are re-resolved from their rules**, so they also pick up newly scanned tracks that match instead of needing to be recreated. The scan summary reports what changed. If a scan finds no tracks at all — a failed scan or an unplugged drive — reconciliation is skipped rather than emptying every playlist. The manual Repair button remains for anything that goes wrong outside a scan.
+- **Smart playlists keep their track limit when rebuilt** — Rebuilding a smart playlist dropped the limit you set at creation, so a "50 tracks" playlist could quietly come back holding every matching song. The limit is now stored with the playlist and honoured on every rebuild — which matters more now that scans rebuild smart playlists on their own.
+
 ## [2.1.3] — 2026-08
 
 ### Fixes

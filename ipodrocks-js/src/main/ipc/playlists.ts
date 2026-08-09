@@ -54,6 +54,51 @@ export function registerPlaylistHandlers(): void {
   );
 
   ipcMain.handle(
+    "playlist:createClassic",
+    safe("playlist:createClassic", async (_event, config: {
+      name: string;
+      trackIds: number[];
+    }) => {
+      const core = getPlaylistCore();
+      const name = (config.name ?? "").trim();
+      if (!name) throw new Error("Please enter a playlist name.");
+      const id = core.createClassicPlaylist(name, config.trackIds ?? []);
+      const p = core.getPlaylistById(id);
+      if (!p) throw new Error("Playlist not found after create");
+      logActivity(
+        getLibrary().getConnection(),
+        "playlist_generated",
+        `Created Classic playlist "${name}" with ${p.trackCount} songs`
+      );
+      invalidateAssistantCache();
+      return p;
+    })
+  );
+
+  ipcMain.handle(
+    "playlist:updateClassic",
+    safe("playlist:updateClassic", async (_event, config: {
+      playlistId: number;
+      name: string;
+      trackIds: number[];
+    }) => {
+      const core = getPlaylistCore();
+      const name = (config.name ?? "").trim();
+      if (!name) throw new Error("Please enter a playlist name.");
+      core.updateClassicPlaylist(config.playlistId, name, config.trackIds ?? []);
+      const p = core.getPlaylistById(config.playlistId);
+      if (!p) throw new Error("Playlist not found after update");
+      logActivity(
+        getLibrary().getConnection(),
+        "playlist_generated",
+        `Updated Classic playlist "${name}" — now ${p.trackCount} songs`
+      );
+      invalidateAssistantCache();
+      return p;
+    })
+  );
+
+  ipcMain.handle(
     "playlist:delete",
     safe("playlist:delete", async (_event, playlistId: number) => {
       getPlaylistCore().deletePlaylist(playlistId);

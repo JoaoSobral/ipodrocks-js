@@ -34,7 +34,34 @@ export class AppDatabase {
     this.migrateVbrEnabled();
     this.migrateShadowPausedStatus();
     this.migrateShadowTrackStat();
+    this.migrateClassicPlaylists();
     this.migrateNfcPaths();
+  }
+
+  /**
+   * Add playlists.track_limit for Classic playlist support.
+   *
+   * The column also back-fills a long-standing gap for smart playlists: their
+   * track limit was only ever applied at creation time and never persisted, so
+   * a rebuild silently dropped it. Now that scans rebuild smart playlists
+   * automatically, the limit has to survive on disk. NULL means "no limit",
+   * which is the correct reading for rows written before this column existed.
+   */
+  private migrateClassicPlaylists(): void {
+    if (!this.db) return;
+    try {
+      const rows = this.db
+        .prepare("PRAGMA table_info(playlists)")
+        .all() as { name: string }[];
+      const names = new Set(rows.map((r) => r.name));
+      if (!names.has("track_limit")) {
+        this.db
+          .prepare("ALTER TABLE playlists ADD COLUMN track_limit INTEGER")
+          .run();
+      }
+    } catch (err) {
+      console.error("[db] migrateClassicPlaylists failed:", err);
+    }
   }
 
   /**

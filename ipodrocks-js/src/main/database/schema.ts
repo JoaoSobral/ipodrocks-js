@@ -297,6 +297,7 @@ CREATE TABLE IF NOT EXISTS playlists (
     description TEXT,
     playlist_type_id INTEGER NOT NULL,
     savant_config TEXT,
+    track_limit INTEGER,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (playlist_type_id) REFERENCES playlist_types (id)
@@ -490,6 +491,7 @@ INSERT OR IGNORE INTO playlist_types (name, description) VALUES ('smart', 'Smart
 INSERT OR IGNORE INTO playlist_types (name, description) VALUES ('custom', 'Custom user-created playlist');
 INSERT OR IGNORE INTO playlist_types (name, description) VALUES ('genius', 'Genius playlist based on music analysis');
 INSERT OR IGNORE INTO playlist_types (name, description) VALUES ('savant', 'Savant playlist with AI recommendations');
+INSERT OR IGNORE INTO playlist_types (name, description) VALUES ('classic', 'Classic playlist with hand-picked tracks');
 
 -- Codec configurations
 INSERT OR IGNORE INTO codec_configurations (codec_id, name, bitrate_value, quality_value, bits_per_sample, is_default)

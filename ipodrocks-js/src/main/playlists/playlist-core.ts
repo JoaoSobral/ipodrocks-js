@@ -6,9 +6,11 @@ import {
   PlaylistTrack,
   SmartPlaylistRule,
   GeniusPlaylistConfig,
+  PlaylistReconcileSummary,
   ArtistInfo,
   AlbumInfo,
   GenreInfo,
+  CLASSIC_PLAYLIST_MAX_TRACKS,
 } from "../../shared/types";
 import { computeDeviceRelativePath } from "../sync/sync-core";
 import { updateExtension } from "../sync/sync-conversion";
@@ -116,8 +118,8 @@ export class PlaylistCore {
       "DELETE FROM genius_playlist_configs WHERE playlist_id = ?"
     );
     this.stmtInsertPlaylist = db.prepare(`
-      INSERT INTO playlists (name, description, playlist_type_id, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?)
+      INSERT INTO playlists (name, description, playlist_type_id, track_limit, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?)
     `);
     this.stmtInsertItem = db.prepare(`
       INSERT OR IGNORE INTO playlist_items (playlist_id, track_id, position)
@@ -157,9 +159,13 @@ export class PlaylistCore {
     smart: "smart_",
     genius: "genius_",
     savant: "savant_",
+    classic: "classic_",
   };
 
-  private _withTypePrefix(name: string, type: "smart" | "genius" | "savant"): string {
+  private _withTypePrefix(
+    name: string,
+    type: "smart" | "genius" | "savant" | "classic"
+  ): string {
     const prefix = PlaylistCore.TYPE_PREFIXES[type];
     return name.startsWith(prefix) ? name : `${prefix}${name}`;
   }
@@ -249,6 +255,31 @@ export class PlaylistCore {
     }));
   }
 
+  /**
+   * Renumber a playlist's items to a contiguous 1..n run, preserving order.
+   *
+   * Shared by {@link repairPlaylist} and {@link reconcileAllPlaylists} — both
+   * leave gaps behind after pruning, and `playlist_items` has a
+   * UNIQUE(playlist_id, position) constraint that later appends rely on.
+   *
+   * @returns The number of items remaining in the playlist.
+   */
+  private _compactPositions(playlistId: number): number {
+    const remaining = this.db
+      .prepare(
+        "SELECT id FROM playlist_items WHERE playlist_id = ? ORDER BY position"
+      )
+      .all(playlistId) as { id: number }[];
+    const renum = this.db.prepare(
+      "UPDATE playlist_items SET position = ? WHERE id = ?"
+    );
+    // Shift everything out of the way first: renumbering in place can collide
+    // with a not-yet-moved row and trip UNIQUE(playlist_id, position).
+    remaining.forEach((row, i) => renum.run(-(i + 1), row.id));
+    remaining.forEach((row, i) => renum.run(i + 1, row.id));
+    return remaining.length;
+  }
+
   repairPlaylist(playlistId: number): { removed: number; remaining: number } {
     const now = new Date().toISOString();
     const run = this.db.transaction(() => {
@@ -256,25 +287,102 @@ export class PlaylistCore {
         DELETE FROM playlist_items
         WHERE playlist_id = ? AND track_id NOT IN (SELECT id FROM tracks)
       `).run(playlistId);
-      // Compact positions
-      const remaining = this.db.prepare(
-        "SELECT id FROM playlist_items WHERE playlist_id = ? ORDER BY position"
-      ).all(playlistId) as { id: number }[];
-      const renum = this.db.prepare("UPDATE playlist_items SET position = ? WHERE id = ?");
-      const tx = this.db.transaction(() => {
-        remaining.forEach((row, i) => renum.run(i + 1, row.id));
-      });
-      tx();
+      const remaining = this._compactPositions(playlistId);
       this.db.prepare("UPDATE playlists SET updated_at = ? WHERE id = ?").run(now, playlistId);
-      return { removed: info.changes, remaining: remaining.length };
+      return { removed: info.changes, remaining };
     });
     return run();
+  }
+
+  /**
+   * Bring every playlist back in line with the current library.
+   *
+   * Called automatically after a library scan or folder removal so playlists
+   * never reference songs that no longer exist. Two different behaviours by
+   * type, because only smart playlists can be re-derived:
+   *
+   * - **smart** — fully re-resolved from their rules, so they lose deleted
+   *   tracks *and* pick up newly scanned tracks that match.
+   * - **classic / genius / savant** — pruned only. Their membership was hand-
+   *   or algorithm-picked and there is nothing to recompute it from.
+   *
+   * No-ops on an empty library: that almost always means a scan failed or a
+   * folder is temporarily unreachable, and wiping every playlist in that case
+   * would be unrecoverable.
+   */
+  reconcileAllPlaylists(): PlaylistReconcileSummary {
+    const empty: PlaylistReconcileSummary = {
+      prunedItems: 0,
+      prunedPlaylists: 0,
+      rebuiltSmart: 0,
+    };
+
+    const { n } = this.db.prepare("SELECT COUNT(*) AS n FROM tracks").get() as {
+      n: number;
+    };
+    if (n === 0) return empty;
+
+    const now = new Date().toISOString();
+
+    const prune = this.db.transaction((): PlaylistReconcileSummary => {
+      const affected = this.db
+        .prepare(
+          `SELECT DISTINCT playlist_id FROM playlist_items
+           WHERE track_id NOT IN (SELECT id FROM tracks)`
+        )
+        .all() as { playlist_id: number }[];
+
+      let prunedItems = 0;
+      if (affected.length > 0) {
+        const info = this.db
+          .prepare(
+            "DELETE FROM playlist_items WHERE track_id NOT IN (SELECT id FROM tracks)"
+          )
+          .run();
+        prunedItems = info.changes;
+
+        const touch = this.db.prepare(
+          "UPDATE playlists SET updated_at = ? WHERE id = ?"
+        );
+        for (const { playlist_id } of affected) {
+          this._compactPositions(playlist_id);
+          touch.run(now, playlist_id);
+        }
+      }
+
+      return { prunedItems, prunedPlaylists: affected.length, rebuiltSmart: 0 };
+    });
+
+    const summary = prune();
+
+    // Rebuilds run outside the prune transaction: each one is transactional in
+    // its own right, and a single bad rule set shouldn't roll back the pruning.
+    for (const pl of this.getPlaylists("smart")) {
+      if (this.rebuildSmartPlaylist(pl.id)) summary.rebuiltSmart++;
+    }
+
+    return summary;
   }
 
   rebuildSmartPlaylist(playlistId: number): boolean {
     const rules = this.getSmartRules(playlistId);
     if (rules.length === 0) return false;
-    return this.updateSmartPlaylist(playlistId, this.getPlaylistById(playlistId)?.name ?? "", rules);
+    const playlist = this.getPlaylistById(playlistId);
+    return this.updateSmartPlaylist(
+      playlistId,
+      playlist?.name ?? "",
+      rules,
+      playlist?.description ?? "",
+      this._getTrackLimit(playlistId)
+    );
+  }
+
+  /** Read back the stored track limit for a playlist (null = unlimited). */
+  private _getTrackLimit(playlistId: number): number | undefined {
+    const row = this.db
+      .prepare("SELECT track_limit FROM playlists WHERE id = ?")
+      .get(playlistId) as { track_limit: number | null } | undefined;
+    return row?.track_limit ?? undefined;
   }
 
   // -- smart playlist CRUD ------------------------------------------------
@@ -303,6 +411,7 @@ export class PlaylistCore {
         storedName,
         description,
         typeId,
+        trackLimit != null && trackLimit > 0 ? trackLimit : null,
         now,
         now
       );
@@ -330,17 +439,24 @@ export class PlaylistCore {
    * @param name - New name.
    * @param rules - New rules list.
    * @param description - New description.
+   * @param trackLimit - Max tracks to resolve. Defaults to the limit already
+   *   stored on the playlist, so a rebuild never silently drops it.
    */
   updateSmartPlaylist(
     playlistId: number,
     name: string,
     rules: SmartPlaylistRule[],
-    description = ""
+    description = "",
+    trackLimit?: number
   ): boolean {
     const now = new Date().toISOString();
+    const limit = trackLimit ?? this._getTrackLimit(playlistId);
 
     const run = this.db.transaction(() => {
       this.stmtUpdatePlaylist.run(name, description, now, playlistId);
+      this.db
+        .prepare("UPDATE playlists SET track_limit = ? WHERE id = ?")
+        .run(limit != null && limit > 0 ? limit : null, playlistId);
       this.stmtDeleteSmartRules.run(playlistId);
 
       for (const rule of rules) {
@@ -353,7 +469,7 @@ export class PlaylistCore {
       }
 
       this.stmtDeleteItems.run(playlistId);
-      this._resolveSmartTracks(playlistId, rules, undefined);
+      this._resolveSmartTracks(playlistId, rules, limit);
     });
 
     run();
@@ -411,6 +527,7 @@ export class PlaylistCore {
         storedName,
         description,
         typeId,
+        trackLimit > 0 ? trackLimit : null,
         now,
         now
       );
@@ -487,6 +604,7 @@ export class PlaylistCore {
       VALUES (?, ?, ?, ?, ?, ?)
     `);
 
+
     const run = this.db.transaction(() => {
       const info = stmtInsertSavant.run(
         storedName,
@@ -506,6 +624,128 @@ export class PlaylistCore {
     });
 
     return run();
+  }
+
+  // -- classic playlist CRUD ----------------------------------------------
+
+  /**
+   * Clean a hand-picked track list before it is persisted.
+   *
+   * Deduplicates while preserving first-seen order (the user's tick order is
+   * the running order), drops ids that aren't music tracks in the library, and
+   * enforces the {@link CLASSIC_PLAYLIST_MAX_TRACKS} cap.
+   */
+  private _sanitizeClassicTrackIds(trackIds: number[]): number[] {
+    const unique: number[] = [];
+    const seen = new Set<number>();
+    for (const raw of trackIds) {
+      const id = Number(raw);
+      if (!Number.isInteger(id) || seen.has(id)) continue;
+      seen.add(id);
+      unique.push(id);
+    }
+
+    if (unique.length === 0) {
+      throw new Error("A Classic playlist needs at least one song.");
+    }
+    if (unique.length > CLASSIC_PLAYLIST_MAX_TRACKS) {
+      throw new Error(
+        `A Classic playlist can hold at most ${CLASSIC_PLAYLIST_MAX_TRACKS} songs (got ${unique.length}).`
+      );
+    }
+
+    const ph = unique.map(() => "?").join(",");
+    const valid = new Set(
+      (
+        this.db
+          .prepare(
+            `SELECT id FROM tracks WHERE content_type = 'music' AND id IN (${ph})`
+          )
+          .all(...unique) as { id: number }[]
+      ).map((r) => r.id)
+    );
+
+    const resolved = unique.filter((id) => valid.has(id));
+    if (resolved.length === 0) {
+      throw new Error(
+        "None of the selected songs are in the music library any more."
+      );
+    }
+    return resolved;
+  }
+
+  /**
+   * Create a Classic playlist from a hand-picked, ordered track list.
+   *
+   * @param name - Playlist display name (stored with a ``classic_`` prefix).
+   * @param trackIds - Track ids in the order the user picked them.
+   * @returns New playlist id.
+   */
+  createClassicPlaylist(name: string, trackIds: number[]): number {
+    const typeId = this._playlistTypeId("classic");
+    if (!typeId) throw new Error("Playlist type 'classic' not found");
+    const resolved = this._sanitizeClassicTrackIds(trackIds);
+    const now = new Date().toISOString();
+    const storedName = this._withTypePrefix(name, "classic");
+
+    const run = this.db.transaction(() => {
+      const info = this.stmtInsertPlaylist.run(
+        storedName,
+        "",
+        typeId,
+        null,
+        now,
+        now
+      );
+      const playlistId = Number(info.lastInsertRowid);
+
+      for (let pos = 0; pos < resolved.length; pos++) {
+        this.stmtInsertItem.run(playlistId, resolved[pos], pos + 1);
+      }
+
+      return playlistId;
+    });
+
+    return run();
+  }
+
+  /**
+   * Replace a Classic playlist's name and track list.
+   *
+   * The track list is replaced wholesale, not merged — the picker always sends
+   * the full desired selection.
+   *
+   * @param playlistId - Playlist to update (must be of type ``classic``).
+   * @param name - New display name.
+   * @param trackIds - New ordered track ids.
+   */
+  updateClassicPlaylist(
+    playlistId: number,
+    name: string,
+    trackIds: number[]
+  ): boolean {
+    const existing = this.getPlaylistById(playlistId);
+    if (!existing) throw new Error("Playlist not found");
+    if (existing.typeName !== "classic") {
+      throw new Error(
+        `Playlist #${playlistId} is a ${existing.typeName} playlist — only Classic playlists can be edited.`
+      );
+    }
+
+    const resolved = this._sanitizeClassicTrackIds(trackIds);
+    const now = new Date().toISOString();
+    const storedName = this._withTypePrefix(name, "classic");
+
+    const run = this.db.transaction(() => {
+      this.stmtUpdatePlaylist.run(storedName, existing.description, now, playlistId);
+      this.stmtDeleteItems.run(playlistId);
+      for (let pos = 0; pos < resolved.length; pos++) {
+        this.stmtInsertItem.run(playlistId, resolved[pos], pos + 1);
+      }
+    });
+
+    run();
+    return true;
   }
 
   /**

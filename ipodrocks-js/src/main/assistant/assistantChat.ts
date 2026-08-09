@@ -519,6 +519,9 @@ Tool usage rules (CRITICAL):
 - User asks to subscribe to a podcast → call \`podcast_search\` first (if you don't already have the feed), then call \`podcast_subscribe\`.
 - User gives an RSS feed URL, podcast website URL, or says "subscribe using this link/URL" → call \`podcast_add_by_url\` with that URL immediately. No API key needed.
 - User asks to create a playlist → call \`playlist_create_smart\` or \`playlist_create_genius\`. Get genre/artist/album IDs via \`library_list_genres/artists/albums\` first if you need them.
+- User asks for a playlist of *specific songs* they name (e.g. "make me a playlist with Song A, Song B and Song C") → call \`library_search_tracks\` to resolve each title to a track id, then \`playlist_create_classic\` with those ids in the order they listed them. Use this instead of \`playlist_create_smart\` whenever the user lists individual songs rather than genres, artists, or albums.
+- User asks to add songs to, remove songs from, or rename a Classic playlist → call \`playlist_update_classic\` with the **complete** desired track list. It replaces the list rather than appending, so fetch the current tracks first and send the merged result.
+- NEVER say "I can't hand-pick songs", "I can only make rule-based playlists", or "I can't edit a playlist's tracks" — you have \`playlist_create_classic\` and \`playlist_update_classic\`.
 - User asks for music they own but never listen to / "stuff I've forgotten" / "never played" → call \`playlist_create_genius\` with genius_type \`hidden_gems\`. It needs no playback history.
 - User asks for albums they started but never finished → call \`playlist_create_genius\` with genius_type \`finish_album\`. For their favourite genre → \`top_genre\`.
 - If \`playlist_create_genius\` reports a type is unavailable, relay the reason verbatim — do not retry with a different genius_type. The usual cause is an unset device clock, which the user fixes on the iPod under Settings → General Settings → System → Time & Date.
@@ -532,7 +535,7 @@ Tool usage rules (CRITICAL):
 - If \`shadow_list\` shows \`codecConfigMissing: true\` for a shadow library, or \`shadow_rebuild\` fails saying it "can't be rebuilt" — its codec configuration is gone and rebuilding is not possible. Don't retry \`shadow_rebuild\`. Tell the user, then call \`shadow_delete\` with \`keepFiles: true\` (confirm with them first since it's destructive) and have them create a new shadow library with the same name and folder — the existing files are adopted automatically instead of re-encoded.
 - User asks to delete or remove a shadow library → call \`shadow_list\` first to get the id, then \`shadow_delete\`. Ask whether they want to keep the transcoded files on disk (\`keepFiles: true\`) before confirming — this matters if they plan to recreate the shadow library at the same folder afterward.
 - User asks about duplicates ("do I have duplicate songs?", "find duplicates", "what did the scan mean by duplicates detected?", "clean up my library") → call \`library_find_duplicates\`. It reports byte-identical copies and deletes nothing; tell the user which paths are duplicated and let them choose what to remove.
-- User asks about playlists with missing/broken songs, or "why does my playlist show wrong count", or "fix my playlist" → call \`playlist_list_broken\` first to see which playlists are affected, then call \`playlist_repair\` on the ones the user confirms (or all if they say "fix all"). Only smart playlists can be rebuilt from rules; for others, Repair removes the missing tracks.
+- User asks about playlists with missing/broken songs, or "why does my playlist show wrong count", or "fix my playlist" → playlists now self-heal: every library scan automatically drops songs that no longer exist and re-resolves smart playlists. Tell them a rescan fixes it, and call \`playlist_list_broken\` to check — only if it still reports damage do you call \`playlist_repair\` on the affected playlists. Only smart playlists can be rebuilt from rules; for others, Repair removes the missing tracks.
 - NEVER say "I can't search for podcasts" or "I can't browse the internet" — you have \`podcast_search\` for exactly this purpose.
 - NEVER say "I can't sync devices" or "I don't have a sync tool" — you have \`device_sync\`.
 - NEVER say "I can't delete or remove a device" — you have \`device_remove\`.
@@ -1098,7 +1101,9 @@ export async function sendAssistantMessage(
       }
 
       if (
-        (call.function.name === "playlist_create_smart" || call.function.name === "playlist_create_genius") &&
+        (call.function.name === "playlist_create_smart" ||
+          call.function.name === "playlist_create_genius" ||
+          call.function.name === "playlist_create_classic") &&
         result &&
         typeof result === "object" &&
         "name" in result

@@ -262,6 +262,87 @@ const playlist_create_smart: AiTool = {
   },
 };
 
+const playlist_create_classic: AiTool = {
+  name: "playlist_create_classic",
+  description:
+    "Create a Classic playlist from a specific, hand-picked list of songs. Use this whenever the user names individual songs rather than genres/artists/albums. Get the track IDs from library_search_tracks first. Max 500 songs; the order you pass is the playlist's running order.",
+  parameters: {
+    type: "object",
+    properties: {
+      name: { type: "string", description: "Playlist name" },
+      track_ids: {
+        type: "array",
+        description:
+          "Track IDs in the order they should play. Get these from library_search_tracks.",
+        items: { type: "number" },
+      },
+    },
+    required: ["name", "track_ids"],
+  },
+  kind: "write-safe",
+  summarize: (a) =>
+    `Create Classic playlist "${a.name}" with ${(a.track_ids as number[] | undefined)?.length ?? 0} songs`,
+  async run(args, ctx) {
+    const name = String(args.name ?? "").trim();
+    if (!name) throw new Error("Playlist name is required");
+    const trackIds = (args.track_ids as number[]) ?? [];
+    if (trackIds.length === 0) {
+      throw new Error(
+        "At least one track ID is required — use library_search_tracks to find them"
+      );
+    }
+
+    // createClassicPlaylist drops unknown/non-music ids and enforces the cap,
+    // so a partially wrong guess still produces a usable playlist.
+    const id = ctx.getPlaylistCore().createClassicPlaylist(name, trackIds);
+    const playlist = ctx.getPlaylistCore().getPlaylistById(id);
+    logActivity(ctx.db, "playlist_generated", `Classic (AI): ${name}`);
+    invalidateAssistantCache();
+    return { name, created: true, trackCount: playlist?.trackCount ?? 0 };
+  },
+};
+
+const playlist_update_classic: AiTool = {
+  name: "playlist_update_classic",
+  description:
+    "Rename a Classic playlist and/or replace its songs. track_ids REPLACES the whole list — to add or remove a song, pass the full desired list. Only works on Classic playlists.",
+  parameters: {
+    type: "object",
+    properties: {
+      playlist_id: { type: "number", description: "ID of the Classic playlist" },
+      name: { type: "string", description: "New name (omit to keep the current one)" },
+      track_ids: {
+        type: "array",
+        description: "The complete new track list, in play order. Replaces, never appends.",
+        items: { type: "number" },
+      },
+    },
+    required: ["playlist_id", "track_ids"],
+  },
+  // Destructive: replacing the list throws away a selection the user curated
+  // by hand, so this always goes through the confirm gate.
+  kind: "write-destructive",
+  summarize: (a) => {
+    const count = (a.track_ids as number[] | undefined)?.length ?? 0;
+    return `Replace the songs in Classic playlist #${a.playlist_id} with ${count} song(s)`;
+  },
+  async run(args, ctx) {
+    const core = ctx.getPlaylistCore();
+    const playlistId = Number(args.playlist_id);
+    const existing = core.getPlaylistById(playlistId);
+    if (!existing) throw new Error(`Playlist #${playlistId} not found`);
+
+    const name = args.name ? String(args.name).trim() : existing.name;
+    const trackIds = (args.track_ids as number[]) ?? [];
+    core.updateClassicPlaylist(playlistId, name, trackIds);
+
+    const updated = core.getPlaylistById(playlistId);
+    logActivity(ctx.db, "playlist_generated", `Classic updated (AI): ${name}`);
+    invalidateAssistantCache();
+    return { name, updated: true, trackCount: updated?.trackCount ?? 0 };
+  },
+};
+
 const playlist_create_genius: AiTool = {
   name: "playlist_create_genius",
   description: "Create a Genius playlist based on listening history (most played, favorites, hidden gems, etc.).",
@@ -971,6 +1052,8 @@ export const AI_TOOLS: AiTool[] = [
   device_list,
   playlist_create_smart,
   playlist_create_genius,
+  playlist_create_classic,
+  playlist_update_classic,
   podcast_subscribe,
   podcast_add_by_url,
   device_check,

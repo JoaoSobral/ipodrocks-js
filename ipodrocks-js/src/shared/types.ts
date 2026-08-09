@@ -178,6 +178,22 @@ export interface Playlist {
   updatedAt: string;
 }
 
+/**
+ * Hard cap on how many tracks a Classic (hand-picked) playlist may hold.
+ * Shared so the picker UI, the IPC layer, and the core all agree.
+ */
+export const CLASSIC_PLAYLIST_MAX_TRACKS = 500;
+
+/** Outcome of a {@link PlaylistCore.reconcileAllPlaylists} pass. */
+export interface PlaylistReconcileSummary {
+  /** Orphaned playlist_items rows removed (tracks no longer in the library). */
+  prunedItems: number;
+  /** Playlists that lost at least one track. */
+  prunedPlaylists: number;
+  /** Smart playlists re-resolved from their rules. */
+  rebuiltSmart: number;
+}
+
 export interface PlaylistTrack {
   id: number;
   path: string;
@@ -571,6 +587,8 @@ export interface ScanResult {
   removedTrackPaths?: string[];
   removedTrackIds?: number[];
   updatedTrackPaths?: string[];
+  /** What the automatic post-scan playlist reconciliation did. */
+  playlistsUpdated?: PlaylistReconcileSummary;
 }
 
 export interface ShadowLibrary {

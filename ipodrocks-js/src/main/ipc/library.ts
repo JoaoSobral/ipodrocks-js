@@ -1,5 +1,5 @@
 import { ipcMain, type WebContents } from "electron";
-import { safe, getLibrary, validateFolderPath } from "./common";
+import { safe, getLibrary, getPlaylistCore, validateFolderPath } from "./common";
 import { LibraryScanner } from "../library/library-scanner";
 import { getHarmonicPrefs } from "../utils/prefs";
 import { logActivity, getRecentActivity } from "../activity/activity-logger";
@@ -7,6 +7,32 @@ import { invalidateAssistantCache } from "../assistant/assistantChat";
 
 let activeScanAbort: AbortController | null = null;
 let activeShadowBuildAbort: AbortController | null = null;
+
+/**
+ * Re-sync every playlist with the library after tracks may have disappeared.
+ *
+ * Runs after a completed scan and after a folder removal so the user never has
+ * to notice a "broken playlists" banner and click Repair by hand. Failures are
+ * logged and swallowed: reconciliation is a tidy-up pass, and a problem here
+ * must not fail the scan that just succeeded.
+ */
+function reconcilePlaylistsAfterLibraryChange(context: string) {
+  try {
+    const summary = getPlaylistCore().reconcileAllPlaylists();
+    if (summary.prunedItems > 0 || summary.rebuiltSmart > 0) {
+      logActivity(
+        getLibrary().getConnection(),
+        "playlist_repaired",
+        `Auto-updated playlists after ${context}: removed ${summary.prunedItems} missing tracks from ${summary.prunedPlaylists} playlist(s), rebuilt ${summary.rebuiltSmart} smart playlist(s)`
+      );
+      invalidateAssistantCache();
+    }
+    return summary;
+  } catch (err) {
+    console.error("[ipc] Playlist reconciliation error:", err);
+    return { prunedItems: 0, prunedPlaylists: 0, rebuiltSmart: 0 };
+  }
+}
 
 export function registerLibraryHandlers(): void {
   ipcMain.handle(
@@ -75,6 +101,11 @@ export function registerLibraryHandlers(): void {
           `Scanned ${totalProcessed} files, ${totalAdded} added, ${totalRemoved} removed`
         );
         invalidateAssistantCache(); // F9: library changed, rebuild context on next chat
+
+        // Keep playlists honest: drop songs that no longer exist and re-resolve
+        // smart playlists so they also pick up whatever this scan just added.
+        const playlistSummary = reconcilePlaylistsAfterLibraryChange("library scan");
+
         return {
           filesAdded: totalAdded,
           filesProcessed: totalProcessed,
@@ -83,6 +114,7 @@ export function registerLibraryHandlers(): void {
           errors: allErrors,
           warnings: allWarnings,
           duplicateFilesDetected: totalDuplicateFiles,
+          playlistsUpdated: playlistSummary,
         };
       } finally {
         activeScanAbort = null;
@@ -148,6 +180,7 @@ export function registerLibraryHandlers(): void {
     safe("library:removeFolder", async (_event, folderId: number) => {
       const ok = getLibrary().removeLibraryFolder(folderId, true);
       if (!ok) throw new Error("Folder not found or could not remove");
+      reconcilePlaylistsAfterLibraryChange("folder removal");
     })
   );
 

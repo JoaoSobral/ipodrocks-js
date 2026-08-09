@@ -44,7 +44,7 @@ iPodRocks is a **sync manager** for [Rockbox devices](https://www.rockbox.org/) 
 - **Multiple devices** — iPods, Rockbox players, any FAT32/exFAT-mounted drive
 - **Auto Podcasts** — Subscribe by keyword or RSS/website URL, auto-download episodes, and sync to devices in the background
 - **Extra Audiobooks** — Subscribe to free public-domain audiobooks from LibriVox; chapters download on sync
-- **Smart, Genius, and Savant playlists** — Rule-based, playback-history, or AI-generated
+- **Classic, Smart, Genius, and Savant playlists** — Hand-picked, rule-based, playback-history, or AI-generated. All of them drop deleted songs automatically on the next library scan
 - **Harmonic mixing** — Key and BPM detection, Camelot wheel compatibility
 - **Rocksy** — Floating AI chat that knows your library and can act on your behalf — create playlists, manage podcasts and audiobooks, check and sync devices
 

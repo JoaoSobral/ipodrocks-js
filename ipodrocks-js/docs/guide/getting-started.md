@@ -24,7 +24,7 @@ When you open iPodRocks, you land on the **Welcome** screen. Use the sidebar to 
 - **Dashboard** — Library stats, devices, shadow libraries, recent activity
 - **Library** — Your music catalog
 - **Devices** — Connected players
-- **Playlists** — Smart, Genius, and Savant playlists
+- **Playlists** — Classic, Smart, Genius, and Savant playlists
 - **Sync** — Copy music to a device
 
 Click the gear icon (top right) to open **Settings** when you need to configure the OpenRouter API or harmonic analysis.
@@ -69,7 +69,7 @@ You have a library, a device, and a sync under your belt. From here, dig into th
 
 - [Library](/app-reference/library) — Add folders, scan, create shadow libraries
 - [Devices](/app-reference/devices) — Configure codecs, check device status
-- [Playlists](/app-reference/playlists) — Create Smart, Genius, or Savant playlists
+- [Playlists](/app-reference/playlists) — Create Classic, Smart, Genius, or Savant playlists
 - [Auto Podcasts](/app-reference/autopodcasts) — Subscribe and auto-sync episodes
 - [Sync](/app-reference/sync) — Copy music, podcasts, and playlists to your device
 - [Ratings](/app-reference/ratings) — Bi-directional star ratings between library and device
