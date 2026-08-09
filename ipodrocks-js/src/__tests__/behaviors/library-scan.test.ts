@@ -165,6 +165,88 @@ describe("Library — scan journey", () => {
     expect(titles).toEqual(["Keep", "New"]);
   });
 
+  itDb("keeps codecs that are only used as transcode targets when pruning orphans (issue #105)", async () => {
+    // The reported situation: an all-FLAC library with an MPC shadow library.
+    // No *track* is ever stored as MPC, so the orphan sweep in
+    // cleanupOrphanedEntities() saw the MPC codecs row as unused and deleted
+    // it — with foreign_keys OFF for that transaction, so nothing stopped it.
+    // Every codec_configurations row for MPC was then left pointing at a
+    // missing codec, which silently broke the shadow library that used it.
+    seedAudioFile({
+      dir: libraryDir,
+      relPath: "Artist/Album/keep.flac",
+      metadata: { title: "Keep", artist: "Artist", album: "Album", duration: 120, bitrate: 1000, codec: "FLAC" },
+      contents: Buffer.from("keep-me"),
+    });
+    const removable = seedAudioFile({
+      dir: libraryDir,
+      relPath: "Artist/Album/temp.flac",
+      metadata: { title: "Temp", artist: "Artist", album: "Album", duration: 90, bitrate: 1000, codec: "FLAC" },
+      contents: Buffer.from("remove-me"),
+    });
+
+    const scanner = new LibraryScanner(db);
+    await scanner.scanFolder(libraryDir, "music", undefined, undefined, { scanHarmonicData: false });
+
+    // Precondition: MPC is a configured transcode target, but no track uses it.
+    const mpc = db.prepare("SELECT id FROM codecs WHERE name = 'MPC'").get() as { id: number };
+    expect(mpc).toBeDefined();
+    expect(
+      (db.prepare("SELECT COUNT(*) AS n FROM codec_configurations WHERE codec_id = ?").get(mpc.id) as { n: number }).n
+    ).toBeGreaterThan(0);
+    expect(
+      (db.prepare("SELECT COUNT(*) AS n FROM tracks WHERE codec_id = ?").get(mpc.id) as { n: number }).n
+    ).toBe(0);
+
+    // Removing a track runs the orphan sweep.
+    fs.rmSync(removable);
+    const second = await scanner.scanFolder(libraryDir, "music", undefined, undefined, { scanHarmonicData: false });
+    expect(second.filesRemoved).toBe(1);
+
+    // The MPC codec must survive — it is still referenced by codec_configurations.
+    expect(
+      db.prepare("SELECT id FROM codecs WHERE id = ?").get(mpc.id)
+    ).toBeDefined();
+
+    // And no codec_configurations row anywhere may be left dangling.
+    const danglingConfigs = db
+      .prepare(
+        `SELECT COUNT(*) AS n FROM codec_configurations cc
+         LEFT JOIN codecs c ON cc.codec_id = c.id
+         WHERE c.id IS NULL`
+      )
+      .get() as { n: number };
+    expect(danglingConfigs.n).toBe(0);
+  });
+
+  itDb("still prunes codecs that nothing references at all", async () => {
+    seedAudioFile({
+      dir: libraryDir,
+      relPath: "Artist/Album/keep.flac",
+      metadata: { title: "Keep", artist: "Artist", album: "Album", duration: 120, bitrate: 1000, codec: "FLAC" },
+      contents: Buffer.from("keep-me"),
+    });
+    const removable = seedAudioFile({
+      dir: libraryDir,
+      relPath: "Artist/Album/temp.flac",
+      metadata: { title: "Temp", artist: "Artist", album: "Album", duration: 90, bitrate: 1000, codec: "FLAC" },
+      contents: Buffer.from("remove-me"),
+    });
+
+    // A codec with no tracks AND no codec_configurations — genuinely unused,
+    // so the sweep should still collect it.
+    const strayId = Number(
+      db.prepare("INSERT INTO codecs (name) VALUES ('STRAY_CODEC')").run().lastInsertRowid
+    );
+
+    const scanner = new LibraryScanner(db);
+    await scanner.scanFolder(libraryDir, "music", undefined, undefined, { scanHarmonicData: false });
+    fs.rmSync(removable);
+    await scanner.scanFolder(libraryDir, "music", undefined, undefined, { scanHarmonicData: false });
+
+    expect(db.prepare("SELECT id FROM codecs WHERE id = ?").get(strayId)).toBeUndefined();
+  });
+
   itDb("skips macOS AppleDouble (._) sidecar files when scanning (issue #77)", async () => {
     seedAudioFile({
       dir: libraryDir,
