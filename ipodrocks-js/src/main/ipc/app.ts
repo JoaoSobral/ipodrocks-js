@@ -98,6 +98,7 @@ export function registerAppHandlers(): void {
       if (!win) return null;
       const result = await dialog.showOpenDialog(win, {
         properties: ["openDirectory"],
+        defaultPath: app.getPath("music"),
       });
       if (result.canceled || result.filePaths.length === 0) return null;
       return result.filePaths[0];

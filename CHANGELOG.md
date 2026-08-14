@@ -1,5 +1,11 @@
 # Changelog
 
+## [2.2.1] — 2026-08
+
+### Fixes
+
+- **Closed a high-severity symlink path-traversal vulnerability in the build toolchain (CVE-2026-56876)** — `extract-zip`, an abandoned dependency pulled in transitively by Electron to unpack its own binary during install, had no available patch. Electron was upgraded to 43.4.0, which drops `extract-zip` entirely in favour of a safe replacement; `better-sqlite3` was upgraded alongside it to 13.x (now built on N-API) so the app's database layer keeps working against the newer Electron runtime. Purely a dependency/build-tooling change — no user-facing behavior changes, aside from the "choose a library folder" dialog now opening in your Music folder by default instead of an OS-chosen location.
+
 ## [2.2.0] — 2026-08
 
 ### Features
