@@ -373,6 +373,14 @@ export async function getGeniusSummaryFromDb(): Promise<AnalyzeResult> {
   return window.api.invoke("genius:getSummaryFromDb") as Promise<AnalyzeResult>;
 }
 
+export async function getListeningStats(
+  period: import("@shared/types").ListeningStatsPeriod
+): Promise<import("@shared/types").ListeningStats> {
+  return window.api.invoke("genius:getListeningStats", period) as Promise<
+    import("@shared/types").ListeningStats
+  >;
+}
+
 export async function removeDevice(deviceId: number): Promise<void> {
   await window.api.invoke("device:remove", deviceId);
 }

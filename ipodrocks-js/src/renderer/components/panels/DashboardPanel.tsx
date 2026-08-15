@@ -3,17 +3,35 @@ import { Card } from "../common/Card";
 import { DeviceIcon } from "../common/DeviceIcon";
 import { InfoTooltip } from "../common/InfoTooltip";
 import { ListRow } from "../common/ListRow";
+import { Button } from "../common/Button";
 import { useLibraryStore } from "../../stores/library-store";
 import { useDeviceStore } from "../../stores/device-store";
-import { getShadowLibraries, getRecentActivity } from "../../ipc/api";
+import { getShadowLibraries, getRecentActivity, getListeningStats } from "../../ipc/api";
 import { createDeviceIconResolver } from "../../utils/device-icon";
-import type { ShadowLibrary } from "@shared/types";
+import { safeLocalStorage } from "../../utils/storage";
+import type { ShadowLibrary, ListeningStats, ListeningStatsPeriod } from "@shared/types";
 import type { ActivityEntry } from "../../ipc/api";
+
+const CLOCK_WARNING_DISMISSED_KEY = "ipodrocks-dashboard-clock-warning-dismissed";
 
 function formatBytes(bytes: number): string {
   if (bytes < 1e9) return `${(bytes / 1e6).toFixed(1)} MB`;
   return `${(bytes / 1e9).toFixed(2)} GB`;
 }
+
+function formatListeningTime(ms: number): string {
+  const totalMinutes = Math.floor(ms / 60000);
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (hours === 0) return `${minutes}m`;
+  return `${hours}h ${minutes}m`;
+}
+
+const PERIOD_LABELS: Record<ListeningStatsPeriod, string> = {
+  all: "All Time",
+  year: "This Year",
+  month: "This Month",
+};
 
 function Skeleton({ className = "w-24" }: { className?: string }) {
   return <div className={`h-4 rounded bg-muted animate-pulse ${className}`} />;
@@ -86,6 +104,15 @@ export function DashboardPanel() {
   const [shadowLibs, setShadowLibs] = useState<ShadowLibrary[]>([]);
   const [activity, setActivity] = useState<ActivityEntry[]>([]);
   const [libraryReady, setLibraryReady] = useState(false);
+  const [statsPeriod, setStatsPeriod] = useState<ListeningStatsPeriod>("year");
+  const [listeningStats, setListeningStats] = useState<ListeningStats | null>(null);
+  const [clockWarningDismissed, setClockWarningDismissed] = useState(
+    () => safeLocalStorage()?.getItem(CLOCK_WARNING_DISMISSED_KEY) === "true"
+  );
+  const dismissClockWarning = () => {
+    safeLocalStorage()?.setItem(CLOCK_WARNING_DISMISSED_KEY, "true");
+    setClockWarningDismissed(true);
+  };
 
   const deviceList = Array.isArray(devices) ? devices : [];
   const shadowList = Array.isArray(shadowLibs) ? shadowLibs : [];
@@ -107,8 +134,21 @@ export function DashboardPanel() {
     };
   }, [fetchStats, fetchFolders, fetchDevices]);
 
+  useEffect(() => {
+    let cancelled = false;
+    setListeningStats(null);
+    getListeningStats(statsPeriod)
+      .then((s) => {
+        if (!cancelled) setListeningStats(s);
+      })
+      .catch(console.error);
+    return () => {
+      cancelled = true;
+    };
+  }, [statsPeriod]);
+
   return (
-    <div className="panel-content grid grid-cols-2 gap-5 h-full grid-rows-[auto_auto_1fr]">
+    <div className="panel-content grid grid-cols-2 gap-5 h-full grid-rows-[auto_auto_auto_1fr]">
       {/* Library Stats */}
       <Card title="Library" subtitle="Collection overview">
         {!libraryReady ? (
@@ -249,6 +289,137 @@ export function DashboardPanel() {
                 </div>
               </ListRow>
             ))}
+          </div>
+        )}
+      </Card>
+
+      {/* Listening Stats */}
+      <Card
+        title="Listening Stats"
+        subtitle="From your device playback history"
+        className="col-span-2"
+        action={
+          <div className="flex gap-1">
+            {(Object.keys(PERIOD_LABELS) as ListeningStatsPeriod[]).map((p) => (
+              <Button
+                key={p}
+                variant={statsPeriod === p ? "primary" : "ghost"}
+                size="sm"
+                onClick={() => setStatsPeriod(p)}
+              >
+                {PERIOD_LABELS[p]}
+              </Button>
+            ))}
+          </div>
+        }
+      >
+        {!listeningStats ? (
+          <div className="space-y-3">
+            {Array.from({ length: 3 }, (_, i) => (
+              <Skeleton key={i} className="w-32" />
+            ))}
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {listeningStats.totalMatchedPlays > 0 &&
+              !listeningStats.clockValid &&
+              !clockWarningDismissed && (
+                <div className="flex items-center gap-2 px-2 py-1.5 rounded-md border border-warning/30 bg-warning/10 text-[11px]">
+                  <span className="text-warning shrink-0">⚠</span>
+                  <span className="text-warning flex-1 min-w-0">
+                    Found {listeningStats.totalMatchedPlays.toLocaleString()} logged play
+                    {listeningStats.totalMatchedPlays === 1 ? "" : "s"}, but your device's clock
+                    isn't set — Rockbox is reporting dates from the year 2000. Set the date & time
+                    on your device (Settings → General → Time & Date) and new plays will start
+                    counting toward your stats.
+                  </span>
+                  <Button variant="ghost" size="sm" onClick={dismissClockWarning}>
+                    Dismiss
+                  </Button>
+                </div>
+              )}
+            {listeningStats.totalPlays === 0 ? (
+              <p className="text-xs text-muted-foreground">
+                No listening data yet. Playback logs are read from Rockbox devices during sync.
+              </p>
+            ) : (
+          <div className="space-y-4">
+            <div className="grid grid-cols-3 gap-4">
+              {[
+                { label: "Plays", value: listeningStats.totalPlays.toLocaleString(), icon: "▶" },
+                {
+                  label: "Listening Time",
+                  value: formatListeningTime(listeningStats.totalListeningTimeMs),
+                  icon: "⏱",
+                },
+                { label: "Top Genre", value: listeningStats.topGenre?.name ?? "—", icon: "🎼" },
+              ].map((item) => (
+                <div key={item.label} className="flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center text-sm text-primary">
+                    {item.icon}
+                  </div>
+                  <div>
+                    <p className="text-base font-semibold text-foreground leading-tight">
+                      {item.value}
+                    </p>
+                    <p className="text-[10px] text-muted-foreground">{item.label}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="grid grid-cols-2 gap-6">
+              <div>
+                <p className="text-xs font-semibold text-foreground mb-2">Top Tracks</p>
+                <div className="space-y-1.5">
+                  {listeningStats.topTracks.map((t, i) => {
+                    const max = listeningStats.topTracks[0]?.playCount || 1;
+                    return (
+                      <div key={t.trackId} className="text-[11px]">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="truncate text-foreground">
+                            {i + 1}. {t.title}{" "}
+                            <span className="text-muted-foreground">— {t.artist}</span>
+                          </span>
+                          <span className="text-muted-foreground shrink-0">{t.playCount}</span>
+                        </div>
+                        <div className="h-1 rounded-full bg-muted mt-0.5 overflow-hidden">
+                          <div
+                            className="h-full bg-primary/60 rounded-full"
+                            style={{ width: `${(t.playCount / max) * 100}%` }}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+              <div>
+                <p className="text-xs font-semibold text-foreground mb-2">Top Artists</p>
+                <div className="space-y-1.5">
+                  {listeningStats.topArtists.map((a, i) => {
+                    const max = listeningStats.topArtists[0]?.playCount || 1;
+                    return (
+                      <div key={`${a.name}-${i}`} className="text-[11px]">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="truncate text-foreground">
+                            {i + 1}. {a.name}
+                          </span>
+                          <span className="text-muted-foreground shrink-0">{a.playCount}</span>
+                        </div>
+                        <div className="h-1 rounded-full bg-muted mt-0.5 overflow-hidden">
+                          <div
+                            className="h-full bg-primary/60 rounded-full"
+                            style={{ width: `${(a.playCount / max) * 100}%` }}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          </div>
+            )}
           </div>
         )}
       </Card>

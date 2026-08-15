@@ -324,6 +324,27 @@ export interface AnalysisSummary {
   uniqueArtists: number;
 }
 
+export type ListeningStatsPeriod = "all" | "year" | "month";
+
+export interface ListeningStats {
+  period: ListeningStatsPeriod;
+  totalPlays: number;
+  totalListeningTimeMs: number;
+  uniqueTracksPlayed: number;
+  topTracks: { trackId: number; title: string; artist: string; playCount: number }[];
+  topArtists: { name: string; playCount: number }[];
+  topGenre: { name: string; playCount: number } | null;
+  /**
+   * Matched playback_logs rows regardless of timestamp plausibility — lets a
+   * zero-stats result be told apart from "no plays at all". A device whose
+   * clock was never set logs real plays under year-2000 timestamps, which
+   * are excluded from every count above but still counted here.
+   */
+  totalMatchedPlays: number;
+  /** Whether enough of those matched rows have a plausible timestamp. */
+  clockValid: boolean;
+}
+
 export interface GeniusGenerateOptions {
   maxTracks?: number;
   minPlays?: number;

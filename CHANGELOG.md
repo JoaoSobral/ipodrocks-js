@@ -2,6 +2,12 @@
 
 ## [2.2.1] — 2026-08
 
+### Features
+
+- **Listening Stats on the Dashboard** — A new card shows your top tracks, top artists, top genre, total plays, and total listening time, straight from the playback history your Rockbox devices log during sync. Switch between **All Time**, **This Year**, and **This Month** to see how your listening breaks down by period.
+- **A heads-up when your device's clock isn't set** — Rockbox reads play timestamps off the device's own clock, and a device that has never had its date/time set (or lost it to a dead battery) logs every play as happening in the year 2000. Listening Stats now detects this and shows a dismissible warning — "Found N logged plays, but your device's clock isn't set" — with the fix (Rockbox → Settings → General → Time & Date) right there, instead of silently showing no data. Dismiss it once and it stays dismissed.
+- **Welcome page brought up to date** — The Features and Get Started lists on the Welcome screen now actually mention what's shipped: Classic playlists (hand-picked & editable), the named Genius playlist types (Most Played, Hidden Gems, Top Genre, Finish the Album, and more), Rockbox-native tagnavi smart playlists, LibriVox audiobooks, and Rocksy's fuller tool set (shadow libraries, device settings). Get Started now also covers every sidebar tab, including Extra Audiobooks, which was missing entirely.
+
 ### Fixes
 
 - **Closed a high-severity symlink path-traversal vulnerability in the build toolchain (CVE-2026-56876)** — `extract-zip`, an abandoned dependency pulled in transitively by Electron to unpack its own binary during install, had no available patch. Electron was upgraded to 43.4.0, which drops `extract-zip` entirely in favour of a safe replacement; `better-sqlite3` was upgraded alongside it to 13.x (now built on N-API) so the app's database layer keeps working against the newer Electron runtime. Purely a dependency/build-tooling change — no user-facing behavior changes, aside from the "choose a library folder" dialog now opening in your Music folder by default instead of an OS-chosen location.

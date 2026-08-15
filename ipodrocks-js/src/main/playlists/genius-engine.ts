@@ -4,6 +4,8 @@ import {
   AnalysisSummary,
   GeniusGenerateOptions,
   GeniusTypeOption,
+  ListeningStats,
+  ListeningStatsPeriod,
   MatchedPlayEvent,
   PlayEvent,
   PlaylistGenerationResult,
@@ -277,6 +279,138 @@ export function buildAnalysisSummaryFromDb(
     topAlbum,
     uniqueTracks: uniqueRow.tracks ?? 0,
     uniqueArtists: uniqueRow.artists ?? 0,
+  };
+}
+
+/**
+ * Build "Listening Stats" (top tracks/artists/genre, totals) for a given
+ * period, straight from ``playback_logs``.
+ *
+ * Unlike ``buildAnalysisSummaryFromDb`` (all-time, backed by the
+ * pre-aggregated ``playback_stats`` table), this reads real per-play
+ * timestamps so it can scope to the current calendar year or month — the
+ * aggregate table has no date breakdown. Uses the same device-clock
+ * plausibility bound (``MIN_PLAUSIBLE_TS``/``FUTURE_SLACK_SEC``) as every
+ * other playback_logs query in this file, and the same
+ * ``content_type = 'music'`` scoping used throughout Genius.
+ *
+ * Also reports ``totalMatchedPlays``/``clockValid`` from
+ * ``getPlaybackDataContext`` (unfiltered by plausibility) so a zero-stats
+ * result can be told apart from "no plays at all": a device whose RTC was
+ * never set logs real plays under year-2000 timestamps, which get excluded
+ * from every count above — the caller needs to know plays *exist* so it can
+ * say "set your device's clock" instead of "no listening data yet".
+ */
+export function buildListeningStatsFromDb(
+  db: Database.Database,
+  period: ListeningStatsPeriod
+): ListeningStats {
+  const clockContext = getPlaybackDataContext(db);
+  const nowSec = Math.floor(Date.now() / 1000);
+  const upperBound = nowSec + FUTURE_SLACK_SEC;
+  const now = new Date();
+  const lowerBound =
+    period === "year"
+      ? Math.max(MIN_PLAUSIBLE_TS, Math.floor(new Date(now.getFullYear(), 0, 1).getTime() / 1000))
+      : period === "month"
+      ? Math.max(MIN_PLAUSIBLE_TS, Math.floor(new Date(now.getFullYear(), now.getMonth(), 1).getTime() / 1000))
+      : MIN_PLAUSIBLE_TS;
+
+  const totalsRow = db
+    .prepare(
+      `SELECT COUNT(*) as plays,
+              COALESCE(SUM(pl.elapsed_ms), 0) as listeningMs,
+              COUNT(DISTINCT pl.matched_track_id) as uniqueTracks
+       FROM playback_logs pl
+       JOIN tracks t ON t.id = pl.matched_track_id AND t.content_type = 'music'
+       WHERE pl.timestamp_tick >= ? AND pl.timestamp_tick <= ?`
+    )
+    .get(lowerBound, upperBound) as {
+    plays: number;
+    listeningMs: number;
+    uniqueTracks: number;
+  };
+
+  const totalPlays = totalsRow.plays ?? 0;
+
+  if (totalPlays === 0) {
+    return {
+      period,
+      totalPlays: 0,
+      totalListeningTimeMs: 0,
+      uniqueTracksPlayed: 0,
+      topTracks: [],
+      topArtists: [],
+      topGenre: null,
+      totalMatchedPlays: clockContext.totalMatched,
+      clockValid: clockContext.clockValid,
+    };
+  }
+
+  const topTracks = db
+    .prepare(
+      `SELECT t.id AS trackId, t.title AS title, a.name AS artist, COUNT(*) AS playCount
+       FROM playback_logs pl
+       JOIN tracks t ON t.id = pl.matched_track_id AND t.content_type = 'music'
+       LEFT JOIN artists a ON t.artist_id = a.id
+       WHERE pl.timestamp_tick >= ? AND pl.timestamp_tick <= ?
+       GROUP BY t.id
+       ORDER BY playCount DESC, title
+       LIMIT 5`
+    )
+    .all(lowerBound, upperBound) as Array<{
+    trackId: number;
+    title: string | null;
+    artist: string | null;
+    playCount: number;
+  }>;
+
+  const topArtists = db
+    .prepare(
+      `SELECT a.name AS name, COUNT(*) AS playCount
+       FROM playback_logs pl
+       JOIN tracks t ON t.id = pl.matched_track_id AND t.content_type = 'music'
+       LEFT JOIN artists a ON t.artist_id = a.id
+       WHERE pl.timestamp_tick >= ? AND pl.timestamp_tick <= ?
+       GROUP BY a.id
+       ORDER BY playCount DESC, name
+       LIMIT 5`
+    )
+    .all(lowerBound, upperBound) as Array<{ name: string | null; playCount: number }>;
+
+  const topGenreRow = db
+    .prepare(
+      `SELECT g.name AS name, COUNT(*) AS playCount
+       FROM playback_logs pl
+       JOIN tracks t ON t.id = pl.matched_track_id AND t.content_type = 'music'
+       JOIN genres g ON g.id = t.genre_id
+       WHERE pl.timestamp_tick >= ? AND pl.timestamp_tick <= ?
+       GROUP BY t.genre_id
+       ORDER BY playCount DESC, name
+       LIMIT 1`
+    )
+    .get(lowerBound, upperBound) as { name: string; playCount: number } | undefined;
+
+  return {
+    period,
+    totalPlays,
+    totalListeningTimeMs: totalsRow.listeningMs ?? 0,
+    uniqueTracksPlayed: totalsRow.uniqueTracks ?? 0,
+    topTracks: topTracks.map((r) => ({
+      trackId: r.trackId,
+      title: r.title ?? "Unknown",
+      artist: r.artist ?? "Unknown",
+      playCount: r.playCount,
+    })),
+    topArtists: topArtists.map((r) => ({
+      name: r.name ?? "Unknown",
+      playCount: r.playCount,
+    })),
+    topGenre: topGenreRow
+      ? { name: topGenreRow.name, playCount: topGenreRow.playCount }
+      : null,
+    totalMatchedPlays: clockContext.totalMatched,
+    clockValid: clockContext.clockValid,
   };
 }
 

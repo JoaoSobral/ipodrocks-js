@@ -2,12 +2,13 @@ import { ipcMain } from "electron";
 import { safe, getLibrary, getPlaylistCore } from "./common";
 import {
   buildAnalysisSummaryFromDb,
+  buildListeningStatsFromDb,
   generateGeniusPlaylistFromDb,
   getArtistsFromPlaybackStats,
   getGeniusTypesWithAvailability,
 } from "../playlists/genius-engine";
 import { logActivity } from "../activity/activity-logger";
-import type { GeniusGenerateOptions } from "../../shared/types";
+import type { GeniusGenerateOptions, ListeningStatsPeriod } from "../../shared/types";
 
 export function registerGeniusHandlers(): void {
   ipcMain.handle(
@@ -16,6 +17,13 @@ export function registerGeniusHandlers(): void {
       const summary = buildAnalysisSummaryFromDb(getLibrary().getConnection());
       const artists = getArtistsFromPlaybackStats(getLibrary().getConnection());
       return { summary, artists };
+    })
+  );
+
+  ipcMain.handle(
+    "genius:getListeningStats",
+    safe("genius:getListeningStats", async (_event, period: ListeningStatsPeriod) => {
+      return buildListeningStatsFromDb(getLibrary().getConnection(), period);
     })
   );
 

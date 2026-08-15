@@ -10,13 +10,16 @@ import logoSrcBlack from "@assets/ipodRocks_black.png?url";
 const FEATURES: { icon: string; label: string; description: string }[] = [
   { icon: "📤", label: "Sync", description: "Full or custom sync by album, artist, genre, or playlist." },
   { icon: "📱", label: "Multiple devices", description: "Each device has its own codec, folder layout, and artwork settings." },
-  { icon: "📚", label: "Library & shadows", description: "Music, podcasts, audiobooks; FLAC→MPC mirrors." },
-  { icon: "📋", label: "Playlists", description: "Smart, Genius, Savant (AI), and broken-playlist detection & repair." },
+  { icon: "📚", label: "Library & shadows", description: "Music, podcasts, LibriVox audiobooks; FLAC→MPC mirrors that adopt already-transcoded files instead of re-encoding." },
+  { icon: "📋", label: "Playlists", description: "Classic (hand-picked & editable), Smart, Genius, Savant (AI) — plus broken-playlist detection & repair." },
+  { icon: "🧠", label: "Genius", description: "Auto-generated from real playback history: Most Played, Favorites, Hidden Gems, Top Genre, Top Artist, Top Album, Finish the Album, Deep Dive, and more." },
+  { icon: "📻", label: "Rockbox-native smart playlists", description: "Per-device opt-in: written as live, auto-updating tagnavi tagtree entries instead of frozen .m3u snapshots." },
   { icon: "🎙️", label: "Podcasts", description: "Search via Podcast Index, paste any RSS feed URL, or auto-subscribe with scheduled downloads." },
-  { icon: "💬", label: "Rocksy", description: "AI assistant that can search your library, create playlists, subscribe to podcasts, trigger syncs, scan folders, and more — all from chat." },
+  { icon: "💬", label: "Rocksy", description: "AI assistant that can search your library, create and edit playlists, subscribe to podcasts/audiobooks, manage shadow libraries, adjust device settings, trigger syncs, and more — all from chat." },
   { icon: "🎹", label: "Harmonic mixing", description: "Key/BPM detection and Camelot wheel." },
   { icon: "🔄", label: "Conversion & codecs", description: "MP3, AAC, Musepack, Opus via FFmpeg." },
   { icon: "⭐", label: "Star ratings", description: "5-star (half-star), synced from Rockbox with 3-way merge." },
+  { icon: "📊", label: "Listening stats", description: "Top tracks, artists, and total listening time from device playback history — All Time, This Year, or This Month — right in the Dashboard." },
 ];
 
 type UpdateState =
@@ -137,14 +140,15 @@ export function WelcomePanel() {
 
       {/* Getting started */}
       <Card title="Get started" subtitle="Use the sidebar to navigate">
-        <ul className="text-sm text-muted-foreground space-y-1.5 list-none">
-          <li><strong className="text-foreground">Dashboard</strong> — overview of your library and devices</li>
-          <li><strong className="text-foreground">Library</strong> — add folders and scan your music</li>
-          <li><strong className="text-foreground">Playlists</strong> — create smart, Genius, or Savant playlists</li>
-          <li><strong className="text-foreground">Auto Podcasts</strong> — subscribe and schedule episode downloads</li>
-          <li><strong className="text-foreground">Devices</strong> — add and configure each Rockbox or mountable device</li>
-          <li><strong className="text-foreground">Sync</strong> — copy music and podcasts to the device</li>
-          <li><strong className="text-foreground">Settings</strong> (gear icon) — add your OpenRouter API key for Savant and Rocksy</li>
+        <ul className="text-sm text-muted-foreground space-y-2 list-none">
+          <li><strong className="text-foreground">Dashboard</strong> — library, device, and shadow-library overview, recent activity, and your Listening Stats (top tracks/artists, plays, listening time).</li>
+          <li><strong className="text-foreground">Library</strong> — add folders and scan your music; manage shadow libraries (pre-transcoded mirrors) and playlist repair from here too.</li>
+          <li><strong className="text-foreground">Playlists</strong> — hand-pick a Classic playlist, build a multi-select Smart one, generate a Genius playlist from your listening history, or describe a mood to Savant (AI).</li>
+          <li><strong className="text-foreground">Auto Podcasts</strong> — search Podcast Index, paste any RSS/website URL, and set auto-download rules per subscription.</li>
+          <li><strong className="text-foreground">Extra Audiobooks</strong> — browse and subscribe to free, public-domain audiobooks from LibriVox; chapters download the first time you sync a device that includes the book.</li>
+          <li><strong className="text-foreground">Devices</strong> — add as many Rockbox or mountable devices as you want, each with its own codec, folder layout, and artwork settings.</li>
+          <li><strong className="text-foreground">Sync</strong> — full or custom sync (by album, artist, genre, or playlist) with live progress feedback.</li>
+          <li><strong className="text-foreground">Settings</strong> (gear icon) — add your OpenRouter API key to unlock Savant playlists and Rocksy.</li>
         </ul>
       </Card>
 
