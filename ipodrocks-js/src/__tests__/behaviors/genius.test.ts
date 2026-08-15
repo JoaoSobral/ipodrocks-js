@@ -20,6 +20,7 @@ import {
 } from "../harness";
 
 import {
+  buildListeningStatsFromDb,
   generateGeniusPlaylistFromDb,
   getAvailableGeniusTypes,
   getGeniusTypesWithAvailability,
@@ -288,6 +289,112 @@ describe("Genius engine — library-derived generators", () => {
 
     const result = generateGeniusPlaylistFromDb("finish_album", db);
     expect(result.tracks).toHaveLength(0);
+  });
+});
+
+describe("Genius engine — buildListeningStatsFromDb", () => {
+  let db: TestDb;
+  let folderId: number;
+
+  beforeEach(() => {
+    if (!canRunDbTests) return;
+    db = createTestDb();
+    folderId = seedLibraryFolder(db, { name: "Music", path: "/music", contentType: "music" });
+  });
+
+  afterEach(() => {
+    closeDb(db);
+  });
+
+  itDb("returns zeroed stats when there is no playback data", () => {
+    seedTrack(db, { path: "/music/solo.flac", title: "Solo", artist: "A", album: "X", libraryFolderId: folderId });
+
+    const stats = buildListeningStatsFromDb(db, "all");
+    expect(stats).toEqual({
+      period: "all",
+      totalPlays: 0,
+      totalListeningTimeMs: 0,
+      uniqueTracksPlayed: 0,
+      topTracks: [],
+      topArtists: [],
+      topGenre: null,
+      totalMatchedPlays: 0,
+      clockValid: false,
+    });
+  });
+
+  itDb("ranks top tracks, artists, and genre by play count", () => {
+    const now = Math.floor(Date.now() / 1000);
+    const hit = seedTrack(db, { path: "/music/hit.flac", title: "Hit", artist: "Popular", album: "X", genre: "Rock", libraryFolderId: folderId });
+    seedPlay(db, hit, now - 100, { elapsedMs: 180_000, totalMs: 200_000 });
+    seedPlay(db, hit, now - 200, { elapsedMs: 180_000, totalMs: 200_000 });
+    seedPlay(db, hit, now - 300, { elapsedMs: 180_000, totalMs: 200_000 });
+    const miss = seedTrack(db, { path: "/music/miss.flac", title: "Miss", artist: "Obscure", album: "Y", genre: "Jazz", libraryFolderId: folderId });
+    seedPlay(db, miss, now - 400, { elapsedMs: 180_000, totalMs: 200_000 });
+
+    const stats = buildListeningStatsFromDb(db, "all");
+    expect(stats.totalPlays).toBe(4);
+    expect(stats.uniqueTracksPlayed).toBe(2);
+    expect(stats.totalListeningTimeMs).toBe(4 * 180_000);
+    expect(stats.topTracks[0]).toMatchObject({ title: "Hit", artist: "Popular", playCount: 3 });
+    expect(stats.topArtists[0]).toMatchObject({ name: "Popular", playCount: 3 });
+    expect(stats.topGenre).toMatchObject({ name: "Rock", playCount: 3 });
+  });
+
+  itDb("scopes to the current calendar year and month", () => {
+    const now = new Date();
+    const yearStartSec = Math.floor(new Date(now.getFullYear(), 0, 1).getTime() / 1000);
+    const monthStartSec = Math.floor(new Date(now.getFullYear(), now.getMonth(), 1).getTime() / 1000);
+
+    const thisMonth = seedTrack(db, { path: "/music/tm.flac", title: "ThisMonth", artist: "A", album: "X", libraryFolderId: folderId });
+    seedPlay(db, thisMonth, monthStartSec + 3600);
+
+    const lastMonth = seedTrack(db, { path: "/music/lm.flac", title: "LastMonth", artist: "B", album: "Y", libraryFolderId: folderId });
+    seedPlay(db, lastMonth, monthStartSec - 3600);
+
+    const lastYear = seedTrack(db, { path: "/music/ly.flac", title: "LastYear", artist: "C", album: "Z", libraryFolderId: folderId });
+    seedPlay(db, lastYear, yearStartSec - 3600);
+
+    const monthStats = buildListeningStatsFromDb(db, "month");
+    expect(monthStats.totalPlays).toBe(1);
+    expect(monthStats.topTracks.map((t) => t.title)).toEqual(["ThisMonth"]);
+
+    const yearStats = buildListeningStatsFromDb(db, "year");
+    expect(yearStats.totalPlays).toBeGreaterThanOrEqual(1);
+    expect(yearStats.topTracks.map((t) => t.title)).toContain("ThisMonth");
+    expect(yearStats.topTracks.map((t) => t.title)).not.toContain("LastYear");
+
+    const allStats = buildListeningStatsFromDb(db, "all");
+    expect(allStats.topTracks.map((t) => t.title)).toEqual(
+      expect.arrayContaining(["ThisMonth", "LastMonth", "LastYear"])
+    );
+  });
+
+  itDb("excludes plays logged under an unset (year-2000) device clock, but still reports them as matched", () => {
+    // Regression guard: a zero-stats result must be distinguishable from "no
+    // plays at all" so the UI can tell the user to set their device's clock
+    // instead of implying nothing was captured.
+    const bogus = seedTrack(db, { path: "/music/bogus.flac", title: "Bogus", artist: "A", album: "X", libraryFolderId: folderId });
+    seedPlay(db, bogus, UNSET_CLOCK_TS);
+
+    const stats = buildListeningStatsFromDb(db, "all");
+    expect(stats.totalPlays).toBe(0);
+    expect(stats.topTracks).toEqual([]);
+    expect(stats.totalMatchedPlays).toBe(1);
+    expect(stats.clockValid).toBe(false);
+  });
+
+  itDb("clockValid is true and totalMatchedPlays matches totalPlays once enough plausible rows exist", () => {
+    const now = Math.floor(Date.now() / 1000);
+    const t = seedTrack(db, { path: "/music/ok.flac", title: "Ok", artist: "A", album: "X", libraryFolderId: folderId });
+    for (let i = 0; i < 25; i++) {
+      seedPlay(db, t, now - i * 300);
+    }
+
+    const stats = buildListeningStatsFromDb(db, "all");
+    expect(stats.totalPlays).toBe(25);
+    expect(stats.totalMatchedPlays).toBe(25);
+    expect(stats.clockValid).toBe(true);
   });
 });
 
