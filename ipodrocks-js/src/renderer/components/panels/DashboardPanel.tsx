@@ -148,7 +148,7 @@ export function DashboardPanel() {
   }, [statsPeriod]);
 
   return (
-    <div className="panel-content grid grid-cols-2 gap-5 h-full grid-rows-[auto_auto_auto_1fr]">
+    <div className="panel-content grid grid-cols-2 gap-5">
       {/* Library Stats */}
       <Card title="Library" subtitle="Collection overview">
         {!libraryReady ? (
@@ -425,13 +425,13 @@ export function DashboardPanel() {
       </Card>
 
       {/* Recent Activity */}
-      <Card title="Recent Activity" subtitle="Last 100 operations" className="col-span-2 flex flex-col min-h-0">
+      <Card title="Recent Activity" subtitle="Last 100 operations" className="col-span-2">
         {activity.length === 0 ? (
           <div className="flex items-center justify-center py-8">
             <p className="text-xs text-muted-foreground">No recent activity</p>
           </div>
         ) : (
-          <div className="flex-1 min-h-0 overflow-y-auto space-y-1.5">
+          <div className="max-h-96 overflow-y-auto space-y-1.5">
             {activity.map((entry) => (
               <ListRow key={entry.id} className="justify-between py-1.5 px-2.5 text-xs">
                 <div className="flex items-center gap-2 min-w-0">
