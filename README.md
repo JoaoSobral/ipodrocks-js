@@ -124,6 +124,8 @@ If you really like iPodRocks and want to keep it caffeinated, you can buy me a c
 
 ### Sync & Conversion
 - **Full or custom sync** — Pick albums, artists, genres, playlists
+- **Albums grouped by album artist** — Compilations show up once, under "Various Artists", instead of once per contributing track artist, so the custom-sync album list stays usable. The same choice decides the on-device folder layout when you are not mirroring your library structure, so a 20-artist compilation lands in one folder rather than twenty. Switch to **Track artist** per device if you prefer the old grouping.
+- **Mirror library folder structure** — Reproduce your library's folder tree on the device 1:1, album folder names and all, instead of rebuilding paths from tags
 - FFmpeg conversion with metadata preserved
 - **Rockbox-compatible album art** — Generates a single baseline-JPEG `cover.jpg` per album folder, resized to a per-device maximum (default 300 px so iPods stay responsive), so artwork loads reliably on Rockbox. Uses folder art or embedded artwork as the source; no extra software required
 - Live progress feedback
@@ -240,6 +242,8 @@ If `mpcenc` is not on your PATH, iPodRocks will prompt when you select Musepack.
 
 - **Full sync** — Music, podcasts, audiobooks, playlists
 - **Custom sync** — Pick albums, artists, genres, playlists
+- **Mirror library folder structure** — On by default; keeps the device layout identical to your library, including album folders that carry the year (`Levels (2011)`). Turn it off to rebuild paths from tags as `Artist/Album/track.ext`
+- **Group albums by** — **Album artist** (default) keeps a compilation as one album in both the picker and the rebuilt folder layout; **Track artist** restores the older per-track-artist behaviour
 - Live progress feedback
 
 ### Settings

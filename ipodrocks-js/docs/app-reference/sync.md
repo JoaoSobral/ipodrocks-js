@@ -8,6 +8,8 @@ The Sync panel copies music, podcasts, audiobooks, and playlists from your libra
 - **Sync type** — Full (everything) or Custom (pick albums, artists, genres, playlists).
 - **Full sync options** — Include/exclude music, podcasts, audiobooks, playlists. Orphan Policy (keep, remove, prompt). Skip album artwork.
 - **Custom sync** — Select specific albums, artists, genres, podcasts, audiobooks, and playlists. Choose **Include** (sync only the ticked items) or **Exclude** (sync everything *except* the ticked items). The Audiobooks box includes **Extra Audiobooks** subscribed from LibriVox (see [Extra Audiobooks](./audiobooks.md)).
+- **Mirror library folder structure** — On by default. Reproduces your library's folder tree on the device 1:1, keeping album folder names exactly as they are (including the year, e.g. `Levels (2011)`). Turn it off to rebuild device paths from tags instead, as `Artist/Album/track.ext`.
+- **Group albums by** — Which artist identifies an album: **Album artist** (default) or **Track artist**. See below.
 - **Start Sync** — Runs the sync. Progress modal shows files copied, converted, and removed.
 - **Results** — After sync, a summary card shows success, warnings, or errors.
 
@@ -45,13 +47,26 @@ Custom sync has two polarities controlled by the **Mode** radio at the top of th
 - **Cross-category combination** — Selections across the six category boxes (Albums, Artists, Genres, Podcasts, Audiobooks, Playlists) combine with OR semantics in both modes. In Include mode a track is kept if it matches *any* selection; in Exclude mode a track is dropped if it matches *any* selection.
 - **Playlist propagation** — Selecting a playlist pulls in (Include) or pushes out (Exclude) every track in that playlist, regardless of whether their albums/artists/genres are individually ticked. The albums, artists, and genres of those tracks light up in the "transitive" highlight color (yellow in Include, light orange in Exclude) so it's clear *why* they're affected.
 
+## Album Grouping — Album Artist vs. Track Artist
+
+An album is identified by its title *and* an artist. **Group albums by** decides which artist that is, and it affects two things at once: the entries in the Custom sync **Albums** box, and — when **Mirror library folder structure** is off — the folder layout written to the device.
+
+- **Album artist** *(default)* — Uses the `albumartist` tag, falling back to the track artist when a file does not have one. A compilation whose tracks are by twenty different artists but which is tagged `Various Artists` is **one** album: one row in the picker, and one `Various Artists/<album>/` folder on the device. Albums containing a guest feature stay whole for the same reason.
+- **Track artist** — Uses each track's own `artist` tag, which is how iPodRocks behaved before v2.3.0. The same compilation becomes twenty separate album entries and twenty folders on the device. Available for libraries that are deliberately organised this way.
+
+The setting is per device and is saved with the rest of that device's sync preferences.
+
+**Changing it moves files.** The grouping decides where tracks are written, so switching it (or switching **Mirror library folder structure**) means the next sync copies tracks to their new locations. Set the Orphan Policy to **Remove** on that sync if you want the old folders cleaned up in the same pass; with **Keep** they stay behind until you remove them yourself.
+
+**Upgrading from an earlier version.** Libraries scanned before v2.3.0 never had their `albumartist` tags read, so their compilations are still split per track artist. The next library scan re-reads those tags once and merges the duplicate album entries; it does not re-hash files or re-transcode shadow libraries, so it is quick. Album selections you had already saved keep working — the old labels are still matched, and the picker moves them onto the new ones for you.
+
 ## Per-Device Sync Preferences
 
-Selecting a device in the Sync panel automatically restores that device's last-used sync configuration: sync type, content toggles (music/podcasts/audiobooks/playlists), orphan policy, **the custom-sync Include/Exclude mode**, and any custom selections of albums, artists, genres, playlists, podcasts, and audiobooks.
+Selecting a device in the Sync panel automatically restores that device's last-used sync configuration: sync type, content toggles (music/podcasts/audiobooks/playlists), orphan policy, **Mirror library folder structure**, **Group albums by**, **the custom-sync Include/Exclude mode**, and any custom selections of albums, artists, genres, playlists, podcasts, and audiobooks.
 
 The state is saved every time you click **Sync** for that device — even if the sync errors partway through, because the saved state captures your intent, not the outcome.
 
-Devices that have never been synced through this panel fall back to the panel defaults: full sync, all content types enabled, keep-orphans policy, custom-sync mode = Include.
+Devices that have never been synced through this panel fall back to the panel defaults: full sync, all content types enabled, keep-orphans policy, mirror library folder structure = on, group albums by = Album artist, custom-sync mode = Include.
 
 When you switch between devices, the panel live-swaps to that device's saved configuration. Removing a device from the Devices panel also clears its saved preferences.
 
