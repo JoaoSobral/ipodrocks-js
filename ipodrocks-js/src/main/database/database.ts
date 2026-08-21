@@ -32,6 +32,7 @@ export class AppDatabase {
     this.migrateDeviceSkipAlbumArtwork();
     this.migrateDeviceArtworkMaxDimension();
     this.migrateVbrEnabled();
+    this.migrateDeviceUsbIdentity();
     this.migrateShadowPausedStatus();
     this.migrateShadowTrackStat();
     this.migrateClassicPlaylists();
@@ -188,6 +189,42 @@ export class AppDatabase {
       }
     } catch (err) {
       console.error("[db] migration failed (migrateDeviceArtworkMaxDimension):", err);
+    }
+  }
+
+  /**
+   * Add the optional USB hardware identity columns to devices.
+   *
+   * Existing devices keep NULL, which preserves today's behavior: they are
+   * matched by mount path alone. Only devices the user explicitly binds to a
+   * USB unit get a value.
+   */
+  private migrateDeviceUsbIdentity(): void {
+    if (!this.db) return;
+    try {
+      const rows = this.db
+        .prepare("PRAGMA table_info(devices)")
+        .all() as { name: string }[];
+      const existing = new Set(rows.map((r) => r.name));
+      for (const column of ["usb_vendor_id", "usb_product_id", "usb_serial"]) {
+        if (!existing.has(column)) {
+          this.db.prepare(`ALTER TABLE devices ADD COLUMN ${column} TEXT`).run();
+        }
+      }
+      // The index lives here rather than in SCHEMA_SQL on purpose. SCHEMA_SQL
+      // is exec'd first, and on an existing database CREATE TABLE IF NOT EXISTS
+      // is a no-op — so an index referencing these columns would fail with
+      // "no such column: usb_vendor_id" and take down initialize() before the
+      // ALTER TABLEs above ever ran.
+      this.db
+        .prepare(
+          `CREATE UNIQUE INDEX IF NOT EXISTS idx_devices_usb_identity
+             ON devices(usb_vendor_id, usb_product_id, usb_serial)
+             WHERE usb_vendor_id IS NOT NULL`,
+        )
+        .run();
+    } catch (err) {
+      console.error("[db] migration failed (migrateDeviceUsbIdentity):", err);
     }
   }
 

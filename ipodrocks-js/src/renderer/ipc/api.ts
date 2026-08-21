@@ -3,6 +3,8 @@ import type {
   LibraryFolder,
   DeviceProfile,
   AddDeviceConfig,
+  UsbDeviceInfo,
+  UsbSnapshot,
   ScanResult,
   SyncOptions,
   ScanProgress,
@@ -321,6 +323,18 @@ export async function updateDevice(
 ): Promise<DeviceProfile | { error: string }> {
   return window.api.invoke("device:update", deviceId, updates) as Promise<
     DeviceProfile | { error: string }
+  >;
+}
+
+/**
+ * Enumerate USB devices connected right now, for the device-identity dropdown.
+ *
+ * `available: false` means enumeration failed on this platform — show the user
+ * that we cannot tell, rather than an empty list implying nothing is plugged in.
+ */
+export async function listUsbDevices(): Promise<UsbSnapshot | { error: string }> {
+  return window.api.invoke("device:listUsb") as Promise<
+    UsbSnapshot | { error: string }
   >;
 }
 

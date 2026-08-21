@@ -232,6 +232,12 @@ Clear button (trash icon in chat header) wipes the rolling history and pinned me
 Device not detected or mount path wrong
   Ensure device is mounted before adding. Use the actual mount path (e.g. /media/ipod on Linux, E:\\ on Windows). Avoid symlinks if they cause issues. On Linux use lsblk or mount to confirm the path.
 
+Device shows offline even though it is mounted
+  The device has a USB identity set and that exact unit is not connected. A USB-bound device is only online when its hardware is plugged in AND its mount path is a live volume. Use usb_device_list to see what is actually connected, then either plug in the right player or clear the binding with device_set_usb_identity (which drops the device back to mount-path matching).
+
+Two devices confused for each other / same mount path
+  Two players that mount at the same path (e.g. /Volumes/IPOD) cannot be told apart by path alone, so the second inherits the first one's sync history and ratings. Fix by giving BOTH devices a USB identity via device_set_usb_identity — tagging only one is not enough, because the untagged device still matches on mount path. Devices that report no serial number are identified at model level only, which cannot separate two identical units.
+
 Sync fails or hangs
   Check free space on the device. Use "Check Device" in Devices first to see synced vs to-sync counts. FFmpeg is bundled, no install needed. For Musepack, ensure mpcenc is on PATH. Cancel and retry; try a smaller custom sync (e.g. one album) to isolate.
 

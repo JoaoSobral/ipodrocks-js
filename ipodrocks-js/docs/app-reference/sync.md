@@ -61,5 +61,6 @@ When you switch between devices, the panel live-swaps to that device's saved con
 
 - "Check what would sync to my iPod" → `device_check` *(asks you to confirm first)*
 - "Sync my iPod" → `device_sync` *(asks you to confirm first)*
+- "Which iPod is plugged in right now?" → `usb_device_list`
 
 Both are destructive operations, so Rocksy pauses for a **Confirm / Cancel** prompt before running. See [Devices → Rocksy](./devices.md#rocksy).

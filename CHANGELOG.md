@@ -1,5 +1,19 @@
 # Changelog
 
+## [2.3.0] — 2026-08
+
+### Features
+
+- **Identify a device by its USB hardware instead of its mount path** — Until now a device was known only by where it mounts, and mount paths are not unique: connect two iPods one at a time and both land on `/Volumes/IPOD` (or `/media/ipod`, or `E:\`). iPodRocks could not tell them apart, so the second player silently inherited the first one's sync history, ratings, and podcast state. **Devices → Add/Edit** now has an optional **USB Device** dropdown listing everything plugged in right now; pick your player and iPodRocks records its USB vendor id, product id and serial number, and from then on treats that device as connected only when *that exact unit* is present. Recognized iPod models are named automatically — from the 1st-generation iPod through the nano 7G, including devices sitting in DFU or WTF recovery mode, which report no storage interface and would otherwise be unidentifiable. Leave the field unset and nothing changes: matching stays on the mount path exactly as before. Works on macOS, Windows and Linux with no extra software to install.
+- **Rocksy can see USB devices and bind them** — Ask "what USB devices are connected?" or "what's my iPod's serial number?" and Rocksy answers from the new `usb_device_list` tool. Ask it to tell two players apart and it can set or clear a device's USB identity with `device_set_usb_identity`, which asks you to confirm first — clearing a binding drops the device back to mount-path matching, and that is worth a deliberate click.
+
+### Fixes
+
+- **A device bound to USB hardware can no longer be synced to the wrong volume** — Binding checks the USB unit *and* that the mount path is still a live volume, rather than trusting the USB match alone. Without both, the right iPod plugged into a stale path entry — macOS having mounted it at `/Volumes/IPOD 1` while another drive holds `/Volumes/IPOD` — would have passed the connection check and then written to the other drive.
+- **Album artwork settings chosen while adding a device are no longer discarded** — "Skip album artwork" and the cover size picker were both present in the Add Device form but dropped on save, so they only took effect if you reopened the device and saved it a second time. They now persist on the first save.
+- **A device that reports no USB serial number says so** — Some players and USB bridges report no serial, which makes the identity model-level: enough to tell an iPod classic from a nano, not enough to separate two identical classics. The form now says this outright rather than implying a uniqueness it cannot deliver.
+- **USB enumeration failing no longer marks every device offline** — If USB information cannot be read at all (a locked-down Windows PowerShell policy, a Flatpak-confined `/sys`), iPodRocks falls back to mount-path matching and says so, instead of reporting every bound device as permanently disconnected with no way to recover.
+
 ## [2.2.1] — 2026-08
 
 ### Features

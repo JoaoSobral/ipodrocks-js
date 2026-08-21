@@ -47,6 +47,7 @@ After adding, a scan runs automatically. You can run **Scan Library** again anyt
 2. Open **Devices** from the sidebar.
 3. Click **+ Add Device**.
 4. Enter a name and the **root mount path** of the device.
+5. *(Optional)* Pick your player from the **USB Device** dropdown. This pins the device to that exact piece of hardware, which matters if you own more than one player — see [Identifying a device](../app-reference/devices.md#identifying-a-device).
 5. Choose a codec configuration (Direct Copy, MP3, AAC, Musepack, Opus, etc.).
 6. Click **Add Device**.
 

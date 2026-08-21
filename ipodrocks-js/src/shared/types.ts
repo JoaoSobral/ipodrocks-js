@@ -112,6 +112,17 @@ export interface DeviceProfile extends Device {
   autoPodcastsEnabled?: boolean;
   /** When true, lossy transcodes for this device use variable-bitrate (VBR). */
   vbrEnabled?: boolean;
+  /**
+   * Optional USB hardware identity. When set, this device is matched by the
+   * physical USB unit rather than by mount path alone. All three move together:
+   * either every field is set, or none is.
+   */
+  /** Lowercase 4-digit hex vendor id, e.g. "05ac". */
+  usbVendorId?: string | null;
+  /** Lowercase 4-digit hex product id, e.g. "1261". */
+  usbProductId?: string | null;
+  /** Empty string when the device reports no serial (identity is model-level). */
+  usbSerial?: string | null;
 }
 
 export type ContentType = "music" | "podcast" | "audiobook" | "playlist";
@@ -152,6 +163,41 @@ export interface AddDeviceConfig {
   rockboxSmartPlaylists?: boolean;
   devMode?: boolean;
   vbrEnabled?: boolean;
+  skipAlbumArtwork?: boolean;
+  artworkMaxDimension?: number;
+  /**
+   * Optional USB hardware identity. When set, this device is matched by the
+   * physical USB unit rather than by mount path alone. All three move together:
+   * either every field is set, or none is.
+   */
+  /** Lowercase 4-digit hex vendor id, e.g. "05ac". */
+  usbVendorId?: string | null;
+  /** Lowercase 4-digit hex product id, e.g. "1261". */
+  usbProductId?: string | null;
+  /** Empty string when the device reports no serial (identity is model-level). */
+  usbSerial?: string | null;
+}
+
+/** A USB device currently connected to the machine. */
+export interface UsbDeviceInfo {
+  vendorId: string;
+  productId: string;
+  /** Empty when the device reports no serial. */
+  serial: string;
+  productName: string;
+  vendorName: string;
+  isStorage: boolean;
+  /** Set when the VID:PID is a recognized iPod model, else null. */
+  ipodModel: string | null;
+}
+
+/**
+ * `available: false` means USB enumeration failed on this platform, which is
+ * distinct from "no devices are connected".
+ */
+export interface UsbSnapshot {
+  available: boolean;
+  devices: UsbDeviceInfo[];
 }
 
 export interface DeviceValidation {

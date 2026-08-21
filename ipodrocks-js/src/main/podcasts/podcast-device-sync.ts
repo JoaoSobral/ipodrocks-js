@@ -5,7 +5,8 @@ import { listSubscriptions } from "./podcast-subscriptions";
 import { sanitizeDevicePathComponent } from "../sync/sync-core";
 import { copyFileToDevice } from "../sync/sync-executor";
 import type { SyncProgressPayload } from "../sync/sync-core";
-import { isDeviceMountPathOnline } from "../devices/device-online";
+import { isDeviceOnline, deviceRowToOnlineInput } from "../devices/device-online";
+import { refreshUsbSnapshot } from "../devices/usb-devices";
 import { ensureShowCoverArt } from "./podcast-cover-extractor";
 
 type ProgressCallback = (event: SyncProgressPayload) => void;
@@ -16,6 +17,9 @@ interface DeviceRow {
   podcast_folder: string;
   auto_podcasts_enabled: number;
   dev_mode: number;
+  usb_vendor_id: string | null;
+  usb_product_id: string | null;
+  usb_serial: string | null;
 }
 
 interface EpisodeToSync {
@@ -47,7 +51,7 @@ export async function syncPodcastsToDevice(
 ): Promise<{ synced: number; errors: number }> {
   const device = db
     .prepare(
-      "SELECT id, mount_path, podcast_folder, auto_podcasts_enabled, dev_mode FROM devices WHERE id = ?"
+      "SELECT id, mount_path, podcast_folder, auto_podcasts_enabled, dev_mode, usb_vendor_id, usb_product_id, usb_serial FROM devices WHERE id = ?"
     )
     .get(deviceId) as DeviceRow | undefined;
 
@@ -55,8 +59,8 @@ export async function syncPodcastsToDevice(
     return { synced: 0, errors: 0 };
   }
 
-  const online = !!device.dev_mode || isDeviceMountPathOnline(device.mount_path);
-  if (!online) {
+  await refreshUsbSnapshot();
+  if (!isDeviceOnline(deviceRowToOnlineInput(device))) {
     return { synced: 0, errors: 0 };
   }
 
@@ -155,7 +159,7 @@ export async function syncPodcastsToDevice(
 
 /**
  * Returns IDs of all devices with `auto_podcasts_enabled = 1`.
- * Callers are responsible for checking `isDeviceMountPathOnline` before
+ * Callers are responsible for checking `isDeviceOnline` before
  * attempting to sync — this function does not filter by online status.
  */
 export function getAutoPodcastDeviceIds(db: Database.Database): number[] {

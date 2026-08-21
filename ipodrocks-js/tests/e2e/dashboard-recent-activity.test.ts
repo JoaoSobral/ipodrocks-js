@@ -62,7 +62,10 @@ test("Recent Activity entries render with real, visible height after a scan", as
     .first();
   await dashboardNav.click();
 
-  await expect(window.getByText("Recent Activity")).toBeVisible();
+  // Role-scoped: getByText does case-insensitive substring matching, so a plain
+  // "Recent Activity" also matches the "No recent activity" empty state and
+  // fails strict mode with a confusing two-element error instead of a real one.
+  await expect(window.getByRole("heading", { name: "Recent Activity" })).toBeVisible();
 
   // The regression: this row used to exist in the DOM with ~0px height,
   // which `toBeVisible()` alone does not catch (visibility passes even for
