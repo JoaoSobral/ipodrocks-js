@@ -17,7 +17,10 @@ The Library panel manages your music catalog: folders, scans, shadow libraries, 
 ## How it works
 
 - **Scan** reads file tags (artist, album, title, genre, etc.) and optionally key/BPM via metadata or Essentia. It stores content hashes to skip unchanged files on the next scan.
-- **Shadow libraries** are built once; devices can use them as the source instead of the primary library for faster sync (no on-the-fly transcoding). A shadow library is a **file-only mirror** — it contains the transcoded audio files and copied album artwork, nothing else. Play counts, ratings, and listening history are **not** stored in or synced through shadow libraries; they live in the primary library database and are updated by ingesting `playback.log` from the device. When the primary library changes, shadow libraries are kept in sync automatically (adds, updates, and removes propagate).
+- **Shadow libraries** are built once; devices can use them as the source instead of the primary library for faster sync (no on-the-fly transcoding). A shadow library is a **file-only mirror** — it contains the transcoded audio files and copied album artwork, nothing else. Play counts, ratings, and listening history are **not** stored in or synced through shadow libraries; they live in the primary library database and are updated by ingesting `playback.log` from the device. When the primary library changes, shadow libraries are kept in sync automatically (adds, updates, and removes propagate) — a shadow library is meant to mirror your library exactly, differing only in codec.
+
+  Note that a shadow library mirrors your library's **folder layout**, not its tags. Renaming an album in a tag editor that also renames the folder on disk moves the shadow file with it (the old transcode is deleted on the next scan); editing only the album tag leaves the file where it is and simply re-transcodes it with the new tag.
+- **Prune orphan files** — The **⚙** button on a shadow library row offers a one-shot cleanup that deletes files the main library no longer accounts for. Versions before 2.3.0 did not remove a transcode when its album was renamed or deleted, so shadow libraries built with those versions can hold several copies of the same album under different names. Album artwork is kept for albums that still exist, folders emptied by the cleanup are removed, and nothing outside the shadow library's own folder is ever touched. If the shadow folder is not reachable (an unplugged drive) the prune refuses to run rather than treating every file as an orphan. Renames and deletions from 2.3.0 onward are cleaned up automatically during the scan — the prune is only for the backlog.
 - **Variable bitrate (VBR)** — When creating a shadow library with a lossy codec (MP3, AAC, OGG, Opus), tick **Variable bitrate (VBR)** to encode at a quality level derived from the chosen bitrate instead of a fixed bitrate — usually better quality per file size. The option only shows for these codecs; lossless codecs (FLAC/ALAC) are always variable and Musepack is already quality-based, so it is hidden for them.
 - The track list is virtualized for large libraries. Filters (device, type, on device, playlist) apply in memory.
 
@@ -26,7 +29,8 @@ The Library panel manages your music catalog: folders, scans, shadow libraries, 
 1. **Before scanning:** Enable "Extract harmonic data" and "Analyze with Essentia" in Settings if you want key/BPM for Savant and harmonic mixing. Then add folders and scan.
 2. **After adding a folder:** A scan runs automatically. Wait for it to finish before syncing.
 3. **Shadow libraries:** Create one if you sync to a device that needs a different codec (e.g. MPC). Point the device to the shadow in Devices.
-4. **Clear cache:** Only when you know files or tags changed outside iPodRocks and you want a full re-scan.
+4. **Shadow library larger than it should be?** If it holds albums you renamed or deleted long ago, open its **⚙** menu and run **Prune orphan files**. Run it once; after that the app keeps itself tidy.
+5. **Clear cache:** Only when you know files or tags changed outside iPodRocks and you want a full re-scan.
 
 ## Music Preview Player
 

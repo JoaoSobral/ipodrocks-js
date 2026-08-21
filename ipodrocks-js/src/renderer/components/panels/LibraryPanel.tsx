@@ -35,6 +35,7 @@ import {
   createShadowLibrary,
   deleteShadowLibrary,
   rebuildShadowLibrary,
+  pruneShadowOrphans,
   cancelShadowBuild,
   resumeShadowBuild,
   onShadowBuildProgress,
@@ -137,6 +138,13 @@ export function LibraryPanel() {
     name: string;
   } | null>(null);
   const [keepFilesWhenDelete, setKeepFilesWhenDelete] = useState(false);
+  /** Which shadow row has its cog menu open, if any. */
+  const [shadowMenuId, setShadowMenuId] = useState<number | null>(null);
+  const [shadowPruneModal, setShadowPruneModal] = useState<{
+    id: number;
+    name: string;
+  } | null>(null);
+  const [pruning, setPruning] = useState(false);
   const [harmonicKeyData, setHarmonicKeyData] = useState<{
     keyedCount: number;
     totalCount: number;
@@ -462,6 +470,35 @@ export function LibraryPanel() {
     getShadowLibraries().then(setShadowLibs).catch(console.error);
   }
 
+  function openPruneShadowModal(sl: ShadowLibrary) {
+    setShadowMenuId(null);
+    setShadowPruneModal({ id: sl.id, name: sl.name });
+  }
+
+  async function confirmPruneShadow() {
+    if (!shadowPruneModal || pruning) return;
+    setPruning(true);
+    try {
+      const result = await pruneShadowOrphans(shadowPruneModal.id);
+      setShadowPruneModal(null);
+      if (result.deleted === 0) {
+        toast.success("Nothing to prune — every file belongs to your library.");
+      } else {
+        toast.success(
+          `Removed ${result.deleted} orphaned file${result.deleted === 1 ? "" : "s"} (${formatSize(result.bytesFreed)} freed).`
+        );
+      }
+      const libs = await getShadowLibraries();
+      setShadowLibs(libs);
+    } catch (err) {
+      toast.error(
+        err instanceof Error ? err.message : "Could not prune the shadow library"
+      );
+    } finally {
+      setPruning(false);
+    }
+  }
+
   async function handleRebuildShadow(id: number) {
     startShadowBuildSubscription();
     try {
@@ -702,7 +739,15 @@ export function LibraryPanel() {
                       </p>
                     )}
                   </div>
-                  <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                  {/* Hover-reveal, but pinned visible while this row's menu is
+                      open — otherwise moving the pointer to the menu hides it. */}
+                  <div
+                    className={`flex gap-0.5 transition-opacity ${
+                      shadowMenuId === sl.id
+                        ? "opacity-100"
+                        : "opacity-0 group-hover:opacity-100"
+                    }`}
+                  >
                     {sl.status === "paused" && !sl.codecConfigMissing && (
                       <Button
                         variant="ghost"
@@ -724,6 +769,45 @@ export function LibraryPanel() {
                       >
                         ⟳
                       </Button>
+                    )}
+                    {!sl.codecConfigMissing && (
+                      <div className="relative">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="!p-1"
+                          onClick={() =>
+                            setShadowMenuId(shadowMenuId === sl.id ? null : sl.id)
+                          }
+                          title="More actions"
+                          aria-haspopup="menu"
+                          aria-expanded={shadowMenuId === sl.id}
+                        >
+                          ⚙
+                        </Button>
+                        {shadowMenuId === sl.id && (
+                          <>
+                            {/* Click-away catcher, behind the menu. */}
+                            <div
+                              className="fixed inset-0 z-40"
+                              onClick={() => setShadowMenuId(null)}
+                            />
+                            <div
+                              role="menu"
+                              className="absolute right-0 top-full z-50 mt-1 min-w-[190px] rounded-md border border-border bg-popover p-1 shadow-lg"
+                            >
+                              <button
+                                role="menuitem"
+                                type="button"
+                                className="w-full rounded px-2 py-1.5 text-left text-xs text-foreground hover:bg-muted"
+                                onClick={() => openPruneShadowModal(sl)}
+                              >
+                                Prune orphan files…
+                              </button>
+                            </div>
+                          </>
+                        )}
+                      </div>
                     )}
                     <Button
                       variant="ghost"
@@ -1070,6 +1154,46 @@ export function LibraryPanel() {
               onClick={handleCreateShadow}
             >
               Create & Build
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Prune orphan files confirmation — this deletes files, so it gates. */}
+      <Modal
+        open={shadowPruneModal !== null}
+        onClose={() => !pruning && setShadowPruneModal(null)}
+        title="Prune orphan files?"
+        className="max-w-sm"
+      >
+        <div className="flex flex-col gap-5">
+          <p className="text-sm text-muted-foreground leading-relaxed">
+            Delete files in{" "}
+            <span className="font-medium text-foreground">
+              {shadowPruneModal?.name ?? ""}
+            </span>{" "}
+            that your library no longer has — the leftovers of albums you
+            renamed or deleted. A shadow library is meant to mirror your library
+            exactly, so nothing you still own is touched.
+          </p>
+          <p className="text-xs text-muted-foreground leading-relaxed">
+            Album artwork is kept for albums that still exist. Files are deleted
+            from disk and cannot be recovered from the app; anything removed by
+            mistake is re-created by a rebuild.
+          </p>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button
+              onClick={() => setShadowPruneModal(null)}
+              disabled={pruning}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="danger"
+              onClick={confirmPruneShadow}
+              disabled={pruning}
+            >
+              {pruning ? "Pruning…" : "Prune files"}
             </Button>
           </div>
         </div>

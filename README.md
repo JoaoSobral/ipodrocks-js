@@ -62,7 +62,7 @@ If you really like iPodRocks and want to keep it caffeinated, you can buy me a c
 
 ### Multiple Libraries & Shadow Libraries
 - **Multiple library folders** — Music, podcasts, audiobooks in one catalog
-- **Shadow libraries** — Pre-transcoded mirrors (e.g. FLAC → MPC) for lightning-fast sync to devices that need specific codecs
+- **Shadow libraries** — Pre-transcoded mirrors (e.g. FLAC → MPC) for lightning-fast sync to devices that need specific codecs. A shadow library is a faithful copy of your library differing only in codec: rename or delete an album and the shadow follows. A **⚙ → Prune orphan files** action clears out anything an older version left behind.
 - Build once, sync many — no re-encoding on every sync
 
 ### Multiple Devices

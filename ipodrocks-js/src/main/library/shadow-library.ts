@@ -15,6 +15,7 @@ import {
   SyncCancelled,
 } from "../sync/sync-core";
 import { findOnDisk, normalizePath } from "../utils/normalize-path";
+import { decidePrune, type ShadowFileEntry } from "./shadow-prune";
 import { MetadataExtractor } from "./metadata-extractor";
 import {
   audioMatchesCodecConfig,
@@ -1060,6 +1061,112 @@ export class ShadowLibraryManager {
     }
 
     return deleted;
+  }
+
+  /**
+   * One-shot cleanup: delete files in a shadow library that the main library no
+   * longer accounts for.
+   *
+   * A shadow library is a faithful copy of the library in another codec, so
+   * anything it holds without a `shadow_tracks` row is dead weight. Such files
+   * accumulated before the scan learned to capture `removedShadowPaths`: a
+   * renamed or deleted album left its transcodes behind with nothing pointing
+   * at them, and no code path could ever find them again. This walks the tree
+   * and removes them.
+   *
+   * Artwork is preserved for albums that still exist — see `decidePrune`.
+   * A library whose codec configuration is missing is refused: without it we
+   * cannot tell a stale file from a correctly-encoded one.
+   */
+  pruneOrphanedFiles(shadowLibId: number): {
+    deleted: number;
+    bytesFreed: number;
+    scanned: number;
+  } {
+    const lib = this.getShadowLibraryById(shadowLibId);
+    if (!lib) throw new Error(`Shadow library #${shadowLibId} not found`);
+    if (lib.codecConfigMissing) {
+      throw new Error(
+        `"${lib.name}" is missing its codec configuration — delete and recreate it instead of pruning.`
+      );
+    }
+
+    const root = path.resolve(lib.path);
+    if (!fs.existsSync(root)) {
+      // An unreachable root must never be read as "every file is an orphan" —
+      // the same failure mode the reconcile pass guards against.
+      throw new Error(
+        `"${lib.name}" folder is not reachable (${lib.path}). Connect it and try again.`
+      );
+    }
+
+    const known = new Set<string>();
+    for (const r of this.stmtGetShadowTracksByLib.all(
+      shadowLibId
+    ) as ShadowTrackRow[]) {
+      if (r.shadow_path) known.add(normalizePath(path.resolve(r.shadow_path)));
+    }
+
+    const entries: ShadowFileEntry[] = [];
+    const walk = (dir: string): void => {
+      let dirents: fs.Dirent[];
+      try {
+        dirents = fs.readdirSync(dir, { withFileTypes: true });
+      } catch {
+        return; // unreadable subtree: leave it entirely alone
+      }
+      for (const d of dirents) {
+        const full = path.join(dir, d.name);
+        if (d.isDirectory()) {
+          walk(full);
+          continue;
+        }
+        if (!d.isFile()) continue;
+        try {
+          const st = fs.statSync(full);
+          entries.push({
+            path: full,
+            normalizedPath: normalizePath(path.resolve(full)),
+            normalizedDir: normalizePath(path.resolve(dir)),
+            size: st.size,
+          });
+        } catch {
+          /* vanished mid-walk: not our problem, and not deletable */
+        }
+      }
+    };
+    walk(root);
+
+    const { orphans } = decidePrune(entries, known);
+
+    let deleted = 0;
+    let bytesFreed = 0;
+    for (const o of orphans) {
+      // Defence in depth: never touch anything outside this library's root.
+      const resolved = path.resolve(o.path);
+      if (resolved !== root && !resolved.startsWith(root + path.sep)) continue;
+      try {
+        fs.unlinkSync(resolved);
+        deleted++;
+        bytesFreed += o.size;
+      } catch {
+        /* best effort */
+      }
+    }
+
+    // Drop the album folders the deletions just emptied, without removing the
+    // configured root itself.
+    try {
+      for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+        if (entry.isDirectory()) {
+          cleanEmptyDirectories(path.join(root, entry.name));
+        }
+      }
+    } catch {
+      /* best effort */
+    }
+
+    return { deleted, bytesFreed, scanned: entries.length };
   }
 
   /**

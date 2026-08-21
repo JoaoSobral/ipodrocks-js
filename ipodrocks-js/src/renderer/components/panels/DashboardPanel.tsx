@@ -76,6 +76,7 @@ const OPERATION_LABELS: Record<string, string> = {
   update_device: "Update device",
   read_playback_log: "Read playback log",
   playlist_generated: "Playlist generated",
+  shadow_prune: "Shadow library pruned",
 };
 
 function formatActivityTime(iso: string): string {

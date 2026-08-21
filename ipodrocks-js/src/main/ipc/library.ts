@@ -274,6 +274,23 @@ export function registerLibraryHandlers(): void {
   );
 
   ipcMain.handle(
+    "shadow:pruneOrphans",
+    safe("shadow:pruneOrphans", async (_event, shadowLibId: number) => {
+      const lib = getLibrary();
+      const result = lib.getShadowManager().pruneOrphanedFiles(shadowLibId);
+      const shadowLib = lib.getShadowLibraryById(shadowLibId);
+      if (result.deleted > 0) {
+        logActivity(
+          lib.getConnection(),
+          "shadow_prune",
+          `Pruned ${result.deleted} orphaned file(s) from shadow library: ${shadowLib?.name ?? shadowLibId}`
+        );
+      }
+      return result;
+    })
+  );
+
+  ipcMain.handle(
     "shadow:rebuild",
     safe("shadow:rebuild", async (event, shadowLibId: number) => {
       const lib = getLibrary();

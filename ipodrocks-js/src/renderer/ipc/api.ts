@@ -265,6 +265,20 @@ export async function rebuildShadowLibrary(id: number): Promise<unknown> {
   return window.api.invoke("shadow:rebuild", id);
 }
 
+/**
+ * One-shot cleanup of files the main library no longer accounts for. Runs
+ * synchronously in main and returns what it removed.
+ */
+export async function pruneShadowOrphans(
+  id: number
+): Promise<{ deleted: number; bytesFreed: number; scanned: number }> {
+  return window.api.invoke("shadow:pruneOrphans", id) as Promise<{
+    deleted: number;
+    bytesFreed: number;
+    scanned: number;
+  }>;
+}
+
 export async function cancelShadowBuild(): Promise<{ cancelled: boolean }> {
   return window.api.invoke("shadow:cancelBuild") as Promise<{
     cancelled: boolean;

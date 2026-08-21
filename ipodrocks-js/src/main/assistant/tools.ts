@@ -997,6 +997,67 @@ const shadow_rebuild: AiTool = {
   },
 };
 
+const shadow_prune_orphans: AiTool = {
+  name: "shadow_prune_orphans",
+  description:
+    "Delete files in a shadow library that the main library no longer has — the leftovers of albums that were renamed or deleted before the app learned to clean them up. A shadow library is meant to be a faithful copy of the library in another codec, so anything without a matching library track is dead weight. Album artwork for albums that still exist is kept. Use shadow_list first to get the id.",
+  parameters: {
+    type: "object",
+    properties: {
+      shadowLibraryId: {
+        type: "number",
+        description: "The id of the shadow library to prune (from shadow_list).",
+      },
+    },
+    required: ["shadowLibraryId"],
+  },
+  kind: "write-destructive",
+  summarize: (args) =>
+    `Prune orphaned files from shadow library #${(args as { shadowLibraryId?: number }).shadowLibraryId}`,
+  async run(args, ctx) {
+    const { shadowLibraryId } = args as { shadowLibraryId?: number };
+    if (typeof shadowLibraryId !== "number") {
+      return { ok: false, error: "shadowLibraryId is required" };
+    }
+    const lib = ctx
+      .getLibrary()
+      .getShadowLibraries()
+      .find((l) => l.id === shadowLibraryId);
+    if (!lib) return { ok: false, error: `No shadow library with id ${shadowLibraryId}` };
+
+    try {
+      const result = ctx
+        .getLibrary()
+        .getShadowManager()
+        .pruneOrphanedFiles(shadowLibraryId);
+
+      if (result.deleted > 0) {
+        logActivity(
+          ctx.db,
+          "shadow_prune",
+          `AI pruned ${result.deleted} orphaned file(s) from shadow library: ${lib.name}`
+        );
+        invalidateAssistantCache();
+      }
+
+      return {
+        ok: true,
+        shadowLibraryName: lib.name,
+        ...result,
+        message:
+          result.deleted === 0
+            ? `Nothing to prune in "${lib.name}" — every file there belongs to your library.`
+            : `Removed ${result.deleted} orphaned file(s) from "${lib.name}", freeing ${Math.round(result.bytesFreed / 1_000_000)} MB.`,
+      };
+    } catch (err) {
+      return {
+        ok: false,
+        error: err instanceof Error ? err.message : "Prune failed",
+      };
+    }
+  },
+};
+
 const shadow_delete: AiTool = {
   name: "shadow_delete",
   description:
@@ -1247,6 +1308,7 @@ export const AI_TOOLS: AiTool[] = [
   library_scan,
   shadow_list,
   shadow_rebuild,
+  shadow_prune_orphans,
   shadow_delete,
   library_find_duplicates,
   podcast_download_now,
