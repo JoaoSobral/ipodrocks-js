@@ -1,7 +1,8 @@
 import * as fs from "fs";
 import * as path from "path";
 
-import { Track, SyncProgressEventName } from "../../shared/types";
+import { Track, SyncProgressEventName, AlbumGrouping } from "../../shared/types";
+import { albumArtistOf } from "../../shared/album-label";
 import { Device } from "../devices/device";
 import {
   CompareOptions,
@@ -55,6 +56,8 @@ export interface RunSyncOptions {
   profileCodecExtOverride?: string | null;
   /** Issue #82: mirror the source library folder structure 1:1 instead of rebuilding from tags. */
   preserveFolderStructure?: boolean;
+  /** Issue #113: which artist keys the rebuilt device folder layout. */
+  albumGrouping?: AlbumGrouping;
 }
 
 export interface ContentAnalysis {
@@ -67,6 +70,16 @@ export interface ContentAnalysis {
 }
 
 const FAT32_INVALID = /[\\/:*?"<>|]/g;
+
+/**
+ * The subset of Node's `path` API that {@link folderRelativePath} needs. Lets
+ * tests inject `path.win32` so Windows drive-root behaviour (issue #112) can be
+ * asserted from POSIX CI.
+ */
+type PathFlavor = Pick<
+  typeof path,
+  "resolve" | "relative" | "isAbsolute" | "basename"
+>;
 
 /**
  * Recursively removes empty directories under rootDir (post-order traversal).
@@ -106,28 +119,34 @@ export function sanitizeDevicePathComponent(
  * (relative to the library root), preserving album folder names exactly (incl.
  * the year and parentheses). Returns null when the track does not resolve under
  * a known library folder, so callers can fall back to a tag-based path.
+ *
+ * Issue #112: containment is computed with `path.relative` rather than a
+ * `startsWith(base + sep)` test. When the library root is a filesystem root the
+ * resolved base already ends in a separator ("M:\\", "/"), so the old test
+ * compared against a doubled separator, never matched, and mirroring silently
+ * fell back to tag-based paths. `pathImpl` is injectable so Windows drive-root
+ * behaviour can be regression-tested from POSIX CI with `path.win32`.
  */
-function folderRelativePath(
+export function folderRelativePath(
   trackPath: string,
   contentType: string,
   libraryFolderPaths?: Map<number, string>,
-  folderId?: number
+  folderId?: number,
+  pathImpl: PathFlavor = path
 ): string | null {
   if (folderId == null || !libraryFolderPaths) return null;
   const basePath = libraryFolderPaths.get(folderId);
   if (!basePath) return null;
 
-  const resolved = path.resolve(trackPath);
-  const baseResolved = path.resolve(basePath);
-  if (
-    !resolved.startsWith(baseResolved + path.sep) &&
-    !resolved.startsWith(baseResolved + "/")
-  ) {
+  const resolved = pathImpl.resolve(trackPath);
+  const baseResolved = pathImpl.resolve(basePath);
+  const relRaw = pathImpl.relative(baseResolved, resolved);
+  if (!relRaw || relRaw.startsWith("..") || pathImpl.isAbsolute(relRaw)) {
     return null;
   }
 
-  const rel = resolved.slice(baseResolved.length + 1).replace(/\\/g, "/");
-  const filename = path.basename(trackPath);
+  const rel = relRaw.replace(/\\/g, "/");
+  const filename = pathImpl.basename(trackPath);
   const parts = rel.split("/");
   const folderNames =
     contentType === "music"
@@ -145,8 +164,10 @@ function folderRelativePath(
   }
 
   if (parts.length <= 2) {
-    const baseName = path.basename(basePath);
-    if (!folderNames.includes(baseName)) {
+    // Issue #112: a filesystem/drive root ("M:\\", "/") has an empty basename,
+    // which would sanitize to "_" and inject a junk folder. Skip the prepend.
+    const baseName = pathImpl.basename(baseResolved);
+    if (baseName && !folderNames.includes(baseName)) {
       return path.posix.join(
         sanitizeDevicePathComponent(baseName),
         ...parts.map((p) => sanitizeDevicePathComponent(p))
@@ -161,9 +182,19 @@ export function computeDeviceRelativePath(
   trackInfo: Record<string, unknown>,
   contentType: string,
   libraryFolderPaths?: Map<number, string>,
-  preserveFolderStructure = false
+  preserveFolderStructure = false,
+  albumGrouping: AlbumGrouping = "album-artist"
 ): string {
-  const artist = ((trackInfo.artist as string) ?? "").trim();
+  // Issue #113: when rebuilding a path from tags, fold the album under its album
+  // artist so a compilation lands in one folder instead of one per track artist.
+  const artist = (
+    albumGrouping === "track-artist"
+      ? ((trackInfo.artist as string) ?? "")
+      : albumArtistOf({
+          artist: trackInfo.artist as string | undefined,
+          albumArtist: trackInfo.albumArtist as string | undefined,
+        })
+  ).trim();
   const album = ((trackInfo.album as string) ?? "").trim();
   const filename = path.basename(trackPath);
   const folderId = trackInfo.libraryFolderId as number | undefined;
@@ -205,7 +236,9 @@ export function buildLibraryDestMap(
   /** F7: Pre-loaded path→mtime map from content_hashes. Falls back to fs.statSync on miss. */
   preloadedMtimes?: Map<string, number>,
   /** Issue #82: mirror the source library folder structure 1:1 instead of rebuilding from tags. */
-  preserveFolderStructure = false
+  preserveFolderStructure = false,
+  /** Issue #113: which artist keys the rebuilt device folder layout. */
+  albumGrouping: AlbumGrouping = "album-artist"
 ): {
   destMap: Record<string, string>;
   expectedSizes: Record<string, number>;
@@ -236,7 +269,8 @@ export function buildLibraryDestMap(
       trackInfo,
       contentType,
       libraryFolderPaths,
-      preserveFolderStructure
+      preserveFolderStructure,
+      albumGrouping
     );
 
     if (needsConversion) {
@@ -349,7 +383,9 @@ export function analyzeContentType(
   /** Override profile codec extension for compare (e.g. shadow library codec when codecName is DIRECT COPY). */
   profileCodecExtOverride?: string | null,
   /** Issue #82: mirror the source library folder structure 1:1 instead of rebuilding from tags. */
-  preserveFolderStructure = false
+  preserveFolderStructure = false,
+  /** Issue #113: which artist keys the rebuilt device folder layout. */
+  albumGrouping: AlbumGrouping = "album-artist"
 ): ContentAnalysis {
   if (cancelSignal?.aborted) throw new SyncCancelled();
 
@@ -361,7 +397,8 @@ export function analyzeContentType(
     cancelSignal,
     progressCallback,
     preloadedMtimes,
-    preserveFolderStructure
+    preserveFolderStructure,
+    albumGrouping
   );
 
   if (cancelSignal?.aborted) throw new SyncCancelled();
@@ -458,7 +495,8 @@ export async function copyMissingTracks(
   cancelSignal?: AbortSignal,
   deviceProfile?: { codecConfigBitrate?: number | null; codecConfigQuality?: number | null; vbrEnabled?: boolean },
   codecMismatchMap?: Map<string, string>,
-  preserveFolderStructure = false
+  preserveFolderStructure = false,
+  albumGrouping: AlbumGrouping = "album-artist"
 ): Promise<{ synced: number; missingFiles: string[]; errors: number }> {
   if (!missingPaths.length) return { synced: 0, missingFiles: [], errors: 0 };
 
@@ -506,7 +544,8 @@ export async function copyMissingTracks(
         trackInfo,
         contentType,
         libraryFolderPaths,
-        preserveFolderStructure
+        preserveFolderStructure,
+        albumGrouping
       );
     }
 
@@ -609,7 +648,8 @@ export async function copyAlbumArtworkToDevice(
   progressCallback?: ProgressCallback,
   cancelSignal?: AbortSignal,
   preserveFolderStructure = false,
-  maxDim: number = DEFAULT_COVER_MAX_DIMENSION
+  maxDim: number = DEFAULT_COVER_MAX_DIMENSION,
+  albumGrouping: AlbumGrouping = "album-artist"
 ): Promise<ArtworkSyncResult> {
   if (Object.keys(libraryTracks).length === 0) {
     return { copied: 0, skipped: 0, errors: 0, totalCandidates: 0, failedAlbums: [] };
@@ -628,7 +668,8 @@ export async function copyAlbumArtworkToDevice(
       trackInfo,
       contentType,
       libraryFolderPaths,
-      preserveFolderStructure
+      preserveFolderStructure,
+      albumGrouping
     );
     const deviceRelAlbum = path.dirname(relPath).replace(/\\/g, "/");
     albums.set(sourceDir, { deviceRelAlbum, firstTrack: trackPath });
@@ -791,7 +832,7 @@ export async function runSync(
   /** Album-artwork failures, counted apart from track/song-data failures. */
   artworkErrors: number;
 }> {
-  const { extraTrackPolicy, progressCallback, cancelSignal, skipAlbumArtwork, artworkMaxDimension, preloadedMtimes, profileCodecExtOverride, preserveFolderStructure } =
+  const { extraTrackPolicy, progressCallback, cancelSignal, skipAlbumArtwork, artworkMaxDimension, preloadedMtimes, profileCodecExtOverride, preserveFolderStructure, albumGrouping = "album-artist" } =
     options;
   let artworkErrors = 0;
 
@@ -808,7 +849,8 @@ export async function runSync(
     progressCallback,
     preloadedMtimes,
     profileCodecExtOverride,
-    preserveFolderStructure
+    preserveFolderStructure,
+    albumGrouping
   );
 
   progressCallback?.({
@@ -866,7 +908,8 @@ export async function runSync(
     cancelSignal,
     device.profile,
     analysis.codecMismatchMap,
-    preserveFolderStructure
+    preserveFolderStructure,
+    albumGrouping
   );
 
   if (skipAlbumArtwork !== true && Object.keys(libraryTracks).length > 0) {
@@ -878,7 +921,8 @@ export async function runSync(
       progressCallback,
       cancelSignal,
       preserveFolderStructure,
-      artworkMaxDimension ?? DEFAULT_COVER_MAX_DIMENSION
+      artworkMaxDimension ?? DEFAULT_COVER_MAX_DIMENSION,
+      albumGrouping
     );
     // Artwork failures are counted separately from track failures: they surface
     // as a sync failure of their own, but must never be mistaken for missing or

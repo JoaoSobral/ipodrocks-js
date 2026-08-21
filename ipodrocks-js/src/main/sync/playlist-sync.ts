@@ -1,6 +1,6 @@
 import * as fsp from "fs/promises";
 import * as path from "path";
-import { Playlist } from "../../shared/types";
+import { Playlist, AlbumGrouping } from "../../shared/types";
 import { PlaylistCore } from "../playlists/playlist-core";
 import { ProgressCallback } from "./sync-core";
 import { buildTagnaviConfig, TagnaviPlaylistInput } from "../rockbox/tagnavi-writer";
@@ -10,6 +10,9 @@ export interface M3uOptions {
   codecName: string;
   libraryFolderPaths?: Map<number, string>;
   preserveFolderStructure?: boolean;
+  /** Issue #113: must match the sync's grouping, or M3U entries point at paths
+   * that were never written. */
+  albumGrouping?: AlbumGrouping;
 }
 
 export interface WritePlaylistsArgs {

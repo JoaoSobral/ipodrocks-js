@@ -101,7 +101,8 @@ export class Library {
     genreName: string,
     codecName: string,
     fileHash: string,
-    metadataHash: string | null = null
+    metadataHash: string | null = null,
+    albumArtistName?: string
   ): void {
     this.core.addOrUpdateTrack(
       trackPath,
@@ -120,7 +121,8 @@ export class Library {
       genreName,
       codecName,
       fileHash,
-      metadataHash
+      metadataHash,
+      albumArtistName
     );
   }
 
@@ -285,7 +287,14 @@ export class Library {
     addedPaths: string[],
     updatedPaths: string[],
     removedTrackIds: number[],
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    /**
+     * Shadow files of the removed tracks, captured by the scanner before it
+     * deleted their `shadow_tracks` rows. Required to clean up after an album
+     * folder rename — by now the rows are gone, so the paths cannot be looked
+     * up any more.
+     */
+    removedShadowPaths: string[] = []
   ): Promise<void> {
     const folders = this.core.getLibraryFolders();
     const folderPaths = new Map<number, string>();
@@ -303,6 +312,10 @@ export class Library {
 
     if (removedTrackIds.length > 0) {
       this.shadowManager.propagateRemovedByIds(removedTrackIds);
+    }
+
+    if (removedShadowPaths.length > 0) {
+      this.shadowManager.deleteOrphanedShadowFiles(removedShadowPaths);
     }
   }
 

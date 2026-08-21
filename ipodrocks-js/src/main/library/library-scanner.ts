@@ -20,6 +20,10 @@ import {
   isTrashDirectory,
 } from "../utils/audio-extensions";
 import { normalizePath } from "../utils/normalize-path";
+import {
+  backfillAlbumArtists,
+  isAlbumArtistBackfillDone,
+} from "./album-artist-backfill";
 import { escapeLike } from "../utils/sql-like";
 import {
   findDuplicateFileGroups,
@@ -31,6 +35,8 @@ interface TrackUpsertData {
   filename: string;
   title: string;
   artist: string;
+  /** Issue #113: keys the album row; falls back to `artist` when untagged. */
+  albumArtist?: string;
   album: string;
   genre: string;
   codec: string;
@@ -177,6 +183,12 @@ export class LibraryScanner {
     options?: { scanHarmonicData?: boolean }
   ): Promise<ScanResult> {
     const scanHarmonicData = options?.scanHarmonicData !== false;
+
+    // Issue #113: libraries scanned before album-artist support have their
+    // albums keyed on the track artist. The mtime skip below means a rescan
+    // would never re-read those tags, so repoint them once, up front.
+    await this.runAlbumArtistBackfill(progressCallback, signal);
+
     // `folder` (raw, as resolved from the OS) is used for all filesystem I/O;
     // `folderKey` (NFC) is the canonical form used for every DB lookup so
     // scans stay stable across Unicode normalization drift on SMB/network
@@ -285,6 +297,7 @@ export class LibraryScanner {
           filename: path.basename(dbPath),
           title: metadata.title,
           artist: metadata.artist,
+          albumArtist: metadata.albumArtist,
           album: metadata.album,
           genre: metadata.genre,
           codec: audioInfo.codec,
@@ -360,7 +373,7 @@ export class LibraryScanner {
       // the NFC-keyed on-disk set.
       .filter((p) => !audioFileSet.has(normalizePath(p)));
 
-    const { filesRemoved, removedTrackIds } =
+    const { filesRemoved, removedTrackIds, removedShadowPaths } =
       this.deleteRemovedTracks(removedTrackPaths);
 
     const { warnings: duplicateWarnings, duplicateFilesDetected } =
@@ -384,6 +397,7 @@ export class LibraryScanner {
       addedTrackPaths,
       removedTrackPaths,
       removedTrackIds,
+      removedShadowPaths,
       updatedTrackPaths,
     };
   }
@@ -391,7 +405,14 @@ export class LibraryScanner {
   /**
    * Delete tracks by path from DB (tracks, content_hashes, playback_logs,
    * playback_stats, playlist_items). Cleans up orphaned albums/artists/genres/codecs.
-   * Returns the number of tracks deleted and their IDs (for shadow propagation).
+   * Returns the number of tracks deleted, their IDs (for shadow propagation),
+   * and the shadow files that belonged to them.
+   *
+   * The shadow paths MUST be captured here, before the rows are deleted:
+   * `shadow_tracks.shadow_path` is the only record of where a transcode lives,
+   * so once the row is gone `propagateRemovedByIds()` can no longer find the
+   * file to unlink. That is how a renamed album folder left its old transcodes
+   * behind and the shadow library accumulated several copies of one album.
    *
    * Every dependent table has to be cleaned by hand here: this transaction runs
    * with `foreign_keys = OFF` (see below), so the ON DELETE CASCADE declared on
@@ -402,8 +423,14 @@ export class LibraryScanner {
    */
   private deleteRemovedTracks(
     paths: string[]
-  ): { filesRemoved: number; removedTrackIds: number[] } {
-    if (paths.length === 0) return { filesRemoved: 0, removedTrackIds: [] };
+  ): {
+    filesRemoved: number;
+    removedTrackIds: number[];
+    removedShadowPaths: string[];
+  } {
+    if (paths.length === 0) {
+      return { filesRemoved: 0, removedTrackIds: [], removedShadowPaths: [] };
+    }
 
     const pathToId = new Map<string, number>();
     for (const p of paths) {
@@ -411,6 +438,25 @@ export class LibraryScanner {
       if (row) pathToId.set(p, row.id);
     }
     const ids = [...pathToId.values()];
+
+    // Capture shadow destinations before the rows below are deleted — see the
+    // note above. Best-effort: a missing shadow_tracks table is not fatal.
+    const removedShadowPaths: string[] = [];
+    if (ids.length > 0) {
+      try {
+        const rows = this.db
+          .prepare(
+            `SELECT shadow_path FROM shadow_tracks
+             WHERE source_track_id IN (${ids.map(() => "?").join(",")})`
+          )
+          .all(...ids) as { shadow_path: string }[];
+        for (const r of rows) {
+          if (r.shadow_path) removedShadowPaths.push(r.shadow_path);
+        }
+      } catch (err) {
+        console.error("[scanner] could not read shadow paths for removal:", err);
+      }
+    }
 
     const deleteTrackStmt = this.db.prepare("DELETE FROM tracks WHERE path = ?");
     const deleteHashStmt = this.db.prepare(
@@ -451,7 +497,7 @@ export class LibraryScanner {
       this.db.pragma("foreign_keys = ON");
     }
 
-    return { filesRemoved: deleted, removedTrackIds: ids };
+    return { filesRemoved: deleted, removedTrackIds: ids, removedShadowPaths };
   }
 
   /**
@@ -472,6 +518,41 @@ export class LibraryScanner {
   }
 
   /** Remove albums, artists, genres, codecs with no referencing tracks. */
+  /**
+   * Run the one-shot album-artist backfill (issue #113) if it has not run yet.
+   * No-op on every scan after the first. Failures are logged and swallowed —
+   * a backfill problem must never abort the user's scan.
+   */
+  private async runAlbumArtistBackfill(
+    progressCallback?: (progress: ScanProgress) => void,
+    signal?: AbortSignal
+  ): Promise<void> {
+    if (isAlbumArtistBackfillDone(this.db)) return;
+    try {
+      const result = await backfillAlbumArtists(this.db, this.metadataExtractor, {
+        cancelSignal: signal,
+        onProgress: (processed, total) => {
+          progressCallback?.({
+            file: `Updating album artists (${processed}/${total})`,
+            processed,
+            total,
+            status: "skipped",
+          });
+        },
+      });
+      if (result.repointed > 0) {
+        // Collapsing compilations leaves the old per-track-artist album rows
+        // unreferenced; prune them so they vanish from the picker.
+        this.cleanupOrphanedEntities();
+        console.log(
+          `[scanner] album-artist backfill repointed ${result.repointed} track(s)`
+        );
+      }
+    } catch (err) {
+      console.error("[scanner] album-artist backfill failed:", err);
+    }
+  }
+
   private cleanupOrphanedEntities(): void {
     const orphanAlbumIds = this.db
       .prepare(
@@ -897,7 +978,13 @@ export class LibraryScanner {
    */
   private upsertTrack(data: TrackUpsertData): void {
     const artistId = this.getOrCreateArtistId(data.artist);
-    const albumId = this.getOrCreateAlbumId(data.album, artistId);
+    // Issue #113: albums are keyed on the album artist so a compilation stays a
+    // single row instead of fanning out into one album per track artist.
+    const albumArtistId =
+      data.albumArtist && data.albumArtist !== data.artist
+        ? this.getOrCreateArtistId(data.albumArtist)
+        : artistId;
+    const albumId = this.getOrCreateAlbumId(data.album, albumArtistId);
     const genreId = this.getOrCreateGenreId(data.genre);
     const codecId = this.getOrCreateCodecId(data.codec);
 

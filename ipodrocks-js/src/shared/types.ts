@@ -4,6 +4,12 @@ export interface Track {
   filename: string;
   title: string;
   artist: string;
+  /**
+   * Issue #113: the album-artist tag (falls back to `artist` when untagged).
+   * Grouping albums on this keeps compilations as one album instead of one per
+   * track artist.
+   */
+  albumArtist: string;
   album: string;
   genre: string;
   codec: string;
@@ -200,6 +206,9 @@ export interface PlaylistTrack {
   filename: string;
   title: string;
   artist: string;
+  /** Issue #113: album artist (falls back to `artist`), so M3U device paths
+   * match the folder layout the sync actually writes. */
+  albumArtist: string;
   album: string;
   genre: string;
   duration: number;
@@ -432,6 +441,14 @@ export interface CustomSelections {
 }
 
 export type SyncType = "full" | "custom";
+
+/**
+ * Issue #113: whether albums are grouped (and, when the library folder
+ * structure is not mirrored, laid out on the device) by the album-artist tag or
+ * by each track's own artist. Album artist is the default — it keeps
+ * compilations as a single album.
+ */
+export type AlbumGrouping = "album-artist" | "track-artist";
 export type ExtraTrackPolicy = "keep" | "remove" | "remove-all" | "prompt";
 export type PlaybackStrategy = "native" | "transcode";
 
@@ -446,6 +463,8 @@ export interface DeviceSyncPreferences {
    * (preserving album folder names incl. year) instead of rebuilding paths from
    * artist/album tags. */
   preserveFolderStructure: boolean;
+  /** Issue #113: group albums (and non-mirrored device folders) by album artist or track artist. */
+  albumGrouping: AlbumGrouping;
   selections: CustomSelections;
 }
 
@@ -465,6 +484,9 @@ export interface SyncOptions {
   /** When true, mirror the source library folder structure 1:1 instead of
    * rebuilding device paths from artist/album tags (default true). */
   preserveFolderStructure?: boolean;
+  /** Issue #113: which artist keys the album list and the rebuilt device folder
+   * layout used when preserveFolderStructure is false (default "album-artist"). */
+  albumGrouping?: AlbumGrouping;
 }
 
 // ---------------------------------------------------------------------------
@@ -607,6 +629,12 @@ export interface ScanResult {
   addedTrackPaths?: string[];
   removedTrackPaths?: string[];
   removedTrackIds?: number[];
+  /**
+   * Shadow-library files that belonged to the removed tracks, captured before
+   * their `shadow_tracks` rows were deleted. Without this the transcodes of a
+   * renamed album folder are orphaned on disk forever.
+   */
+  removedShadowPaths?: string[];
   updatedTrackPaths?: string[];
   /** What the automatic post-scan playlist reconciliation did. */
   playlistsUpdated?: PlaylistReconcileSummary;

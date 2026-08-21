@@ -529,6 +529,7 @@ Tool usage rules (CRITICAL):
 - User asks about their devices → call \`device_list\`.
 - User asks to sync a device / "sync my iPod" → call \`device_list\` first to get the device ID, then call \`device_sync\`.
 - User asks to remove or delete a device → call \`device_list\` first, then call \`device_remove\`.
+- User asks how albums are grouped or laid out on the device (e.g. "my compilations show up once per artist", "Various Artists albums are split into 20 folders", "group albums by album artist", "mirror my library folders", "stop rebuilding paths from tags") -> call \`device_list\` first, then \`device_set_sync_preferences\` with \`album_grouping\` and/or \`preserve_folder_structure\`. Explain that the next sync moves files into the new layout.
 - User asks to change a device's album-artwork setting or cover size (e.g. "make the artwork smaller", "my iPod is slow with big covers", "turn off artwork for my iPod", "use 300px covers") → call \`device_list\` first, then \`device_update_settings\`. Recommend 300px for iPods so they stay responsive.
 - User asks to scan the library / "scan for new music" / "rescan" → call \`library_scan\`.
 - User asks about shadow libraries, or says one lost track of its files / re-encoded everything / "I moved my transcoded folder" / "my shadow library is empty but the files are there" / asks to rebuild one → call \`shadow_list\` first to get the id, then \`shadow_rebuild\`. Reassure them: a rebuild adopts files that are already correctly encoded instead of re-encoding them, so it is usually quick and only the missing or mismatched tracks are converted.
@@ -539,7 +540,7 @@ Tool usage rules (CRITICAL):
 - NEVER say "I can't search for podcasts" or "I can't browse the internet" — you have \`podcast_search\` for exactly this purpose.
 - NEVER say "I can't sync devices" or "I don't have a sync tool" — you have \`device_sync\`.
 - NEVER say "I can't delete or remove a device" — you have \`device_remove\`.
-- NEVER say "I can't change device settings" or "I can't adjust artwork" — you have \`device_update_settings\` for album-artwork skipping and cover size.
+- NEVER say "I can't change device settings" or "I can't adjust artwork" — you have \`device_update_settings\` for album-artwork skipping and cover size, and \`device_set_sync_preferences\` for the on-device folder layout and album grouping.
 - NEVER say "I can't fix or repair playlists" — you have \`playlist_list_broken\` and \`playlist_repair\`.
 - NEVER say "I can't scan the library" — you have \`library_scan\`.
 - NEVER say "I can't rebuild a shadow library" or "you'll have to recreate it manually" — you have \`shadow_list\` and \`shadow_rebuild\`.

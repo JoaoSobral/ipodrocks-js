@@ -29,6 +29,7 @@ export class AppDatabase {
     this.migratePodcasts();
     this.migratePodcastSource();
     this.migrateDeviceSyncPreferences();
+    this.migrateDeviceAlbumGrouping();
     this.migrateDeviceSkipAlbumArtwork();
     this.migrateDeviceArtworkMaxDimension();
     this.migrateVbrEnabled();
@@ -135,6 +136,34 @@ export class AppDatabase {
         "[db] migration failed (migrateDeviceSyncPreferences):",
         err
       );
+    }
+  }
+
+  /**
+   * Add the album_grouping column to device_sync_preferences (issue #113).
+   *
+   * Unlike migrateDeviceSyncPreferences above, existing rows are backfilled with
+   * the NEW default ('album-artist') rather than the old behaviour: the whole
+   * point of the issue is that per-track-artist grouping produced an unusable
+   * album list and a scattered on-device folder tree. Devices synced without
+   * folder mirroring will reorganise into album-artist folders on their next
+   * sync — a one-time reshuffle, after which the layout is stable.
+   */
+  private migrateDeviceAlbumGrouping(): void {
+    if (!this.db) return;
+    try {
+      const rows = this.db
+        .prepare("PRAGMA table_info(device_sync_preferences)")
+        .all() as { name: string }[];
+      if (!new Set(rows.map((r) => r.name)).has("album_grouping")) {
+        this.db
+          .prepare(
+            "ALTER TABLE device_sync_preferences ADD COLUMN album_grouping TEXT NOT NULL DEFAULT 'album-artist'"
+          )
+          .run();
+      }
+    } catch (err) {
+      console.error("[db] migration failed (migrateDeviceAlbumGrouping):", err);
     }
   }
 

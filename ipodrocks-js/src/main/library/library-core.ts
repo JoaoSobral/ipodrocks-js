@@ -28,6 +28,7 @@ interface TrackRow {
   file_hash: string;
   play_count: number;
   artist: string;
+  album_artist: string;
   album: string;
   genre: string;
   codec: string;
@@ -70,6 +71,7 @@ const BASE_TRACKS_QUERY = `
          t.duration, t.bitrate, t.bits_per_sample, t.file_size, t.content_type,
          t.library_folder_id, t.file_hash, t.play_count,
          COALESCE(a.name, 'Unknown Artist') as artist,
+         COALESCE(aa.name, a.name, 'Unknown Artist') as album_artist,
          COALESCE(al.title, 'Unknown Album') as album,
          COALESCE(g.name, 'Unknown Genre') as genre,
          COALESCE(c.name, 'Unknown Codec') as codec,
@@ -79,6 +81,7 @@ const BASE_TRACKS_QUERY = `
   FROM tracks t
   LEFT JOIN artists a ON t.artist_id = a.id
   LEFT JOIN albums al ON t.album_id = al.id
+  LEFT JOIN artists aa ON al.artist_id = aa.id
   LEFT JOIN genres g ON t.genre_id = g.id
   LEFT JOIN codecs c ON t.codec_id = c.id
 `;
@@ -284,8 +287,9 @@ export class LibraryCore {
    * @param fileSize - File size in bytes
    * @param contentType - 'music' or 'podcast'
    * @param libraryFolderId - ID of the library folder
-   * @param artistName - Artist name
+   * @param artistName - Artist name (the per-track artist)
    * @param albumTitle - Album title
+   * @param albumArtistName - Album artist; keys the album row (issue #113)
    * @param genreName - Genre name
    * @param codecName - Codec name (auto-normalized)
    * @param fileHash - SHA256 of file content
@@ -308,12 +312,20 @@ export class LibraryCore {
     genreName: string,
     codecName: string,
     fileHash: string,
-    metadataHash: string | null = null
+    metadataHash: string | null = null,
+    albumArtistName?: string
   ): void {
     const dbPath = normalizePath(trackPath);
     const doUpsert = this.db.transaction(() => {
       const artistId = this._getOrCreateArtist(artistName);
-      const albumId = this._getOrCreateAlbum(albumTitle, artistId);
+      // Issue #113: the album is keyed on the *album* artist so a compilation
+      // stays a single row instead of one per track artist. Falls back to the
+      // track artist when the tag is absent.
+      const albumArtistId =
+        albumArtistName && albumArtistName !== artistName
+          ? this._getOrCreateArtist(albumArtistName)
+          : artistId;
+      const albumId = this._getOrCreateAlbum(albumTitle, albumArtistId);
       const genreId = this._getOrCreateGenre(genreName);
       const codecId = this._getCodecId(codecName);
 
@@ -542,6 +554,7 @@ export class LibraryCore {
       filename: row.filename,
       title: row.title,
       artist: row.artist,
+      albumArtist: row.album_artist ?? row.artist,
       album: row.album,
       genre: row.genre,
       codec: row.codec,

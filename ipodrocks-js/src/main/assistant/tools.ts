@@ -13,7 +13,17 @@ import type Database from "better-sqlite3";
 import type { Library } from "../library/library";
 import type { PlaylistCore } from "../playlists/playlist-core";
 import type { DevicesCore } from "../devices/devices-core";
-import type { PodcastSearchResult, SmartPlaylistRule } from "../../shared/types";
+import type {
+  AlbumGrouping,
+  DeviceSyncPreferences,
+  PodcastSearchResult,
+  SmartPlaylistRule,
+} from "../../shared/types";
+import {
+  emptySelections,
+  getDeviceSyncPreferences,
+  saveDeviceSyncPreferences,
+} from "../sync/device-sync-preferences";
 import type { ToolDefinition } from "../llm/openRouterClient";
 import {
   listSubscriptions,
@@ -701,6 +711,96 @@ const device_update_settings: AiTool = {
   },
 };
 
+const device_set_sync_preferences: AiTool = {
+  name: "device_set_sync_preferences",
+  description:
+    "Update how a device lays out files during sync. 'preserve_folder_structure' mirrors the library folder tree 1:1 on the device (keeping album folder names such as 'Levels (2011)'); when off, paths are rebuilt from tags. 'album_grouping' chooses which artist identifies an album: 'album-artist' keeps a compilation as one album (e.g. 'Various Artists') in both the custom-sync album list and the rebuilt folder layout, while 'track-artist' splits it per contributing artist. Changing either setting means the next sync moves files into the new layout.",
+  parameters: {
+    type: "object",
+    properties: {
+      device_id: { type: "number", description: "Device ID (from device_list)" },
+      preserve_folder_structure: {
+        type: "boolean",
+        description: "Mirror the library folder structure 1:1 on the device.",
+      },
+      album_grouping: {
+        type: "string",
+        enum: ["album-artist", "track-artist"],
+        description:
+          "Which artist identifies an album. 'album-artist' keeps compilations as a single album; 'track-artist' is the older per-track-artist behaviour.",
+      },
+    },
+    required: ["device_id"],
+  },
+  kind: "write-safe",
+  summarize: (a) => {
+    const parts: string[] = [];
+    if (a.preserve_folder_structure !== undefined)
+      parts.push(`mirror folders = ${a.preserve_folder_structure}`);
+    if (a.album_grouping !== undefined) parts.push(`group albums by ${a.album_grouping}`);
+    return `Update device #${a.device_id} sync layout (${parts.join(", ") || "no changes"})`;
+  },
+  async run(args, ctx) {
+    const deviceId = Number(args.device_id);
+    if (!Number.isInteger(deviceId) || deviceId <= 0) throw new Error("Invalid device_id");
+    const device = ctx.getDevicesCore().getDeviceById(deviceId);
+    if (!device) throw new Error(`Device #${deviceId} not found`);
+
+    if (
+      args.preserve_folder_structure === undefined &&
+      args.album_grouping === undefined
+    ) {
+      throw new Error("No settings provided to update");
+    }
+    if (
+      args.album_grouping !== undefined &&
+      args.album_grouping !== "album-artist" &&
+      args.album_grouping !== "track-artist"
+    ) {
+      throw new Error("album_grouping must be 'album-artist' or 'track-artist'");
+    }
+
+    // Preferences may not exist yet for a device that has never been synced.
+    const current =
+      getDeviceSyncPreferences(ctx.db, deviceId) ??
+      ({
+        syncType: "full",
+        extraTrackPolicy: "keep",
+        includeMusic: true,
+        includePodcasts: true,
+        includeAudiobooks: true,
+        includePlaylists: true,
+        preserveFolderStructure: true,
+        albumGrouping: "album-artist",
+        selections: emptySelections(),
+      } satisfies DeviceSyncPreferences);
+
+    const next: DeviceSyncPreferences = {
+      ...current,
+      preserveFolderStructure:
+        args.preserve_folder_structure !== undefined
+          ? !!args.preserve_folder_structure
+          : current.preserveFolderStructure,
+      albumGrouping:
+        (args.album_grouping as AlbumGrouping | undefined) ?? current.albumGrouping,
+    };
+
+    saveDeviceSyncPreferences(ctx.db, deviceId, next);
+    invalidateAssistantCache();
+    logActivity(
+      ctx.db,
+      "update_device",
+      `AI updated sync layout for device: ${device.profile.name}`
+    );
+    return {
+      updated: true,
+      name: device.profile.name,
+      preserveFolderStructure: next.preserveFolderStructure,
+      albumGrouping: next.albumGrouping,
+    };
+  },
+};
+
 const device_sync: AiTool = {
   name: "device_sync",
   description: "Start a sync for a device using its saved sync preferences. Opens the Sync panel where you can watch progress.",
@@ -1059,6 +1159,7 @@ export const AI_TOOLS: AiTool[] = [
   device_check,
   device_remove,
   device_update_settings,
+  device_set_sync_preferences,
   device_sync,
   library_scan,
   shadow_list,

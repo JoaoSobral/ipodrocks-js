@@ -19,6 +19,12 @@ import type { ApeTags } from "../tagging/apev2/types";
 export interface TrackMetadata {
   title: string;
   artist: string;
+  /**
+   * Issue #113: the "album artist" tag, used to key the `albums` row so that a
+   * compilation stays one album instead of fanning out per track artist.
+   * Falls back to the track artist when the tag is absent, so it is never empty.
+   */
+  albumArtist: string;
   album: string;
   genre: string;
   trackNumber: string;
@@ -105,6 +111,7 @@ export class MetadataExtractor {
 
       const title = common.title || stem;
       const artist = common.artist || "Unknown Artist";
+      const albumArtist = common.albumartist || artist;
       const album = common.album || "Unknown Album";
       const genre = common.genre?.[0] || "Unknown Genre";
       const trackNumber = common.track?.no?.toString() ?? "";
@@ -115,6 +122,7 @@ export class MetadataExtractor {
         return {
           title,
           artist,
+          albumArtist,
           album,
           genre,
           trackNumber,
@@ -124,7 +132,7 @@ export class MetadataExtractor {
         };
       }
 
-      return { title, artist, album, genre, trackNumber, discNumber };
+      return { title, artist, albumArtist, album, genre, trackNumber, discNumber };
     } catch (err) {
       console.warn(`⚠️  Error reading metadata from ${filePath}:`, err);
       const stem = path.basename(filePath, path.extname(filePath));
@@ -133,6 +141,7 @@ export class MetadataExtractor {
       return {
         title: stem,
         artist: "Unknown Artist",
+        albumArtist: "Unknown Artist",
         album: "Unknown Album",
         genre: "Unknown Genre",
         trackNumber: "",
@@ -328,14 +337,20 @@ export class MetadataExtractor {
       const tags = { ...streamTags, ...probe.format?.tags };
       const title = tags.title || tags.TITLE || stem;
       const artist = tags.artist || tags.ARTIST || "Unknown Artist";
+      const albumArtist =
+        tags.album_artist ||
+        tags.ALBUM_ARTIST ||
+        tags.albumartist ||
+        tags.ALBUMARTIST ||
+        artist;
       const album = tags.album || tags.ALBUM || "Unknown Album";
       const genre = tags.genre || tags.GENRE || "Unknown Genre";
       const trackNumber = tags.track || tags.TRACK || "";
       const discNumber = tags.disc || tags.DISC || "";
       if (contentType === "podcast" || contentType === "audiobook") {
-        return { title, artist, album, genre, trackNumber, discNumber, showTitle: album, episodeNumber: trackNumber };
+        return { title, artist, albumArtist, album, genre, trackNumber, discNumber, showTitle: album, episodeNumber: trackNumber };
       }
-      return { title, artist, album, genre, trackNumber, discNumber };
+      return { title, artist, albumArtist, album, genre, trackNumber, discNumber };
     } catch {
       return null;
     }
@@ -368,6 +383,7 @@ export class MetadataExtractor {
 
     const title = ape.title || stem;
     const artist = ape.artist || "Unknown Artist";
+    const albumArtist = ape.albumArtist || artist;
     const album = ape.album || "Unknown Album";
     const genre = ape.genre || "Unknown Genre";
     const trackNumber = ape.track ?? "";
@@ -377,6 +393,7 @@ export class MetadataExtractor {
       return {
         title,
         artist,
+        albumArtist,
         album,
         genre,
         trackNumber,
@@ -386,7 +403,7 @@ export class MetadataExtractor {
       };
     }
 
-    return { title, artist, album, genre, trackNumber, discNumber };
+    return { title, artist, albumArtist, album, genre, trackNumber, discNumber };
   }
 
   /**

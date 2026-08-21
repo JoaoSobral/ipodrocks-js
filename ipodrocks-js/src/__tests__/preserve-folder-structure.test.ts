@@ -79,3 +79,75 @@ describe("computeDeviceRelativePath — preserveFolderStructure (issue #82)", ()
     expect(rel).toBe("Artist/Album/x.flac");
   });
 });
+
+/**
+ * Issue #113: with mirroring OFF the path is rebuilt from tags, and the artist
+ * component must come from the album artist so a compilation lands in one
+ * folder instead of one per contributing track artist.
+ */
+describe("computeDeviceRelativePath — albumGrouping (issue #113)", () => {
+  const compilationPath = path.join(
+    LIB_ROOT,
+    "Compilations",
+    "Now 40",
+    "01 - Alpha Band.flac"
+  );
+  const compilationTrack = {
+    artist: "Alpha Band",
+    albumArtist: "Various Artists",
+    album: "Now 40",
+    libraryFolderId: 1,
+  };
+
+  it("uses the album artist by default", () => {
+    expect(
+      computeDeviceRelativePath(compilationPath, compilationTrack, "music", folderPaths, false)
+    ).toBe("Various Artists/Now 40/01 - Alpha Band.flac");
+  });
+
+  it("uses the track artist when grouping is track-artist", () => {
+    expect(
+      computeDeviceRelativePath(
+        compilationPath,
+        compilationTrack,
+        "music",
+        folderPaths,
+        false,
+        "track-artist"
+      )
+    ).toBe("Alpha Band/Now 40/01 - Alpha Band.flac");
+  });
+
+  it("gives every track of a compilation the same album folder", () => {
+    const dests = ["Alpha Band", "Beta Crew", "Gamma Trio"].map((artist) =>
+      computeDeviceRelativePath(
+        path.join(LIB_ROOT, "Compilations", "Now 40", `${artist}.flac`),
+        { ...compilationTrack, artist },
+        "music",
+        folderPaths,
+        false,
+        "album-artist"
+      )
+    );
+    expect(new Set(dests.map((d) => path.posix.dirname(d))).size).toBe(1);
+  });
+
+  it("falls back to the track artist when no album artist is tagged", () => {
+    expect(
+      computeDeviceRelativePath(trackPath, trackInfo, "music", folderPaths, false, "album-artist")
+    ).toBe("Avicii/Levels/Avicii - Levels - 01 - Levels.flac");
+  });
+
+  it("is ignored while mirroring is on — the source layout still wins", () => {
+    expect(
+      computeDeviceRelativePath(
+        compilationPath,
+        compilationTrack,
+        "music",
+        folderPaths,
+        true,
+        "album-artist"
+      )
+    ).toBe("Compilations/Now 40/01 - Alpha Band.flac");
+  });
+});

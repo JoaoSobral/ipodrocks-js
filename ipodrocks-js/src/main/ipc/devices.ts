@@ -175,6 +175,7 @@ export function registerDeviceHandlers(): void {
 
       const checkPrefs = getDeviceSyncPreferences(lib.getConnection(), deviceId);
       const preserveFolderStructure = checkPrefs?.preserveFolderStructure !== false;
+      const albumGrouping = checkPrefs?.albumGrouping ?? "album-artist";
 
       if (
         device.profile.sourceLibraryType === "shadow" &&
@@ -239,7 +240,8 @@ export function registerDeviceHandlers(): void {
         undefined,
         undefined,
         undefined,
-        preserveFolderStructure
+        preserveFolderStructure,
+        albumGrouping
       );
       const musicCompare = compareLibraries(
         musicDest.destMap,
@@ -260,7 +262,8 @@ export function registerDeviceHandlers(): void {
         undefined,
         undefined,
         undefined,
-        preserveFolderStructure
+        preserveFolderStructure,
+        albumGrouping
       );
       const podcastCompare = compareLibraries(
         podcastDest.destMap,
@@ -281,7 +284,8 @@ export function registerDeviceHandlers(): void {
         undefined,
         undefined,
         undefined,
-        preserveFolderStructure
+        preserveFolderStructure,
+        albumGrouping
       );
       const audiobookCompare = compareLibraries(
         audiobookDest.destMap,

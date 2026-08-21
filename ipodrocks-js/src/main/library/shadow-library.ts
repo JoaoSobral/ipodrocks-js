@@ -1001,6 +1001,68 @@ export class ShadowLibraryManager {
   }
 
   /**
+   * Delete shadow files by absolute path, for tracks whose `shadow_tracks` rows
+   * are already gone.
+   *
+   * `LibraryScanner.deleteRemovedTracks()` removes those rows by hand inside a
+   * `foreign_keys = OFF` transaction, so by the time the scan propagates its
+   * removals `propagateRemovedByIds()` can no longer resolve a `shadow_path`.
+   * The scan therefore captures the paths first and hands them here. Without
+   * this, renaming an album folder in the primary library leaves the old
+   * transcodes on disk and the shadow library accumulates duplicate albums.
+   *
+   * Paths outside a known shadow-library root are ignored: this deletes files,
+   * and a stale or malformed row must never be able to reach elsewhere on disk.
+   */
+  deleteOrphanedShadowFiles(shadowPaths: string[]): number {
+    if (shadowPaths.length === 0) return 0;
+
+    const roots = this.getShadowLibraries().map((l) => path.resolve(l.path));
+    if (roots.length === 0) return 0;
+
+    const touchedRoots = new Set<string>();
+    let deleted = 0;
+
+    for (const p of shadowPaths) {
+      if (!p) continue;
+      const resolved = path.resolve(p);
+      const root = roots.find(
+        (r) => resolved === r || resolved.startsWith(r + path.sep)
+      );
+      if (!root) continue;
+
+      try {
+        if (fs.existsSync(resolved)) {
+          fs.unlinkSync(resolved);
+          deleted++;
+        }
+        touchedRoots.add(root);
+      } catch {
+        /* best effort */
+      }
+    }
+
+    // A renamed album leaves its old directory empty; drop it so the shadow
+    // tree keeps matching the library instead of filling with dead folders.
+    // Only descend into the root's children — cleanEmptyDirectories removes the
+    // directory it is given, and the configured shadow root must survive even
+    // when the library is momentarily empty.
+    for (const root of touchedRoots) {
+      try {
+        for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+          if (entry.isDirectory()) {
+            cleanEmptyDirectories(path.join(root, entry.name));
+          }
+        }
+      } catch {
+        /* best effort */
+      }
+    }
+
+    return deleted;
+  }
+
+  /**
    * Look up shadow track paths for a given shadow library, keyed by
    * source track ID.
    */
