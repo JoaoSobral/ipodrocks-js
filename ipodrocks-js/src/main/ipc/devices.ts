@@ -9,7 +9,8 @@ import {
   buildLibraryTrackMaps,
   remapTrackMapToShadow,
 } from "./common";
-import { isDeviceMountPathOnline } from "../devices/device-online";
+import { isDeviceOnline } from "../devices/device-online";
+import { refreshUsbSnapshot, listUsbDevices } from "../devices/usb-devices";
 import { getDeviceSyncPreferences } from "../sync/device-sync-preferences";
 import { buildLibraryDestMap, getProfileCodecExt } from "../sync/sync-core";
 import { compareLibraries } from "../sync/name-size-sync";
@@ -41,6 +42,15 @@ export function registerDeviceHandlers(): void {
       );
       invalidateAssistantCache(); // F9: device config changed
       return device.profile;
+    })
+  );
+
+  ipcMain.handle(
+    "device:listUsb",
+    safe("device:listUsb", async () => {
+      // Force a fresh enumeration: the user opens this dropdown precisely when
+      // they have just plugged something in, so a cached snapshot is wrong.
+      return await listUsbDevices();
     })
   );
 
@@ -120,7 +130,8 @@ export function registerDeviceHandlers(): void {
     safe("device:ping", async (_event, deviceId: number) => {
       const device = getDevicesCore().getDeviceById(deviceId);
       if (!device) return { online: false };
-      return { online: device.profile.devMode || isDeviceMountPathOnline(device.mountPath) };
+      await refreshUsbSnapshot();
+      return { online: isDeviceOnline(device.profile) };
     })
   );
 
@@ -130,7 +141,8 @@ export function registerDeviceHandlers(): void {
       const device = getDevicesCore().getDeviceById(deviceId);
       if (!device) return { error: `Device ${deviceId} not found` };
 
-      if (!device.profile.devMode && !isDeviceMountPathOnline(device.mountPath)) {
+      await refreshUsbSnapshot();
+      if (!isDeviceOnline(device.profile)) {
         return { offline: true, deviceId, name: device.name };
       }
 
@@ -385,7 +397,8 @@ export function registerDeviceHandlers(): void {
       const device = getDevicesCore().getDeviceById(deviceId);
       if (!device) return { error: `Device ${deviceId} not found` };
 
-      if (!device.profile.devMode && !isDeviceMountPathOnline(device.mountPath)) {
+      await refreshUsbSnapshot();
+      if (!isDeviceOnline(device.profile)) {
         return { offline: true, error: "Device not connected", ingested: 0, skipped: 0 };
       }
 

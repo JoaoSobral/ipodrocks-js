@@ -6,7 +6,8 @@ import { downloadChapter } from "./audiobook-downloader";
 import { sanitizeDevicePathComponent } from "../sync/sync-core";
 import { copyFileToDevice } from "../sync/sync-executor";
 import type { SyncProgressPayload } from "../sync/sync-core";
-import { isDeviceMountPathOnline } from "../devices/device-online";
+import { isDeviceOnline, deviceRowToOnlineInput } from "../devices/device-online";
+import { refreshUsbSnapshot } from "../devices/usb-devices";
 
 type ProgressCallback = (event: SyncProgressPayload) => void;
 
@@ -15,6 +16,9 @@ interface DeviceRow {
   mount_path: string;
   audiobook_folder: string;
   dev_mode: number;
+  usb_vendor_id: string | null;
+  usb_product_id: string | null;
+  usb_serial: string | null;
 }
 
 interface ChapterToSync {
@@ -42,13 +46,15 @@ export async function syncAutoAudiobooksToDevice(
   progressCallback?: ProgressCallback
 ): Promise<{ synced: number; errors: number }> {
   const device = db
-    .prepare("SELECT id, mount_path, audiobook_folder, dev_mode FROM devices WHERE id = ?")
+    .prepare(
+      "SELECT id, mount_path, audiobook_folder, dev_mode, usb_vendor_id, usb_product_id, usb_serial FROM devices WHERE id = ?"
+    )
     .get(deviceId) as DeviceRow | undefined;
 
   if (!device || !device.mount_path) return { synced: 0, errors: 0 };
 
-  const online = !!device.dev_mode || isDeviceMountPathOnline(device.mount_path);
-  if (!online) return { synced: 0, errors: 0 };
+  await refreshUsbSnapshot();
+  if (!isDeviceOnline(deviceRowToOnlineInput(device))) return { synced: 0, errors: 0 };
 
   const allSubs = listSubscriptions(db);
   if (allSubs.length === 0) return { synced: 0, errors: 0 };

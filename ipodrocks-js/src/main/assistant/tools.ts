@@ -42,6 +42,7 @@ import { downloadCover as downloadAudiobookCover } from "../audiobooks/audiobook
 import { findDuplicateFileGroups } from "../library/duplicate-files";
 import { logActivity } from "../activity/activity-logger";
 import { invalidateAssistantCache } from "./assistantChat";
+import { listUsbDevices } from "../devices/usb-devices";
 import {
   getGeniusTypesWithAvailability,
   generateGeniusPlaylistFromDb,
@@ -217,6 +218,9 @@ const device_list: AiTool = {
       mountPath: d.profile.mountPath,
       model: d.profile.modelName,
       lastSyncDate: d.profile.lastSyncDate,
+      usbVendorId: d.profile.usbVendorId ?? null,
+      usbProductId: d.profile.usbProductId ?? null,
+      usbSerial: d.profile.usbSerial ?? null,
     }));
   },
 };
@@ -711,6 +715,83 @@ const device_update_settings: AiTool = {
   },
 };
 
+const usb_device_list: AiTool = {
+  name: "usb_device_list",
+  description:
+    "List USB devices currently connected to this computer, including vendor id, product id and serial number. Recognized iPod models are named. Use this to find the USB identity of a device before binding it with device_set_usb_identity.",
+  parameters: { type: "object", properties: {} },
+  kind: "read",
+  summarize: () => "List connected USB devices",
+  async run() {
+    const snapshot = await listUsbDevices();
+    if (!snapshot.available) {
+      return {
+        available: false,
+        note: "USB enumeration is not available on this system. Devices will be matched by mount path only.",
+        devices: [],
+      };
+    }
+    return { available: true, devices: snapshot.devices };
+  },
+};
+
+const device_set_usb_identity: AiTool = {
+  name: "device_set_usb_identity",
+  description:
+    "Bind a device to a physical USB unit, or clear that binding. When bound, the device is only considered connected if that exact USB device is plugged in — this is how two players that mount at the same path are told apart. Omit usb_vendor_id and usb_product_id (or pass them as null) to clear the binding and fall back to mount-path matching.",
+  parameters: {
+    type: "object",
+    properties: {
+      device_id: { type: "number", description: "Device ID (from device_list)" },
+      usb_vendor_id: {
+        type: "string",
+        description: "4-digit hex vendor id from usb_device_list, e.g. '05ac'. Null to clear.",
+      },
+      usb_product_id: {
+        type: "string",
+        description: "4-digit hex product id from usb_device_list, e.g. '1261'. Null to clear.",
+      },
+      usb_serial: {
+        type: "string",
+        description:
+          "Serial number from usb_device_list. Pass an empty string when the device reports none; the identity is then model-level and cannot distinguish two identical units.",
+      },
+    },
+    required: ["device_id"],
+  },
+  // Destructive: clearing an identity lets another drive at the same mount path
+  // be mistaken for this device, which can send a sync to the wrong volume.
+  kind: "write-destructive",
+  summarize: (a) =>
+    a.usb_vendor_id && a.usb_product_id
+      ? `Bind device #${a.device_id} to USB ${a.usb_vendor_id}:${a.usb_product_id}`
+      : `Clear the USB identity of device #${a.device_id} (mount-path matching only)`,
+  async run(args, ctx) {
+    const deviceId = Number(args.device_id);
+    if (!Number.isInteger(deviceId) || deviceId <= 0) throw new Error("Invalid device_id");
+    const device = ctx.getDevicesCore().getDeviceById(deviceId);
+    if (!device) throw new Error(`Device #${deviceId} not found`);
+
+    const clearing = !args.usb_vendor_id || !args.usb_product_id;
+    const ok = ctx.getDevicesCore().updateDevice(deviceId, {
+      usbVendorId: clearing ? null : String(args.usb_vendor_id),
+      usbProductId: clearing ? null : String(args.usb_product_id),
+      usbSerial: clearing ? null : String(args.usb_serial ?? ""),
+    });
+    if (!ok) throw new Error(`Failed to update device #${deviceId}`);
+
+    invalidateAssistantCache();
+    logActivity(
+      ctx.db,
+      "update_device",
+      clearing
+        ? `AI cleared the USB identity for device: ${device.profile.name}`
+        : `AI bound device ${device.profile.name} to USB ${args.usb_vendor_id}:${args.usb_product_id}`
+    );
+    return ctx.getDevicesCore().getDeviceById(deviceId)!.profile;
+  },
+};
+
 const device_set_sync_preferences: AiTool = {
   name: "device_set_sync_preferences",
   description:
@@ -1150,6 +1231,7 @@ export const AI_TOOLS: AiTool[] = [
   podcast_list_subscriptions,
   podcast_list_episodes,
   device_list,
+  usb_device_list,
   playlist_create_smart,
   playlist_create_genius,
   playlist_create_classic,
@@ -1160,6 +1242,7 @@ export const AI_TOOLS: AiTool[] = [
   device_remove,
   device_update_settings,
   device_set_sync_preferences,
+  device_set_usb_identity,
   device_sync,
   library_scan,
   shadow_list,

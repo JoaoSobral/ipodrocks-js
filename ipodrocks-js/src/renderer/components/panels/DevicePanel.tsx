@@ -18,6 +18,7 @@ import {
   removeDevice,
   checkDevice,
   pingDevice,
+  listUsbDevices,
   pickFolder,
   getDeviceModels,
   getCodecConfigs,
@@ -35,7 +36,12 @@ import { getTranscodableCodecConfigs, isVbrCapableCodec } from "../../utils/code
 import { createDeviceIconResolver } from "../../utils/device-icon";
 import { DeviceIcon } from "../common/DeviceIcon";
 import type { CheckResult, DeviceModel, CodecConfig } from "../../ipc/api";
-import type { DeviceProfile, ShadowLibrary } from "@shared/types";
+import type {
+  DeviceProfile,
+  ShadowLibrary,
+  UsbDeviceInfo,
+} from "@shared/types";
+import type { SelectOption } from "../common/Select";
 
 function downloadOrphansCsv(cr: CheckResult): void {
   const rows: string[][] = [["type", "device_path"]];
@@ -63,6 +69,36 @@ function downloadOrphansCsv(cr: CheckResult): void {
 
 const checkboxClass =
   "h-4 w-4 rounded border-border bg-input accent-primary cursor-pointer";
+
+/**
+ * A USB identity flattened into one string so it can live in a <Select> value.
+ * Empty means "no identity — match by mount path".
+ */
+function usbKeyOf(
+  vendorId?: string | null,
+  productId?: string | null,
+  serial?: string | null
+): string {
+  if (!vendorId || !productId) return "";
+  return `${vendorId}:${productId}:${serial ?? ""}`;
+}
+
+/** Split a key back into the three columns. A blank key clears the identity. */
+function parseUsbKey(key: string): {
+  usbVendorId: string | null;
+  usbProductId: string | null;
+  usbSerial: string | null;
+} {
+  if (!key) return { usbVendorId: null, usbProductId: null, usbSerial: null };
+  const [vendorId, productId, ...rest] = key.split(":");
+  return { usbVendorId: vendorId, usbProductId: productId, usbSerial: rest.join(":") };
+}
+
+/** Best-effort display name; many devices report no product string at all. */
+function usbLabel(device: UsbDeviceInfo): string {
+  const base = device.ipodModel || device.productName || device.vendorName || "Unknown device";
+  return device.serial ? base : `${base} (no serial)`;
+}
 
 export function DevicePanel() {
   const devices = useDeviceStore((s) => s.devices);
@@ -101,6 +137,14 @@ export function DevicePanel() {
   const [sourceLibraryType, setSourceLibraryType] = useState<"primary" | "shadow">("primary");
   const [shadowLibraryId, setShadowLibraryId] = useState<number | null>(null);
   const [formSubmitted, setFormSubmitted] = useState(false);
+  /** Selected USB identity as "vid:pid:serial". Empty means mount-path matching. */
+  const [usbKey, setUsbKey] = useState("");
+  /** What the device had when the modal opened, so we can detect a clear. */
+  const [originalUsbKey, setOriginalUsbKey] = useState("");
+  const [usbDevices, setUsbDevices] = useState<UsbDeviceInfo[]>([]);
+  const [usbAvailable, setUsbAvailable] = useState(true);
+  const [usbLoading, setUsbLoading] = useState(false);
+  const [confirmClearUsb, setConfirmClearUsb] = useState(false);
 
   // Lookup data
   const [models, setModels] = useState<DeviceModel[]>([]);
@@ -166,6 +210,8 @@ export function DevicePanel() {
     setSourceLibraryType("primary");
     setShadowLibraryId(null);
     setFormSubmitted(false);
+    setUsbKey("");
+    setOriginalUsbKey("");
   }, []);
 
   const openForEdit = useCallback(
@@ -207,6 +253,10 @@ export function DevicePanel() {
     setAutoPodcastsEnabled(device.autoPodcastsEnabled ?? false);
     setDevMode(device.devMode ?? false);
 
+    const storedUsb = usbKeyOf(device.usbVendorId, device.usbProductId, device.usbSerial);
+    setUsbKey(storedUsb);
+    setOriginalUsbKey(storedUsb);
+
     setShowDeviceModal(true);
   },
     [defaultDeviceId]
@@ -217,6 +267,84 @@ export function DevicePanel() {
     setShowDeviceModal(true);
   }, [resetForm]);
 
+  const loadUsbDevices = useCallback(async () => {
+    setUsbLoading(true);
+    try {
+      const result = await listUsbDevices();
+      if ("error" in result) {
+        setUsbAvailable(false);
+        setUsbDevices([]);
+      } else {
+        setUsbAvailable(result.available);
+        setUsbDevices(result.devices);
+      }
+    } catch {
+      setUsbAvailable(false);
+      setUsbDevices([]);
+    } finally {
+      setUsbLoading(false);
+    }
+  }, []);
+
+  // Enumerate when the form opens — the list is a point-in-time snapshot.
+  useEffect(() => {
+    if (showDeviceModal) void loadUsbDevices();
+  }, [showDeviceModal, loadUsbDevices]);
+
+  const usbOptions = useMemo(() => {
+    const options: SelectOption[] = [
+      { value: "", label: "Not set — match by mount path only" },
+    ];
+
+    const connected = Array.isArray(usbDevices) ? usbDevices : [];
+    // Recognized iPods rank above storage-class: an iPod in DFU or WTF mode
+    // exposes no mass-storage interface and would otherwise sort to the bottom.
+    const ipods = connected.filter((d) => d.ipodModel);
+    const storage = connected.filter((d) => !d.ipodModel && d.isStorage);
+    const other = connected.filter((d) => !d.ipodModel && !d.isStorage);
+
+    for (const [group, list] of [
+      ["iPods", ipods],
+      ["Storage devices", storage],
+      ["Other USB devices", other],
+    ] as const) {
+      for (const device of list) {
+        options.push({
+          value: usbKeyOf(device.vendorId, device.productId, device.serial),
+          label: usbLabel(device),
+          detail: `${device.vendorId}:${device.productId}`,
+          group,
+        });
+      }
+    }
+
+    // A device being edited while unplugged must still round-trip its identity,
+    // otherwise opening and saving the form would silently wipe it.
+    if (usbKey && !options.some((o) => o.value === usbKey)) {
+      const { usbVendorId, usbProductId } = parseUsbKey(usbKey);
+      options.push({
+        value: usbKey,
+        label: "Saved device — not connected",
+        detail: `${usbVendorId}:${usbProductId}`,
+        group: "Saved",
+      });
+    }
+    return options;
+  }, [usbDevices, usbKey]);
+
+  /** Warn when the chosen identity cannot tell two identical units apart. */
+  const usbHint = useMemo(() => {
+    if (!usbAvailable) {
+      return "Could not read USB devices on this system — matching will fall back to the mount path.";
+    }
+    if (!usbKey) return undefined;
+    const { usbSerial } = parseUsbKey(usbKey);
+    if (!usbSerial) {
+      return "This device reports no serial number, so it is identified by model only — two identical units would still collide.";
+    }
+    return undefined;
+  }, [usbAvailable, usbKey]);
+
   const directCopyConfigId = useMemo(() => {
     const configs = Array.isArray(codecConfigs) ? codecConfigs : [];
     const dc = configs.find(
@@ -224,6 +352,19 @@ export function DevicePanel() {
     );
     return dc?.id ?? null;
   }, [codecConfigs]);
+
+  /**
+   * Dropping a USB identity is the risky direction: the device falls back to
+   * mount-path matching, where another drive at the same path can be mistaken
+   * for it. Confirm that explicitly; a swap to a different unit only informs.
+   */
+  function handleSaveClicked() {
+    if (originalUsbKey && !usbKey) {
+      setConfirmClearUsb(true);
+      return;
+    }
+    void handleSaveDevice();
+  }
 
   async function handleSaveDevice() {
     if (!name.trim() || !mountPath.trim() || modelId == null) {
@@ -264,6 +405,7 @@ export function DevicePanel() {
       vbrEnabled: transferMode === "transcode" ? vbrEnabled : false,
       rockboxSmartPlaylists,
       devMode,
+      ...parseUsbKey(usbKey),
     };
 
     if (editingDeviceId !== null) {
@@ -291,6 +433,14 @@ export function DevicePanel() {
         setDefaultDeviceId(device.id);
       }
     }
+    if (usbKey !== originalUsbKey) {
+      toast.warning(
+        usbKey
+          ? `'${name}' is now matched by its USB device`
+          : `'${name}' is now matched by mount path only`
+      );
+    }
+
     setShowDeviceModal(false);
     resetForm();
     fetchDevices();
@@ -385,6 +535,16 @@ export function DevicePanel() {
                       {isDefaultDev && (
                         <span className="px-1.5 py-0.5 text-[9px] font-medium rounded bg-primary/15 text-primary">
                           DEFAULT
+                        </span>
+                      )}
+                      {d?.usbVendorId && d?.usbProductId && (
+                        <span
+                          className="px-1.5 py-0.5 text-[9px] font-mono rounded bg-muted text-muted-foreground"
+                          title={`Matched by USB device ${d.usbVendorId}:${d.usbProductId}${
+                            d.usbSerial ? ` (serial ${d.usbSerial})` : " (no serial)"
+                          }`}
+                        >
+                          USB {d.usbVendorId}:{d.usbProductId}
                         </span>
                       )}
                     </div>
@@ -648,6 +808,28 @@ export function DevicePanel() {
             )}
           </div>
 
+          {/* USB identity — optional. Pins the device to a physical USB unit so
+              two players that mount at the same path stay distinguishable. */}
+          <div>
+            <div className="flex gap-2 items-end">
+              <div className="flex-1">
+                <Select
+                  label="USB Device (optional)"
+                  tooltip="Match this device by its USB hardware instead of its mount path. Useful when two players mount at the same path. Leave unset to match by mount path only."
+                  options={usbOptions}
+                  value={usbKey}
+                  onChange={setUsbKey}
+                  placeholder="Not set — match by mount path only"
+                  hint={usbHint}
+                  testId="usb-device-select"
+                />
+              </div>
+              <Button size="md" onClick={() => void loadUsbDevices()} disabled={usbLoading}>
+                {usbLoading ? "Scanning…" : "Refresh"}
+              </Button>
+            </div>
+          </div>
+
           {/* Transfer Mode */}
           <div>
             <Label>Transfer Mode</Label>
@@ -885,11 +1067,36 @@ export function DevicePanel() {
             </Button>
             <Button
               variant="primary"
-              onClick={handleSaveDevice}
+              onClick={handleSaveClicked}
             >
               {editingDeviceId !== null ? "Update Device" : "Add Device"}
             </Button>
           </div>
+        </div>
+      </Modal>
+
+      <Modal
+        open={confirmClearUsb}
+        onClose={() => setConfirmClearUsb(false)}
+        title="Remove USB identity?"
+      >
+        <p className="text-sm text-muted-foreground">
+          <span className="text-foreground font-medium">{name || "This device"}</span> will be
+          matched by its mount path only. Another drive mounted at{" "}
+          <span className="font-mono text-foreground">{mountPath}</span> could be mistaken for
+          it.
+        </p>
+        <div className="mt-4 flex justify-end gap-2">
+          <Button onClick={() => setConfirmClearUsb(false)}>Cancel</Button>
+          <Button
+            variant="primary"
+            onClick={() => {
+              setConfirmClearUsb(false);
+              void handleSaveDevice();
+            }}
+          >
+            Remove
+          </Button>
         </div>
       </Modal>
 

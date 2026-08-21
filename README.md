@@ -70,7 +70,8 @@ If you really like iPodRocks and want to keep it caffeinated, you can buy me a c
 - Per-device codec configs (direct copy, MP3, AAC, Musepack, Opus, OGG)
 - Device check: compare what’s on disk vs library, spot orphans
 - **Per-device icons** — iPod Classic, Nano, and Mini get their own artwork; other devices each get a distinct generic Rockbox icon so cards are easy to tell apart at a glance
-- **Live connection indicator** — A prominent green/red dot on each device card shows whether the mount path is currently reachable
+- **Live connection indicator** — A prominent green/red dot on each device card shows whether the device is currently reachable
+- **Identify a device by its USB hardware** — Own two iPods that both mount at `/Volumes/IPOD`? Pick the player from a dropdown of connected USB devices and iPodRocks pins that device row to its vendor id, product id and serial number, so the wrong player can never inherit the right one's sync history and ratings. Recognized iPod models are named automatically. Leave it unset and nothing changes — matching stays on the mount path, exactly as before. Works on macOS, Windows and Linux with no extra software to install.
 
 ### Classic, Smart & Genius Playlists
 - **Classic playlists — hand-pick your own songs** — Tick songs straight from your library in a virtualized picker with search plus artist/album/genre filters. **Your selection persists across every filter change**, so you can build one playlist out of several different searches. Tick order is play order, up to 500 songs. Classic is also the only playlist type you can **edit** after creating — reopen the picker with your songs already ticked.
@@ -186,7 +187,7 @@ If `mpcenc` is not on your PATH, iPodRocks will prompt when you select Musepack.
 ## Quick Start
 
 1. **Add library folder** — Open **Library**, click **Add Folder**, and choose your music root folder (for example, `/home/user/Music`). iPodRocks scans all subfolders recursively for audio files. Important to have your audio with tags
-2. **Add device** — Open **Devices**, click **+ Add Device**, and pick the **root mount path of the device** (for example, `/media/ipod`). The app will automatically create `music`, `podcasts`, and `audiobooks` folders on the device if they do not exist.
+2. **Add device** — Open **Devices**, click **+ Add Device**, and pick the **root mount path of the device** (for example, `/media/ipod`). The app will automatically create `music`, `podcasts`, and `audiobooks` folders on the device if they do not exist. If you own more than one player, also pick it from the optional **USB Device** dropdown so the two never get confused for each other.
 3. **Create playlists** (optional) — Open **Playlists** for Classic (hand-picked), Smart, Genius, or Savant playlists.
 4. **Sync** — Open **Sync**, select your device, choose full or custom sync, and click **Start Sync**.
 

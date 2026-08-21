@@ -7,6 +7,16 @@ Common issues and how to fix them.
 - **Symptom:** Device does not appear, or sync fails with "path not found".
 - **Fix:** Ensure the device is mounted before adding it. Use the actual mount path (e.g. `/media/ipod` on Linux, `E:\` on Windows). Avoid symlinks if they cause issues. On Linux, check `lsblk` or `mount` to confirm the path.
 
+## Device shows offline even though it is mounted
+
+- **Cause:** The device has a **USB Device** identity set, and that exact unit is not connected. A USB-bound device is only online when its hardware is plugged in *and* its mount path is a live volume — that is what stops another drive at the same path from being mistaken for it.
+- **Fix:** Plug the right player in, or open **Devices → Edit** and check the **USB Device** field. If it was bound to the wrong unit, pick the correct one from the dropdown (press **Refresh** after connecting). To go back to mount-path matching, set it to *"Not set"* and confirm the warning. Ask Rocksy "what USB devices are connected?" to see what the app can actually see.
+
+## Two devices keep getting confused for each other
+
+- **Cause:** Both players mount at the same path (e.g. `/Volumes/IPOD`), so iPodRocks cannot tell them apart and the second one inherits the first one's sync history and ratings.
+- **Fix:** Give **both** devices a **USB Device** identity in **Devices → Edit**. Tagging only one is not enough — the untagged device still matches on mount path alone. See [Devices → Identifying a device](../app-reference/devices.md#identifying-a-device).
+
 ## Sync fails or hangs
 
 - **Symptom:** Sync progress modal stalls or shows errors.

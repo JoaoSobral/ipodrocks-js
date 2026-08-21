@@ -235,6 +235,8 @@ One SQLite file, around 36 tables. They group naturally by feature:
 
 `devices` · `device_models` · `codecs` · `codec_configurations` · `device_transfer_modes` · `device_synced_tracks` · `device_sync_preferences` · `sync_configurations` · `sync_rules`
 
+`devices` also carries an optional USB hardware identity (`usb_vendor_id`, `usb_product_id`, `usb_serial`) behind a partial unique index, so a device row can be pinned to one physical unit rather than to a mount path. Enumeration lives in `src/main/devices/usb-devices.ts`, which shells out to `ioreg` on macOS, reads `/sys/bus/usb/devices` on Linux, and queries `Win32_PnPEntity` via PowerShell on Windows — no native module. Results are cached briefly and resolved synchronously by `isDeviceOnline` in `src/main/devices/device-online.ts`.
+
 **Ratings** — the three tables that make the bi-directional rating sync work.
 
 | Table | Description |

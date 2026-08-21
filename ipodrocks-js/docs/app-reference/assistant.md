@@ -5,7 +5,7 @@ Rocksy is a floating chat that knows your library, playlists, and listening hist
 ## What it does
 
 - **Floating chat** — Open from the sidebar or a button. Stays on top while you use other panels.
-- **Takes actions, not just answers** — Rocksy calls structured tools to fetch live data and run operations: search the library, create playlists, manage podcasts and audiobooks, check and sync devices, and more.
+- **Takes actions, not just answers** — Rocksy calls structured tools to fetch live data and run operations: search the library, create playlists, manage podcasts and audiobooks, check and sync devices, identify a device by its USB hardware, and more.
 - **Persistent memory** — Up to 40 pinned memories survive app restarts. Say "always remember my name is Pedro" or "don't forget I love jazz".
 - **Rolling history** — Last 100 exchanges as hidden context. The assistant stays informed without cluttering the chat.
 - **Create playlists** — Ask "Make me a rock playlist with 30 tracks" or "Create a late night favorites playlist from my listening history" for a Smart or Genius playlist. Name individual songs instead — "make me a playlist with Heroes, Starman and Life on Mars" — and Rocksy looks each one up and builds a **Classic** playlist.
@@ -16,9 +16,9 @@ Rocksy is a floating chat that knows your library, playlists, and listening hist
 
 Rocksy's tools are grouped into three tiers by how risky they are:
 
-- **Read** *(run immediately)* — Look up data: search tracks, list albums / artists / genres, search and list podcasts and their episodes, search and list audiobooks, list devices.
+- **Read** *(run immediately)* — Look up data: search tracks, list albums / artists / genres, search and list podcasts and their episodes, search and list audiobooks, list devices, list connected USB devices.
 - **Write-safe** *(run immediately)* — Non-destructive changes: create Classic, Smart, and Genius playlists, repair a broken playlist, subscribe to a podcast (by search **or by URL**), subscribe to a LibriVox audiobook, refresh an audiobook cover.
-- **Write-destructive** *(ask before running)* — Anything that deletes, syncs, scans, or changes folders: delete a playlist, replace a Classic playlist's tracks, download or delete podcast episodes, unsubscribe from an audiobook, add or remove library folders, scan the library, check or sync a device. Rocksy pauses and shows **Confirm / Cancel** buttons before these run.
+- **Write-destructive** *(ask before running)* — Anything that deletes, syncs, scans, or changes folders: delete a playlist, replace a Classic playlist's tracks, download or delete podcast episodes, unsubscribe from an audiobook, add or remove library folders, scan the library, check or sync a device, change a device's USB identity. Rocksy pauses and shows **Confirm / Cancel** buttons before these run.
 
 ### Examples
 

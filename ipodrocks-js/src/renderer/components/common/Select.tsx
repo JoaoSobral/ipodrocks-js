@@ -3,9 +3,16 @@ import { createPortal } from "react-dom";
 import { Label } from "./Label";
 import { InfoTooltip } from "./InfoTooltip";
 
-interface SelectOption {
+export interface SelectOption {
   value: string;
   label: string;
+  /**
+   * Optional heading this option sits under. Consecutive options sharing a
+   * group render beneath one header; ungrouped options render as before.
+   */
+  group?: string;
+  /** Secondary text shown to the right, e.g. a USB id. */
+  detail?: string;
 }
 
 interface SelectProps {
@@ -87,25 +94,47 @@ export function Select({
       style={dropdownStyle}
       role="listbox"
     >
-      {options.map((opt) => (
-        <button
-          key={opt.value}
-          type="button"
-          role="option"
-          aria-selected={opt.value === value}
-          onClick={() => {
-            onChange?.(opt.value);
-            setOpen(false);
-          }}
-          className={`w-full px-3 py-2 text-left text-sm transition-colors ${
-            opt.value === value
-              ? "bg-primary/20 text-primary"
-              : "text-foreground hover:bg-muted/50"
-          }`}
-        >
-          {opt.label}
-        </button>
-      ))}
+      {options.map((opt, i) => {
+        // Headers are presentational so they stay out of the option sequence
+        // for assistive tech and for tests that select by role="option".
+        const header =
+          opt.group && opt.group !== options[i - 1]?.group ? (
+            <div
+              key={`group-${opt.group}`}
+              role="presentation"
+              className="px-3 pt-2 pb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground"
+            >
+              {opt.group}
+            </div>
+          ) : null;
+
+        return (
+          <div key={opt.value}>
+            {header}
+            <button
+              type="button"
+              role="option"
+              aria-selected={opt.value === value}
+              onClick={() => {
+                onChange?.(opt.value);
+                setOpen(false);
+              }}
+              className={`w-full px-3 py-2 text-left text-sm transition-colors flex items-center justify-between gap-2 ${
+                opt.value === value
+                  ? "bg-primary/20 text-primary"
+                  : "text-foreground hover:bg-muted/50"
+              }`}
+            >
+              <span className="truncate">{opt.label}</span>
+              {opt.detail && (
+                <span className="shrink-0 font-mono text-xs text-muted-foreground">
+                  {opt.detail}
+                </span>
+              )}
+            </button>
+          </div>
+        );
+      })}
     </div>,
     document.body
   );
