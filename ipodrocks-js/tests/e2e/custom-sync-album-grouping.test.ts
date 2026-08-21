@@ -80,6 +80,49 @@ function seedCompilation(): boolean {
   return true;
 }
 
+/** Seed a single-artist album, optionally with an album-artist tag. */
+function seedAlbum(
+  album: string,
+  artist: string,
+  albumArtist: string | null,
+  fileName = "01.mp3"
+): boolean {
+  const dir = path.join(seedDir, `${artist} - ${album}`);
+  fs.mkdirSync(dir, { recursive: true });
+  const meta = [
+    "-metadata", `title=Only Track`,
+    "-metadata", `artist=${artist}`,
+    "-metadata", `album=${album}`,
+  ];
+  if (albumArtist) meta.push("-metadata", `album_artist=${albumArtist}`);
+
+  const out = path.join(dir, fileName);
+  const res = spawnSync(
+    "ffmpeg",
+    ["-y", "-v", "quiet", "-f", "lavfi", "-i", "anullsrc=r=8000:cl=mono", "-t", "1", ...meta, out],
+    { encoding: "utf8" }
+  );
+  return res.status === 0 && fs.existsSync(out);
+}
+
+/** Open Sync → Custom so the album picker is on screen. */
+async function openCustomSync(window: Page): Promise<void> {
+  await window.click('button:has-text("Sync")');
+  await window.click('input[value="custom"], label:has-text("Custom")');
+  await window.waitForSelector('text="Choose what to sync"', { timeout: 10_000 });
+}
+
+/** The visible text of every row in the Albums box. */
+async function albumRowTexts(window: Page): Promise<string[]> {
+  const box = window
+    .locator("div.theme-box")
+    .filter({ has: window.locator('p:text-is("Albums")') })
+    .first();
+  await box.waitFor({ timeout: 10_000 });
+  await box.locator("label").first().waitFor({ timeout: 10_000 });
+  return (await box.locator("label").allInnerTexts()).map((t) => t.trim());
+}
+
 async function readyWindow(): Promise<Page> {
   const window = await launched.app.firstWindow();
   await window.waitForLoadState("domcontentloaded");
@@ -283,4 +326,87 @@ test("custom sync selects the whole compilation from a single album label", asyn
 
   expect(result.errors).toBe(0);
   expect(result.synced).toBe(3);
+});
+
+test("the album row shows the album name, not \"Album — Artist\"", async () => {
+  test.skip(!seeded, "ffmpeg unavailable — cannot seed tagged audio");
+  const window = await readyWindow();
+  await scanAndAddDevice(window);
+  await openCustomSync(window);
+
+  const rows = await albumRowTexts(window);
+  // The compilation is one row, and it reads as the plain album name.
+  expect(rows).toContain(ALBUM);
+  expect(rows.filter((r) => r === ALBUM)).toHaveLength(1);
+  // No artist suffix on an unambiguous album.
+  expect(rows.some((r) => r.includes(`${ALBUM} — `))).toBe(false);
+});
+
+test("two albums sharing a title still show their artists", async () => {
+  test.skip(!seeded, "ffmpeg unavailable — cannot seed tagged audio");
+  // Without the artist these would be two identical, unpickable rows.
+  const a = seedAlbum("Greatest Hits", "ABBA", "ABBA");
+  const b = seedAlbum("Greatest Hits", "Queen", "Queen");
+  test.skip(!a || !b, "ffmpeg unavailable");
+
+  const window = await readyWindow();
+  await scanAndAddDevice(window);
+  await openCustomSync(window);
+
+  const rows = await albumRowTexts(window);
+  expect(rows).toContain("Greatest Hits — ABBA");
+  expect(rows).toContain("Greatest Hits — Queen");
+  // ...while the unambiguous compilation stays clean.
+  expect(rows).toContain(ALBUM);
+});
+
+test("ticking a renamed-looking row still syncs the right tracks", async () => {
+  test.skip(!seeded, "ffmpeg unavailable — cannot seed tagged audio");
+  const window = await readyWindow();
+  const deviceId = await scanAndAddDevice(window);
+  await openCustomSync(window);
+
+  // Tick the compilation by its displayed (bare) name...
+  await window.click(`label:has-text("${ALBUM}") input[type="checkbox"]`);
+  await window.click('button:has-text("Start Sync")');
+  await window.waitForSelector('text=/Completed|Success|completed/i', { timeout: 30_000 });
+
+  // ...and the underlying key still selected all three tracks.
+  const prefs = await window.evaluate(
+    async (id) =>
+      (await (window as unknown as ApiWindow).api.invoke(
+        "sync:getDevicePreferences",
+        id
+      )) as { selections?: { albums?: string[] } } | null,
+    deviceId
+  );
+  expect(prefs?.selections?.albums).toEqual([`${ALBUM} — ${ALBUM_ARTIST}`]);
+});
+
+test("a library with no album-artist tags explains why the setting looks inert", async () => {
+  test.skip(!seeded, "ffmpeg unavailable — cannot seed tagged audio");
+  // Wipe the tagged compilation; seed one album with NO album_artist tag.
+  fs.rmSync(seedDir, { recursive: true, force: true });
+  fs.mkdirSync(seedDir, { recursive: true });
+  test.skip(!seedAlbum("Untagged Album", "Some Artist", null), "ffmpeg unavailable");
+
+  const window = await readyWindow();
+  await scanAndAddDevice(window);
+  await openCustomSync(window);
+
+  await expect(
+    window.locator("text=/No album-artist tags are in use/i")
+  ).toBeVisible({ timeout: 10_000 });
+  await expect(window.locator('button:has-text("Scan library")')).toBeVisible();
+});
+
+test("the hint is absent once the library does have album-artist tags", async () => {
+  test.skip(!seeded, "ffmpeg unavailable — cannot seed tagged audio");
+  const window = await readyWindow();
+  await scanAndAddDevice(window);
+  await openCustomSync(window);
+
+  await expect(
+    window.locator("text=/No album-artist tags are in use/i")
+  ).toHaveCount(0);
 });

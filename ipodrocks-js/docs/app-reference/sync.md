@@ -56,6 +56,10 @@ An album is identified by its title *and* an artist. **Group albums by** decides
 
 The setting is per device and is saved with the rest of that device's sync preferences.
 
+**Album rows show the album name.** The list reads as album titles alone; the artist is appended only when two different albums share a title (e.g. "Greatest Hits — ABBA" and "Greatest Hits — Queen"), where it is the only thing telling them apart. Hover any row to see its full name.
+
+**If the two options look identical**, no album-artist tags are in use in your library and the panel says so. iPodRocks reads that tag **from your files during a library scan**, so this is what you see when the library was last scanned before v2.3.0, or when you tagged album artists after your last scan. The note has a **Scan library** button that runs one; the scan reads the tags and the list changes on your next visit.
+
 **Changing it moves files.** The grouping decides where tracks are written, so switching it (or switching **Mirror library folder structure**) means the next sync copies tracks to their new locations. Set the Orphan Policy to **Remove** on that sync if you want the old folders cleaned up in the same pass; with **Keep** they stay behind until you remove them yourself.
 
 **Upgrading from an earlier version.** Libraries scanned before v2.3.0 never had their `albumartist` tags read, so their compilations are still split per track artist. The next library scan re-reads those tags once and merges the duplicate album entries; it does not re-hash files or re-transcode shadow libraries, so it is quick. Album selections you had already saved keep working — the old labels are still matched, and the picker moves them onto the new ones for you.

@@ -21,7 +21,12 @@ import { SyncProgressModal } from "../modals/SyncProgressModal";
 import { useAudiobooksStore } from "../../stores/audiobooks-store";
 import type { Track, Playlist, ShadowLibrary } from "@shared/types";
 import type { AlbumGrouping, CustomSelectionMode, CustomSelections, ExtraTrackPolicy, SyncOptions, SyncType } from "@shared/types";
-import { albumLabelForTrack, albumLabelsForTrack } from "@shared/album-label";
+import {
+  albumEntryForTrack,
+  albumLabelForTrack,
+  albumLabelsForTrack,
+  buildAlbumDisplayMap,
+} from "@shared/album-label";
 
 interface SyncPrefsState {
   syncType: SyncType;
@@ -142,6 +147,8 @@ export function SyncPanel() {
   const [deviceId, setDeviceId] = useState<number | "">("");
   const pendingSyncDeviceId = useUIStore((s) => s.pendingSyncDeviceId);
   const setPendingSyncDeviceId = useUIStore((s) => s.setPendingSyncDeviceId);
+  const setPendingLibraryScan = useUIStore((s) => s.setPendingLibraryScan);
+  const navigateTo = useUIStore((s) => s.navigateTo);
   const [shadowLibs, setShadowLibs] = useState<ShadowLibrary[]>([]);
   const [prefs, dispatch] = useReducer(syncPrefsReducer, INITIAL_PREFS);
   const { syncType, fullIncludeMusic, fullIncludePodcasts, fullIncludeAudiobooks, fullIncludePlaylists, extraTrackPolicy, preserveFolderStructure, albumGrouping, customMode, selectedItems } = prefs;
@@ -160,14 +167,45 @@ export function SyncPanel() {
 
   // Issue #113: one entry per (album, album artist) — grouping on the track
   // artist made every compilation appear once per contributing artist.
-  const albums = useMemo(() => {
+  //
+  // `albums` holds the selection KEYS ("Album — Artist"), which are persisted in
+  // custom_selections_json and matched in the main process. `albumDisplay` maps
+  // each key to what the row actually reads — the album name on its own, unless
+  // two albums share a title. Display and key are deliberately separate so the
+  // rows can be readable without invalidating a single saved selection.
+  const { albums, albumDisplay } = useMemo(() => {
     const list = Array.isArray(tracks) ? tracks : [];
-    const seen = new Set<string>();
-    list
+    const entries = list
       .filter((t) => (t?.contentType || "music") === "music")
-      .forEach((t) => seen.add(albumLabelForTrack(t, albumGrouping)));
-    return [...seen].sort();
+      .map((t) => albumEntryForTrack(t, albumGrouping));
+    const keys = [...new Set(entries.map((e) => e.key))].sort();
+    return { albums: keys, albumDisplay: buildAlbumDisplayMap(entries) };
   }, [tracks, albumGrouping]);
+
+  /**
+   * Whether any track actually carries an album artist distinct from its own
+   * artist. When none do, the two grouping options produce an identical list
+   * and the dropdown looks broken — so we say so rather than leaving the user
+   * clicking an inert control.
+   *
+   * Album-artist tags are read from the files during a library scan, so a
+   * library last scanned before this feature existed always lands here until
+   * it is scanned once more.
+   */
+  const albumArtistDataState = useMemo(() => {
+    const music = (Array.isArray(tracks) ? tracks : []).filter(
+      (t) => (t?.contentType || "music") === "music"
+    );
+    if (music.length === 0) return "empty" as const;
+    return music.some((t) => (t.albumArtist ?? "") !== (t.artist ?? ""))
+      ? ("present" as const)
+      : ("absent" as const);
+  }, [tracks]);
+
+  function scanLibraryForAlbumArtists() {
+    setPendingLibraryScan(true);
+    navigateTo?.("library");
+  }
 
   /**
    * Issue #113: selections saved before album-artist grouping hold
@@ -741,6 +779,23 @@ export function SyncPanel() {
             ]}
           />
         </div>
+        {albumGrouping === "album-artist" && albumArtistDataState === "absent" && (
+          <div className="mt-3 rounded-md border border-border bg-muted/30 p-3 text-xs text-muted-foreground leading-relaxed">
+            <p>
+              No album-artist tags are in use in your library, so both options
+              produce the same list. iPodRocks reads that tag from your files
+              during a library scan — if you have tagged album artists since your
+              last scan, run one to pick them up.
+            </p>
+            <Button
+              size="sm"
+              className="mt-2"
+              onClick={scanLibraryForAlbumArtists}
+            >
+              Scan library
+            </Button>
+          </div>
+        )}
       </Card>
 
       {/* Custom sync: grid of categories */}
@@ -808,7 +863,9 @@ export function SyncPanel() {
                             onChange={() => toggleSelection(key, label, !isSelected)}
                             className="accent-primary rounded"
                           />
-                          <span className="truncate min-w-0">{label}</span>
+                          <span className="truncate min-w-0" title={label}>
+                            {key === "albums" ? (albumDisplay.get(label) ?? label) : label}
+                          </span>
                           {isAutoAudiobook && (
                             <span
                               className="shrink-0 text-[10px] font-medium px-1 py-0.5 rounded bg-primary/10 text-primary"

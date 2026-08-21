@@ -53,6 +53,60 @@ export function albumLabelForTrack(
   return albumLabel(albumOf(t), artist);
 }
 
+/** A picker entry: its stable key plus the parts needed to display it. */
+export interface AlbumEntry {
+  /** Selection key — byte-identical to `albumLabelForTrack`. Persisted; never change. */
+  key: string;
+  album: string;
+  artist: string;
+}
+
+/**
+ * The picker entry a track contributes under `grouping`.
+ *
+ * `key` MUST equal `albumLabelForTrack(t, grouping)`: it is what gets written to
+ * `custom_selections_json` and what the main-process matcher compares against.
+ * Display text is derived separately by {@link buildAlbumDisplayMap}, so the
+ * two can diverge without breaking a single saved selection.
+ */
+export function albumEntryForTrack(
+  t: AlbumLabelSource,
+  grouping: AlbumGrouping
+): AlbumEntry {
+  const album = albumOf(t);
+  const artist =
+    grouping === "track-artist" ? trackArtistOf(t) : albumArtistOf(t);
+  return { key: albumLabel(album, artist), album, artist };
+}
+
+/**
+ * Map each entry key to the text shown for it.
+ *
+ * Album titles carry the meaning, so a row reads as just the album name. The
+ * artist is appended only when it is doing real work — two different albums
+ * sharing a title, e.g. "Greatest Hits" by ABBA and by Queen — which would
+ * otherwise be two identical, unpickable rows.
+ */
+export function buildAlbumDisplayMap(
+  entries: AlbumEntry[]
+): Map<string, string> {
+  // Count DISTINCT keys per title: a compilation contributes one entry per
+  // track, and those duplicates must not make a unique album look ambiguous.
+  const keysByAlbum = new Map<string, Set<string>>();
+  for (const e of entries) {
+    const set = keysByAlbum.get(e.album) ?? new Set<string>();
+    set.add(e.key);
+    keysByAlbum.set(e.album, set);
+  }
+
+  const display = new Map<string, string>();
+  for (const e of entries) {
+    const ambiguous = (keysByAlbum.get(e.album)?.size ?? 0) > 1;
+    display.set(e.key, ambiguous ? albumLabel(e.album, e.artist) : e.album);
+  }
+  return display;
+}
+
 /**
  * Every label this track may legitimately be selected under: the label for the
  * active grouping plus the legacy track-artist label.
