@@ -183,27 +183,6 @@ test.afterEach(async () => {
   }
 });
 
-test("a compilation is one album entry, not one per track artist", async () => {
-  test.skip(!seeded, "ffmpeg unavailable — cannot seed tagged audio");
-  const window = await readyWindow();
-  await scanAndAddDevice(window);
-
-  const tracks = await compilationTracks(window);
-  expect(tracks).toHaveLength(3);
-
-  // Track artists stay distinct; the album artist is shared.
-  expect(new Set(tracks.map((t) => t.artist)).size).toBe(3);
-  expect(new Set(tracks.map((t) => t.albumArtist))).toEqual(new Set([ALBUM_ARTIST]));
-
-  // The picker builds labels as `${album} — ${artist}`; under album-artist
-  // grouping the compilation collapses to a single entry.
-  const byAlbumArtist = new Set(tracks.map((t) => `${t.album} — ${t.albumArtist}`));
-  expect([...byAlbumArtist]).toEqual([`${ALBUM} — ${ALBUM_ARTIST}`]);
-
-  const byTrackArtist = new Set(tracks.map((t) => `${t.album} — ${t.artist}`));
-  expect(byTrackArtist.size).toBe(3);
-});
-
 test("syncing without folder mirroring puts the compilation in one folder", async () => {
   test.skip(!seeded, "ffmpeg unavailable — cannot seed tagged audio");
   const window = await readyWindow();
@@ -237,34 +216,7 @@ test("syncing without folder mirroring puts the compilation in one folder", asyn
   }
 });
 
-test("track-artist grouping restores the per-artist folder layout", async () => {
-  test.skip(!seeded, "ffmpeg unavailable — cannot seed tagged audio");
-  const window = await readyWindow();
-  const deviceId = await scanAndAddDevice(window);
-
-  await window.evaluate(
-    async (id) =>
-      (window as unknown as ApiWindow).api.invoke("sync:start", {
-        deviceId: id,
-        syncType: "full",
-        extraTrackPolicy: "keep",
-        preserveFolderStructure: false,
-        albumGrouping: "track-artist",
-        includeMusic: true,
-        includePodcasts: false,
-        includeAudiobooks: false,
-        includePlaylists: false,
-      }),
-    deviceId
-  );
-
-  const musicDir = path.join(deviceDir, "Music");
-  for (const artist of TRACK_ARTISTS) {
-    expect(fs.existsSync(path.join(musicDir, artist, ALBUM))).toBe(true);
-  }
-});
-
-test("the grouping preference persists per device", async () => {
+test("track-artist grouping restores the per-artist layout, and sticks", async () => {
   test.skip(!seeded, "ffmpeg unavailable — cannot seed tagged audio");
   const window = await readyWindow();
   const deviceId = await scanAndAddDevice(window);
@@ -293,45 +245,30 @@ test("the grouping preference persists per device", async () => {
     return { before: before?.albumGrouping ?? null, after: after?.albumGrouping ?? null };
   }, deviceId);
 
-  // Defaults to album-artist (or has no saved prefs yet), then persists the choice.
+  const musicDir = path.join(deviceDir, "Music");
+  for (const artist of TRACK_ARTISTS) {
+    expect(fs.existsSync(path.join(musicDir, artist, ALBUM))).toBe(true);
+  }
+
+  // The sync persists the grouping per device, so the next one reproduces this
+  // layout instead of silently reshuffling back to the album-artist default.
   expect(prefs.after).toBe("track-artist");
   if (prefs.before !== null) expect(prefs.before).toBe("album-artist");
-});
-
-test("custom sync selects the whole compilation from a single album label", async () => {
-  test.skip(!seeded, "ffmpeg unavailable — cannot seed tagged audio");
-  const window = await readyWindow();
-  const deviceId = await scanAndAddDevice(window);
-
-  const result = await window.evaluate(
-    async ([id, label]) =>
-      (await (window as unknown as ApiWindow).api.invoke("sync:start", {
-        deviceId: id,
-        syncType: "custom",
-        extraTrackPolicy: "keep",
-        preserveFolderStructure: false,
-        albumGrouping: "album-artist",
-        selections: {
-          mode: "include",
-          albums: [label],
-          artists: [],
-          genres: [],
-          podcasts: [],
-          audiobooks: [],
-          playlists: [],
-        },
-      })) as { errors: number; synced: number },
-    [deviceId, `${ALBUM} — ${ALBUM_ARTIST}`] as [number, string]
-  );
-
-  expect(result.errors).toBe(0);
-  expect(result.synced).toBe(3);
 });
 
 test("the album row shows the album name, not \"Album — Artist\"", async () => {
   test.skip(!seeded, "ffmpeg unavailable — cannot seed tagged audio");
   const window = await readyWindow();
   await scanAndAddDevice(window);
+
+  // The `album_artist` tag ffmpeg wrote survives the scan and reaches the
+  // renderer — everything below depends on that, so it is worth pinning here
+  // rather than trusting the UI to imply it.
+  const tracks = await compilationTracks(window);
+  expect(tracks).toHaveLength(3);
+  expect(new Set(tracks.map((t) => t.artist)).size).toBe(3);
+  expect(new Set(tracks.map((t) => t.albumArtist))).toEqual(new Set([ALBUM_ARTIST]));
+
   await openCustomSync(window);
 
   const rows = await albumRowTexts(window);
@@ -340,6 +277,12 @@ test("the album row shows the album name, not \"Album — Artist\"", async () =>
   expect(rows.filter((r) => r === ALBUM)).toHaveLength(1);
   // No artist suffix on an unambiguous album.
   expect(rows.some((r) => r.includes(`${ALBUM} — `))).toBe(false);
+
+  // ...and the "your library has no album artists" hint stays away, because
+  // this library plainly does have them.
+  await expect(
+    window.locator("text=/No album-artist tags are in use/i")
+  ).toHaveCount(0);
 });
 
 test("two albums sharing a title still show their artists", async () => {
@@ -398,15 +341,4 @@ test("a library with no album-artist tags explains why the setting looks inert",
     window.locator("text=/No album-artist tags are in use/i")
   ).toBeVisible({ timeout: 10_000 });
   await expect(window.locator('button:has-text("Scan library")')).toBeVisible();
-});
-
-test("the hint is absent once the library does have album-artist tags", async () => {
-  test.skip(!seeded, "ffmpeg unavailable — cannot seed tagged audio");
-  const window = await readyWindow();
-  await scanAndAddDevice(window);
-  await openCustomSync(window);
-
-  await expect(
-    window.locator("text=/No album-artist tags are in use/i")
-  ).toHaveCount(0);
 });

@@ -323,7 +323,6 @@ export function SyncPanel() {
         try {
           const playlistTracks = await getPlaylistTracks(pl.id);
           for (const t of playlistTracks) {
-            const album = (t.album ?? "Unknown Album").trim();
             const artist = (t.artist ?? "Unknown Artist").trim();
             const genre = (t.genre ?? "Unknown Genre").trim();
             albumSet.add(albumLabelForTrack(t, albumGrouping));
@@ -343,7 +342,7 @@ export function SyncPanel() {
     return () => {
       cancelled = true;
     };
-  }, [syncType, playlists, selectedPlaylistsKey]);
+  }, [syncType, playlists, selectedPlaylistsKey, albumGrouping]);
 
   const affectedItems = useMemo(() => {
     const selected: Record<string, Set<string>> = {

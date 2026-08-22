@@ -64,7 +64,7 @@ function makeCtx(overrides: Partial<AiToolContext> = {}): AiToolContext {
     getPlaylistCore: () => playlistCoreMock,
     getDevicesCore: () => ({
       getDevices: vi.fn().mockReturnValue([
-        { profile: { id: 1, name: "iPod Classic", mountPath: "/Volumes/IPOD", modelName: "iPod Classic", lastSyncDate: null } },
+        { profile: { id: 1, name: "iPod Classic", mountPath: "/Volumes/IPOD", modelName: "iPod Classic", lastSyncDate: null, usbVendorId: "05ac", usbProductId: "1266", usbSerial: "SERIAL_TOOL" } },
       ]),
       getDeviceById: vi.fn().mockReturnValue({ profile: { id: 1, name: "iPod Classic" } }),
     }) as unknown as ReturnType<AiToolContext["getDevicesCore"]>,
@@ -169,6 +169,34 @@ describe("device_list (read)", () => {
     const result = await getToolByName("device_list")!.run({}, ctx) as Array<{ id: number; name: string }>;
     expect(result[0].id).toBe(1);
     expect(result[0].name).toBe("iPod Classic");
+  });
+
+  // Rocksy has to see the USB identity, or device_set_usb_identity has no way
+  // to tell the user what a device is currently bound to.
+  it("exposes the USB identity", async () => {
+    const ctx = makeCtx();
+    const result = (await getToolByName("device_list")!.run({}, ctx)) as Array<{
+      usbVendorId: string | null;
+      usbProductId: string | null;
+      usbSerial: string | null;
+    }>;
+    expect(result[0]).toMatchObject({
+      usbVendorId: "05ac",
+      usbProductId: "1266",
+      usbSerial: "SERIAL_TOOL",
+    });
+  });
+
+  it("reports a null identity for a device matched by mount path", async () => {
+    const ctx = makeCtx({
+      getDevicesCore: () => ({
+        getDevices: vi.fn().mockReturnValue([{ profile: { id: 2, name: "Unbound" } }]),
+      }) as unknown as ReturnType<AiToolContext["getDevicesCore"]>,
+    });
+    const result = (await getToolByName("device_list")!.run({}, ctx)) as Array<{
+      usbVendorId: string | null;
+    }>;
+    expect(result[0].usbVendorId).toBeNull();
   });
 });
 

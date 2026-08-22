@@ -30,6 +30,12 @@ import {
   formatDuplicateWarnings,
 } from "./duplicate-files";
 
+/**
+ * Bound on how many values go into one `IN (?, ?, …)`. SQLite's default
+ * SQLITE_MAX_VARIABLE_NUMBER is 32766; stay well under it.
+ */
+const SQL_PARAM_CHUNK = 500;
+
 interface TrackUpsertData {
   path: string;
   filename: string;
@@ -441,15 +447,22 @@ export class LibraryScanner {
 
     // Capture shadow destinations before the rows below are deleted — see the
     // note above. Best-effort: a missing shadow_tracks table is not fatal.
+    //
+    // Chunked because this is the one query here whose parameter count scales
+    // with the removal: unplugging a network share makes the whole library look
+    // removed, and a single IN () over 30k+ ids trips SQLite's variable limit.
+    // That throws into the catch below, which would silently take the shadow
+    // paths with it and resurrect the very leak this capture exists to fix.
     const removedShadowPaths: string[] = [];
-    if (ids.length > 0) {
+    for (let i = 0; i < ids.length; i += SQL_PARAM_CHUNK) {
+      const chunk = ids.slice(i, i + SQL_PARAM_CHUNK);
       try {
         const rows = this.db
           .prepare(
             `SELECT shadow_path FROM shadow_tracks
-             WHERE source_track_id IN (${ids.map(() => "?").join(",")})`
+             WHERE source_track_id IN (${chunk.map(() => "?").join(",")})`
           )
-          .all(...ids) as { shadow_path: string }[];
+          .all(...chunk) as { shadow_path: string }[];
         for (const r of rows) {
           if (r.shadow_path) removedShadowPaths.push(r.shadow_path);
         }
@@ -517,7 +530,6 @@ export class LibraryScanner {
     };
   }
 
-  /** Remove albums, artists, genres, codecs with no referencing tracks. */
   /**
    * Run the one-shot album-artist backfill (issue #113) if it has not run yet.
    * No-op on every scan after the first. Failures are logged and swallowed —
@@ -553,6 +565,7 @@ export class LibraryScanner {
     }
   }
 
+  /** Remove albums, artists, genres, codecs with no referencing tracks. */
   private cleanupOrphanedEntities(): void {
     const orphanAlbumIds = this.db
       .prepare(

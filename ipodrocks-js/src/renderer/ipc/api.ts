@@ -3,7 +3,6 @@ import type {
   LibraryFolder,
   DeviceProfile,
   AddDeviceConfig,
-  UsbDeviceInfo,
   UsbSnapshot,
   ScanResult,
   SyncOptions,

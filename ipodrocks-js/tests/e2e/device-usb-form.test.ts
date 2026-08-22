@@ -13,35 +13,36 @@ import { launchApp, type LaunchedApp } from "./electron-launcher";
 
 let launched: LaunchedApp;
 
-test.beforeEach(async () => {
-  launched = await launchApp();
+// One app for the whole file: none of these tests depend on the state the
+// others leave behind, and an Electron cold start costs more than every
+// assertion here put together.
+test.describe.configure({ mode: "serial" });
+
+test.beforeAll(async () => {
+  // DevicePanel auto-opens an "MPC unavailable" reminder on hosts without
+  // `mpcenc`, and its backdrop swallows clicks. Seeding the "don't remind me"
+  // pref means the modal cannot appear at all, so the form helper below does
+  // not have to spend 8s waiting to find out whether it did.
+  launched = await launchApp(undefined, { seedPrefs: { mpcRemindDisabled: true } });
 });
-test.afterEach(async () => {
+test.afterAll(async () => {
   await launched.cleanup();
 });
 
-/**
- * Open the Devices panel and the Add Device modal.
- *
- * On hosts without `mpcenc` the panel auto-opens an "MPC unavailable" reminder
- * whose backdrop swallows clicks; `waitFor()` polls (unlike `isVisible()`) so
- * the modal settles before we decide whether to dismiss it. See device-add.test.ts.
- */
+/** Open the Devices panel and the Add Device modal. */
 async function openAddDeviceForm(window: Page): Promise<void> {
   await window.waitForLoadState("domcontentloaded");
   await window.locator('button:has-text("Devices"), a:has-text("Devices")').first().click();
-
-  const mpcModal = window.locator('div[role="dialog"]:has-text("Musepack (MPC) unavailable")');
-  const appeared = await mpcModal
-    .waitFor({ state: "visible", timeout: 8_000 })
-    .then(() => true)
-    .catch(() => false);
-  if (appeared) await mpcModal.locator('button[title="Close"]').click();
-
   await window.locator('button:has-text("+ Add Device")').first().click();
 }
 
-test("the USB Device field renders and defaults to mount-path matching", async () => {
+/** Close the Add Device modal so the next test starts from the panel. */
+async function closeAddDeviceForm(window: Page): Promise<void> {
+  await window.locator('button:text-is("Cancel")').first().click();
+  await window.locator('button:text-is("Add Device")').waitFor({ state: "hidden" });
+}
+
+test("the USB field defaults to mount-path matching and always offers it back", async () => {
   const window = await launched.app.firstWindow();
   await openAddDeviceForm(window);
 
@@ -49,27 +50,26 @@ test("the USB Device field renders and defaults to mount-path matching", async (
   await expect(usbSelect).toBeVisible();
 
   // Default state tells the user what happens when they leave it alone.
-  await expect(
-    usbSelect.locator('button:has-text("Not set — match by mount path only")')
-  ).toBeVisible();
+  // Target the trigger by its text — the field's tooltip icon is a button too.
+  const trigger = usbSelect.locator(
+    'button:has-text("Not set — match by mount path only")'
+  );
+  await expect(trigger).toBeVisible();
 
   // The rescan control is present — users plug the device in after opening this.
   await expect(window.locator('button:text-is("Refresh")')).toBeVisible();
-});
 
-test("the USB list always offers a way back to mount-path matching", async () => {
-  const window = await launched.app.firstWindow();
-  await openAddDeviceForm(window);
-
-  // Target the trigger by its text — the field's tooltip icon is a button too.
-  await window
-    .getByTestId("usb-device-select")
-    .locator('button:has-text("Not set — match by mount path only")')
-    .click();
-
-  // Whatever hardware this runs on, the "not set" escape hatch is option one.
+  // Whatever hardware this runs on, the "not set" escape hatch is option one,
+  // so a user who binds the wrong unit can always get back to where they were.
+  await trigger.click();
   const options = window.locator('[role="option"]');
   await expect(options.first()).toHaveText(/Not set — match by mount path only/);
+
+  // Picking it closes the dropdown and leaves the field where it started.
+  await options.first().click();
+  await expect(trigger).toBeVisible();
+
+  await closeAddDeviceForm(window);
 });
 
 test("a device can still be added without touching the USB field", async () => {

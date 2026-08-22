@@ -6,7 +6,8 @@
  * bogus vendor id (ffff) that no real device can report, so the suite behaves
  * identically on a laptop with an iPod attached and on a headless CI runner.
  *
- * Parser-level coverage lives in src/__tests__/usb-devices.test.ts.
+ * Parser-level coverage lives in src/__tests__/usb-devices.test.ts, and the
+ * Rocksy `device_list` view of the identity in src/__tests__/assistant-tools.test.ts.
  *
  * Run: npm run build && npx playwright test
  */
@@ -18,10 +19,16 @@ import { launchApp, type LaunchedApp } from "./electron-launcher";
 
 let launched: LaunchedApp;
 
-test.beforeEach(async () => {
+// One app for the file. Every test below names its device with a unique serial
+// and looks the result up by the id it got back, so none of them can see (or be
+// confused by) the rows the others leave in the database — and an Electron cold
+// start costs several times what the assertions themselves do.
+test.describe.configure({ mode: "serial" });
+
+test.beforeAll(async () => {
   launched = await launchApp();
 });
-test.afterEach(async () => {
+test.afterAll(async () => {
   await launched.cleanup();
 });
 
@@ -252,27 +259,4 @@ test("device:listUsb returns a well-formed snapshot", async () => {
     expect(d.vendorId).toMatch(/^[0-9a-f]{4}$/);
     expect(d.productId).toMatch(/^[0-9a-f]{4}$/);
   }
-});
-
-test("device_list exposes the USB identity to Rocksy", async () => {
-  const window = await readyWindow();
-
-  const device = await window.evaluate(async () => {
-    const api = (window as unknown as { api: Api }).api;
-    const added = (await api.invoke("device:add", {
-      name: `USB Tool ${Date.now()}`,
-      mountPath: "/tmp/ipr-usb-tool",
-      usbVendorId: "05ac",
-      usbProductId: "1266",
-      usbSerial: "SERIAL_TOOL",
-    })) as { id: number };
-
-    const list = (await api.invoke("device:list")) as Array<{
-      id: number;
-      usbProductId?: string | null;
-    }>;
-    return list.find((d) => d.id === added.id);
-  });
-
-  expect(device?.usbProductId).toBe("1266");
 });

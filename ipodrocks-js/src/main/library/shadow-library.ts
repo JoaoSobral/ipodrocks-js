@@ -1108,6 +1108,9 @@ export class ShadowLibraryManager {
     }
 
     const entries: ShadowFileEntry[] = [];
+    // `dir` is always already absolute (the walk starts at a resolved root and
+    // only ever path.joins onto it), so its normalized form is computed once per
+    // directory rather than twice per file.
     const walk = (dir: string): void => {
       let dirents: fs.Dirent[];
       try {
@@ -1115,19 +1118,22 @@ export class ShadowLibraryManager {
       } catch {
         return; // unreadable subtree: leave it entirely alone
       }
+      const normalizedDir = normalizePath(dir);
       for (const d of dirents) {
         const full = path.join(dir, d.name);
         if (d.isDirectory()) {
           walk(full);
           continue;
         }
+        // Symlinks report false here, so the walk never follows one out of the
+        // tree and never offers one up for deletion.
         if (!d.isFile()) continue;
         try {
           const st = fs.statSync(full);
           entries.push({
             path: full,
-            normalizedPath: normalizePath(path.resolve(full)),
-            normalizedDir: normalizePath(path.resolve(dir)),
+            normalizedPath: normalizePath(full),
+            normalizedDir,
             size: st.size,
           });
         } catch {
