@@ -1,4 +1,5 @@
-import fs from "fs";
+import fs, { type Dirent } from "fs";
+import fsp from "fs/promises";
 import path from "path";
 import Database from "better-sqlite3";
 
@@ -36,6 +37,70 @@ const RECONCILE_YIELD_EVERY = 50;
 
 /** Pending row writes buffered before a transaction flush. */
 const RECONCILE_FLUSH_EVERY = 500;
+
+/**
+ * Files handled between event-loop yields during the orphan prune. Each step is
+ * one awaited stat or unlink, so yielding on every one would cost more than the
+ * work; every few hundred keeps the window responsive without measurable drag.
+ */
+const PRUNE_YIELD_EVERY = 200;
+
+/** Hand the event loop back so the renderer can paint mid-walk. */
+function yieldToEventLoop(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
+}
+
+/**
+ * Remove directories a deletion pass just emptied, walking up towards `root`.
+ *
+ * `root` itself always survives: a shadow library whose every file was stale is
+ * still a configured shadow library, and deleting its folder would break the
+ * next build. Deepest paths are tried first so a parent is only considered once
+ * its children are gone, and a non-empty directory simply fails and stops that
+ * chain.
+ */
+async function removeEmptiedDirs(dirs: Set<string>, root: string): Promise<void> {
+  for (const dir of deepestFirst(dirs)) {
+    let current = dir;
+    while (current !== root && current.startsWith(root + path.sep)) {
+      try {
+        await fsp.rmdir(current);
+      } catch (err) {
+        if (!keepClimbing(err)) break;
+      }
+      current = path.dirname(current);
+    }
+  }
+}
+
+/** {@link removeEmptiedDirs} for the scan path, which is synchronous. */
+function removeEmptiedDirsSync(dirs: Set<string>, root: string): void {
+  for (const dir of deepestFirst(dirs)) {
+    let current = dir;
+    while (current !== root && current.startsWith(root + path.sep)) {
+      try {
+        fs.rmdirSync(current);
+      } catch (err) {
+        if (!keepClimbing(err)) break;
+      }
+      current = path.dirname(current);
+    }
+  }
+}
+
+/** Deepest paths first, so a parent is tried only once its children are gone. */
+function deepestFirst(dirs: Set<string>): string[] {
+  return [...dirs].sort((a, b) => b.length - a.length);
+}
+
+/**
+ * ENOENT means another chain already removed this directory, so the climb can
+ * continue. Anything else — ENOTEMPTY above all — means something still lives
+ * here and this chain is finished.
+ */
+function keepClimbing(err: unknown): boolean {
+  return (err as NodeJS.ErrnoException)?.code === "ENOENT";
+}
 
 function computeDirectorySize(root: string): number {
   try {
@@ -1021,7 +1086,8 @@ export class ShadowLibraryManager {
     const roots = this.getShadowLibraries().map((l) => path.resolve(l.path));
     if (roots.length === 0) return 0;
 
-    const touchedRoots = new Set<string>();
+    /** Directories a deletion emptied, grouped by the root they belong to. */
+    const emptiedByRoot = new Map<string, Set<string>>();
     let deleted = 0;
 
     for (const p of shadowPaths) {
@@ -1037,7 +1103,9 @@ export class ShadowLibraryManager {
           fs.unlinkSync(resolved);
           deleted++;
         }
-        touchedRoots.add(root);
+        const dirs = emptiedByRoot.get(root) ?? new Set<string>();
+        dirs.add(path.dirname(resolved));
+        emptiedByRoot.set(root, dirs);
       } catch {
         /* best effort */
       }
@@ -1045,19 +1113,11 @@ export class ShadowLibraryManager {
 
     // A renamed album leaves its old directory empty; drop it so the shadow
     // tree keeps matching the library instead of filling with dead folders.
-    // Only descend into the root's children — cleanEmptyDirectories removes the
-    // directory it is given, and the configured shadow root must survive even
-    // when the library is momentarily empty.
-    for (const root of touchedRoots) {
-      try {
-        for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
-          if (entry.isDirectory()) {
-            cleanEmptyDirectories(path.join(root, entry.name));
-          }
-        }
-      } catch {
-        /* best effort */
-      }
+    // Only the directories we deleted from are considered — sweeping each whole
+    // root would re-walk the entire shadow tree to reclaim a handful of folders,
+    // and the configured root itself must survive even when it empties.
+    for (const [root, dirs] of emptiedByRoot) {
+      removeEmptiedDirsSync(dirs, root);
     }
 
     return deleted;
@@ -1078,11 +1138,11 @@ export class ShadowLibraryManager {
    * A library whose codec configuration is missing is refused: without it we
    * cannot tell a stale file from a correctly-encoded one.
    */
-  pruneOrphanedFiles(shadowLibId: number): {
+  async pruneOrphanedFiles(shadowLibId: number): Promise<{
     deleted: number;
     bytesFreed: number;
     scanned: number;
-  } {
+  }> {
     const lib = this.getShadowLibraryById(shadowLibId);
     if (!lib) throw new Error(`Shadow library #${shadowLibId} not found`);
     if (lib.codecConfigMissing) {
@@ -1107,14 +1167,18 @@ export class ShadowLibraryManager {
       if (r.shadow_path) known.add(normalizePath(path.resolve(r.shadow_path)));
     }
 
+    // Every filesystem call below is awaited and the loops yield, because this
+    // walks an entire shadow tree from an ipcMain handler: doing it
+    // synchronously froze the window — including the "Pruning…" spinner meant
+    // to show it was working — for as long as the walk took.
     const entries: ShadowFileEntry[] = [];
     // `dir` is always already absolute (the walk starts at a resolved root and
     // only ever path.joins onto it), so its normalized form is computed once per
     // directory rather than twice per file.
-    const walk = (dir: string): void => {
-      let dirents: fs.Dirent[];
+    const walk = async (dir: string): Promise<void> => {
+      let dirents: Dirent[];
       try {
-        dirents = fs.readdirSync(dir, { withFileTypes: true });
+        dirents = await fsp.readdir(dir, { withFileTypes: true });
       } catch {
         return; // unreadable subtree: leave it entirely alone
       }
@@ -1122,14 +1186,14 @@ export class ShadowLibraryManager {
       for (const d of dirents) {
         const full = path.join(dir, d.name);
         if (d.isDirectory()) {
-          walk(full);
+          await walk(full);
           continue;
         }
         // Symlinks report false here, so the walk never follows one out of the
         // tree and never offers one up for deletion.
         if (!d.isFile()) continue;
         try {
-          const st = fs.statSync(full);
+          const st = await fsp.stat(full);
           entries.push({
             path: full,
             normalizedPath: normalizePath(full),
@@ -1139,38 +1203,35 @@ export class ShadowLibraryManager {
         } catch {
           /* vanished mid-walk: not our problem, and not deletable */
         }
+        if (entries.length % PRUNE_YIELD_EVERY === 0) await yieldToEventLoop();
       }
     };
-    walk(root);
+    await walk(root);
 
     const { orphans } = decidePrune(entries, known);
 
     let deleted = 0;
     let bytesFreed = 0;
-    for (const o of orphans) {
+    const emptiedDirs = new Set<string>();
+    for (const [i, o] of orphans.entries()) {
       // Defence in depth: never touch anything outside this library's root.
       const resolved = path.resolve(o.path);
       if (resolved !== root && !resolved.startsWith(root + path.sep)) continue;
       try {
-        fs.unlinkSync(resolved);
+        await fsp.unlink(resolved);
         deleted++;
         bytesFreed += o.size;
+        emptiedDirs.add(path.dirname(resolved));
       } catch {
         /* best effort */
       }
+      if (i % PRUNE_YIELD_EVERY === 0) await yieldToEventLoop();
     }
 
     // Drop the album folders the deletions just emptied, without removing the
-    // configured root itself.
-    try {
-      for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
-        if (entry.isDirectory()) {
-          cleanEmptyDirectories(path.join(root, entry.name));
-        }
-      }
-    } catch {
-      /* best effort */
-    }
+    // configured root itself. Only the directories we actually deleted from are
+    // considered — a full-tree sweep would re-walk everything we just walked.
+    await removeEmptiedDirs(emptiedDirs, root);
 
     return { deleted, bytesFreed, scanned: entries.length };
   }

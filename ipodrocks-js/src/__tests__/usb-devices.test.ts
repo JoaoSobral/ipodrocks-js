@@ -5,6 +5,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
+import { normalizeUsbIdentity } from "../main/devices/devices-core";
 import {
   parseIoregOutput,
   parsePnpJson,
@@ -272,5 +273,53 @@ describe("usbDeviceMatches", () => {
   it("falls back to model-level matching when no serial was stored", () => {
     // This is the documented degradation: two identical units would collide.
     expect(usbDeviceMatches(ipod, "05ac", "1261", "")).toBe(true);
+  });
+});
+
+/**
+ * The three columns are one value. A device that is bound to a USB unit is only
+ * "connected" when that unit is present, so silently dropping the binding turns
+ * a mount-path collision back into a sync aimed at the wrong volume — which is
+ * the whole thing the feature exists to prevent.
+ */
+describe("normalizeUsbIdentity", () => {
+  it("canonicalizes both ids to lowercase 4-digit hex", () => {
+    expect(normalizeUsbIdentity("05AC", "1261", "SERIAL")).toEqual({
+      vendorId: "05ac",
+      productId: "1261",
+      serial: "SERIAL",
+    });
+  });
+
+  it("keeps an empty serial as '' so the uniqueness index still applies", () => {
+    expect(normalizeUsbIdentity("05ac", "1261", null)?.serial).toBe("");
+  });
+
+  it("returns null when all three are absent — the clear-the-binding case", () => {
+    expect(normalizeUsbIdentity(null, null, null)).toBeNull();
+    expect(normalizeUsbIdentity(undefined, undefined, undefined)).toBeNull();
+    expect(normalizeUsbIdentity("", "", "")).toBeNull();
+  });
+
+  it("rejects a vendor id with no product id, and the reverse", () => {
+    expect(() => normalizeUsbIdentity("05ac", null, "S")).toThrow(
+      /vendor id and a product id/i
+    );
+    expect(() => normalizeUsbIdentity(null, "1261", "S")).toThrow(
+      /vendor id and a product id/i
+    );
+  });
+
+  // A serial on its own reads as an edit to a bound device, not as a request to
+  // unbind it. Treating it as a clear is how a binding disappears unannounced.
+  it("rejects a serial supplied on its own instead of clearing the binding", () => {
+    expect(() => normalizeUsbIdentity(null, null, "SERIAL")).toThrow(
+      /cannot be set on its own/i
+    );
+  });
+
+  it("rejects ids that are not 4-digit hex", () => {
+    expect(() => normalizeUsbIdentity("zzzz", "1261", "")).toThrow(/4-digit hex/i);
+    expect(() => normalizeUsbIdentity("05ac", "1ffff", "")).toThrow(/4-digit hex/i);
   });
 });

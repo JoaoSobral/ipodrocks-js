@@ -161,16 +161,43 @@ test("clearing the identity drops all three columns together", async () => {
 test("a partial identity is rejected rather than half-saved", async () => {
   const window = await readyWindow();
 
-  const result = await window.evaluate(async () => {
+  const results = await window.evaluate(async () => {
     const api = (window as unknown as { api: Api }).api;
-    return (await api.invoke("device:add", {
+
+    const added = (await api.invoke("device:add", {
       name: `USB Partial ${Date.now()}`,
       mountPath: "/tmp/ipr-usb-partial",
       usbVendorId: "05ac",
     })) as { error?: string };
+
+    // Same rule on the update path. A serial with no ids behind it looks like an
+    // edit to a bound device; treating it as "clear the binding" would unbind
+    // one without saying so, and the device would then answer to any drive that
+    // turns up at its mount path.
+    const bound = (await api.invoke("device:add", {
+      name: `USB Partial Bound ${Date.now()}`,
+      mountPath: "/tmp/ipr-usb-partial-bound",
+      usbVendorId: "05ac",
+      usbProductId: "1261",
+      usbSerial: "SERIAL_PARTIAL",
+    })) as { id: number };
+
+    const updated = (await api.invoke("device:update", bound.id, {
+      usbSerial: "SERIAL_CHANGED",
+    })) as { error?: string };
+
+    const after = ((await api.invoke("device:list")) as Array<{
+      id: number;
+      usbSerial?: string | null;
+    }>).find((d) => d.id === bound.id);
+
+    return { added, updated, serialAfter: after?.usbSerial ?? null };
   });
 
-  expect(result.error).toMatch(/vendor id and a product id/i);
+  expect(results.added.error).toMatch(/vendor id and a product id/i);
+  expect(results.updated.error).toMatch(/cannot be set on its own/i);
+  // Rejected means untouched, not partially applied.
+  expect(results.serialAfter).toBe("SERIAL_PARTIAL");
 });
 
 /**

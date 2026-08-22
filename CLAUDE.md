@@ -29,13 +29,16 @@ These are confirmed reuse/efficiency issues found during `src/main/` review. Add
 
 ### From the PR #116 review (2026-08-22)
 
-| Area | File | Issue |
+All five items found in that review were fixed in the same PR. Kept here as the
+reasoning behind the current shape of the code:
+
+| Area | File | Resolution |
 |---|---|---|
-| Blocking I/O | `library/shadow-library.ts` — `pruneOrphanedFiles()` | Recursive `readdirSync`/`statSync`/`unlinkSync` over the whole shadow tree runs on the main process. A large shadow library freezes the UI for the duration; the "Pruning…" spinner cannot even animate. Move to `fs/promises` and yield. |
-| Data loss | `library/shadow-prune.ts` — `decidePrune()` | A non-audio file is deleted whenever its directory holds no *claimed* audio. Nothing checks that the shadow root is a tree the app created, so a shadow library pointed at a folder that also holds unrelated data will have that data deleted. Consider refusing a root whose top level contains no `shadow_tracks`-claimed file. |
-| Altitude | `sync/sync-core.ts` | `analyzeContentType()` (13 params), `copyAlbumArtworkToDevice()` (11) and `copyMissingTracks()` (10) grew another trailing positional flag for `albumGrouping`, on top of `preserveFolderStructure`. Call sites are now walls of `undefined`. Convert the tail to a single options object. |
-| Robustness | `devices/devices-core.ts` — `updateDevice()` | `{ usbSerial: "X" }` with no vendor/product silently clears all three USB columns, while `createDevice` throws for the same partial input. Make the update path throw too. Also: the `usb_*` entries added to `FIELD_MAP`/`ALLOWED_UPDATE_FIELDS` are dead — the generic loop `continue`s past those keys. |
-| Dead param | `devices/usb-devices.ts` — `refreshUsbSnapshot(force)` | No caller passes `force`, and when one does an in-flight non-forced enumeration is returned instead of a fresh one. Drop the parameter or make it bypass `inFlight`. |
+| Blocking I/O | `library/shadow-library.ts` — `pruneOrphanedFiles()` | Now `async`: walks with `fs/promises` and yields every `PRUNE_YIELD_EVERY` files, so the window keeps painting. Its directory cleanup no longer re-sweeps the whole tree — `removeEmptiedDirs()` climbs only from the directories a deletion actually emptied (same for `deleteOrphanedShadowFiles`, via `removeEmptiedDirsSync`). |
+| Data loss | `library/shadow-prune.ts` — `decidePrune()` | Bounded by `isPrunableName()`: the prune only deletes what the shadow builder can write — a transcode, or the `cover.jpg` generated beside it. Anything else survives regardless of its directory, so a shadow library pointed at a folder holding unrelated data cannot destroy it. **Adding a new file kind to the shadow build means adding its name to `SHADOW_ARTWORK_NAMES` or it will never be pruned.** |
+| Altitude | `sync/sync-core.ts` | The optional tails collapsed into `LayoutOptions` / `RunOptions` and the per-function `…Options` interfaces that extend them. `runSync` builds one `layout` object and hands the same one to compare, copy and artwork — which is the point: those three passes must agree on where a track lands or every sync re-copies the library. |
+| Robustness | `devices/devices-core.ts` | `normalizeUsbIdentity()` throws on a serial with no ids behind it instead of reading it as "clear the binding". Only all-three-absent clears. The dead `usb_*` entries are gone from `FIELD_MAP`/`ALLOWED_UPDATE_FIELDS`; `USB_IDENTITY_KEYS` is the single list the update loop skips. |
+| Dead param | `devices/usb-devices.ts` | `refreshUsbSnapshot()` no longer takes `force`. The one caller that must bypass the cache (`device:listUsb`) calls `listUsbDevices()` directly, which a `force` flag could not have achieved anyway — it would still return an in-flight pre-plug enumeration. |
 
 > Note: `src/main/ipc.ts` was split into per-domain modules under `src/main/ipc/` (one `registerXHandlers()` per channel prefix, shared helpers in `ipc/common.ts`). Add new handlers to the matching domain module.
 

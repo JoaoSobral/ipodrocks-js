@@ -103,28 +103,28 @@ describe("Shadow library — prune orphan files", () => {
     cleanupTmp(tmpDir);
   });
 
-  itDb("removes a leftover album and keeps the one the library still has", () => {
+  itDb("removes a leftover album and keeps the one the library still has", async () => {
     const live = putShadowFile("Artist/Peter/01.mpc", true);
     const stale = putShadowFile("Artist/Donald/01.mpc", false);
 
-    const result = shadow.pruneOrphanedFiles(shadowLibId);
+    const result = await shadow.pruneOrphanedFiles(shadowLibId);
 
     expect(result.deleted).toBe(1);
     expect(fs.existsSync(stale)).toBe(false);
     expect(fs.existsSync(live)).toBe(true);
   });
 
-  itDb("removes the emptied album folder too", () => {
+  itDb("removes the emptied album folder too", async () => {
     putShadowFile("Artist/Peter/01.mpc", true);
     putShadowFile("Artist/Donald/01.mpc", false);
 
-    shadow.pruneOrphanedFiles(shadowLibId);
+    await shadow.pruneOrphanedFiles(shadowLibId);
 
     expect(fs.existsSync(path.join(shadowDir, "Artist", "Donald"))).toBe(false);
     expect(fs.existsSync(path.join(shadowDir, "Artist", "Peter"))).toBe(true);
   });
 
-  itDb("keeps artwork for a live album and drops it for a dead one", () => {
+  itDb("keeps artwork for a live album and drops it for a dead one", async () => {
     putShadowFile("Artist/Peter/01.mpc", true);
     const liveCover = path.join(shadowDir, "Artist/Peter/cover.jpg");
     fs.writeFileSync(liveCover, "art");
@@ -133,17 +133,17 @@ describe("Shadow library — prune orphan files", () => {
     const deadCover = path.join(shadowDir, "Artist/Donald/cover.jpg");
     fs.writeFileSync(deadCover, "art");
 
-    shadow.pruneOrphanedFiles(shadowLibId);
+    await shadow.pruneOrphanedFiles(shadowLibId);
 
     expect(fs.existsSync(liveCover)).toBe(true);
     expect(fs.existsSync(deadCover)).toBe(false);
   });
 
-  itDb("is a no-op when the shadow library is already faithful", () => {
+  itDb("is a no-op when the shadow library is already faithful", async () => {
     const a = putShadowFile("Artist/Album/01.mpc", true);
     const b = putShadowFile("Artist/Album/02.mpc", true);
 
-    const result = shadow.pruneOrphanedFiles(shadowLibId);
+    const result = await shadow.pruneOrphanedFiles(shadowLibId);
 
     expect(result.deleted).toBe(0);
     expect(result.bytesFreed).toBe(0);
@@ -151,48 +151,65 @@ describe("Shadow library — prune orphan files", () => {
     expect(fs.existsSync(b)).toBe(true);
   });
 
-  itDb("is idempotent — a second run finds nothing left to do", () => {
+  itDb("is idempotent — a second run finds nothing left to do", async () => {
     putShadowFile("Artist/Peter/01.mpc", true);
     putShadowFile("Artist/Donald/01.mpc", false);
 
-    expect(shadow.pruneOrphanedFiles(shadowLibId).deleted).toBe(1);
-    expect(shadow.pruneOrphanedFiles(shadowLibId).deleted).toBe(0);
+    expect((await shadow.pruneOrphanedFiles(shadowLibId)).deleted).toBe(1);
+    expect((await shadow.pruneOrphanedFiles(shadowLibId)).deleted).toBe(0);
   });
 
-  itDb("reports the space it reclaimed", () => {
+  itDb("reports the space it reclaimed", async () => {
     putShadowFile("Artist/Donald/01.mpc", false, "x".repeat(2048));
 
-    const result = shadow.pruneOrphanedFiles(shadowLibId);
+    const result = await shadow.pruneOrphanedFiles(shadowLibId);
     expect(result.bytesFreed).toBe(2048);
   });
 
-  itDb("refuses to run when the shadow folder is unreachable", () => {
+  itDb("refuses to run when the shadow folder is unreachable", async () => {
     putShadowFile("Artist/Peter/01.mpc", true);
     fs.rmSync(shadowDir, { recursive: true, force: true });
 
     // An unplugged drive must never be mistaken for "every file is an orphan".
-    expect(() => shadow.pruneOrphanedFiles(shadowLibId)).toThrow(/not reachable/i);
+    await expect(shadow.pruneOrphanedFiles(shadowLibId)).rejects.toThrow(
+      /not reachable/i
+    );
   });
 
-  itDb("never touches files outside the shadow library root", () => {
+  // A shadow library is just a folder the user picked. If they point one at a
+  // folder that also holds their own data, the prune must not eat it.
+  itDb("leaves files the shadow builder never wrote where they are", async () => {
+    putShadowFile("Artist/Donald/01.mpc", false);
+    const doc = path.join(shadowDir, "Artist", "Donald", "receipt.pdf");
+    fs.writeFileSync(doc, "not ours");
+
+    const result = await shadow.pruneOrphanedFiles(shadowLibId);
+
+    // Only the stale transcode goes; the directory stays because it is not empty.
+    expect(result.deleted).toBe(1);
+    expect(fs.existsSync(doc)).toBe(true);
+    expect(fs.existsSync(path.join(shadowDir, "Artist", "Donald"))).toBe(true);
+  });
+
+  itDb("never touches files outside the shadow library root", async () => {
     const outside = path.join(tmpDir, "outside.mpc");
     fs.writeFileSync(outside, "precious");
     putShadowFile("Artist/Donald/01.mpc", false);
 
-    shadow.pruneOrphanedFiles(shadowLibId);
+    await shadow.pruneOrphanedFiles(shadowLibId);
 
     expect(fs.existsSync(outside)).toBe(true);
   });
 
-  itDb("keeps the shadow library root even when everything in it goes", () => {
+  itDb("keeps the shadow library root even when everything in it goes", async () => {
     putShadowFile("Artist/Donald/01.mpc", false);
 
-    shadow.pruneOrphanedFiles(shadowLibId);
+    await shadow.pruneOrphanedFiles(shadowLibId);
 
     expect(fs.existsSync(shadowDir)).toBe(true);
   });
 
-  itDb("rejects an unknown shadow library", () => {
-    expect(() => shadow.pruneOrphanedFiles(99999)).toThrow(/not found/i);
+  itDb("rejects an unknown shadow library", async () => {
+    await expect(shadow.pruneOrphanedFiles(99999)).rejects.toThrow(/not found/i);
   });
 });

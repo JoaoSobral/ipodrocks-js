@@ -1026,7 +1026,7 @@ const shadow_prune_orphans: AiTool = {
     if (!lib) return { ok: false, error: `No shadow library with id ${shadowLibraryId}` };
 
     try {
-      const result = ctx
+      const result = await ctx
         .getLibrary()
         .getShadowManager()
         .pruneOrphanedFiles(shadowLibraryId);

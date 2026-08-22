@@ -321,9 +321,18 @@ let cached: UsbSnapshot = EMPTY_SNAPSHOT;
 let cachedAt = 0;
 let inFlight: Promise<UsbSnapshot> | null = null;
 
-/** Refresh the snapshot if stale. Concurrent callers share one enumeration. */
-export async function refreshUsbSnapshot(force = false): Promise<UsbSnapshot> {
-  if (!force && Date.now() - cachedAt < SNAPSHOT_TTL_MS) return cached;
+/**
+ * Refresh the snapshot if stale. Concurrent callers share one enumeration.
+ *
+ * There is deliberately no `force` flag. The one caller that must not see a
+ * cached answer — `device:listUsb`, behind the "Refresh" button, where the user
+ * has just plugged something in — calls {@link listUsbDevices} directly, which
+ * is both simpler and stronger: a `force` here would still hand back whatever
+ * an already-in-flight enumeration returns, which is exactly the pre-plug
+ * snapshot the user is trying to get past.
+ */
+export async function refreshUsbSnapshot(): Promise<UsbSnapshot> {
+  if (Date.now() - cachedAt < SNAPSHOT_TTL_MS) return cached;
   if (inFlight) return inFlight;
 
   inFlight = listUsbDevices()

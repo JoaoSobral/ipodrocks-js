@@ -32,8 +32,7 @@ describe("computeDeviceRelativePath — preserveFolderStructure (issue #82)", ()
       trackPath,
       trackInfo,
       "music",
-      folderPaths,
-      true
+      { libraryFolderPaths: folderPaths, preserveFolderStructure: true }
     );
     expect(rel).toBe("Avicii/Levels (2011)/Avicii - Levels - 01 - Levels.flac");
   });
@@ -43,14 +42,15 @@ describe("computeDeviceRelativePath — preserveFolderStructure (issue #82)", ()
       trackPath,
       trackInfo,
       "music",
-      folderPaths,
-      false
+      { libraryFolderPaths: folderPaths, preserveFolderStructure: false }
     );
     expect(rel).toBe("Avicii/Levels/Avicii - Levels - 01 - Levels.flac");
   });
 
   it("defaults to the tag-based path when the flag is omitted", () => {
-    const rel = computeDeviceRelativePath(trackPath, trackInfo, "music", folderPaths);
+    const rel = computeDeviceRelativePath(trackPath, trackInfo, "music", {
+      libraryFolderPaths: folderPaths,
+    });
     expect(rel).toBe("Avicii/Levels/Avicii - Levels - 01 - Levels.flac");
   });
 
@@ -60,8 +60,7 @@ describe("computeDeviceRelativePath — preserveFolderStructure (issue #82)", ()
       p,
       { artist: "Daft Punk", album: "Discovery", libraryFolderId: 1 },
       "music",
-      folderPaths,
-      true
+      { libraryFolderPaths: folderPaths, preserveFolderStructure: true }
     );
     expect(rel).toBe("Daft Punk/Discovery (2001)/01.flac");
   });
@@ -72,8 +71,7 @@ describe("computeDeviceRelativePath — preserveFolderStructure (issue #82)", ()
       outside,
       { artist: "Artist", album: "Album", libraryFolderId: 1 },
       "music",
-      folderPaths,
-      true
+      { libraryFolderPaths: folderPaths, preserveFolderStructure: true }
     );
     // No mirror possible → tag-based path (year dropped).
     expect(rel).toBe("Artist/Album/x.flac");
@@ -101,7 +99,10 @@ describe("computeDeviceRelativePath — albumGrouping (issue #113)", () => {
 
   it("uses the album artist by default", () => {
     expect(
-      computeDeviceRelativePath(compilationPath, compilationTrack, "music", folderPaths, false)
+      computeDeviceRelativePath(compilationPath, compilationTrack, "music", {
+        libraryFolderPaths: folderPaths,
+        preserveFolderStructure: false,
+      })
     ).toBe("Various Artists/Now 40/01 - Alpha Band.flac");
   });
 
@@ -111,9 +112,11 @@ describe("computeDeviceRelativePath — albumGrouping (issue #113)", () => {
         compilationPath,
         compilationTrack,
         "music",
-        folderPaths,
-        false,
-        "track-artist"
+        {
+          libraryFolderPaths: folderPaths,
+          preserveFolderStructure: false,
+          albumGrouping: "track-artist",
+        }
       )
     ).toBe("Alpha Band/Now 40/01 - Alpha Band.flac");
   });
@@ -124,9 +127,11 @@ describe("computeDeviceRelativePath — albumGrouping (issue #113)", () => {
         path.join(LIB_ROOT, "Compilations", "Now 40", `${artist}.flac`),
         { ...compilationTrack, artist },
         "music",
-        folderPaths,
-        false,
-        "album-artist"
+        {
+          libraryFolderPaths: folderPaths,
+          preserveFolderStructure: false,
+          albumGrouping: "album-artist",
+        }
       )
     );
     expect(new Set(dests.map((d) => path.posix.dirname(d))).size).toBe(1);
@@ -134,7 +139,11 @@ describe("computeDeviceRelativePath — albumGrouping (issue #113)", () => {
 
   it("falls back to the track artist when no album artist is tagged", () => {
     expect(
-      computeDeviceRelativePath(trackPath, trackInfo, "music", folderPaths, false, "album-artist")
+      computeDeviceRelativePath(trackPath, trackInfo, "music", {
+        libraryFolderPaths: folderPaths,
+        preserveFolderStructure: false,
+        albumGrouping: "album-artist",
+      })
     ).toBe("Avicii/Levels/Avicii - Levels - 01 - Levels.flac");
   });
 
@@ -144,9 +153,11 @@ describe("computeDeviceRelativePath — albumGrouping (issue #113)", () => {
         compilationPath,
         compilationTrack,
         "music",
-        folderPaths,
-        true,
-        "album-artist"
+        {
+          libraryFolderPaths: folderPaths,
+          preserveFolderStructure: true,
+          albumGrouping: "album-artist",
+        }
       )
     ).toBe("Compilations/Now 40/01 - Alpha Band.flac");
   });

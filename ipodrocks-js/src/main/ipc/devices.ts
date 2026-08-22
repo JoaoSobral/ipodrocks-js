@@ -12,7 +12,11 @@ import {
 import { isDeviceOnline } from "../devices/device-online";
 import { refreshUsbSnapshot, listUsbDevices } from "../devices/usb-devices";
 import { getDeviceSyncPreferences } from "../sync/device-sync-preferences";
-import { buildLibraryDestMap, getProfileCodecExt } from "../sync/sync-core";
+import {
+  buildLibraryDestMap,
+  getProfileCodecExt,
+  type LayoutOptions,
+} from "../sync/sync-core";
 import { compareLibraries } from "../sync/name-size-sync";
 import { readAndIngestPlaybackLog } from "../playlists/playback-log-ingest";
 import {
@@ -188,6 +192,13 @@ export function registerDeviceHandlers(): void {
       const checkPrefs = getDeviceSyncPreferences(lib.getConnection(), deviceId);
       const preserveFolderStructure = checkPrefs?.preserveFolderStructure !== false;
       const albumGrouping = checkPrefs?.albumGrouping ?? "album-artist";
+      // The check must predict the exact paths a sync would write, so it reads
+      // the layout from the same object shape the sync itself uses.
+      const layout: LayoutOptions = {
+        libraryFolderPaths,
+        preserveFolderStructure,
+        albumGrouping,
+      };
 
       if (
         device.profile.sourceLibraryType === "shadow" &&
@@ -248,12 +259,7 @@ export function registerDeviceHandlers(): void {
         libraryMusicMap,
         "music",
         codecName,
-        libraryFolderPaths,
-        undefined,
-        undefined,
-        undefined,
-        preserveFolderStructure,
-        albumGrouping
+        layout
       );
       const musicCompare = compareLibraries(
         musicDest.destMap,
@@ -270,12 +276,7 @@ export function registerDeviceHandlers(): void {
         libraryPodcastMap,
         "podcast",
         codecName,
-        libraryFolderPaths,
-        undefined,
-        undefined,
-        undefined,
-        preserveFolderStructure,
-        albumGrouping
+        layout
       );
       const podcastCompare = compareLibraries(
         podcastDest.destMap,
@@ -292,12 +293,7 @@ export function registerDeviceHandlers(): void {
         libraryAudiobookMap,
         "audiobook",
         codecName,
-        libraryFolderPaths,
-        undefined,
-        undefined,
-        undefined,
-        preserveFolderStructure,
-        albumGrouping
+        layout
       );
       const audiobookCompare = compareLibraries(
         audiobookDest.destMap,

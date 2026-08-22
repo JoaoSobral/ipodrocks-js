@@ -277,7 +277,7 @@ export function registerLibraryHandlers(): void {
     "shadow:pruneOrphans",
     safe("shadow:pruneOrphans", async (_event, shadowLibId: number) => {
       const lib = getLibrary();
-      const result = lib.getShadowManager().pruneOrphanedFiles(shadowLibId);
+      const result = await lib.getShadowManager().pruneOrphanedFiles(shadowLibId);
       const shadowLib = lib.getShadowLibraryById(shadowLibId);
       if (result.deleted > 0) {
         logActivity(

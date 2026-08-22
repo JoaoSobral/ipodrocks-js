@@ -895,14 +895,11 @@ export class PlaylistCore {
         album: track.album,
         libraryFolderId: track.libraryFolderId,
       };
-      let relPath = computeDeviceRelativePath(
-        trackPath,
-        trackInfo,
-        "music",
-        options.libraryFolderPaths,
-        options.preserveFolderStructure ?? false,
-        options.albumGrouping ?? "album-artist"
-      );
+      let relPath = computeDeviceRelativePath(trackPath, trackInfo, "music", {
+        libraryFolderPaths: options.libraryFolderPaths,
+        preserveFolderStructure: options.preserveFolderStructure ?? false,
+        albumGrouping: options.albumGrouping ?? "album-artist",
+      });
       if (needsConversion) {
         relPath = updateExtension(relPath, codecLower);
       }

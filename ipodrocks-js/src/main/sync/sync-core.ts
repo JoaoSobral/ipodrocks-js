@@ -60,6 +60,53 @@ export interface RunSyncOptions {
   albumGrouping?: AlbumGrouping;
 }
 
+/**
+ * How a track's destination path is built.
+ *
+ * Every pass that touches the device layout takes this same shape, and they all
+ * have to be given the *same* values: comparing with one layout and copying
+ * with another writes files to paths the compare never looked at, so the sync
+ * re-copies the whole library on every run. Bundling the three settings into
+ * one object is what makes a mismatch visible at the call site.
+ */
+export interface LayoutOptions {
+  libraryFolderPaths?: Map<number, string>;
+  /** Issue #82: mirror the source library folder structure 1:1 instead of rebuilding from tags. */
+  preserveFolderStructure?: boolean;
+  /** Issue #113: which artist keys the rebuilt device folder layout. */
+  albumGrouping?: AlbumGrouping;
+}
+
+/** Cooperative cancellation and progress reporting for the long passes. */
+export interface RunOptions {
+  cancelSignal?: AbortSignal;
+  progressCallback?: ProgressCallback;
+}
+
+export interface BuildDestMapOptions extends LayoutOptions, RunOptions {
+  /** F7: Pre-loaded path→mtime map from content_hashes. Falls back to fs.statSync on miss. */
+  preloadedMtimes?: Map<string, number>;
+}
+
+export interface AnalyzeContentTypeOptions extends BuildDestMapOptions {
+  /** Override profile codec extension for compare (e.g. shadow library codec when codecName is DIRECT COPY). */
+  profileCodecExtOverride?: string | null;
+}
+
+export interface CopyMissingTracksOptions extends LayoutOptions, RunOptions {
+  deviceProfile?: {
+    codecConfigBitrate?: number | null;
+    codecConfigQuality?: number | null;
+    vbrEnabled?: boolean;
+  };
+  codecMismatchMap?: Map<string, string>;
+}
+
+export interface CopyAlbumArtworkOptions extends LayoutOptions, RunOptions {
+  /** Max dimension (px) for the generated cover. */
+  maxDim?: number;
+}
+
 export interface ContentAnalysis {
   libraryTracks: Record<string, Record<string, unknown>>;
   deviceTracks: Record<string, { file_size: number }>;
@@ -181,10 +228,13 @@ export function computeDeviceRelativePath(
   trackPath: string,
   trackInfo: Record<string, unknown>,
   contentType: string,
-  libraryFolderPaths?: Map<number, string>,
-  preserveFolderStructure = false,
-  albumGrouping: AlbumGrouping = "album-artist"
+  layout: LayoutOptions = {}
 ): string {
+  const {
+    libraryFolderPaths,
+    preserveFolderStructure = false,
+    albumGrouping = "album-artist",
+  } = layout;
   // Issue #113: when rebuilding a path from tags, fold the album under its album
   // artist so a compilation lands in one folder instead of one per track artist.
   const artist = (
@@ -230,20 +280,13 @@ export function buildLibraryDestMap(
   libraryTracks: Record<string, Record<string, unknown>>,
   contentType: string,
   codecName: string,
-  libraryFolderPaths?: Map<number, string>,
-  cancelSignal?: AbortSignal,
-  progressCallback?: ProgressCallback,
-  /** F7: Pre-loaded path→mtime map from content_hashes. Falls back to fs.statSync on miss. */
-  preloadedMtimes?: Map<string, number>,
-  /** Issue #82: mirror the source library folder structure 1:1 instead of rebuilding from tags. */
-  preserveFolderStructure = false,
-  /** Issue #113: which artist keys the rebuilt device folder layout. */
-  albumGrouping: AlbumGrouping = "album-artist"
+  options: BuildDestMapOptions = {}
 ): {
   destMap: Record<string, string>;
   expectedSizes: Record<string, number>;
   expectedMtimes: Record<string, number>;
 } {
+  const { cancelSignal, progressCallback, preloadedMtimes } = options;
   const destMap: Record<string, string> = {};
   const expectedSizes: Record<string, number> = {};
   const expectedMtimes: Record<string, number> = {};
@@ -268,9 +311,7 @@ export function buildLibraryDestMap(
       trackPath,
       trackInfo,
       contentType,
-      libraryFolderPaths,
-      preserveFolderStructure,
-      albumGrouping
+      options
     );
 
     if (needsConversion) {
@@ -375,30 +416,21 @@ export function analyzeContentType(
   libraryTracks: Record<string, Record<string, unknown>>,
   contentType: string,
   codecName: string,
-  libraryFolderPaths?: Map<number, string>,
-  cancelSignal?: AbortSignal,
-  progressCallback?: ProgressCallback,
-  /** F7: Pre-loaded path→mtime from content_hashes, passed through to buildLibraryDestMap. */
-  preloadedMtimes?: Map<string, number>,
-  /** Override profile codec extension for compare (e.g. shadow library codec when codecName is DIRECT COPY). */
-  profileCodecExtOverride?: string | null,
-  /** Issue #82: mirror the source library folder structure 1:1 instead of rebuilding from tags. */
-  preserveFolderStructure = false,
-  /** Issue #113: which artist keys the rebuilt device folder layout. */
-  albumGrouping: AlbumGrouping = "album-artist"
+  options: AnalyzeContentTypeOptions = {}
 ): ContentAnalysis {
+  const {
+    cancelSignal,
+    progressCallback,
+    profileCodecExtOverride,
+    preserveFolderStructure = false,
+  } = options;
   if (cancelSignal?.aborted) throw new SyncCancelled();
 
   const { destMap, expectedSizes, expectedMtimes } = buildLibraryDestMap(
     libraryTracks,
     contentType,
     codecName,
-    libraryFolderPaths,
-    cancelSignal,
-    progressCallback,
-    preloadedMtimes,
-    preserveFolderStructure,
-    albumGrouping
+    options
   );
 
   if (cancelSignal?.aborted) throw new SyncCancelled();
@@ -490,14 +522,9 @@ export async function copyMissingTracks(
   missingPaths: string[],
   libraryTracks: Record<string, Record<string, unknown>>,
   codecName: string,
-  libraryFolderPaths?: Map<number, string>,
-  progressCallback?: ProgressCallback,
-  cancelSignal?: AbortSignal,
-  deviceProfile?: { codecConfigBitrate?: number | null; codecConfigQuality?: number | null; vbrEnabled?: boolean },
-  codecMismatchMap?: Map<string, string>,
-  preserveFolderStructure = false,
-  albumGrouping: AlbumGrouping = "album-artist"
+  options: CopyMissingTracksOptions = {}
 ): Promise<{ synced: number; missingFiles: string[]; errors: number }> {
+  const { progressCallback, cancelSignal, deviceProfile, codecMismatchMap } = options;
   if (!missingPaths.length) return { synced: 0, missingFiles: [], errors: 0 };
 
   const existingPaths: string[] = [];
@@ -543,9 +570,7 @@ export async function copyMissingTracks(
         tp,
         trackInfo,
         contentType,
-        libraryFolderPaths,
-        preserveFolderStructure,
-        albumGrouping
+        options
       );
     }
 
@@ -644,13 +669,13 @@ export async function copyAlbumArtworkToDevice(
   deviceContentPath: string,
   contentType: string,
   libraryTracks: Record<string, Record<string, unknown>>,
-  libraryFolderPaths?: Map<number, string>,
-  progressCallback?: ProgressCallback,
-  cancelSignal?: AbortSignal,
-  preserveFolderStructure = false,
-  maxDim: number = DEFAULT_COVER_MAX_DIMENSION,
-  albumGrouping: AlbumGrouping = "album-artist"
+  options: CopyAlbumArtworkOptions = {}
 ): Promise<ArtworkSyncResult> {
+  const {
+    progressCallback,
+    cancelSignal,
+    maxDim = DEFAULT_COVER_MAX_DIMENSION,
+  } = options;
   if (Object.keys(libraryTracks).length === 0) {
     return { copied: 0, skipped: 0, errors: 0, totalCandidates: 0, failedAlbums: [] };
   }
@@ -667,9 +692,7 @@ export async function copyAlbumArtworkToDevice(
       trackPath,
       trackInfo,
       contentType,
-      libraryFolderPaths,
-      preserveFolderStructure,
-      albumGrouping
+      options
     );
     const deviceRelAlbum = path.dirname(relPath).replace(/\\/g, "/");
     albums.set(sourceDir, { deviceRelAlbum, firstTrack: trackPath });
@@ -836,6 +859,15 @@ export async function runSync(
     options;
   let artworkErrors = 0;
 
+  // Built once and handed to every pass below. The compare, the copy and the
+  // artwork walk must agree on where a track lands, so they read the layout
+  // from one object rather than each taking its own trailing arguments.
+  const layout: LayoutOptions = {
+    libraryFolderPaths,
+    preserveFolderStructure,
+    albumGrouping,
+  };
+
   progressCallback?.({ event: "log", message: `Comparing library with device (${contentType})...` });
 
   const analysis = analyzeContentType(
@@ -844,13 +876,13 @@ export async function runSync(
     libraryTracks,
     contentType,
     codecName,
-    libraryFolderPaths,
-    cancelSignal,
-    progressCallback,
-    preloadedMtimes,
-    profileCodecExtOverride,
-    preserveFolderStructure,
-    albumGrouping
+    {
+      ...layout,
+      cancelSignal,
+      progressCallback,
+      preloadedMtimes,
+      profileCodecExtOverride,
+    }
   );
 
   progressCallback?.({
@@ -903,13 +935,13 @@ export async function runSync(
     analysis.missingPaths,
     analysis.libraryTracks,
     codecName,
-    libraryFolderPaths,
-    progressCallback,
-    cancelSignal,
-    device.profile,
-    analysis.codecMismatchMap,
-    preserveFolderStructure,
-    albumGrouping
+    {
+      ...layout,
+      progressCallback,
+      cancelSignal,
+      deviceProfile: device.profile,
+      codecMismatchMap: analysis.codecMismatchMap,
+    }
   );
 
   if (skipAlbumArtwork !== true && Object.keys(libraryTracks).length > 0) {
@@ -917,12 +949,12 @@ export async function runSync(
       deviceContentPath,
       contentType,
       libraryTracks,
-      libraryFolderPaths,
-      progressCallback,
-      cancelSignal,
-      preserveFolderStructure,
-      artworkMaxDimension ?? DEFAULT_COVER_MAX_DIMENSION,
-      albumGrouping
+      {
+        ...layout,
+        progressCallback,
+        cancelSignal,
+        maxDim: artworkMaxDimension ?? DEFAULT_COVER_MAX_DIMENSION,
+      }
     );
     // Artwork failures are counted separately from track failures: they surface
     // as a sync failure of their own, but must never be mistaken for missing or

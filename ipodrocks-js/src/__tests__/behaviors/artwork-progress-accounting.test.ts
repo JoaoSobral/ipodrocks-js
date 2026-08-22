@@ -85,11 +85,7 @@ describe.skipIf(!canRun)("artwork progress accounting", () => {
       deviceDir,
       "music",
       tracks,
-      undefined,
-      (e) => events.push(e as Event),
-      undefined,
-      false,
-      300
+      { progressCallback: (e) => events.push(e as Event), maxDim: 300 }
     );
 
     expect(result.copied).toBe(3);
@@ -114,15 +110,15 @@ describe.skipIf(!canRun)("artwork progress accounting", () => {
 
     const first: Event[] = [];
     await copyAlbumArtworkToDevice(
-      deviceDir, "music", tracks, undefined,
-      (e) => first.push(e as Event), undefined, false, 300
+      deviceDir, "music", tracks,
+      { progressCallback: (e) => first.push(e as Event), maxDim: 300 }
     );
     expect(first.filter((e) => e.event === "total_add")).toHaveLength(1);
 
     const second: Event[] = [];
     const result = await copyAlbumArtworkToDevice(
-      deviceDir, "music", tracks, undefined,
-      (e) => second.push(e as Event), undefined, false, 300
+      deviceDir, "music", tracks,
+      { progressCallback: (e) => second.push(e as Event), maxDim: 300 }
     );
 
     expect(result.skipped).toBe(1);

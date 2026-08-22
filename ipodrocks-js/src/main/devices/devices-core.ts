@@ -96,9 +96,8 @@ const ALLOWED_UPDATE_FIELDS = new Set([
   "dev_mode",
   "auto_podcasts_enabled",
   "vbr_enabled",
-  "usb_vendor_id",
-  "usb_product_id",
-  "usb_serial",
+  // NOTE: the usb_* columns are deliberately absent. They are written as one
+  // unit by updateDevice(), never through the generic loop — see USB_IDENTITY_KEYS.
 ]);
 
 const FIELD_MAP: Record<string, string> = {
@@ -127,10 +126,14 @@ const FIELD_MAP: Record<string, string> = {
   devMode: "dev_mode",
   autoPodcastsEnabled: "auto_podcasts_enabled",
   vbrEnabled: "vbr_enabled",
-  usbVendorId: "usb_vendor_id",
-  usbProductId: "usb_product_id",
-  usbSerial: "usb_serial",
 };
+
+/**
+ * Update keys that `updateDevice` resolves as a group rather than field by
+ * field. They are kept out of FIELD_MAP so the generic loop cannot write one of
+ * the three columns on its own and leave a half-formed identity behind.
+ */
+const USB_IDENTITY_KEYS = new Set(["usbVendorId", "usbProductId", "usbSerial"]);
 
 /** Allowed generated-cover dimensions (px). 300 default keeps iPods responsive. */
 export const ARTWORK_MAX_DIMENSIONS = [200, 300, 500, 750] as const;
@@ -159,6 +162,11 @@ export interface UsbIdentity {
  * The three fields move together: supplying only some of them is a caller bug,
  * not a partial identity. Serial is stored as '' rather than NULL when the
  * device reports none, so the partial unique index still catches duplicates.
+ *
+ * Returns null only when all three are absent, which means "clear the binding
+ * and fall back to mount-path matching". A serial on its own is rejected rather
+ * than read as a clear: it looks like an edit to a bound device, and silently
+ * unbinding one is how a sync ends up on the wrong volume.
  */
 export function normalizeUsbIdentity(
   vendorId: unknown,
@@ -167,7 +175,15 @@ export function normalizeUsbIdentity(
 ): UsbIdentity | null {
   const hasVendor = vendorId != null && vendorId !== "";
   const hasProduct = productId != null && productId !== "";
-  if (!hasVendor && !hasProduct) return null;
+  const hasSerial = serial != null && serial !== "";
+  if (!hasVendor && !hasProduct) {
+    if (hasSerial) {
+      throw new Error(
+        "A USB serial cannot be set on its own — pass a vendor id and a product id too"
+      );
+    }
+    return null;
+  }
   if (!hasVendor || !hasProduct) {
     throw new Error("USB identity requires both a vendor id and a product id");
   }
@@ -305,10 +321,10 @@ export class DevicesCore {
     const values: unknown[] = [];
 
     // The three USB columns are one value, so they are resolved as a group and
-    // then excluded from the generic loop below. Clearing any of them clears
-    // all three, dropping the device back to mount-path matching.
-    const touchesUsb =
-      "usbVendorId" in updates || "usbProductId" in updates || "usbSerial" in updates;
+    // then excluded from the generic loop below. Clearing them all together
+    // drops the device back to mount-path matching; clearing only some of them
+    // throws (see normalizeUsbIdentity) rather than half-saving.
+    const touchesUsb = [...USB_IDENTITY_KEYS].some((k) => k in updates);
     if (touchesUsb) {
       const usb = normalizeUsbIdentity(
         updates.usbVendorId,
@@ -321,7 +337,7 @@ export class DevicesCore {
     }
 
     for (const [key, value] of Object.entries(updates)) {
-      if (key === "usbVendorId" || key === "usbProductId" || key === "usbSerial") continue;
+      if (USB_IDENTITY_KEYS.has(key)) continue;
       const dbField = FIELD_MAP[key];
       if (!dbField || !ALLOWED_UPDATE_FIELDS.has(dbField)) continue;
       fields.push(`${dbField} = ?`);
