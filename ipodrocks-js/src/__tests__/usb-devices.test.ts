@@ -186,7 +186,12 @@ describe("parsePnpJson (Windows)", () => {
   });
 });
 
-describe("readSysfsUsbDevices (Linux)", () => {
+/**
+ * The fixture tree uses the real sysfs names, and an interface node is called
+ * `1-1:1.0` — a name Windows cannot create, so the tree cannot be built there.
+ * The function under test only ever runs on Linux, so skip rather than fake it.
+ */
+describe.skipIf(process.platform === "win32")("readSysfsUsbDevices (Linux)", () => {
   let root: string;
 
   beforeEach(() => {
