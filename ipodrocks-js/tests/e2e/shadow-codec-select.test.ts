@@ -11,6 +11,8 @@
  *
  * When mpcenc is available on the host, it additionally asserts an "MPC" option
  * exists and can be chosen (the encoder is filtered out when mpcenc is missing).
+ * Note that only the *reminder modal* is suppressed in beforeEach — encoder
+ * availability itself is untouched, so that last assertion still means something.
  *
  * Run with: `npm run build && npx playwright test`
  */
@@ -25,7 +27,14 @@ let seedDir: string;
 
 test.beforeEach(async () => {
   seedDir = fs.mkdtempSync(path.join(os.homedir(), ".ipr-e2e-shadow-"));
-  launched = await launchApp();
+  // Suppress the "Musepack (MPC) unavailable" reminder. On a host without
+  // mpcenc (every CI runner) LibraryPanel raises it as soon as the Create
+  // Shadow Library dialog opens, and its backdrop swallows the clicks this test
+  // needs. Seeding the pref makes the reminder's `!mpcRemindDisabled` guard
+  // false, so it cannot appear at all — see the note at the dismissal below.
+  launched = await launchApp(undefined, {
+    seedPrefs: { mpcRemindDisabled: true },
+  });
 });
 
 test.afterEach(async () => {
@@ -70,13 +79,17 @@ test("codec dropdown stays within the window and all options are selectable", as
   await window.locator('button:has-text("+ Create")').first().click();
   await window.getByRole("dialog").filter({ hasText: "Create Shadow Library" }).waitFor({ timeout: 10_000 });
 
-  // When mpcenc is missing a "Musepack unavailable" reminder modal appears over
-  // the dialog; dismiss just that modal (scoped to its dialog) so it doesn't
-  // cover the codec select.
-  const mpcReminder = window.getByRole("dialog").filter({ hasText: "Musepack (MPC) unavailable" });
-  if (await mpcReminder.isVisible().catch(() => false)) {
-    await mpcReminder.getByRole("button", { name: "OK" }).click().catch(() => undefined);
-  }
+  // The reminder is raised by an effect that waits on two mount-time IPC calls
+  // (isMpcencAvailable, getMpcRemindDisabled), so it can pop *after* the dialog
+  // opens. Dismissing it with a non-polling isVisible() check therefore lost the
+  // race on slow CI runners, and the reminder's backdrop then swallowed the
+  // click on the codec trigger below — a 30s timeout whose cause was invisible
+  // from the error. The beforeEach pref makes it unreachable instead; this
+  // asserts that, so a regression in the suppression fails here and says why.
+  const mpcReminder = window
+    .getByRole("dialog")
+    .filter({ hasText: "Musepack (MPC) unavailable" });
+  await expect(mpcReminder).toHaveCount(0);
 
   const codecSelect = window.locator('[data-testid="shadow-codec-select"]');
   await expect(codecSelect).toBeVisible({ timeout: 10_000 });
