@@ -7,17 +7,6 @@ export interface SyncFileEntry {
   contentType: string;
 }
 
-export interface SyncResults {
-  synced: number;
-  skipped: number;
-  removed: number;
-  /** Track/song-data failures only. */
-  errors: number;
-  /** Album-artwork failures — cover art only, never song data. */
-  artworkErrors: number;
-  status: "success" | "error" | "warning";
-}
-
 interface SyncState {
   syncing: boolean;
   progress: number;
@@ -26,13 +15,11 @@ interface SyncState {
   processed: number;
   total: number;
   copied: number;
-  results: SyncResults | null;
   setSyncing: (syncing: boolean) => void;
   addFileEntry: (entry: SyncFileEntry) => void;
   setProgress: (
     progress: Partial<Pick<SyncState, "progress" | "currentFile" | "processed" | "total" | "copied">>,
   ) => void;
-  setResults: (results: SyncResults | null) => void;
   reset: () => void;
 }
 
@@ -44,7 +31,6 @@ const initial = {
   processed: 0,
   total: 0,
   copied: 0,
-  results: null as SyncResults | null,
 };
 
 export const useSyncStore = create<SyncState>((set) => ({
@@ -65,6 +51,5 @@ export const useSyncStore = create<SyncState>((set) => ({
     }),
 
   setProgress: (p) => set((state) => ({ ...state, ...p })),
-  setResults: (results) => set({ results }),
   reset: () => set(initial),
 }));

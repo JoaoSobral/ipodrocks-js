@@ -4,8 +4,8 @@ import { Button } from "../common/Button";
 import { Select } from "../common/Select";
 import { InfoTooltip } from "../common/InfoTooltip";
 import { Modal } from "../common/Modal";
+import { DeviceStatusCard } from "../common/DeviceStatusCard";
 import { useDeviceStore } from "../../stores/device-store";
-import { useSyncStore } from "../../stores/sync-store";
 import { useUIStore } from "../../stores/ui-store";
 import {
   getTracks,
@@ -122,22 +122,12 @@ function syncPrefsReducer(state: SyncPrefsState, action: SyncPrefsAction): SyncP
   }
 }
 
-const statusColors = {
-  success: "var(--success)",
-  error: "var(--destructive)",
-  warning: "var(--warning)",
-} as const;
-const statusLabels = {
-  success: "Success",
-  error: "Failed",
-  warning: "Completed with warnings",
-} as const;
-
 export function SyncPanel() {
   const devices = useDeviceStore((s) => s.devices);
   const fetchDevices = useDeviceStore((s) => s.fetchDevices);
   const deviceList = Array.isArray(devices) ? devices : [];
-  const { results, setResults } = useSyncStore();
+  /** Bumped when a sync finishes, so Device Status re-checks the device. */
+  const [statusRefreshKey, setStatusRefreshKey] = useState(0);
   const [showSyncModal, setShowSyncModal] = useState(false);
   const [syncOptionsForModal, setSyncOptionsForModal] = useState<SyncOptions | null>(null);
   const [precheckError, setPrecheckError] = useState<string | null>(null);
@@ -579,7 +569,6 @@ export function SyncPanel() {
             playlists: [...selectedItems.playlists],
           }
         : undefined;
-    setResults(null);
     const syncOpts: SyncOptions = {
       deviceId: deviceId as number,
       syncType,
@@ -624,7 +613,6 @@ export function SyncPanel() {
     albumGrouping,
     customMode,
     selectedItems,
-    setResults,
   ]);
 
   return (
@@ -966,65 +954,12 @@ export function SyncPanel() {
             setSyncOptionsForModal(null);
           }}
           syncOptions={syncOptionsForModal}
-          onComplete={(r) => {
-            setResults({
-              synced: r.synced,
-              skipped: r.skipped,
-              removed: 0,
-              errors: r.errors,
-              artworkErrors: r.artworkErrors,
-              status: r.status,
-            });
-          }}
+          onComplete={() => setStatusRefreshKey((n) => n + 1)}
         />
       )}
 
-      {/* Results */}
-      {results && (
-        <Card title="Sync Results">
-          <div className="flex items-center gap-3 mb-4">
-            <span
-              className="px-2.5 py-1 rounded-full text-xs font-medium"
-              style={{
-                backgroundColor: `${statusColors[results.status]}15`,
-                color: statusColors[results.status],
-              }}
-            >
-              {/* Artwork-only failures still read as failed, but must not imply
-                  that any song data failed to copy. */}
-              {results.errors === 0 && results.artworkErrors > 0
-                ? "Failed — album artwork only"
-                : statusLabels[results.status]}
-            </span>
-          </div>
-          <div className="grid grid-cols-5 gap-4">
-            {[
-              { label: "Synced", value: results.synced, color: "var(--success)" },
-              { label: "Skipped", value: results.skipped, color: "var(--muted-foreground)" },
-              { label: "Removed", value: results.removed, color: "var(--warning)" },
-              { label: "Song Errors", value: results.errors, color: "var(--destructive)" },
-              { label: "Artwork Errors", value: results.artworkErrors, color: "var(--destructive)" },
-            ].map((stat) => (
-              <div key={stat.label} className="text-center">
-                <p className="text-xl font-bold" style={{ color: stat.color }}>
-                  {stat.value}
-                </p>
-                <p className="text-[10px] text-muted-foreground">{stat.label}</p>
-              </div>
-            ))}
-          </div>
-          {results.artworkErrors > 0 && (
-            <p className="mt-3 text-xs text-destructive">
-              Album artwork could not be generated for {results.artworkErrors} album
-              {results.artworkErrors === 1 ? "" : "s"}. This affects cover art only —
-              {results.errors === 0
-                ? " every song file copied successfully."
-                : " see Song Errors above for track problems."}{" "}
-              Check the sync log for the album folders involved.
-            </p>
-          )}
-        </Card>
-      )}
+      {/* Device status */}
+      <DeviceStatusCard deviceId={deviceId} refreshKey={statusRefreshKey} />
     </div>
   );
 }

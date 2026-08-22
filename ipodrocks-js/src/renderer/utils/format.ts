@@ -58,3 +58,8 @@ export function formatShadowSize(bytes: number): string {
   const gb = bytes / 1e9;
   return `${gb.toFixed(1)} GB`;
 }
+
+/** Gigabytes to one decimal place. Takes GB, not bytes. */
+export function formatGb(gb: number): string {
+  return `${gb.toFixed(1)} GB`;
+}

@@ -68,6 +68,7 @@ Full sync — copies everything. Set Orphan Policy to Remove for an exact mirror
 Custom sync — pick specific albums, artists, genres, podcasts, audiobooks, playlists.
 Orphan Policy — Remove (deletes files not in library), Keep (leaves them), Prompt (asks each time).
 Album artwork — copied by default (cover.jpg, folder.png, etc.). Uncheck "Skip album artwork" to disable.
+Device Status — the card at the bottom of the Sync panel shows what is on the target device right now: songs, podcasts and audiobooks synced (and how many are still to sync), playlist files, orphans, and space used (e.g. 30.0 / 300.0 GB). It runs the same check as Devices → Check Device, once per device, and refreshes itself after a sync. Press Refresh to re-run it.
 
 Sync does NOT write play counts, ratings, or metadata to the device. Ratings sync separately via Rockbox's database_changelog.txt (see Ratings section).
 
@@ -239,7 +240,7 @@ Two devices confused for each other / same mount path
   Two players that mount at the same path (e.g. /Volumes/IPOD) cannot be told apart by path alone, so the second inherits the first one's sync history and ratings. Fix by giving BOTH devices a USB identity via device_set_usb_identity — tagging only one is not enough, because the untagged device still matches on mount path. Devices that report no serial number are identified at model level only, which cannot separate two identical units.
 
 Sync fails or hangs
-  Check free space on the device. Use "Check Device" in Devices first to see synced vs to-sync counts. FFmpeg is bundled, no install needed. For Musepack, ensure mpcenc is on PATH. Cancel and retry; try a smaller custom sync (e.g. one album) to isolate.
+  Check free space on the device — the Device Status card in the Sync panel shows it, along with synced vs to-sync counts (or use "Check Device" in Devices). FFmpeg is bundled, no install needed. For Musepack, ensure mpcenc is on PATH. Cancel and retry; try a smaller custom sync (e.g. one album) to isolate.
 
 Genius "No playback history"
   Connect the device, enable "Read playback log" in Devices, click Recheck device for playback.log. Rockbox must have played tracks to write the file. If you already synced once, try Load from Database instead.

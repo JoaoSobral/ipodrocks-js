@@ -31,7 +31,7 @@ import {
   podcastSetDeviceAutoPodcasts,
 } from "../../ipc/api";
 import { MpcUnavailableModal } from "../modals/MpcUnavailableModal";
-import { formatCodecLabel } from "../../utils/format";
+import { formatCodecLabel, formatGb } from "../../utils/format";
 import { getTranscodableCodecConfigs, isVbrCapableCodec } from "../../utils/codec";
 import { createDeviceIconResolver } from "../../utils/device-icon";
 import { DeviceIcon } from "../common/DeviceIcon";
@@ -480,10 +480,6 @@ export function DevicePanel() {
   async function handlePickMount() {
     const result = await pickFolder();
     if (result) setMountPath(result);
-  }
-
-  function formatGb(gb: number): string {
-    return `${gb.toFixed(1)} GB`;
   }
 
   return (
