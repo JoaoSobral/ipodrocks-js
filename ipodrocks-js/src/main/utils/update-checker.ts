@@ -54,22 +54,37 @@ export async function fetchLatestRelease(
   };
 }
 
+/**
+ * How long an automatic check waits before hitting the network again. The
+ * automatic check fires on every mount of the Welcome panel, so without this
+ * it would run once per tab visit and once per app launch.
+ */
+export const AUTO_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
+
 export function shouldAutoCheck(
   now: number,
-  snoozeUntil: number | undefined
+  snoozeUntil: number | undefined,
+  lastAutoCheckAt?: number | undefined
 ): boolean {
-  if (snoozeUntil === undefined) return true;
-  return now >= snoozeUntil;
+  if (snoozeUntil !== undefined && now < snoozeUntil) return false;
+  if (lastAutoCheckAt !== undefined && now - lastAutoCheckAt < AUTO_CHECK_INTERVAL_MS) {
+    return false;
+  }
+  return true;
 }
 
-/** Total update checks (auto + manual, combined) allowed per rolling window. */
+/**
+ * Manual update checks allowed per rolling window. Automatic checks are not
+ * counted here — they have their own once-a-day throttle, so an app that sits
+ * on the Welcome panel can never spend the budget the button needs.
+ */
 export const UPDATE_CHECK_RATE_LIMIT = 4;
 export const UPDATE_CHECK_WINDOW_MS = 60 * 60 * 1000;
 
 /**
- * Decides whether another update check is allowed under a rolling-window
- * rate limit, given the timestamps of prior checks. Pure — the caller owns
- * persisting the returned (pruned) timestamps.
+ * Decides whether another manual update check is allowed under a
+ * rolling-window rate limit, given the timestamps of prior checks. Pure — the
+ * caller owns persisting the returned (pruned) timestamps.
  */
 export function checkRateLimit(
   timestamps: number[],

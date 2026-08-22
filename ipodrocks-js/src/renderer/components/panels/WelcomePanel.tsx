@@ -30,10 +30,22 @@ type UpdateState =
   | { status: "rateLimited" }
   | { status: "available"; result: CheckForUpdatesResult };
 
+// The panel unmounts whenever another tab is shown, so the result of the last
+// check lives outside the component: revisiting Welcome restores what the
+// button said instead of firing a fresh check every time (which is also what
+// keeps StrictMode's double-mount from checking twice).
+let lastUpdateState: UpdateState = { status: "idle" };
+let autoCheckStarted = false;
+
 export function WelcomePanel() {
   const { theme } = useThemeStore();
   const logoSrc = theme === "light" ? logoSrcTransp : logoSrcBlack;
-  const [updateState, setUpdateState] = useState<UpdateState>({ status: "idle" });
+  const [updateState, setUpdateStateRaw] = useState<UpdateState>(lastUpdateState);
+
+  const setUpdateState = (next: UpdateState) => {
+    lastUpdateState = next;
+    setUpdateStateRaw(next);
+  };
 
   const runCheck = async (auto: boolean) => {
     setUpdateState({ status: "checking" });
@@ -51,7 +63,11 @@ export function WelcomePanel() {
     }
   };
 
-  useEffect(() => { runCheck(true); }, []);
+  useEffect(() => {
+    if (autoCheckStarted) return;
+    autoCheckStarted = true;
+    runCheck(true);
+  }, []);
 
   const handleCheckForUpdates = () => runCheck(false);
 

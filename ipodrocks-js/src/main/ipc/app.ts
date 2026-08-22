@@ -7,6 +7,8 @@ import {
   setMpcRemindDisabled,
   getUpdateSnoozeUntil,
   setUpdateSnoozeUntil,
+  getLastAutoUpdateCheckAt,
+  setLastAutoUpdateCheckAt,
   getUpdateCheckTimestamps,
   setUpdateCheckTimestamps,
 } from "../utils/prefs";
@@ -43,19 +45,27 @@ export function registerAppHandlers(): void {
     "app:checkForUpdates",
     safe("app:checkForUpdates", async (_event, opts?: { auto?: boolean }) => {
       const current = app.getVersion();
+      const now = Date.now();
       if (opts?.auto) {
+        // The automatic check runs on every mount of the Welcome panel, so it
+        // gets its own once-a-day throttle and stays out of the manual budget
+        // below — otherwise a few visits to the tab would leave the button
+        // permanently rate-limited.
         const snoozeUntil = getUpdateSnoozeUntil();
-        if (!shouldAutoCheck(Date.now(), snoozeUntil ?? undefined)) {
+        const lastAuto = getLastAutoUpdateCheckAt();
+        if (!shouldAutoCheck(now, snoozeUntil ?? undefined, lastAuto ?? undefined)) {
           return { current, latest: current, updateAvailable: false, snoozed: true };
         }
+        setLastAutoUpdateCheckAt(now);
+      } else {
+        // Cap manual checks at 4/hour so this app instance can't burn through
+        // GitHub's unauthenticated 60/hour rate limit.
+        const rate = checkRateLimit(getUpdateCheckTimestamps(), now);
+        if (!rate.allowed) {
+          return { current, latest: current, updateAvailable: false, error: "rate-limited" };
+        }
+        setUpdateCheckTimestamps(rate.timestamps);
       }
-      // Cap auto + manual checks combined at 4/hour so this app instance
-      // can't burn through GitHub's unauthenticated 60/hour rate limit.
-      const rate = checkRateLimit(getUpdateCheckTimestamps(), Date.now());
-      if (!rate.allowed) {
-        return { current, latest: current, updateAvailable: false, error: "rate-limited" };
-      }
-      setUpdateCheckTimestamps(rate.timestamps);
       try {
         const release = await fetchLatestRelease();
         const latest = release.tagName.replace(/^v/, "");

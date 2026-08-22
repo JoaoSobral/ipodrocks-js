@@ -1,13 +1,16 @@
 /**
  * @vitest-environment node
  *
- * Covers checkRateLimit — the rolling-window cap on update checks (auto +
- * manual, combined) that keeps a single app instance under GitHub's
- * unauthenticated 60/hour API limit.
+ * Covers checkRateLimit — the rolling-window cap on *manual* update checks
+ * that keeps a single app instance under GitHub's unauthenticated 60/hour API
+ * limit — and shouldAutoCheck, the separate once-a-day throttle that keeps the
+ * automatic check-on-mount out of that budget.
  */
 import { describe, it, expect } from "vitest";
 import {
   checkRateLimit,
+  shouldAutoCheck,
+  AUTO_CHECK_INTERVAL_MS,
   UPDATE_CHECK_RATE_LIMIT,
   UPDATE_CHECK_WINDOW_MS,
 } from "../main/utils/update-checker";
@@ -53,5 +56,24 @@ describe("checkRateLimit", () => {
     expect(second.allowed).toBe(false);
     const third = checkRateLimit(first.timestamps, now + 1500, 1, 1000);
     expect(third.allowed).toBe(true);
+  });
+});
+
+describe("shouldAutoCheck", () => {
+  const now = 1_000_000_000;
+
+  it("allows the first automatic check", () => {
+    expect(shouldAutoCheck(now, undefined, undefined)).toBe(true);
+  });
+
+  it("suppresses the automatic check while snoozed, and resumes after", () => {
+    expect(shouldAutoCheck(now, now + 1000, undefined)).toBe(false);
+    expect(shouldAutoCheck(now, now, undefined)).toBe(true);
+  });
+
+  it("throttles repeat automatic checks to one per interval", () => {
+    // Remounting the Welcome panel minutes later must not re-check.
+    expect(shouldAutoCheck(now, undefined, now - 60_000)).toBe(false);
+    expect(shouldAutoCheck(now, undefined, now - AUTO_CHECK_INTERVAL_MS)).toBe(true);
   });
 });
