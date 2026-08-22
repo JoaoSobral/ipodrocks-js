@@ -52,9 +52,9 @@ test("the automatic check on mount leaves the manual budget intact", async () =>
   const now = Date.now();
   launched = await launchApp(undefined, {
     seedPrefs: {
-      // 3 manual checks spent; one slot left. No lastAutoUpdateCheckAt, so the
+      // All but one manual slot spent. No lastAutoUpdateCheckAt, so the
       // automatic check on mount runs for real — it must not take that slot.
-      updateCheckTimestamps: [now - 1_000, now - 2_000, now - 3_000],
+      updateCheckTimestamps: spentChecks(now, UPDATE_CHECK_RATE_LIMIT - 1),
     },
   });
   const window = await launched.app.firstWindow();
