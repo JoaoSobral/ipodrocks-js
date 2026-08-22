@@ -23,7 +23,6 @@ These are confirmed reuse/efficiency issues found during `src/main/` review. Add
 | Reuse | `library-scanner.ts` / `library-core.ts` | `get-or-create` pattern for artist/album/genre duplicated |
 | Efficiency | `library-scanner.ts:641` | `INSERT OR IGNORE` then `SELECT` — reverse to `SELECT` first |
 | Efficiency | `metadata-extractor.ts:141` | `parseFile()` called twice per track |
-| Efficiency | `playback-log-ingest.ts:90` | Full library aggregation on every ingest — should be incremental |
 | GitHub Actions | `.github/dependabot.yml` | `package-ecosystem: ""` — Dependabot is disabled |
 | GitHub Actions | All workflows | Actions pinned to floating `@vN` tags instead of commit SHAs |
 
@@ -42,9 +41,27 @@ reasoning behind the current shape of the code:
 
 > Note: `src/main/ipc.ts` was split into per-domain modules under `src/main/ipc/` (one `registerXHandlers()` per channel prefix, shared helpers in `ipc/common.ts`). Add new handlers to the matching domain module.
 
+## Hazard: an index in `SCHEMA_SQL` over a column added by a migration
+
+`db.exec(SCHEMA_SQL)` runs at the top of `AppDatabase.initialize()`, **before any
+migration**. On an existing database `CREATE TABLE IF NOT EXISTS` is a no-op, so a
+column added by an `ALTER TABLE` migration does not exist yet at that point. A
+`CREATE INDEX ... ON t(new_column)` in `SCHEMA_SQL` therefore throws and takes the
+whole of `initialize()` — and the app launch — down with it, for every upgrading
+user while working perfectly on a fresh install.
+
+This shipped once already (the 2.3.0 `usb_vendor_id` index, see
+`src/__tests__/regressions/device-usb-identity-migration.test.ts`) and was nearly
+reintroduced by `idx_device_synced_devpath` in 2.3.0-beta. **Put the column in
+`SCHEMA_SQL`, but create its index only inside the migration**, immediately after
+the `ALTER TABLE`. Add a regression test that builds a database with the column
+stripped back out and asserts `initialize()` does not throw.
+
 ## Hazard: `foreign_keys = OFF` during track deletion
 
 `LibraryScanner.deleteRemovedTracks()` (`src/main/library/library-scanner.ts`) wraps its deletes in `PRAGMA foreign_keys = OFF`, so **no `ON DELETE CASCADE` declared in the schema fires there**. Every dependent table must be deleted by hand inside that transaction (`playback_logs`, `playback_stats`, `shadow_tracks`, `content_hashes`, `playlist_items`). The same applies to `cleanupOrphanedEntities()` in the same file.
+
+**As of 2.3.0-beta the list is: `playback_logs`, `playback_stats`, `device_runtime_stats`, `runtime_play_deltas`, `device_track_ratings`, `rating_conflicts`, `rating_events`, `shadow_tracks`, `content_hashes`, `playlist_items`.** The three rating tables were being orphaned on every removed track until 2.3.0-beta — they declare `ON DELETE CASCADE`, which is exactly why nobody noticed. `src/__tests__/regressions/runtime-stats-orphan.test.ts` pins the whole set across `deleteRemovedTracks()`, `LibraryCore.deleteTrack()` and `removeLibraryFolder()`.
 
 **Deleting the row is not always enough.** `shadow_tracks.shadow_path` is the only record of where a transcode lives on disk, so it must be *captured before* the row is deleted — `deleteRemovedTracks()` returns it as `removedShadowPaths` and the scan hands it to `ShadowLibraryManager.deleteOrphanedShadowFiles()`. Deleting the row first is what let renamed album folders leave their old transcodes behind forever. Any dependent table that points at a file on disk needs the same treatment.
 

@@ -109,7 +109,14 @@ export interface DeviceProfile extends Device {
   codecName: string | null;
   modelName: string | null;
   modelInternalValue: string | null;
-  skipPlaybackLog?: boolean;
+  /**
+   * Do not import Rockbox's play history from this device.
+   *
+   * Stored in the legacy `skip_playback_log` column: the setting means the same
+   * thing it always did, only the source it governs changed from playback.log
+   * to Rockbox's runtime data.
+   */
+  skipRuntimeData?: boolean;
   skipAlbumArtwork?: boolean;
   /** Max dimension (px) for the Rockbox cover.jpg generated on sync. */
   artworkMaxDimension?: number;
@@ -165,7 +172,8 @@ export interface AddDeviceConfig {
   modelId?: number | null;
   sourceLibraryType?: "primary" | "shadow";
   shadowLibraryId?: number | null;
-  skipPlaybackLog?: boolean;
+  /** See DeviceProfile.skipRuntimeData. */
+  skipRuntimeData?: boolean;
   rockboxSmartPlaylists?: boolean;
   devMode?: boolean;
   vbrEnabled?: boolean;
@@ -319,11 +327,11 @@ export interface GeniusTypeOption {
   description: string;
   icon: string;
   /**
-   * Whether this type reads absolute wall-clock time from the device RTC.
-   * Rockbox timestamps are only as good as the clock the user set on the
-   * device, so these types are gated on the clock looking plausible.
+   * Whether this type needs Rockbox's runtime counters. Types that read only
+   * library metadata — ratings, or the absence of any play — work on a library
+   * that has never been near a device, so they are never gated.
    */
-  requiresDeviceClock?: boolean;
+  requiresRuntimeData?: boolean;
   /**
    * Whether this type can currently produce a meaningful result. When false
    * the UI shows it disabled with ``unavailableReason`` instead of hiding it.
@@ -336,37 +344,15 @@ export interface GeniusTypeOption {
 /** Response for the ``genius:types`` channel. */
 export interface GeniusTypesResponse {
   types: GeniusTypeOption[];
-  /** Approximate months spanned by the plausible playback log (0 when none). */
-  dataMonths: number;
-  /** ISO date of the earliest plausible matched playback-log entry, or null. */
-  firstLogDate: string | null;
-  /** Matched playback-log rows, regardless of timestamp plausibility. */
-  totalMatched: number;
-  /** Matched rows whose timestamp is outside the plausible range. */
-  implausibleCount: number;
-  /** Whether the device clock looks correctly set. */
-  clockValid: boolean;
+  /** Tracks with at least one play recorded by Rockbox. */
+  tracksWithPlays: number;
+  /** Total plays across the library. */
+  totalPlays: number;
+  /** Devices that have contributed runtime data. */
+  deviceCount: number;
 }
 
-// -- Genius / Rockbox playback log types ----------------------------------
-
-export interface PlayEvent {
-  timestamp: number;
-  elapsedMs: number;
-  totalMs: number;
-  filePath: string;
-  completionRatio: number;
-}
-
-export interface MatchedPlayEvent extends PlayEvent {
-  trackId: number;
-  artist: string;
-  album: string;
-  title: string;
-  genre: string;
-  duration: number;
-  rating: number | null;
-}
+// -- Genius / Rockbox runtime data types ----------------------------------
 
 export interface AnalysisSummary {
   totalPlays: number;
@@ -390,14 +376,15 @@ export interface ListeningStats {
   topArtists: { name: string; playCount: number }[];
   topGenre: { name: string; playCount: number } | null;
   /**
-   * Matched playback_logs rows regardless of timestamp plausibility — lets a
-   * zero-stats result be told apart from "no plays at all". A device whose
-   * clock was never set logs real plays under year-2000 timestamps, which
-   * are excluded from every count above but still counted here.
+   * Every play in the library, ignoring the period.
+   *
+   * Lets a zero result be told apart from "nothing recorded at all". Rockbox
+   * dates no plays, so ``year`` and ``month`` can only count what iPodRocks has
+   * observed since it started watching — a library full of plays can still
+   * report zero for this month, and the caller needs to say so rather than
+   * claim there is no listening data.
    */
-  totalMatchedPlays: number;
-  /** Whether enough of those matched rows have a plausible timestamp. */
-  clockValid: boolean;
+  totalLibraryPlays: number;
 }
 
 export interface GeniusGenerateOptions {

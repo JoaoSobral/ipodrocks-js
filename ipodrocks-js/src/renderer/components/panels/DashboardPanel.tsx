@@ -12,8 +12,6 @@ import { safeLocalStorage } from "../../utils/storage";
 import type { ShadowLibrary, ListeningStats, ListeningStatsPeriod } from "@shared/types";
 import type { ActivityEntry } from "../../ipc/api";
 
-const CLOCK_WARNING_DISMISSED_KEY = "ipodrocks-dashboard-clock-warning-dismissed";
-
 function formatBytes(bytes: number): string {
   if (bytes < 1e9) return `${(bytes / 1e6).toFixed(1)} MB`;
   return `${(bytes / 1e9).toFixed(2)} GB`;
@@ -74,6 +72,8 @@ const OPERATION_LABELS: Record<string, string> = {
   add_folder: "Add folder",
   add_device: "Add device",
   update_device: "Update device",
+  read_runtime_data: "Imported play history",
+  // Retired in 2.3.0-beta; kept so older activity rows still render.
   read_playback_log: "Read playback log",
   playlist_generated: "Playlist generated",
   shadow_prune: "Shadow library pruned",
@@ -107,14 +107,6 @@ export function DashboardPanel() {
   const [libraryReady, setLibraryReady] = useState(false);
   const [statsPeriod, setStatsPeriod] = useState<ListeningStatsPeriod>("year");
   const [listeningStats, setListeningStats] = useState<ListeningStats | null>(null);
-  const [clockWarningDismissed, setClockWarningDismissed] = useState(
-    () => safeLocalStorage()?.getItem(CLOCK_WARNING_DISMISSED_KEY) === "true"
-  );
-  const dismissClockWarning = () => {
-    safeLocalStorage()?.setItem(CLOCK_WARNING_DISMISSED_KEY, "true");
-    setClockWarningDismissed(true);
-  };
-
   const deviceList = Array.isArray(devices) ? devices : [];
   const shadowList = Array.isArray(shadowLibs) ? shadowLibs : [];
   const resolveDeviceIcon = useMemo(
@@ -297,7 +289,7 @@ export function DashboardPanel() {
       {/* Listening Stats */}
       <Card
         title="Listening Stats"
-        subtitle="From your device playback history"
+        subtitle="Gathered by Rockbox on your device and imported when you sync"
         className="col-span-2"
         action={
           <div className="flex gap-1">
@@ -322,26 +314,23 @@ export function DashboardPanel() {
           </div>
         ) : (
           <div className="space-y-3">
-            {listeningStats.totalMatchedPlays > 0 &&
-              !listeningStats.clockValid &&
-              !clockWarningDismissed && (
-                <div className="flex items-center gap-2 px-2 py-1.5 rounded-md border border-warning/30 bg-warning/10 text-[11px]">
-                  <span className="text-warning shrink-0">⚠</span>
-                  <span className="text-warning flex-1 min-w-0">
-                    Found {listeningStats.totalMatchedPlays.toLocaleString()} logged play
-                    {listeningStats.totalMatchedPlays === 1 ? "" : "s"}, but your device's clock
-                    isn't set — Rockbox is reporting dates from the year 2000. Set the date & time
-                    on your device (Settings → General → Time & Date) and new plays will start
-                    counting toward your stats.
-                  </span>
-                  <Button variant="ghost" size="sm" onClick={dismissClockWarning}>
-                    Dismiss
-                  </Button>
-                </div>
-              )}
             {listeningStats.totalPlays === 0 ? (
               <p className="text-xs text-muted-foreground">
-                No listening data yet. Playback logs are read from Rockbox devices during sync.
+                {listeningStats.totalLibraryPlays > 0 ? (
+                  <>
+                    Nothing played in this period yet. Your library has{" "}
+                    {listeningStats.totalLibraryPlays.toLocaleString()} play
+                    {listeningStats.totalLibraryPlays === 1 ? "" : "s"} in total — Rockbox
+                    doesn't date them, so "This Year" and "This Month" only count what
+                    iPodRocks has seen since it started watching. Switch to All Time to see
+                    everything.
+                  </>
+                ) : (
+                  <>
+                    No listening data yet. Turn on Gather Runtime Data in Rockbox (Settings →
+                    Playback Settings), then connect your device and sync.
+                  </>
+                )}
               </p>
             ) : (
           <div className="space-y-4">

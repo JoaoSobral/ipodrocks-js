@@ -38,6 +38,74 @@ export class AppDatabase {
     this.migrateShadowTrackStat();
     this.migrateClassicPlaylists();
     this.migrateNfcPaths();
+    this.migrateDeviceSyncedTrackPath();
+    this.migrateResetPlaybackStats();
+  }
+
+  /**
+   * Add device_synced_tracks.device_path.
+   *
+   * Rockbox reports its runtime data against the on-device path, so matching a
+   * runtime record back to a library track needs the path we actually wrote.
+   * The device check already computes it and used to discard it. Existing rows
+   * stay null until the next check fills them in; the importer falls back to
+   * relative-path and unique-basename matching in the meantime.
+   */
+  private migrateDeviceSyncedTrackPath(): void {
+    if (!this.db) return;
+    try {
+      const rows = this.db
+        .prepare("PRAGMA table_info(device_synced_tracks)")
+        .all() as { name: string }[];
+      if (!rows.some((r) => r.name === "device_path")) {
+        this.db
+          .prepare("ALTER TABLE device_synced_tracks ADD COLUMN device_path TEXT")
+          .run();
+      }
+      this.db
+        .prepare(
+          "CREATE INDEX IF NOT EXISTS idx_device_synced_devpath ON device_synced_tracks(device_id, device_path)"
+        )
+        .run();
+    } catch (err) {
+      console.error("[db] migration failed (migrateDeviceSyncedTrackPath):", err);
+    }
+  }
+
+  /**
+   * Clear playback_stats once, when moving off the playback.log importer.
+   *
+   * Rockbox's own counters and the old playback.log record the same plays --
+   * the log counts anything over half a second, runtime data only counts a play
+   * that ran 15 seconds -- so the two cannot be added, and neither can be
+   * scaled into the other. Statistics restart from Rockbox's counters, and the
+   * next import rebuilds this table from device_runtime_stats.
+   *
+   * playback_logs itself is left untouched: nothing reads it any more, but the
+   * rows are the user's own history and deleting them is not this migration's
+   * call to make.
+   */
+  private migrateResetPlaybackStats(): void {
+    if (!this.db) return;
+    try {
+      const done = this.db
+        .prepare(
+          "SELECT value FROM app_settings WHERE key = 'migrate_runtime_stats_reset_done'"
+        )
+        .get() as { value: string } | undefined;
+      if (done?.value === "1") return;
+
+      this.db.transaction(() => {
+        this.db!.prepare("DELETE FROM playback_stats").run();
+        this.db!
+          .prepare(
+            "INSERT OR REPLACE INTO app_settings (key, value, updated_at) VALUES ('migrate_runtime_stats_reset_done', '1', CURRENT_TIMESTAMP)"
+          )
+          .run();
+      })();
+    } catch (err) {
+      console.error("[db] migration failed (migrateResetPlaybackStats):", err);
+    }
   }
 
   /**

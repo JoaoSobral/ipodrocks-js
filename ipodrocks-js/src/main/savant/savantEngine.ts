@@ -40,7 +40,6 @@ export interface SavantContext {
       completionRate: number;
     }>;
     skippedArtists: string[];
-    timeOfDayPattern: "morning" | "afternoon" | "evening" | "latenight" | "mixed";
   } | null;
   candidateTracks: CandidateTrack[];
 }
@@ -135,7 +134,6 @@ async function assembleSavantContext(
       topArtists,
       topTracks,
       skippedArtists: [...skippedArtists],
-      timeOfDayPattern: "mixed",
     };
   }
 
@@ -253,8 +251,7 @@ You must respond ONLY with valid JSON — no prose, no markdown.`;
         .slice(0, 5)
         .map((a) => `${a.artist} (${a.playCount} plays)`)
         .join(", ")}
-- Artists they tend to skip: ${ctx.geniusSignals.skippedArtists.join(", ") || "none identified"}
-- Typical listening time: ${ctx.geniusSignals.timeOfDayPattern}
+- Artists they tend to leave unfinished: ${ctx.geniusSignals.skippedArtists.join(", ") || "none identified"}
 `
     : "- No listening history available";
 

@@ -23,7 +23,7 @@ First sync: Sync → select device → Full or Custom → Start Sync.
 ---
 
 ### Dashboard
-At-a-glance view: Library stats (tracks, albums, artists, total size), Devices list, Shadow Libraries status, Recent Activity (syncs, scans, playlist generations, playback log reads).
+At-a-glance view: Library stats (tracks, albums, artists, total size), Devices list, Shadow Libraries status, Recent Activity (syncs, scans, playlist generations, play history imports).
 No background refresh — switch away and back to reload.
 
 ---
@@ -52,7 +52,7 @@ Set as default — used as default device for sync and Genius.
 Codec options: Direct Copy (no conversion), MP3, AAC, Musepack (MPC), Opus, OGG.
 Use shadow libraries for pre-transcoded sync (faster, avoids on-the-fly conversion).
 
-Playback log — enable "Read playback log" on the device profile to ingest Rockbox's playback.log for Genius playlists and listening stats.
+Play history — leave "Do not import play history from this device" unchecked (the default) so iPodRocks imports Rockbox's runtime data: play counts, listening time and ratings, used for Genius playlists and listening stats. Requires Gather Runtime Data on the device.
 
 Rockbox smart playlists (tagnavi) — when enabled on a device profile, smart playlists sync as live Rockbox tagnavi database queries instead of static .m3u files. Classic, Genius, and Savant playlists always sync as .m3u — they are static track selections with no rules to translate. After syncing, reboot the device and run Database → Initialize Now in Rockbox for entries to appear. After the first init, updates are automatic if tagcache_autoupdate is on.
 
@@ -86,7 +86,7 @@ Five tabs: All, Classic, Smart, Genius, Savant.
 All — view, create, delete, and export all playlists. Click a playlist to see its tracks. Export as M3U8.
 Classic — hand-picked songs chosen by the user, up to 500. The only editable playlist type. Syncs as .m3u.
 Smart — rule-based playlists (genre, artist, album + track limit). Syncs as .m3u or live tagnavi.
-Genius — from Rockbox playback history (Most Played, Favorites, Late Night, etc.). Syncs as .m3u.
+Genius — from Rockbox's runtime data (Most Played, Favorites, Forgotten Favorites, etc.). Syncs as .m3u.
 Savant — AI-generated from mood (requires OpenRouter API key). Syncs as .m3u.
 
 Playlists stay in sync with the library automatically: after every library scan or folder removal, songs that no longer exist on disk are dropped from every playlist, and smart playlists are re-resolved from their rules so they also pick up newly scanned tracks. Users do not need to click Repair.
@@ -117,25 +117,27 @@ Rockbox dynamic mode (tagnavi): when enabled on the device profile, smart playli
 ---
 
 ### Genius Playlists
-Built from Rockbox playback history (from playback.log). Most types require at least one device with playback log enabled.
+Built from Rockbox's runtime data — the play counts, listening time, play order and
+ratings Rockbox records itself when Gather Runtime Data is on. Most types need at
+least one device that has recorded some.
 
 Genius types:
-  Top Rated (from Rockbox star ratings — needs no playback history)
-  Hidden Gems (library tracks never played — needs no playback history)
-  Most Played, Favorites, Skip List, Recently Discovered
+  Top Rated (from Rockbox star ratings — needs no play history)
+  Hidden Gems (library tracks never played — needs no play history)
+  Most Played, Favorites, Never Finished, Recently Discovered
+  Forgotten Favorites (well-rated or often-played tracks not returned to)
   Top Artist, Top Album, Top Genre, Deep Dive (single artist focus)
   Finish the Album (unheard tracks from albums started but never finished)
-  Late Night (22:00–05:00 plays — requires the device clock to be set correctly)
 
-Device clock: Rockbox stamps each play using the iPod's own clock. If that clock is
-wrong (an unset RTC reports the year 2000), Late Night is disabled, because times of
-day cannot be trusted. Fix it on the device under Settings → General Settings →
-System → Time & Date. Every other type uses play counts and completion rates, so
-they stay correct regardless of the clock.
+What runtime data cannot do: Rockbox records no dates or times, only counters and a
+play-order number, so there is no "played at this time of day" type. It also only
+counts a play once a track has run 15 seconds, so a track skipped immediately is
+never recorded — "Never Finished" means started-and-abandoned, not skipped.
 
 How to use:
-1. Add a device and enable "Read playback log" in Devices.
-2. Load from Database (if already synced before) or Recheck device for playback.log (reads from device).
+1. On the device, turn on Settings → Playback Settings → Gather Runtime Data.
+2. Add the device in iPodRocks, then Load from Database or Import Runtime Data
+   (reads from the connected device).
 3. Wait for analysis. Check the summary (total plays, matched plays).
 4. Pick a Genius type and configure options (track limit, min plays, artist).
 5. Generate → preview → Save with a name.
@@ -151,7 +153,7 @@ Quick mode — preset moods (Chill, Workout, Focus, etc.). Click to generate ins
 Chat mode — describe your vibe in plain English ("late night jazz", "upbeat indie for a run"). Refine with follow-up messages.
 Harmonic mixing — when tracks have Camelot key data, the AI orders them for smooth transitions.
 Rating-aware — candidate tracks include star ratings; Savant gives extra weight to highly-rated tracks.
-The AI avoids tracks you consistently skip (from playback history when available).
+The AI avoids tracks you consistently leave unfinished (from Rockbox's runtime data when available).
 
 How to use: add OpenRouter key in Settings → Quick or Chat mode → Generate → Save. Savant playlists are static once saved; regenerate for a fresh mix.
 Improve harmonic coverage: enable "Extract harmonic data" and "Analyze with Essentia" in Settings, then scan or run Backfill.
@@ -174,9 +176,9 @@ Sync phases (run automatically during sync):
     - Both changed but differ by 1 unit → half-step tolerance, higher value wins.
     - Both changed significantly → conflict recorded.
   Phase 2 — File sync (normal copy/transcode/remove).
-  Phase 3 — Propagate (library → device): writes canonical library ratings back to database_changelog.txt.
+  Phase 3 — Propagate (library → device): writes canonical library ratings straight into Rockbox's database, one field at a time, the same way Rockbox does. A rating the device already holds is skipped, so a sync with nothing to say writes nothing.
 
-After sync with rating changes: on the device go to Settings → General → Database → Initialize Now to apply the new ratings file.
+After sync with rating changes: the values are saved immediately. Restart Rockbox for them to show on the device's own screen — with tagcache_ram on it keeps the database in memory and does not reload it when USB disconnects. Do NOT run Database → Initialize Now to "apply" them; that rebuilds the database and is not needed.
 
 Conflicts: when a conflict is recorded, the Library panel shows a warning banner. Click Resolve → to open the conflict panel. For each conflict: choose Keep Library, Use Device, or Set Manually.
 
@@ -242,8 +244,8 @@ Two devices confused for each other / same mount path
 Sync fails or hangs
   Check free space on the device — the Device Status card in the Sync panel shows it, along with synced vs to-sync counts (or use "Check Device" in Devices). FFmpeg is bundled, no install needed. For Musepack, ensure mpcenc is on PATH. Cancel and retry; try a smaller custom sync (e.g. one album) to isolate.
 
-Genius "No playback history"
-  Connect the device, enable "Read playback log" in Devices, click Recheck device for playback.log. Rockbox must have played tracks to write the file. If you already synced once, try Load from Database instead.
+Genius "No play history"
+  On the device, check Settings → Playback Settings → Gather Runtime Data is on, then play something for at least 15 seconds (shorter plays are never counted). Connect the device and click Import Runtime Data. If you already synced once, try Load from Database instead. If the device has never built its database, run Settings → Database → Initialize Now on it first.
 
 Savant or Rocksy not working
   Add your OpenRouter API key in Settings → OpenRouter API. Test the connection. Ensure you have credits and the selected model is available. Check your network connection.

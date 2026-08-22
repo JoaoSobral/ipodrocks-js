@@ -415,8 +415,20 @@ export class LibraryCore {
     if (!row) return false;
 
     const trackId = row.id;
-    this.db.prepare("DELETE FROM playback_logs WHERE matched_track_id = ?").run(trackId);
-    this.db.prepare("DELETE FROM playback_stats WHERE track_id = ?").run(trackId);
+    // Every table keyed on tracks(id) has to be cleared by hand -- track
+    // deletion elsewhere runs with foreign_keys = OFF, so no CASCADE fires and
+    // this path must match it or the two disagree about what an orphan is.
+    for (const sql of [
+      "DELETE FROM playback_logs WHERE matched_track_id = ?",
+      "DELETE FROM playback_stats WHERE track_id = ?",
+      "DELETE FROM device_runtime_stats WHERE track_id = ?",
+      "DELETE FROM runtime_play_deltas WHERE track_id = ?",
+      "DELETE FROM device_track_ratings WHERE track_id = ?",
+      "DELETE FROM rating_conflicts WHERE track_id = ?",
+      "DELETE FROM rating_events WHERE track_id = ?",
+    ]) {
+      this.db.prepare(sql).run(trackId);
+    }
     const info = this.stmtDeleteTrack.run(dbPath);
     return info.changes > 0;
   }
@@ -461,16 +473,21 @@ export class LibraryCore {
         const ids = trackIds.map((r) => r.id);
         if (ids.length > 0) {
           const placeholders = ids.map(() => "?").join(",");
-          this.db
-            .prepare(
-              `DELETE FROM playback_logs WHERE matched_track_id IN (${placeholders})`
-            )
-            .run(...ids);
-          this.db
-            .prepare(
-              `DELETE FROM playback_stats WHERE track_id IN (${placeholders})`
-            )
-            .run(...ids);
+          for (const table of [
+            ["playback_logs", "matched_track_id"],
+            ["playback_stats", "track_id"],
+            ["device_runtime_stats", "track_id"],
+            ["runtime_play_deltas", "track_id"],
+            ["device_track_ratings", "track_id"],
+            ["rating_conflicts", "track_id"],
+            ["rating_events", "track_id"],
+          ] as const) {
+            this.db
+              .prepare(
+                `DELETE FROM ${table[0]} WHERE ${table[1]} IN (${placeholders})`
+              )
+              .run(...ids);
+          }
         }
         this.db
           .prepare("DELETE FROM tracks WHERE library_folder_id = ?")

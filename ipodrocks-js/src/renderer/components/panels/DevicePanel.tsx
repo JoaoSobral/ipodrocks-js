@@ -122,7 +122,7 @@ export function DevicePanel() {
   const [defaultCodecConfigId, setDefaultCodecConfigId] = useState<number | null>(null);
   const [description, setDescription] = useState("");
   const [isDefault, setIsDefault] = useState(false);
-  const [playbackLogEnabled, setPlaybackLogEnabled] = useState(true);
+  const [runtimeDataEnabled, setRuntimeDataEnabled] = useState(true);
   const [rockboxSmartPlaylists, setRockboxSmartPlaylists] = useState(false);
   const [autoPodcastsEnabled, setAutoPodcastsEnabled] = useState(false);
   const [skipAlbumArtwork, setSkipAlbumArtwork] = useState(false);
@@ -194,7 +194,7 @@ export function DevicePanel() {
     setDefaultCodecConfigId(null);
     setDescription("");
     setIsDefault(false);
-    setPlaybackLogEnabled(true); // true = read playback.log (default)
+    setRuntimeDataEnabled(true); // true = import Rockbox's runtime data (default)
     setRockboxSmartPlaylists(false);
     setAutoPodcastsEnabled(false);
     setSkipAlbumArtwork(false);
@@ -245,7 +245,7 @@ export function DevicePanel() {
       setShadowLibraryId(null);
     }
 
-    setPlaybackLogEnabled(!(device.skipPlaybackLog ?? false));
+    setRuntimeDataEnabled(!(device.skipRuntimeData ?? false));
     setSkipAlbumArtwork(device.skipAlbumArtwork ?? false);
     setArtworkMaxDimension(device.artworkMaxDimension ?? 300);
     setVbrEnabled(device.vbrEnabled ?? false);
@@ -399,7 +399,7 @@ export function DevicePanel() {
       playlistFolder,
       sourceLibraryType: resolvedSourceType,
       shadowLibraryId: resolvedShadowId,
-      skipPlaybackLog: !playbackLogEnabled,
+      skipRuntimeData: !runtimeDataEnabled,
       skipAlbumArtwork,
       artworkMaxDimension,
       vbrEnabled: transferMode === "transcode" ? vbrEnabled : false,
@@ -975,12 +975,12 @@ export function DevicePanel() {
               <input
                 type="checkbox"
                 className={checkboxClass}
-                checked={!playbackLogEnabled}
-                onChange={(e) => setPlaybackLogEnabled(!e.target.checked)}
+                checked={!runtimeDataEnabled}
+                onChange={(e) => setRuntimeDataEnabled(!e.target.checked)}
               />
               <span className="text-sm text-foreground flex items-center gap-1">
-                Do not read playback.log data
-                <InfoTooltip text="Rockbox records your play history in a file called playback.log. Disable this if you don't want iPodRocks to import that history for Genius playlists." />
+                Do not import play history from this device
+                <InfoTooltip text="With Gather Runtime Data enabled, Rockbox records how often and how long you play each track, and your ratings. Turn this off if you don't want iPodRocks importing that from this device for statistics and Genius playlists." />
               </span>
             </label>
             <label className="flex items-center gap-2.5 cursor-pointer">

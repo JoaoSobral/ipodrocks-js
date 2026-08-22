@@ -379,21 +379,24 @@ export async function pingDevice(deviceId: number): Promise<{ online: boolean }>
   return window.api.invoke("device:ping", deviceId) as Promise<{ online: boolean }>;
 }
 
-export interface ReadPlaybackLogResult {
-  ingested: number;
-  skipped: number;
+export interface ReadRuntimeDataResult {
+  imported: number;
+  unmatched: number;
+  newPlays: number;
+  /** Why nothing was imported — null when the import succeeded. */
+  reason: string | null;
   summary: AnalysisSummary;
   error?: string;
   offline?: boolean;
 }
 
-export async function readDevicePlaybackLog(
+export async function readDeviceRuntimeData(
   deviceId: number
-): Promise<ReadPlaybackLogResult> {
+): Promise<ReadRuntimeDataResult> {
   return window.api.invoke(
-    "device:readPlaybackLog",
+    "device:readRuntimeData",
     deviceId
-  ) as Promise<ReadPlaybackLogResult>;
+  ) as Promise<ReadRuntimeDataResult>;
 }
 
 export async function getGeniusSummaryFromDb(): Promise<AnalyzeResult> {

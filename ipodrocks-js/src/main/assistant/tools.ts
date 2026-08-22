@@ -47,6 +47,7 @@ import {
   getGeniusTypesWithAvailability,
   generateGeniusPlaylistFromDb,
 } from "../playlists/genius-engine";
+import { readAndIngestRuntimeData } from "../rockbox/runtime-ingest";
 
 export interface AiToolContext {
   db: Database.Database;
@@ -465,6 +466,47 @@ const device_check: AiTool = {
     const device = ctx.getDevicesCore().getDeviceById(deviceId);
     if (!device) throw new Error(`Device #${deviceId} not found`);
     return { deviceId, name: device.profile.name, note: "Full check requires mounting the device — please use the Devices panel for a detailed sync analysis." };
+  },
+};
+
+const device_read_runtime_data: AiTool = {
+  name: "device_read_runtime_data",
+  description:
+    "Import Rockbox's runtime data from a connected device — play counts, listening time and ratings the player recorded itself. Use when the user asks to import their play history, or asks why their play counts or listening stats are empty. Requires Gather Runtime Data to be enabled in Rockbox.",
+  parameters: {
+    type: "object",
+    properties: {
+      device_id: { type: "number", description: "Device ID (from device_list)" },
+    },
+    required: ["device_id"],
+  },
+  // Reads the device and updates local statistics. Nothing on the device is
+  // written and nothing local is destroyed, so it needs no confirm gate.
+  kind: "write-safe",
+  summarize: (a) => `Import play history from device #${a.device_id}`,
+  async run(args, ctx) {
+    const deviceId = Number(args.device_id);
+    if (!Number.isInteger(deviceId) || deviceId <= 0) throw new Error("Invalid device_id");
+    const device = ctx.getDevicesCore().getDeviceById(deviceId);
+    if (!device) throw new Error(`Device #${deviceId} not found`);
+
+    const result = readAndIngestRuntimeData(
+      ctx.db,
+      deviceId,
+      device.mountPath,
+      device.profile.skipRuntimeData ?? false
+    );
+
+    return {
+      deviceId,
+      name: device.profile.name,
+      imported: result.imported,
+      unmatched: result.unmatched,
+      newPlays: result.newPlays,
+      // Relay the reason verbatim when there was nothing to import: it names
+      // the exact setting the user has to change on the device.
+      reason: result.state.kind === "ok" ? null : result.state.message,
+    };
   },
 };
 
@@ -1295,6 +1337,7 @@ export const AI_TOOLS: AiTool[] = [
   usb_device_list,
   playlist_create_smart,
   playlist_create_genius,
+  device_read_runtime_data,
   playlist_create_classic,
   playlist_update_classic,
   podcast_subscribe,

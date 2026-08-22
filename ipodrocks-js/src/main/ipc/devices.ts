@@ -18,7 +18,8 @@ import {
   type LayoutOptions,
 } from "../sync/sync-core";
 import { compareLibraries } from "../sync/name-size-sync";
-import { readAndIngestPlaybackLog } from "../playlists/playback-log-ingest";
+import { toMountRelative } from "../rockbox/device-path-match";
+import { readAndIngestRuntimeData } from "../rockbox/runtime-ingest";
 import {
   buildAnalysisSummaryFromDb,
   getArtistsFromPlaybackStats,
@@ -151,22 +152,6 @@ export function registerDeviceHandlers(): void {
       }
 
       const lib = getLibrary();
-      if (!device.profile.skipPlaybackLog) {
-        const ingest = readAndIngestPlaybackLog(
-          deviceId,
-          lib.getConnection(),
-          device.mountPath,
-          false,
-          device.name
-        );
-        if (ingest.ingested > 0 || ingest.skipped > 0) {
-          logActivity(
-            lib.getConnection(),
-            "read_playback_log",
-            `${device.name} (check): ${ingest.ingested} ingested, ${ingest.skipped} skipped`
-          );
-        }
-      }
 
       const [musicStats, podcastStats, audiobookStats, playlistStats] = await Promise.all([
         device.getContentStats("music"),
@@ -338,24 +323,53 @@ export function registerDeviceHandlers(): void {
         walkPlaylists(playlistFolder);
       }
 
-      const matchedLibraryPaths = [
-        ...musicCompare.tracksToSkip.map((t) => t.library_path),
-        ...podcastCompare.tracksToSkip.map((t) => t.library_path),
-        ...audiobookCompare.tracksToSkip.map((t) => t.library_path),
+      // Keep the on-device location alongside the library path. Rockbox
+      // reports its runtime counters and ratings against the device path, and
+      // this walk is the only place that knows, for certain, where each track
+      // actually landed -- deriving it later from the sync layout would only
+      // ever be a re-guess.
+      const matchedTracks = [
+        ...musicCompare.tracksToSkip,
+        ...podcastCompare.tracksToSkip,
+        ...audiobookCompare.tracksToSkip,
       ];
       const conn = lib.getConnection();
       conn.prepare("DELETE FROM device_synced_tracks WHERE device_id = ?").run(deviceId);
       const insertStmt = conn.prepare(
-        "INSERT OR REPLACE INTO device_synced_tracks (device_id, library_path) VALUES (?, ?)"
+        "INSERT OR REPLACE INTO device_synced_tracks (device_id, library_path, device_path) VALUES (?, ?, ?)"
       );
-      for (const lp of matchedLibraryPaths) {
-        insertStmt.run(deviceId, lp);
+      for (const t of matchedTracks) {
+        insertStmt.run(
+          deviceId,
+          t.library_path,
+          toMountRelative(t.device_path, device.mountPath)
+        );
       }
 
-      const totalOnDevice = matchedLibraryPaths.length;
+      const totalOnDevice = matchedTracks.length;
       getDevicesCore().updateDevice(deviceId, {
         totalSyncedItems: totalOnDevice,
       });
+
+      // Import runtime data now rather than at the top of the handler: the walk
+      // above has just recorded where every track actually sits on the device,
+      // which is what lets Rockbox's records be matched exactly instead of by
+      // filename — including on a device being checked for the first time.
+      if (!device.profile.skipRuntimeData) {
+        const ingest = readAndIngestRuntimeData(
+          conn,
+          deviceId,
+          device.mountPath,
+          false
+        );
+        if (ingest.imported > 0) {
+          logActivity(
+            conn,
+            "read_runtime_data",
+            `${device.name} (check): ${ingest.imported} track(s) imported, ${ingest.unmatched} unmatched`
+          );
+        }
+      }
 
       return {
         deviceId,
@@ -388,37 +402,43 @@ export function registerDeviceHandlers(): void {
   );
 
   ipcMain.handle(
-    "device:readPlaybackLog",
-    safe("device:readPlaybackLog", async (_event, deviceId: number) => {
+    "device:readRuntimeData",
+    safe("device:readRuntimeData", async (_event, deviceId: number) => {
       const device = getDevicesCore().getDeviceById(deviceId);
       if (!device) return { error: `Device ${deviceId} not found` };
 
       await refreshUsbSnapshot();
       if (!isDeviceOnline(device.profile)) {
-        return { offline: true, error: "Device not connected", ingested: 0, skipped: 0 };
+        return {
+          offline: true,
+          error: "Device not connected",
+          imported: 0,
+          unmatched: 0,
+        };
       }
 
       const lib = getLibrary();
-      const ingest = readAndIngestPlaybackLog(
+      const db = lib.getConnection();
+      const ingest = readAndIngestRuntimeData(
+        db,
         deviceId,
-        lib.getConnection(),
         device.mountPath,
-        device.profile.skipPlaybackLog ?? false,
-        device.name
+        device.profile.skipRuntimeData ?? false
       );
       logActivity(
-        lib.getConnection(),
-        "read_playback_log",
-        `${device.name}: ${ingest.ingested} ingested, ${ingest.skipped} skipped`
+        db,
+        "read_runtime_data",
+        `${device.name}: ${ingest.imported} track(s) imported, ${ingest.unmatched} unmatched`
       );
-      const db = lib.getConnection();
-      const summary = buildAnalysisSummaryFromDb(db);
-      const artists = getArtistsFromPlaybackStats(db);
       return {
-        ingested: ingest.ingested,
-        skipped: ingest.skipped,
-        summary,
-        artists,
+        imported: ingest.imported,
+        unmatched: ingest.unmatched,
+        newPlays: ingest.newPlays,
+        // Null when the import succeeded — the UI only needs a reason when it
+        // has nothing to show, and "this track was never played" is not one.
+        reason: ingest.state.kind === "ok" ? null : ingest.state.message,
+        summary: buildAnalysisSummaryFromDb(db),
+        artists: getArtistsFromPlaybackStats(db),
       };
     })
   );

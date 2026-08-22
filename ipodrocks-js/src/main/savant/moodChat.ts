@@ -148,7 +148,7 @@ export function buildSavantChatContext(db: Database.Database): string {
 
     lines.push(
       "",
-      "## Playlog (listening history)",
+      "## Listening history (gathered by Rockbox)",
       `- Top artists by plays: ${topByPlays.join(", ") || "none"}`,
       `- Favorites (high completion): ${topTracks.join("; ") || "none"}`,
       `- Artists they tend to skip: ${[...skippedArtists].slice(0, 5).join(", ") || "none"}`

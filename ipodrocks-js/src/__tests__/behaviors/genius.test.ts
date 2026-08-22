@@ -1,12 +1,20 @@
 /**
  * @vitest-environment node
  *
- * Behavioral coverage for the Genius playlist engine — the DB-backed
- * generators that read Rockbox `playback.log` data out of `playback_logs`.
+ * Behavioral coverage for the Genius playlist engine, which reads the runtime
+ * counters Rockbox records itself — play count, listening time, average
+ * completion and play order — out of `device_runtime_stats` / `playback_stats`.
  *
- * Focuses on the time-window generators (which had bugs / timezone hazards)
- * and the availability gating surfaced to the UI. Drives the engine functions
- * in `src/main/playlists/genius-engine.ts` directly against an in-memory DB.
+ * Two properties of that data shape almost every test here:
+ *
+ *   * Rockbox only counts a play once a track has run 15 seconds, so a track
+ *     skipped immediately is indistinguishable from one never played.
+ *   * Rockbox attaches no date to a play. Period-scoped stats can therefore
+ *     only count what iPodRocks has observed since it started watching, which
+ *     is what `runtime_play_deltas` records.
+ *
+ * Drives the engine functions in `src/main/playlists/genius-engine.ts`
+ * directly against an in-memory DB.
  */
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 
@@ -14,6 +22,7 @@ import {
   canRunDbTests,
   closeDb,
   createTestDb,
+  seedDevice,
   seedLibraryFolder,
   seedTrack,
   type TestDb,
@@ -28,199 +37,352 @@ import {
 
 const itDb = it.skipIf(!canRunDbTests);
 
-const MONTH_SEC = 30 * 24 * 60 * 60;
-
-/** Insert a matched playback-log row for a track. */
-function seedPlay(
-  db: TestDb,
-  trackId: number,
-  tsSec: number,
-  opts: { elapsedMs?: number; totalMs?: number } = {}
-): void {
-  const elapsedMs = opts.elapsedMs ?? 200_000;
-  const totalMs = opts.totalMs ?? 200_000;
-  const ratio = totalMs > 0 ? Math.min(1, elapsedMs / totalMs) : 0;
-  db.prepare(
-    `INSERT INTO playback_logs
-       (device_id, device_db_id, device_name, timestamp_tick, elapsed_ms,
-        total_ms, file_path, matched_track_id, completion_rate)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  ).run(
-    "dev1",
-    1,
-    "Test Device",
-    tsSec,
-    elapsedMs,
-    totalMs,
-    `/music/track-${trackId}-${tsSec}.flac`,
-    trackId,
-    ratio
-  );
+interface RuntimeInput {
+  plays: number;
+  /** Average completion 0..1. Defaults to a full listen. */
+  completion?: number;
+  /** Rockbox's play-order counter; ordering only, never a date. */
+  serial?: number;
+  /** Host-clock date recorded when an import saw the counter rise. */
+  lastPlayedAt?: string;
+  lengthMs?: number;
 }
 
 /**
- * Rebuild `playback_stats` from `playback_logs`, mirroring the aggregation in
- * `playback-log-ingest.ts`. Needed by anything that reads play counts, which
- * come from `playback_stats.total_plays` — never from `tracks.play_count`.
+ * Give a track the runtime counters a device import would have produced, and
+ * refresh the library roll-up the generators actually read.
  */
-function aggregateStats(db: TestDb): void {
+function seedRuntime(
+  db: TestDb,
+  deviceId: number,
+  trackId: number,
+  input: RuntimeInput
+): void {
+  const lengthMs = input.lengthMs ?? 200_000;
+  const completion = input.completion ?? 1;
+  const playTimeMs = Math.round(lengthMs * input.plays * completion);
+
   db.prepare(
-    `INSERT OR REPLACE INTO playback_stats
+    `INSERT INTO device_runtime_stats
+       (device_id, track_id, device_path, play_count, play_time_ms, rating,
+        last_played_serial, length_ms, avg_completion, prev_play_count,
+        last_played_at)
+     VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, 0, ?)
+     ON CONFLICT(device_id, track_id) DO UPDATE SET
+       play_count = excluded.play_count,
+       play_time_ms = excluded.play_time_ms,
+       avg_completion = excluded.avg_completion,
+       last_played_serial = excluded.last_played_serial,
+       last_played_at = excluded.last_played_at`
+  ).run(
+    deviceId,
+    trackId,
+    `music/track-${trackId}.flac`,
+    input.plays,
+    playTimeMs,
+    input.serial ?? 0,
+    lengthMs,
+    completion,
+    input.lastPlayedAt ?? null
+  );
+
+  rollUp(db);
+}
+
+/** Mirrors aggregateRuntimeStats in rockbox/runtime-ingest.ts. */
+function rollUp(db: TestDb): void {
+  db.prepare("DELETE FROM playback_stats").run();
+  db.prepare(
+    `INSERT INTO playback_stats
        (track_id, total_plays, total_playtime_ms, avg_completion_rate,
         last_played_at, first_played_at, updated_at)
-     SELECT matched_track_id, COUNT(*), SUM(elapsed_ms), AVG(completion_rate),
-            datetime(MAX(timestamp_tick), 'unixepoch'),
-            datetime(MIN(timestamp_tick), 'unixepoch'),
+     SELECT r.track_id, SUM(r.play_count), SUM(r.play_time_ms),
+            CASE WHEN SUM(r.play_count) > 0
+                 THEN SUM(COALESCE(r.avg_completion, 0) * r.play_count)
+                      / SUM(r.play_count)
+                 ELSE 0 END,
+            MAX(r.last_played_at),
+            (SELECT MIN(d.observed_at) FROM runtime_play_deltas d
+              WHERE d.track_id = r.track_id),
             CURRENT_TIMESTAMP
-     FROM playback_logs
-     WHERE matched_track_id IS NOT NULL
-     GROUP BY matched_track_id`
+       FROM device_runtime_stats r
+      GROUP BY r.track_id`
   ).run();
 }
 
-/** A timestamp from an unset Rockbox RTC, which reports the year 2000. */
-const UNSET_CLOCK_TS = Math.floor(Date.UTC(2000, 9, 10, 3, 30, 0) / 1000);
+/** Record an observed rise in a track's play count at a given host date. */
+function seedDelta(
+  db: TestDb,
+  deviceId: number,
+  trackId: number,
+  observedAt: string,
+  plays: number,
+  playtimeMs = 200_000
+): void {
+  db.prepare(
+    `INSERT INTO runtime_play_deltas
+       (device_id, track_id, observed_at, plays_delta, playtime_delta_ms)
+     VALUES (?, ?, ?, ?, ?)`
+  ).run(deviceId, trackId, observedAt, plays, playtimeMs);
+  rollUp(db);
+}
 
-describe("Genius engine — device clock plausibility", () => {
+describe("Genius engine — counter-based generators", () => {
   let db: TestDb;
   let folderId: number;
+  let deviceId: number;
 
   beforeEach(() => {
     if (!canRunDbTests) return;
     db = createTestDb();
-    folderId = seedLibraryFolder(db, { name: "Music", path: "/music", contentType: "music" });
+    folderId = seedLibraryFolder(db, {
+      name: "Music",
+      path: "/music",
+      contentType: "music",
+    });
+    deviceId = seedDevice(db, { name: "iPod", mountPath: "/mnt/ipod" });
   });
 
   afterEach(() => {
     closeDb(db);
   });
 
-  itDb("treats year-2000 timestamps as an unset clock and gates late_night", () => {
-    for (let i = 0; i < 30; i++) {
-      const t = seedTrack(db, { path: `/music/u${i}.flac`, title: `U${i}`, artist: "A", album: "X", libraryFolderId: folderId });
-      seedPlay(db, t, UNSET_CLOCK_TS + i * 300);
+  function track(
+    title: string,
+    opts: {
+      artist?: string;
+      album?: string;
+      genre?: string;
+      rating?: number | null;
+      trackNumber?: number;
+    } = {}
+  ): number {
+    return seedTrack(db, {
+      path: `/music/${title}.flac`,
+      title,
+      artist: opts.artist ?? "A",
+      album: opts.album ?? "X",
+      genre: opts.genre,
+      rating: opts.rating ?? null,
+      trackNumber: opts.trackNumber,
+      libraryFolderId: folderId,
+    });
+  }
+
+  itDb("most_played ranks by Rockbox's play count", () => {
+    const a = track("Often");
+    const b = track("Rarely");
+    seedRuntime(db, deviceId, a, { plays: 9 });
+    seedRuntime(db, deviceId, b, { plays: 1 });
+
+    const result = generateGeniusPlaylistFromDb("most_played", db);
+    expect(result.tracks.map((t) => t.title)).toEqual(["Often", "Rarely"]);
+    expect(result.tracks[0].playCount).toBe(9);
+  });
+
+  itDb("most_played honours a minimum play count", () => {
+    seedRuntime(db, deviceId, track("Once"), { plays: 1 });
+    seedRuntime(db, deviceId, track("Lots"), { plays: 6 });
+
+    const result = generateGeniusPlaylistFromDb("most_played", db, { minPlays: 5 });
+    expect(result.tracks.map((t) => t.title)).toEqual(["Lots"]);
+  });
+
+  itDb("favorites needs both high completion and repeat plays", () => {
+    seedRuntime(db, deviceId, track("Loved"), { plays: 4, completion: 0.95 });
+    // Completed, but only once — not yet a favourite.
+    seedRuntime(db, deviceId, track("Tried"), { plays: 1, completion: 1 });
+    // Played often, but never all the way through.
+    seedRuntime(db, deviceId, track("Background"), { plays: 8, completion: 0.4 });
+
+    const result = generateGeniusPlaylistFromDb("favorites", db);
+    expect(result.tracks.map((t) => t.title)).toEqual(["Loved"]);
+  });
+
+  itDb("skip_list means never finished, not never played", () => {
+    // Rockbox does not record a skip at all, so a track with no plays cannot
+    // be judged: it might be unplayed, or skipped every time. Only a track
+    // that *has* plays and keeps being abandoned qualifies.
+    const abandoned = track("Abandoned");
+    seedRuntime(db, deviceId, abandoned, { plays: 5, completion: 0.1 });
+    seedRuntime(db, deviceId, track("Finished"), { plays: 5, completion: 0.98 });
+    track("NeverTouched");
+
+    const result = generateGeniusPlaylistFromDb("skip_list", db);
+    expect(result.playlistName).toBe("Never Finished");
+    expect(result.tracks.map((t) => t.title)).toEqual(["Abandoned"]);
+  });
+
+  itDb("top_artist weights by play count, not by how many tracks have counters", () => {
+    // The regression this pins: tallying one point per track with a counter
+    // would crown Prolific (3 tracks, 3 plays) over Beloved (1 track, 40).
+    for (let i = 1; i <= 3; i++) {
+      seedRuntime(db, deviceId, track(`Filler${i}`, { artist: "Prolific" }), {
+        plays: 1,
+      });
     }
-
-    const res = getGeniusTypesWithAvailability(db);
-    expect(res.clockValid).toBe(false);
-    expect(res.implausibleCount).toBe(30);
-    expect(res.plausibleCount).toBe(0);
-    // Real plays exist, so callers must not be told the history is empty.
-    expect(res.totalMatched).toBe(30);
-    // No trustworthy span, so no month count is claimed.
-    expect(res.dataMonths).toBe(0);
-    expect(res.firstLogDate).toBeNull();
-
-    const lateNight = res.types.find((t) => t.value === "late_night");
-    expect(lateNight?.available).toBe(false);
-    expect(lateNight?.unavailableReason).toMatch(/clock/i);
-  });
-
-  itDb("accepts a correctly-set clock once enough plausible rows exist", () => {
-    const base = Math.floor(Date.UTC(2025, 5, 1, 12, 0, 0) / 1000);
-    for (let i = 0; i < 25; i++) {
-      const t = seedTrack(db, { path: `/music/p${i}.flac`, title: `P${i}`, artist: "A", album: "X", libraryFolderId: folderId });
-      seedPlay(db, t, base + i * 300);
-    }
-
-    const res = getGeniusTypesWithAvailability(db);
-    expect(res.clockValid).toBe(true);
-    expect(res.firstLogDate).not.toBeNull();
-    expect(res.types.find((t) => t.value === "late_night")?.available).toBe(true);
-  });
-
-  itDb("a single plausible row among bad ones does not vouch for the clock", () => {
-    for (let i = 0; i < 30; i++) {
-      const t = seedTrack(db, { path: `/music/b${i}.flac`, title: `B${i}`, artist: "A", album: "X", libraryFolderId: folderId });
-      seedPlay(db, t, UNSET_CLOCK_TS + i * 300);
-    }
-    const good = seedTrack(db, { path: "/music/good.flac", title: "Good", artist: "A", album: "X", libraryFolderId: folderId });
-    seedPlay(db, good, Math.floor(Date.UTC(2025, 5, 1, 23, 30, 0) / 1000));
-
-    expect(getGeniusTypesWithAvailability(db).clockValid).toBe(false);
-  });
-
-  itDb("recently_discovered still works when every timestamp is implausible", () => {
-    // Regression guard: this generator uses timestamps only for ordering, so
-    // it must NOT drop rows logged under a wrong clock — unlike late_night.
-    const a = seedTrack(db, { path: "/music/r1.flac", title: "Tried", artist: "A", album: "X", libraryFolderId: folderId });
-    seedPlay(db, a, UNSET_CLOCK_TS, { elapsedMs: 195_000, totalMs: 200_000 });
-    const b = seedTrack(db, { path: "/music/r2.flac", title: "Skipped", artist: "B", album: "Y", libraryFolderId: folderId });
-    seedPlay(db, b, UNSET_CLOCK_TS + 600, { elapsedMs: 10_000, totalMs: 200_000 });
-
-    const result = generateGeniusPlaylistFromDb("recently_discovered", db);
-    expect(result.tracks.map((t) => t.title)).toEqual(["Tried"]);
-  });
-
-  itDb("late_night drops plays logged under an unset clock", () => {
-    // 03:30 on a year-2000 stamp falls inside 22:00–05:00 by the raw hour, but
-    // it is not a real late-night listen and must not be counted.
-    const bogus = seedTrack(db, { path: "/music/bogus.flac", title: "Bogus", artist: "A", album: "X", libraryFolderId: folderId });
-    seedPlay(db, bogus, UNSET_CLOCK_TS, { elapsedMs: 190_000, totalMs: 200_000 });
-
-    const result = generateGeniusPlaylistFromDb("late_night", db);
-    expect(result.tracks).toHaveLength(0);
-    expect(result.criteria).toMatch(/clock/i);
-  });
-});
-
-describe("Genius engine — playback-derived generators", () => {
-  let db: TestDb;
-  let folderId: number;
-
-  beforeEach(() => {
-    if (!canRunDbTests) return;
-    db = createTestDb();
-    folderId = seedLibraryFolder(db, { name: "Music", path: "/music", contentType: "music" });
-  });
-
-  afterEach(() => {
-    closeDb(db);
-  });
-
-  itDb("late_night buckets by device-local (UTC-decoded) hour", () => {
-    // 23:30 — within the 22:00–05:00 window regardless of the runner's TZ.
-    const night = seedTrack(db, { path: "/music/n.flac", title: "Night", artist: "A", album: "X", libraryFolderId: folderId });
-    seedPlay(db, night, Math.floor(Date.UTC(2025, 0, 15, 23, 30, 0) / 1000), { elapsedMs: 190_000, totalMs: 200_000 });
-    // 14:00 — daytime, excluded.
-    const day = seedTrack(db, { path: "/music/d.flac", title: "Day", artist: "B", album: "Y", libraryFolderId: folderId });
-    seedPlay(db, day, Math.floor(Date.UTC(2025, 0, 15, 14, 0, 0) / 1000), { elapsedMs: 190_000, totalMs: 200_000 });
-
-    const result = generateGeniusPlaylistFromDb("late_night", db);
-    expect(result.tracks.map((t) => t.title)).toEqual(["Night"]);
-  });
-
-  itDb("top_artist reports real play counts from playback_stats", () => {
-    // Regression guard: these used to read tracks.play_count, a column nothing
-    // writes, so every preview showed 0 plays.
-    const t = seedTrack(db, { path: "/music/a1.flac", title: "Hit", artist: "A", album: "X", libraryFolderId: folderId });
-    seedPlay(db, t, Math.floor(Date.UTC(2025, 0, 15, 12, 0, 0) / 1000));
-    seedPlay(db, t, Math.floor(Date.UTC(2025, 0, 15, 13, 0, 0) / 1000));
-    aggregateStats(db);
+    seedRuntime(db, deviceId, track("Anthem", { artist: "Beloved" }), {
+      plays: 40,
+    });
 
     const result = generateGeniusPlaylistFromDb("top_artist", db);
-    expect(result.tracks.map((x) => x.playCount)).toEqual([2]);
+    expect(result.playlistName).toBe("Top Artist: Beloved");
+  });
+
+  itDb("top_album weights by play count too", () => {
+    for (let i = 1; i <= 4; i++) {
+      seedRuntime(
+        db,
+        deviceId,
+        track(`Thin${i}`, { artist: "A", album: "Sampled" }),
+        { plays: 1 }
+      );
+    }
+    seedRuntime(
+      db,
+      deviceId,
+      track("Hit", { artist: "A", album: "Adored" }),
+      { plays: 30 }
+    );
+
+    const result = generateGeniusPlaylistFromDb("top_album", db);
+    expect(result.playlistName).toBe("Top Album: Adored");
+  });
+
+  itDb("recently_discovered takes single plays heard right through", () => {
+    seedRuntime(db, deviceId, track("Newer"), {
+      plays: 1,
+      completion: 0.95,
+      serial: 9,
+    });
+    seedRuntime(db, deviceId, track("Older"), {
+      plays: 1,
+      completion: 0.95,
+      serial: 2,
+    });
+    // Heard once but abandoned — tried, not liked.
+    seedRuntime(db, deviceId, track("Bailed"), {
+      plays: 1,
+      completion: 0.3,
+      serial: 10,
+    });
+    // Liked, but no longer a discovery.
+    seedRuntime(db, deviceId, track("Familiar"), { plays: 6, completion: 1 });
+
+    const result = generateGeniusPlaylistFromDb("recently_discovered", db);
+    expect(result.tracks.map((t) => t.title)).toEqual(["Newer", "Older"]);
+  });
+
+  itDb("recently_discovered prefers a real date over the play-order serial", () => {
+    // The serial says Serialled is more recent; the host-clock date on Dated
+    // is the stronger signal and must win.
+    seedRuntime(db, deviceId, track("Serialled"), {
+      plays: 1,
+      completion: 1,
+      serial: 500,
+    });
+    seedRuntime(db, deviceId, track("Dated"), {
+      plays: 1,
+      completion: 1,
+      serial: 1,
+      lastPlayedAt: "2026-08-01T10:00:00.000Z",
+    });
+
+    const result = generateGeniusPlaylistFromDb("recently_discovered", db);
+    expect(result.tracks.map((t) => t.title)).toEqual(["Dated", "Serialled"]);
+  });
+
+  itDb("forgotten_favorites surfaces well-liked tracks left longest", () => {
+    const stale = track("Stale", { rating: 9 });
+    const recent = track("Recent", { rating: 9 });
+    seedRuntime(db, deviceId, stale, { plays: 2, serial: 1 });
+    seedRuntime(db, deviceId, recent, { plays: 2, serial: 90 });
+    // Neither well rated nor often played.
+    seedRuntime(db, deviceId, track("Meh"), { plays: 1, serial: 2 });
+
+    const result = generateGeniusPlaylistFromDb("forgotten_favorites", db);
+    expect(result.tracks.map((t) => t.title)).toEqual(["Stale", "Recent"]);
+  });
+
+  itDb("deep_dive orders one artist's library by play count", () => {
+    const hit = track("Hit", { artist: "Focus" });
+    const deep = track("Deep", { artist: "Focus" });
+    track("Elsewhere", { artist: "Other" });
+    seedRuntime(db, deviceId, hit, { plays: 12 });
+    seedRuntime(db, deviceId, deep, { plays: 1 });
+
+    const result = generateGeniusPlaylistFromDb("deep_dive", db, {
+      artist: "Focus",
+    });
+    expect(result.tracks.map((t) => t.title)).toEqual(["Hit", "Deep"]);
+  });
+
+  itDb("top_genre sums play counts rather than counting tracks", () => {
+    for (let i = 1; i <= 3; i++) {
+      seedRuntime(db, deviceId, track(`Jazzy${i}`, { genre: "Jazz" }), {
+        plays: 1,
+      });
+    }
+    const rocker = track("Rocker", { genre: "Rock" });
+    seedRuntime(db, deviceId, rocker, { plays: 20 });
+    track("Rocker2", { genre: "Rock" });
+
+    const result = generateGeniusPlaylistFromDb("top_genre", db);
+    expect(result.playlistName).toBe("Top Genre: Rock");
+    expect(result.tracks.map((t) => t.title).sort()).toEqual([
+      "Rocker",
+      "Rocker2",
+    ]);
+  });
+
+  itDb("top_genre never crowns an untagged genre", () => {
+    // Untagged track played more than the tagged one — it must still lose,
+    // because "no genre" is not a genre.
+    seedRuntime(db, deviceId, track("Untagged"), { plays: 30 });
+    const rock = track("Rocker", { genre: "Rock" });
+    seedRuntime(db, deviceId, rock, { plays: 1 });
+    track("Rocker2", { genre: "Rock" });
+
+    const result = generateGeniusPlaylistFromDb("top_genre", db);
+    expect(result.playlistName).toBe("Top Genre: Rock");
   });
 });
 
 describe("Genius engine — library-derived generators", () => {
   let db: TestDb;
   let folderId: number;
+  let deviceId: number;
 
   beforeEach(() => {
     if (!canRunDbTests) return;
     db = createTestDb();
-    folderId = seedLibraryFolder(db, { name: "Music", path: "/music", contentType: "music" });
+    folderId = seedLibraryFolder(db, {
+      name: "Music",
+      path: "/music",
+      contentType: "music",
+    });
+    deviceId = seedDevice(db, { name: "iPod", mountPath: "/mnt/ipod" });
   });
 
   afterEach(() => {
     closeDb(db);
   });
 
-  itDb("hidden_gems returns never-played tracks, with no playback history at all", () => {
-    const unplayed = seedTrack(db, { path: "/music/h1.flac", title: "Unplayed", artist: "A", album: "X", libraryFolderId: folderId });
-    const played = seedTrack(db, { path: "/music/h2.flac", title: "Played", artist: "B", album: "Y", libraryFolderId: folderId });
-    seedPlay(db, played, Math.floor(Date.UTC(2025, 0, 15, 12, 0, 0) / 1000));
+  function track(title: string, opts: Record<string, unknown> = {}): number {
+    return seedTrack(db, {
+      path: `/music/${title}.flac`,
+      title,
+      artist: (opts.artist as string) ?? "A",
+      album: (opts.album as string) ?? "X",
+      trackNumber: opts.trackNumber as number | undefined,
+      libraryFolderId: folderId,
+    });
+  }
+
+  itDb("hidden_gems returns tracks with no plays recorded", () => {
+    const unplayed = track("Unplayed");
+    const played = track("Played", { artist: "B", album: "Y" });
+    seedRuntime(db, deviceId, played, { plays: 3 });
 
     const result = generateGeniusPlaylistFromDb("hidden_gems", db);
     const ids = result.tracks.map((t) => t.id);
@@ -229,36 +391,41 @@ describe("Genius engine — library-derived generators", () => {
     expect(ids).not.toContain(played);
   });
 
-  itDb("hidden_gems runs on an empty playback log instead of erroring out", () => {
-    seedTrack(db, { path: "/music/e1.flac", title: "Solo", artist: "A", album: "X", libraryFolderId: folderId });
-
+  itDb("hidden_gems runs on a library with no play history at all", () => {
+    track("Solo");
     const result = generateGeniusPlaylistFromDb("hidden_gems", db);
     expect(result.tracks.map((t) => t.title)).toEqual(["Solo"]);
   });
 
-  itDb("top_genre never crowns an untagged genre", () => {
-    // Untagged track played more than the tagged one — it must still lose,
-    // because "no genre" is not a genre.
-    const untagged = seedTrack(db, { path: "/music/g0.flac", title: "Untagged", artist: "A", album: "X", libraryFolderId: folderId });
-    seedPlay(db, untagged, 1_750_000_000);
-    seedPlay(db, untagged, 1_750_000_100);
-    seedPlay(db, untagged, 1_750_000_200);
-    const rock = seedTrack(db, { path: "/music/g1.flac", title: "Rocker", artist: "B", album: "Y", genre: "Rock", libraryFolderId: folderId });
-    seedPlay(db, rock, 1_750_000_300);
-    seedTrack(db, { path: "/music/g2.flac", title: "Rocker2", artist: "B", album: "Y", genre: "Rock", libraryFolderId: folderId });
+  itDb("top_rated works without any play history", () => {
+    seedTrack(db, {
+      path: "/music/great.flac",
+      title: "Great",
+      artist: "A",
+      album: "X",
+      rating: 10,
+      libraryFolderId: folderId,
+    });
+    seedTrack(db, {
+      path: "/music/ok.flac",
+      title: "Ok",
+      artist: "A",
+      album: "X",
+      rating: 4,
+      libraryFolderId: folderId,
+    });
 
-    const result = generateGeniusPlaylistFromDb("top_genre", db);
-    expect(result.playlistName).toBe("Top Genre: Rock");
-    expect(result.tracks.map((t) => t.title).sort()).toEqual(["Rocker", "Rocker2"]);
+    const result = generateGeniusPlaylistFromDb("top_rated", db);
+    expect(result.tracks.map((t) => t.title)).toEqual(["Great"]);
   });
 
   itDb("finish_album returns unheard tracks from part-played albums", () => {
     const ids: number[] = [];
     for (let i = 1; i <= 4; i++) {
-      ids.push(seedTrack(db, { path: `/music/alb${i}.flac`, title: `Track${i}`, artist: "A", album: "Started", trackNumber: i, libraryFolderId: folderId }));
+      ids.push(track(`Track${i}`, { album: "Started", trackNumber: i }));
     }
-    seedPlay(db, ids[0], 1_750_000_000);
-    seedPlay(db, ids[1], 1_750_000_100);
+    seedRuntime(db, deviceId, ids[0], { plays: 1 });
+    seedRuntime(db, deviceId, ids[1], { plays: 1 });
 
     const result = generateGeniusPlaylistFromDb("finish_album", db);
     expect(result.tracks.map((t) => t.title)).toEqual(["Track3", "Track4"]);
@@ -268,9 +435,9 @@ describe("Genius engine — library-derived generators", () => {
     // Album-less tracks must not collapse into one bogus group. Seeded with
     // distinct album titles so they cannot form a shared >=3-track album.
     for (let i = 1; i <= 5; i++) {
-      const t = seedTrack(db, { path: `/music/loose${i}.flac`, title: `Loose${i}`, artist: `Artist${i}`, album: `Album${i}`, libraryFolderId: folderId });
+      const t = track(`Loose${i}`, { artist: `Artist${i}`, album: `Album${i}` });
       db.prepare("UPDATE tracks SET album_id = NULL WHERE id = ?").run(t);
-      if (i === 1) seedPlay(db, t, 1_750_000_000);
+      if (i === 1) seedRuntime(db, deviceId, t, { plays: 1 });
     }
 
     const result = generateGeniusPlaylistFromDb("finish_album", db);
@@ -280,11 +447,11 @@ describe("Genius engine — library-derived generators", () => {
   itDb("finish_album skips fully-played and untouched albums", () => {
     const done: number[] = [];
     for (let i = 1; i <= 3; i++) {
-      done.push(seedTrack(db, { path: `/music/done${i}.flac`, title: `Done${i}`, artist: "A", album: "Finished", trackNumber: i, libraryFolderId: folderId }));
+      done.push(track(`Done${i}`, { album: "Finished", trackNumber: i }));
     }
-    done.forEach((id, i) => seedPlay(db, id, 1_750_000_000 + i * 100));
+    for (const id of done) seedRuntime(db, deviceId, id, { plays: 1 });
     for (let i = 1; i <= 3; i++) {
-      seedTrack(db, { path: `/music/never${i}.flac`, title: `Never${i}`, artist: "B", album: "Untouched", trackNumber: i, libraryFolderId: folderId });
+      track(`Never${i}`, { artist: "B", album: "Untouched", trackNumber: i });
     }
 
     const result = generateGeniusPlaylistFromDb("finish_album", db);
@@ -295,149 +462,168 @@ describe("Genius engine — library-derived generators", () => {
 describe("Genius engine — buildListeningStatsFromDb", () => {
   let db: TestDb;
   let folderId: number;
+  let deviceId: number;
 
   beforeEach(() => {
     if (!canRunDbTests) return;
     db = createTestDb();
-    folderId = seedLibraryFolder(db, { name: "Music", path: "/music", contentType: "music" });
+    folderId = seedLibraryFolder(db, {
+      name: "Music",
+      path: "/music",
+      contentType: "music",
+    });
+    deviceId = seedDevice(db, { name: "iPod", mountPath: "/mnt/ipod" });
   });
 
   afterEach(() => {
     closeDb(db);
   });
 
-  itDb("returns zeroed stats when there is no playback data", () => {
-    seedTrack(db, { path: "/music/solo.flac", title: "Solo", artist: "A", album: "X", libraryFolderId: folderId });
-
-    const stats = buildListeningStatsFromDb(db, "all");
-    expect(stats).toEqual({
-      period: "all",
-      totalPlays: 0,
-      totalListeningTimeMs: 0,
-      uniqueTracksPlayed: 0,
-      topTracks: [],
-      topArtists: [],
-      topGenre: null,
-      totalMatchedPlays: 0,
-      clockValid: false,
+  function track(title: string, opts: Record<string, unknown> = {}): number {
+    return seedTrack(db, {
+      path: `/music/${title}.flac`,
+      title,
+      artist: (opts.artist as string) ?? "A",
+      album: "X",
+      genre: opts.genre as string | undefined,
+      libraryFolderId: folderId,
     });
-  });
+  }
 
-  itDb("ranks top tracks, artists, and genre by play count", () => {
-    const now = Math.floor(Date.now() / 1000);
-    const hit = seedTrack(db, { path: "/music/hit.flac", title: "Hit", artist: "Popular", album: "X", genre: "Rock", libraryFolderId: folderId });
-    seedPlay(db, hit, now - 100, { elapsedMs: 180_000, totalMs: 200_000 });
-    seedPlay(db, hit, now - 200, { elapsedMs: 180_000, totalMs: 200_000 });
-    seedPlay(db, hit, now - 300, { elapsedMs: 180_000, totalMs: 200_000 });
-    const miss = seedTrack(db, { path: "/music/miss.flac", title: "Miss", artist: "Obscure", album: "Y", genre: "Jazz", libraryFolderId: folderId });
-    seedPlay(db, miss, now - 400, { elapsedMs: 180_000, totalMs: 200_000 });
-
-    const stats = buildListeningStatsFromDb(db, "all");
-    expect(stats.totalPlays).toBe(4);
-    expect(stats.uniqueTracksPlayed).toBe(2);
-    expect(stats.totalListeningTimeMs).toBe(4 * 180_000);
-    expect(stats.topTracks[0]).toMatchObject({ title: "Hit", artist: "Popular", playCount: 3 });
-    expect(stats.topArtists[0]).toMatchObject({ name: "Popular", playCount: 3 });
-    expect(stats.topGenre).toMatchObject({ name: "Rock", playCount: 3 });
-  });
-
-  itDb("scopes to the current calendar year and month", () => {
-    const now = new Date();
-    const yearStartSec = Math.floor(new Date(now.getFullYear(), 0, 1).getTime() / 1000);
-    const monthStartSec = Math.floor(new Date(now.getFullYear(), now.getMonth(), 1).getTime() / 1000);
-
-    const thisMonth = seedTrack(db, { path: "/music/tm.flac", title: "ThisMonth", artist: "A", album: "X", libraryFolderId: folderId });
-    seedPlay(db, thisMonth, monthStartSec + 3600);
-
-    const lastMonth = seedTrack(db, { path: "/music/lm.flac", title: "LastMonth", artist: "B", album: "Y", libraryFolderId: folderId });
-    seedPlay(db, lastMonth, monthStartSec - 3600);
-
-    const lastYear = seedTrack(db, { path: "/music/ly.flac", title: "LastYear", artist: "C", album: "Z", libraryFolderId: folderId });
-    seedPlay(db, lastYear, yearStartSec - 3600);
-
-    const monthStats = buildListeningStatsFromDb(db, "month");
-    expect(monthStats.totalPlays).toBe(1);
-    expect(monthStats.topTracks.map((t) => t.title)).toEqual(["ThisMonth"]);
-
-    const yearStats = buildListeningStatsFromDb(db, "year");
-    expect(yearStats.totalPlays).toBeGreaterThanOrEqual(1);
-    expect(yearStats.topTracks.map((t) => t.title)).toContain("ThisMonth");
-    expect(yearStats.topTracks.map((t) => t.title)).not.toContain("LastYear");
-
-    const allStats = buildListeningStatsFromDb(db, "all");
-    expect(allStats.topTracks.map((t) => t.title)).toEqual(
-      expect.arrayContaining(["ThisMonth", "LastMonth", "LastYear"])
-    );
-  });
-
-  itDb("excludes plays logged under an unset (year-2000) device clock, but still reports them as matched", () => {
-    // Regression guard: a zero-stats result must be distinguishable from "no
-    // plays at all" so the UI can tell the user to set their device's clock
-    // instead of implying nothing was captured.
-    const bogus = seedTrack(db, { path: "/music/bogus.flac", title: "Bogus", artist: "A", album: "X", libraryFolderId: folderId });
-    seedPlay(db, bogus, UNSET_CLOCK_TS);
-
-    const stats = buildListeningStatsFromDb(db, "all");
-    expect(stats.totalPlays).toBe(0);
-    expect(stats.topTracks).toEqual([]);
-    expect(stats.totalMatchedPlays).toBe(1);
-    expect(stats.clockValid).toBe(false);
-  });
-
-  itDb("clockValid is true and totalMatchedPlays matches totalPlays once enough plausible rows exist", () => {
-    const now = Math.floor(Date.now() / 1000);
-    const t = seedTrack(db, { path: "/music/ok.flac", title: "Ok", artist: "A", album: "X", libraryFolderId: folderId });
-    for (let i = 0; i < 25; i++) {
-      seedPlay(db, t, now - i * 300);
+  itDb("reports a well-formed zero result on a fresh library", () => {
+    for (const period of ["all", "year", "month"] as const) {
+      const stats = buildListeningStatsFromDb(db, period);
+      expect(stats).toMatchObject({
+        period,
+        totalPlays: 0,
+        totalListeningTimeMs: 0,
+        uniqueTracksPlayed: 0,
+        topTracks: [],
+        topArtists: [],
+        topGenre: null,
+        totalLibraryPlays: 0,
+      });
     }
+  });
+
+  itDb("all-time totals come from every counter Rockbox has recorded", () => {
+    const a = track("Top", { artist: "Alpha", genre: "Rock" });
+    const b = track("Second", { artist: "Beta", genre: "Rock" });
+    seedRuntime(db, deviceId, a, { plays: 20, lengthMs: 100_000 });
+    seedRuntime(db, deviceId, b, { plays: 5, lengthMs: 100_000 });
 
     const stats = buildListeningStatsFromDb(db, "all");
     expect(stats.totalPlays).toBe(25);
-    expect(stats.totalMatchedPlays).toBe(25);
-    expect(stats.clockValid).toBe(true);
+    expect(stats.uniqueTracksPlayed).toBe(2);
+    expect(stats.totalListeningTimeMs).toBe(2_500_000);
+    expect(stats.topTracks[0]).toMatchObject({ title: "Top", playCount: 20 });
+    expect(stats.topArtists[0]).toMatchObject({ name: "Alpha", playCount: 20 });
+    expect(stats.topGenre).toMatchObject({ name: "Rock", playCount: 25 });
+  });
+
+  itDb("year and month count only what was observed inside them", () => {
+    // Rockbox dates nothing, so a period can only cover the rises iPodRocks
+    // has actually watched happen.
+    const t = track("Dated");
+    seedRuntime(db, deviceId, t, { plays: 10 });
+    const now = new Date();
+    const thisMonth = new Date(now.getFullYear(), now.getMonth(), 2).toISOString();
+    const earlierThisYear = new Date(now.getFullYear(), 0, 2).toISOString();
+    const lastYear = new Date(now.getFullYear() - 1, 5, 2).toISOString();
+
+    seedDelta(db, deviceId, t, thisMonth, 3);
+    seedDelta(db, deviceId, t, earlierThisYear, 4);
+    seedDelta(db, deviceId, t, lastYear, 3);
+
+    expect(buildListeningStatsFromDb(db, "all").totalPlays).toBe(10);
+    // Both of this year's observations count; last year's does not.
+    expect(buildListeningStatsFromDb(db, "year").totalPlays).toBe(7);
+    // January 2nd falls inside "this month" only during January.
+    expect(buildListeningStatsFromDb(db, "month").totalPlays).toBe(
+      now.getMonth() === 0 ? 7 : 3
+    );
+  });
+
+  itDb("an empty period still reports the library total, so the UI can say why", () => {
+    // A library full of plays can legitimately show zero for this month: the
+    // counters predate iPodRocks watching them. Saying "no listening data" there
+    // would be wrong.
+    seedRuntime(db, deviceId, track("Old"), { plays: 40 });
+
+    const stats = buildListeningStatsFromDb(db, "month");
+    expect(stats.totalPlays).toBe(0);
+    expect(stats.totalLibraryPlays).toBe(40);
   });
 });
 
 describe("Genius engine — type registry", () => {
   let db: TestDb;
+  let folderId: number;
+  let deviceId: number;
 
   beforeEach(() => {
     if (!canRunDbTests) return;
     db = createTestDb();
-    seedLibraryFolder(db, { name: "Music", path: "/music", contentType: "music" });
+    folderId = seedLibraryFolder(db, {
+      name: "Music",
+      path: "/music",
+      contentType: "music",
+    });
+    deviceId = seedDevice(db, { name: "iPod", mountPath: "/mnt/ipod" });
   });
 
   afterEach(() => {
     closeDb(db);
   });
 
-  itDb("returns 12 types, with only clock-dependent ones gated on a fresh profile", () => {
+  itDb("offers 12 types, gating the counter-based ones on a fresh profile", () => {
     const res = getGeniusTypesWithAvailability(db);
     expect(res.types).toHaveLength(12);
-    expect(res.totalMatched).toBe(0);
-    expect(res.dataMonths).toBe(0);
-    expect(res.firstLogDate).toBeNull();
+    expect(res.tracksWithPlays).toBe(0);
+    expect(res.totalPlays).toBe(0);
+    expect(res.deviceCount).toBe(0);
 
     const byValue = new Map(res.types.map((t) => [t.value, t]));
-    // Types that need no history at all.
+    // These read library metadata only, so they work with no device at all.
     expect(byValue.get("top_rated")?.available).toBe(true);
     expect(byValue.get("hidden_gems")?.available).toBe(true);
-    // Count/completion types stay selectable; they just come back empty.
-    expect(byValue.get("most_played")?.available).toBe(true);
-    // Only the clock-dependent type is gated.
-    expect(byValue.get("late_night")?.available).toBe(false);
-
-    // The removed time-window types are gone for good.
-    for (const dead of ["oldies", "nostalgia", "recent_favorites", "time_capsule", "golden_era"]) {
-      expect(byValue.has(dead), dead).toBe(false);
-    }
+    // Everything else needs counters, and says how to get them.
+    expect(byValue.get("most_played")?.available).toBe(false);
+    expect(byValue.get("most_played")?.unavailableReason).toMatch(
+      /Gather Runtime Data/
+    );
   });
 
-  itDb("getAvailableGeniusTypes filters out gated types", () => {
-    const values = getAvailableGeniusTypes(db).map((t) => t.value);
+  itDb("no longer offers a time-of-day type", () => {
+    // Rockbox's runtime data carries no clock at all, so late_night cannot be
+    // computed from it and was removed rather than faked.
+    const values = getGeniusTypesWithAvailability(db).types.map((t) => t.value);
     expect(values).not.toContain("late_night");
+    expect(values).toContain("forgotten_favorites");
+  });
+
+  itDb("unlocks the counter-based types once a device has recorded plays", () => {
+    const t = seedTrack(db, {
+      path: "/music/x.flac",
+      title: "X",
+      artist: "A",
+      album: "Y",
+      libraryFolderId: folderId,
+    });
+    seedRuntime(db, deviceId, t, { plays: 3 });
+
+    const res = getGeniusTypesWithAvailability(db);
+    expect(res.tracksWithPlays).toBe(1);
+    expect(res.totalPlays).toBe(3);
+    expect(res.deviceCount).toBe(1);
+    expect(res.types.every((x) => x.available !== false)).toBe(true);
+  });
+
+  itDb("getAvailableGeniusTypes filters out the gated ones", () => {
+    const values = getAvailableGeniusTypes(db).map((t) => t.value);
+    expect(values).toContain("top_rated");
     expect(values).toContain("hidden_gems");
-    expect(values).toContain("top_genre");
-    expect(values).toContain("finish_album");
+    expect(values).not.toContain("most_played");
+    expect(values).not.toContain("top_genre");
   });
 });

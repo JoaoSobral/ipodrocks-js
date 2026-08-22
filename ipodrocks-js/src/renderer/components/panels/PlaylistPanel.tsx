@@ -29,7 +29,7 @@ import {
   getArtists,
   getAlbums,
   previewSmartTracks,
-  readDevicePlaybackLog,
+  readDeviceRuntimeData,
   getGeniusSummaryFromDb,
   getGeniusTypes,
   generateGeniusPlaylist,
@@ -154,18 +154,14 @@ export function PlaylistPanel() {
     Array<{ name: string; playCount: number }>
   >([]);
   const [geniusTypes, setGeniusTypes] = useState<GeniusTypeOption[]>([]);
-  const [geniusDataMonths, setGeniusDataMonths] = useState(0);
-  const [geniusFirstLogDate, setGeniusFirstLogDate] = useState<string | null>(
-    null
-  );
+  const [geniusTotalPlays, setGeniusTotalPlays] = useState(0);
+  const [geniusDeviceCount, setGeniusDeviceCount] = useState(0);
   const [geniusSelectedType, setGeniusSelectedType] = useState<string | null>(
     null
   );
   const [geniusMaxTracks, setGeniusMaxTracks] = useState(25);
   const [geniusMinPlays, setGeniusMinPlays] = useState(1);
   const [geniusArtistPick, setGeniusArtistPick] = useState("");
-  const [geniusClockValid, setGeniusClockValid] = useState(true);
-  const [geniusTotalMatched, setGeniusTotalMatched] = useState(0);
   const [geniusPreview, setGeniusPreview] =
     useState<PlaylistGenerationResult | null>(null);
   const [geniusError, setGeniusError] = useState<string | null>(null);
@@ -381,10 +377,8 @@ export function PlaylistPanel() {
       }
       const typesRes = await getGeniusTypes();
       setGeniusTypes(typesRes.types);
-      setGeniusDataMonths(typesRes.dataMonths);
-      setGeniusFirstLogDate(typesRes.firstLogDate);
-      setGeniusClockValid(typesRes.clockValid);
-      setGeniusTotalMatched(typesRes.totalMatched);
+      setGeniusTotalPlays(typesRes.totalPlays);
+      setGeniusDeviceCount(typesRes.deviceCount);
       setGeniusStep("summary");
     } catch (err) {
       setGeniusError(err instanceof Error ? err.message : String(err));
@@ -397,7 +391,7 @@ export function PlaylistPanel() {
     setGeniusStep("analyzing");
     setGeniusError(null);
     try {
-      const res = await readDevicePlaybackLog(geniusDeviceId);
+      const res = await readDeviceRuntimeData(geniusDeviceId);
       if (res.offline) {
         setGeniusError("Device not connected. Reconnect the device and try again.");
         setGeniusStep("idle");
@@ -414,17 +408,16 @@ export function PlaylistPanel() {
       );
       if (res.summary.matchedPlays === 0) {
         setGeniusError(
-          "No playback data found. Make sure the device has been used with Rockbox."
+          res.reason ??
+            "No play history found on this device yet."
         );
         setGeniusStep("idle");
         return;
       }
       const typesRes = await getGeniusTypes();
       setGeniusTypes(typesRes.types);
-      setGeniusDataMonths(typesRes.dataMonths);
-      setGeniusFirstLogDate(typesRes.firstLogDate);
-      setGeniusClockValid(typesRes.clockValid);
-      setGeniusTotalMatched(typesRes.totalMatched);
+      setGeniusTotalPlays(typesRes.totalPlays);
+      setGeniusDeviceCount(typesRes.deviceCount);
       setGeniusStep("summary");
     } catch (err) {
       setGeniusError(err instanceof Error ? err.message : String(err));
@@ -818,8 +811,8 @@ export function PlaylistPanel() {
                   Re-read from Device
                 </h4>
                 <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
-                  Re-scan the playback log directly from a connected device for
-                  the most up-to-date data.
+                  Re-read Rockbox's play counts and ratings straight off a
+                  connected device for the most up-to-date data.
                 </p>
               </div>
               <div className="mt-auto space-y-3">
@@ -841,17 +834,18 @@ export function PlaylistPanel() {
                   disabled={geniusDeviceId == null}
                   onClick={handleRecheckDevice}
                 >
-                  Re-read Playback Log
+                  Import Runtime Data
                 </Button>
               </div>
             </div>
           </div>
 
           <div className="rounded-lg border border-amber-500/50 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
-            <strong>No playback data?</strong> Enable playback logging on your
-            Rockbox device under{" "}
-            <em>Settings → Playback Settings → Logging → Yes</em>. A reboot is
-            required for the change to take effect.
+            <strong>No play history?</strong> Turn on{" "}
+            <em>Settings → Playback Settings → Gather Runtime Data</em> on your
+            Rockbox device. From then on it records play counts, listening time
+            and ratings itself — a play counts once a track has run 15 seconds.
+            Playback Logging is no longer used and does not need to be on.
           </div>
         </div>
       );
@@ -864,7 +858,7 @@ export function PlaylistPanel() {
           <div className="flex flex-col items-center justify-center py-12 gap-3">
             <Spinner size="md" />
             <p className="text-sm text-muted-foreground">
-              Reading playback log&hellip;
+              Reading runtime data&hellip;
             </p>
           </div>
         </Card>
@@ -935,41 +929,16 @@ export function PlaylistPanel() {
             </div>
           </Card>
 
-          {/* Playback-history context */}
-          {!geniusClockValid && geniusTotalMatched > 0 ? (
-            <div className="text-[11px] rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 leading-relaxed">
-              <p className="text-amber-600 dark:text-amber-400 font-medium">
-                &#9888; Your device clock is not set correctly.
-              </p>
-              <p className="text-muted-foreground mt-1">
-                {geniusTotalMatched} play
-                {geniusTotalMatched === 1 ? " is" : "s are"} recorded, but
-                Rockbox stamped {geniusTotalMatched === 1 ? "it" : "them"} with
-                the device&rsquo;s own clock, which is wrong &mdash; so times of
-                day cannot be trusted. Set it on the iPod under{" "}
-                <span className="font-medium text-foreground">
-                  Settings &rarr; General Settings &rarr; System &rarr; Time
-                  &amp; Date
-                </span>
-                , then play some music and re-check the device. Playlists based
-                on play counts and completion are unaffected.
-              </p>
-            </div>
-          ) : (
-            <p className="text-[11px] text-muted-foreground">
-              {geniusDataMonths > 0
-                ? `Playback history: ~${geniusDataMonths} month${
-                    geniusDataMonths === 1 ? "" : "s"
-                  }${
-                    geniusFirstLogDate
-                      ? ` (since ${new Date(
-                          geniusFirstLogDate
-                        ).toLocaleDateString()})`
-                      : ""
-                  }.`
-                : "No playback history yet."}
-            </p>
-          )}
+          {/* Play-history context */}
+          <p className="text-[11px] text-muted-foreground">
+            {geniusTotalPlays > 0
+              ? `${geniusTotalPlays.toLocaleString()} play${
+                  geniusTotalPlays === 1 ? "" : "s"
+                } gathered by Rockbox across ${geniusDeviceCount} device${
+                  geniusDeviceCount === 1 ? "" : "s"
+                }.`
+              : "No play history yet. Turn on Gather Runtime Data in Rockbox under Settings \u2192 Playback Settings, listen to some music, then re-check the device."}
+          </p>
 
           {/* Type picker grid */}
           <div className="grid grid-cols-4 gap-3">

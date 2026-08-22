@@ -153,6 +153,49 @@ CREATE TABLE IF NOT EXISTS playback_stats (
     UNIQUE(track_id)
 );
 
+-- Rockbox's own runtime counters, one row per device x track.
+--
+-- These are absolute totals maintained by Rockbox itself, not events: an
+-- import overwrites rather than appends, which is what makes re-importing an
+-- unchanged device a no-op. prev_play_count holds what the previous import
+-- saw, so the next one can tell whether the track was played in between.
+CREATE TABLE IF NOT EXISTS device_runtime_stats (
+    device_id INTEGER NOT NULL,
+    track_id INTEGER NOT NULL,
+    device_path TEXT NOT NULL,
+    play_count INTEGER NOT NULL DEFAULT 0,
+    play_time_ms INTEGER NOT NULL DEFAULT 0,
+    rating INTEGER,
+    last_played_serial INTEGER,
+    length_ms INTEGER,
+    avg_completion REAL,
+    prev_play_count INTEGER NOT NULL DEFAULT 0,
+    last_played_at TIMESTAMP,
+    first_seen_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    last_seen_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    imported_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (device_id, track_id),
+    FOREIGN KEY (device_id) REFERENCES devices (id),
+    FOREIGN KEY (track_id) REFERENCES tracks (id)
+);
+
+-- Every observed rise in a track's play count, stamped with the host clock.
+--
+-- Rockbox records no dates at all -- its "lastplayed" is a global counter that
+-- gives ordering and nothing more -- so this is the only honest source of a
+-- real date. It records when iPodRocks saw the counter move, which is true; it
+-- does not reconstruct when the track was actually played, which would not be.
+CREATE TABLE IF NOT EXISTS runtime_play_deltas (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    device_id INTEGER NOT NULL,
+    track_id INTEGER NOT NULL,
+    observed_at TIMESTAMP NOT NULL,
+    plays_delta INTEGER NOT NULL,
+    playtime_delta_ms INTEGER NOT NULL DEFAULT 0,
+    FOREIGN KEY (device_id) REFERENCES devices (id),
+    FOREIGN KEY (track_id) REFERENCES tracks (id)
+);
+
 -- ============================================================
 -- Devices
 -- ============================================================
@@ -224,6 +267,12 @@ CREATE TABLE IF NOT EXISTS devices (
 CREATE TABLE IF NOT EXISTS device_synced_tracks (
     device_id INTEGER NOT NULL,
     library_path TEXT NOT NULL,
+    -- Mount-relative POSIX path on the device, casefolded and NFC-normalised.
+    -- Rockbox reports runtime data against the on-device path, so this is what
+    -- maps one of its records back to a library track exactly rather than by
+    -- guessing from a filename. Null on rows written before 2.3.0-beta; the
+    -- next device check fills it in.
+    device_path TEXT,
     checked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (device_id, library_path),
     FOREIGN KEY (device_id) REFERENCES devices (id)
@@ -606,6 +655,15 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_playback_logs_device_timestamp_path
 CREATE INDEX IF NOT EXISTS idx_playback_stats_track ON playback_stats(track_id);
 CREATE INDEX IF NOT EXISTS idx_playback_stats_plays ON playback_stats(total_plays);
 
+-- device_runtime_stats
+CREATE INDEX IF NOT EXISTS idx_runtime_stats_track ON device_runtime_stats(track_id);
+CREATE INDEX IF NOT EXISTS idx_runtime_stats_plays ON device_runtime_stats(play_count);
+
+-- runtime_play_deltas
+CREATE INDEX IF NOT EXISTS idx_runtime_deltas_track ON runtime_play_deltas(track_id);
+CREATE INDEX IF NOT EXISTS idx_runtime_deltas_observed ON runtime_play_deltas(observed_at);
+CREATE INDEX IF NOT EXISTS idx_runtime_deltas_device ON runtime_play_deltas(device_id);
+
 -- library_folders
 CREATE INDEX IF NOT EXISTS idx_library_folders_content_type ON library_folders(content_type);
 
@@ -614,6 +672,11 @@ CREATE INDEX IF NOT EXISTS idx_devices_name ON devices(name);
 
 -- device_synced_tracks
 CREATE INDEX IF NOT EXISTS idx_device_synced_device ON device_synced_tracks(device_id);
+-- idx_device_synced_devpath is created by migrateDeviceSyncedTrackPath(), NOT
+-- here. This whole script is exec'd before any migration runs, and on an
+-- existing database CREATE TABLE IF NOT EXISTS is a no-op -- so device_path is
+-- still absent at this point and indexing it would throw, taking initialize()
+-- and the app launch down with it. Same trap as the 2.3.0 USB identity index.
 
 -- sync_configurations
 CREATE INDEX IF NOT EXISTS idx_sync_configs_device ON sync_configurations(device_id);

@@ -25,7 +25,7 @@ Common issues and how to fix them.
 ## Genius playlists: "No playback history"
 
 - **Symptom:** Genius tab says no playback data or no matched plays.
-- **Fix:** Connect the device and enable "Read playback log" in Devices. Click **Recheck device for playback.log** to read `playback.log` from the device. Rockbox must have written this file by playing tracks. If you already synced, try **Load from Database** instead.
+- **Fix:** On the device, check **Settings → Playback Settings → Gather Runtime Data** is on, then play something for at least 15 seconds — Rockbox does not count shorter plays at all. Connect the device and click **Import Runtime Data** in Genius. If you already synced, try **Load from Database** instead. If the device has never built its database, run **Settings → Database → Initialize Now** on it first.
 
 ## Savant or Rocksy not working
 

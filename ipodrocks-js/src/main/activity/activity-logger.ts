@@ -14,7 +14,10 @@ export type ActivityOperation =
   | "remove_folder"
   | "add_device"
   | "update_device"
+  // Retired in 2.3.0-beta but kept in the union: the string is persisted in
+  // the activity table, and dropping it would stop existing rows rendering.
   | "read_playback_log"
+  | "read_runtime_data"
   | "playlist_generated"
   | "playlist_deleted"
   | "playlist_repaired"

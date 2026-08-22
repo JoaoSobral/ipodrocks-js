@@ -45,8 +45,7 @@ test("genius:getListeningStats returns zeroed stats for every period on a fresh 
       topTracks: [],
       topArtists: [],
       topGenre: null,
-      totalMatchedPlays: 0,
-      clockValid: false,
+      totalLibraryPlays: 0,
     });
   }
 });

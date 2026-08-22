@@ -24,7 +24,7 @@ test.afterEach(async () => {
   await launched.cleanup();
 });
 
-test("genius:types returns all 12 types with the clock-gated one unavailable on a fresh profile", async () => {
+test("genius:types returns all 12 types, gating the counter-based ones on a fresh profile", async () => {
   const window = await launched.app.firstWindow();
   await window.waitForLoadState("domcontentloaded");
 
@@ -39,41 +39,45 @@ test("genius:types returns all 12 types with the clock-gated one unavailable on 
       value: string;
       available?: boolean;
       unavailableReason?: string;
-      requiresDeviceClock?: boolean;
+      requiresRuntimeData?: boolean;
     }>;
-    dataMonths: number;
-    firstLogDate: string | null;
-    totalMatched: number;
-    implausibleCount: number;
-    clockValid: boolean;
+    tracksWithPlays: number;
+    totalPlays: number;
+    deviceCount: number;
   };
 
   expect(Array.isArray(typed.types)).toBe(true);
   expect(typed.types.length).toBe(12);
-  expect(typed.dataMonths).toBe(0);
-  expect(typed.firstLogDate).toBeNull();
-  expect(typed.totalMatched).toBe(0);
-  expect(typed.implausibleCount).toBe(0);
-  // No plausible rows on a fresh profile, so the clock is not yet trusted.
-  expect(typed.clockValid).toBe(false);
+  expect(typed.tracksWithPlays).toBe(0);
+  expect(typed.totalPlays).toBe(0);
+  expect(typed.deviceCount).toBe(0);
 
   const byValue = new Map(typed.types.map((t) => [t.value, t]));
-  // Types needing no playback history at all.
+
+  // These read library metadata only — ratings, and the absence of any play —
+  // so they work on a library that has never been near a device.
   expect(byValue.get("top_rated")?.available).toBe(true);
   expect(byValue.get("hidden_gems")?.available).toBe(true);
-  // Count/completion types stay selectable; they just come back empty.
-  expect(byValue.get("most_played")?.available).toBe(true);
-  expect(byValue.get("top_genre")?.available).toBe(true);
-  expect(byValue.get("finish_album")?.available).toBe(true);
 
-  // The one clock-dependent type is disabled, with a reason the UI renders.
-  const lateNight = byValue.get("late_night");
-  expect(lateNight?.requiresDeviceClock).toBe(true);
-  expect(lateNight?.available).toBe(false);
-  expect(lateNight?.unavailableReason).toBeTruthy();
+  // Everything else needs Rockbox's counters. Disabled with a reason the UI
+  // renders as a tooltip, rather than offering a guaranteed-empty playlist.
+  for (const gated of ["most_played", "top_genre", "finish_album", "forgotten_favorites"]) {
+    const t = byValue.get(gated);
+    expect(t?.requiresRuntimeData, gated).toBe(true);
+    expect(t?.available, gated).toBe(false);
+    expect(t?.unavailableReason, gated).toMatch(/Gather Runtime Data/);
+  }
 
-  // The removed time-window types must not come back.
-  for (const dead of ["oldies", "nostalgia", "recent_favorites", "time_capsule", "golden_era"]) {
+  // Removed types must not come back. `late_night` bucketed plays by hour of
+  // day, which runtime data cannot express — it carries no clock at all.
+  for (const dead of [
+    "late_night",
+    "oldies",
+    "nostalgia",
+    "recent_favorites",
+    "time_capsule",
+    "golden_era",
+  ]) {
     expect(byValue.has(dead), dead).toBe(false);
   }
 });

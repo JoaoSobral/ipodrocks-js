@@ -410,7 +410,9 @@ export class LibraryScanner {
 
   /**
    * Delete tracks by path from DB (tracks, content_hashes, playback_logs,
-   * playback_stats, playlist_items). Cleans up orphaned albums/artists/genres/codecs.
+   * playback_stats, device_runtime_stats, runtime_play_deltas, the three rating
+   * tables, shadow_tracks, playlist_items). Cleans up orphaned
+   * albums/artists/genres/codecs.
    * Returns the number of tracks deleted, their IDs (for shadow propagation),
    * and the shadow files that belonged to them.
    *
@@ -487,6 +489,24 @@ export class LibraryScanner {
     const deletePlaylistItemsStmt = this.db.prepare(
       "DELETE FROM playlist_items WHERE track_id = ?"
     );
+    const deleteRuntimeStatsStmt = this.db.prepare(
+      "DELETE FROM device_runtime_stats WHERE track_id = ?"
+    );
+    const deleteRuntimeDeltasStmt = this.db.prepare(
+      "DELETE FROM runtime_play_deltas WHERE track_id = ?"
+    );
+    // These three declare ON DELETE CASCADE, which never fires here because
+    // this transaction runs with foreign_keys = OFF -- they were being orphaned
+    // on every removed track.
+    const deleteDeviceRatingsStmt = this.db.prepare(
+      "DELETE FROM device_track_ratings WHERE track_id = ?"
+    );
+    const deleteRatingConflictsStmt = this.db.prepare(
+      "DELETE FROM rating_conflicts WHERE track_id = ?"
+    );
+    const deleteRatingEventsStmt = this.db.prepare(
+      "DELETE FROM rating_events WHERE track_id = ?"
+    );
 
     let deleted = 0;
     this.db.pragma("foreign_keys = OFF");
@@ -497,6 +517,11 @@ export class LibraryScanner {
           if (trackId != null) {
             deletePlaybackLogsStmt.run(trackId);
             deletePlaybackStatsStmt.run(trackId);
+            deleteRuntimeStatsStmt.run(trackId);
+            deleteRuntimeDeltasStmt.run(trackId);
+            deleteDeviceRatingsStmt.run(trackId);
+            deleteRatingConflictsStmt.run(trackId);
+            deleteRatingEventsStmt.run(trackId);
             deleteShadowStmt.run(trackId);
             deletePlaylistItemsStmt.run(trackId);
           }

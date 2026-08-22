@@ -119,7 +119,9 @@ const FIELD_MAP: Record<string, string> = {
   lastSyncCount: "last_sync_count",
   sourceLibraryType: "source_library_type",
   shadowLibraryId: "shadow_library_id",
-  skipPlaybackLog: "skip_playback_log",
+  // The column keeps its original name: renaming it would mean rebuilding the
+  // whole devices table for one bit whose meaning has not changed.
+  skipRuntimeData: "skip_playback_log",
   skipAlbumArtwork: "skip_album_artwork",
   artworkMaxDimension: "artwork_max_dimension",
   rockboxSmartPlaylists: "rockbox_smart_playlists",
@@ -265,7 +267,7 @@ export class DevicesCore {
         config.modelId ?? null,
         config.sourceLibraryType ?? "primary",
         config.shadowLibraryId ?? null,
-        config.skipPlaybackLog ? 1 : 0,
+        config.skipRuntimeData ? 1 : 0,
         config.rockboxSmartPlaylists ? 1 : 0,
         config.devMode ? 1 : 0,
         config.vbrEnabled ? 1 : 0,
@@ -371,6 +373,10 @@ export class DevicesCore {
       ).run(id);
       this.db.prepare("DELETE FROM sync_configurations WHERE device_id = ?").run(id);
       this.db.prepare("DELETE FROM device_synced_tracks WHERE device_id = ?").run(id);
+      // Runtime counters are the device's own; they mean nothing once it is
+      // gone, and leaving them would keep inflating the library roll-up.
+      this.db.prepare("DELETE FROM device_runtime_stats WHERE device_id = ?").run(id);
+      this.db.prepare("DELETE FROM runtime_play_deltas WHERE device_id = ?").run(id);
       this.db.prepare("UPDATE genius_playlist_configs SET device_id = NULL WHERE device_id = ?").run(id);
       this.db.prepare("UPDATE tracks SET rating_source_device_id = NULL WHERE rating_source_device_id = ?").run(id);
       this.db.prepare("UPDATE rating_events SET device_id = NULL WHERE device_id = ?").run(id);
@@ -491,7 +497,7 @@ export class DevicesCore {
       codecName: row.codec_name,
       modelName: row.model_name,
       modelInternalValue: row.model_internal_value,
-      skipPlaybackLog: !!(row.skip_playback_log ?? 0),
+      skipRuntimeData: !!(row.skip_playback_log ?? 0),
       skipAlbumArtwork: !!(row.skip_album_artwork ?? 0),
       artworkMaxDimension: sanitizeArtworkMaxDimension(row.artwork_max_dimension),
       rockboxSmartPlaylists: !!(row.rockbox_smart_playlists ?? 0),

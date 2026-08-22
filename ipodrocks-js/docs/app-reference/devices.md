@@ -45,7 +45,7 @@ Notes:
 3. **Choose codec** based on device support. Rockbox supports many formats; use direct copy for FLAC/MP3 if the device plays them. Use MPC or Opus for smaller files.
 4. **Use shadow libraries** when you want to pre-transcode once and sync quickly to multiple devices.
 5. **Check Device** before syncing to see what will change. Use "Recheck" after a sync to confirm.
-6. **Playback log** — Enable if you use Genius playlists; iPodRocks reads `playback.log` from the device for listening history.
+6. **Play history** — Leave enabled if you use Genius playlists or Listening Stats; iPodRocks imports Rockbox's own play counters, listening time and ratings from the device. Requires **Gather Runtime Data** under **Settings → Playback Settings** on the device.
 7. **Rockbox smart playlists (tagnavi)** — When enabled, smart playlists sync as live tagnavi query entries (written to `.rockbox/tagnavi_user.config`) instead of static `.m3u` files. Genius, Savant, and Custom playlists always write `.m3u` regardless of this setting. See [Smart Playlists → Rockbox dynamic mode](./playlists-smart.md#rockbox-dynamic-mode-per-device-opt-in).
 
 ## Rocksy

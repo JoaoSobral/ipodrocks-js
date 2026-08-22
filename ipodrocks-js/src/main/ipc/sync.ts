@@ -30,14 +30,8 @@ import {
   computeRatingPropagations,
   markRatingsPropagated,
 } from "../sync/rating-merge";
-import {
-  readRockboxRatings,
-  writeRockboxRatingsChangelog,
-  resolveDevicePathToTrackId,
-  hasRockboxChangelog,
-  buildDeviceRelativePath,
-} from "../rockbox/tagcache";
-import { readAndIngestPlaybackLog } from "../playlists/playback-log-ingest";
+import { writeRating } from "../rockbox/tagcache-index";
+import { readAndIngestRuntimeData } from "../rockbox/runtime-ingest";
 import { logActivity } from "../activity/activity-logger";
 import type {
   SyncOptions,
@@ -272,48 +266,77 @@ export function registerSyncHandlers(): void {
         throw err;
       }
 
-      if (!device.profile.skipPlaybackLog) {
-        syncOpts.progressCallback?.({ event: "log", message: "Reading playback.log..." });
-        const ingest = readAndIngestPlaybackLog(
-          opts.deviceId,
+      // Read Rockbox's runtime data once. It carries the play counters and the
+      // ratings together, plus the index position of each record — which is
+      // what Phase 3 needs to write a rating back without re-reading the
+      // device database.
+      let runtimeImport: ReturnType<typeof readAndIngestRuntimeData> | null = null;
+      try {
+        syncOpts.progressCallback?.({
+          event: "log",
+          message: "Reading runtime data from device...",
+        });
+        runtimeImport = readAndIngestRuntimeData(
           lib.getConnection(),
+          opts.deviceId,
           device.mountPath,
-          false,
-          device.name
+          device.profile.skipRuntimeData ?? false
         );
-        if (ingest.ingested > 0 || ingest.skipped > 0) {
+        if (runtimeImport.imported > 0) {
+          const played = runtimeImport.newPlays > 0
+            ? `, ${runtimeImport.newPlays} newly played`
+            : "";
           syncOpts.progressCallback?.({
             event: "log",
-            message: `Ingested ${ingest.ingested} playback events (${ingest.skipped} duplicates skipped).`,
+            message: `Imported runtime data for ${runtimeImport.imported} track(s)${played}.`,
+          });
+        } else if (
+          runtimeImport.state.kind !== "ok" &&
+          !device.profile.skipRuntimeData
+        ) {
+          syncOpts.progressCallback?.({
+            event: "log",
+            message: runtimeImport.state.message,
           });
         }
+        if (runtimeImport.unmatched > 0) {
+          syncOpts.progressCallback?.({
+            event: "log",
+            message: `${runtimeImport.unmatched} runtime record(s) matched no library track.`,
+          });
+        }
+      } catch (err) {
+        console.error("[ipc] Runtime data import failed (non-fatal):", err);
       }
 
-      // Phase 1: INGEST — read device ratings and merge into canonical DB
+      // Phase 1: INGEST — merge the device's ratings into the canonical DB
       try {
-        if (hasRockboxChangelog(device.mountPath)) {
-          syncOpts.progressCallback?.({ event: "log", message: "Reading device ratings..." });
-          const deviceRatingsByPath = readRockboxRatings(device.mountPath);
+        if (runtimeImport && runtimeImport.ratings.size > 0) {
           const db = lib.getConnection();
+          const ingestResult = ingestDeviceRatings(
+            db,
+            opts.deviceId,
+            runtimeImport.ratings
+          );
 
-          // Resolve device-relative paths to track IDs
-          const deviceRatingsByTrackId = new Map<number, number>();
-          for (const [devPath, rating] of deviceRatingsByPath) {
-            const trackId = resolveDevicePathToTrackId(db, opts.deviceId, devPath, device.mountPath);
-            if (trackId !== null) {
-              deviceRatingsByTrackId.set(trackId, rating);
-            }
-          }
+          // A rebuilt Rockbox database comes back with every rating at zero.
+          // The binary index says so outright — a rebuild resets the serial —
+          // which is a far better signal than inferring it from how many
+          // ratings happen to be zero.
+          const looksRebuilt =
+            runtimeImport.serial === 0 ||
+            (ingestResult.massZeroFraction > 0.25 &&
+              runtimeImport.ratings.size > 10);
 
-          const ingestResult = ingestDeviceRatings(db, opts.deviceId, deviceRatingsByTrackId);
-
-          if (ingestResult.massZeroFraction > 0.25 && deviceRatingsByPath.size > 10) {
+          if (looksRebuilt) {
             syncOpts.progressCallback?.({
               event: "log",
-              message: `Warning: ${Math.round(ingestResult.massZeroFraction * 100)}% of device ratings are 0 — possible Rockbox DB rebuild. Ratings from device skipped pending review.`,
+              message:
+                "Warning: the device's ratings all read as unset — its database looks rebuilt. Ratings from the device were skipped pending review.",
             });
           } else {
-            const total = ingestResult.adopted + ingestResult.converged + ingestResult.conflicts;
+            const total =
+              ingestResult.adopted + ingestResult.converged + ingestResult.conflicts;
             if (total > 0) {
               syncOpts.progressCallback?.({
                 event: "log",
@@ -588,39 +611,33 @@ export function registerSyncHandlers(): void {
         const db = lib.getConnection();
         const propagations = computeRatingPropagations(db, opts.deviceId);
 
-        if (propagations.size > 0) {
-          // Build device-relative paths for the changelog
-          const deviceMusicFolder = device.profile.musicFolder ?? "Music";
-
-          // For each track to propagate, we need its device filename
-          const trackIds = [...propagations.keys()];
-          const placeholders = trackIds.map(() => "?").join(",");
-          const trackRows = db
-            .prepare(
-              `SELECT t.id, t.filename FROM tracks t WHERE t.id IN (${placeholders})`
-            )
-            .all(...trackIds) as { id: number; filename: string }[];
-
-          const entries: import("../rockbox/tagcache").RockboxRatingEntry[] = [];
+        if (propagations.size > 0 && runtimeImport) {
+          // Write each rating straight into the record Rockbox reads, exactly
+          // as Rockbox does internally. The index positions come from this
+          // sync's own read, because a "Database → Initialize Now" on the
+          // device renumbers every entry — they are never cached across runs.
           const propagatedIds: number[] = [];
+          let written = 0;
 
-          for (const row of trackRows) {
-            const rating = propagations.get(row.id);
-            if (rating === undefined) continue;
-            entries.push({
-              filePath: buildDeviceRelativePath(deviceMusicFolder, row.filename),
-              rating,
-            });
-            propagatedIds.push(row.id);
+          for (const [trackId, rating] of propagations) {
+            const idxId = runtimeImport.idxIds.get(trackId);
+            if (idxId === undefined) continue;
+            // Returns false when the device already holds this rating, so a
+            // second sync with nothing to say writes no bytes at all.
+            if (writeRating(device.mountPath, idxId, rating)) written++;
+            propagatedIds.push(trackId);
           }
 
-          writeRockboxRatingsChangelog(device.mountPath, entries);
-          markRatingsPropagated(db, opts.deviceId, propagatedIds);
+          if (propagatedIds.length > 0) {
+            markRatingsPropagated(db, opts.deviceId, propagatedIds);
+          }
 
-          syncOpts.progressCallback?.({
-            event: "log",
-            message: `Pushed ${entries.length} rating(s) to device. Run "Database → Initialize Now" on the device to apply.`,
-          });
+          if (written > 0) {
+            syncOpts.progressCallback?.({
+              event: "log",
+              message: `Wrote ${written} rating(s) to the device. Restart Rockbox for them to show on screen — the values are already saved.`,
+            });
+          }
         }
       } catch (err) {
         console.error("[ipc] Rating propagation failed (non-fatal):", err);

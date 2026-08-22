@@ -76,9 +76,11 @@ If you really like iPodRocks and want to keep it caffeinated, you can buy me a c
 ### Classic, Smart & Genius Playlists
 - **Classic playlists — hand-pick your own songs** — Tick songs straight from your library in a virtualized picker with search plus artist/album/genre filters. **Your selection persists across every filter change**, so you can build one playlist out of several different searches. Tick order is play order, up to 500 songs. Classic is also the only playlist type you can **edit** after creating — reopen the picker with your songs already ticked.
 - **Multi-select Smart playlist builder** — Pick any combination of genres, artists, and albums in a single 3-column modal. Cross-type AND, within-type OR. Live "~N tracks" preview updates as you tick.
-- **Star-rated playlists** — Both Smart and Genius support a `top_rated` strategy that surfaces tracks rated 4★+ (Rockbox 0–10 ≥ 8). Smart variant works even before any device log is ingested.
-- **Genius from playback logs** — Most Played, Favorites, Skip List, Hidden Gems, Top Genre, Finish the Album, Deep Dive, and more. Star ratings from your library now flow into every Genius algorithm.
+- **Star-rated playlists** — Both Smart and Genius support a `top_rated` strategy that surfaces tracks rated 4★+ (Rockbox 0–10 ≥ 8). Smart variant works before any play history has been imported.
+- **Genius from Rockbox's runtime data** — Most Played, Favorites, Never Finished, Forgotten Favorites, Hidden Gems, Top Genre, Finish the Album, Deep Dive, and more, built from the play counts and listening time Rockbox records itself. Ratings sync both ways: rate a track in iPodRocks and it appears on the iPod, rate it on the iPod and it appears in your library.
 - **Rockbox-native smart playlists (tagnavi)** — Per-device opt-in: Smart playlists are written as live, auto-updating Rockbox tagtree entries in `.rockbox/tagnavi_custom.config` instead of frozen `.m3u` snapshots. Other playlist kinds still write `.m3u`.
+
+> **One Rockbox setting to enable:** turn on **Settings → Playback Settings → Gather Runtime Data** on your device. Rockbox then records play counts, listening time, play order and ratings itself, and iPodRocks imports them on every sync. **Playback Logging is not used and does not need to be enabled** — turning both on gains you nothing. Note that Rockbox only counts a play once a track has run 15 seconds.
 - **Playlists as a library filter** — Filter the Library track list down to any playlist's members with a Playlist `<select>` in the filter row; full playlist management lives in the Playlists panel.
 - **Playlists self-heal on every scan** — Delete music from disk and your playlists follow: each library scan (and folder removal) drops songs that no longer exist, closes up the track numbering, and **re-resolves Smart playlists from their rules** so they also pick up newly scanned matches — track limit preserved. A scan that finds no tracks at all is skipped rather than emptying everything. Manual Repair/Rebuild and the sync gate's "Repair all & continue" remain for anything that goes wrong outside a scan.
 
@@ -216,7 +218,7 @@ If `mpcenc` is not on your PATH, iPodRocks will prompt when you select Musepack.
 
 - **Classic** — Hand-picked: tick the songs you want, in the order you want them (max 500). Search and filter by artist/album/genre without losing your selection. The only playlist type you can edit afterwards
 - **Smart** — Rule-based (genre, artist, album) with track limits, multi-select 3-column builder, and a `top_rated` strategy for 4★+ tracks
-- **Genius** — From Rockbox playback logs; analyze device first. Includes a `top_rated` Genius type that works without any play history
+- **Genius** — From Rockbox's runtime data; import from the device first. Includes `top_rated` and `hidden_gems`, which work without any play history
 - **Savant** — AI-generated from mood (requires OpenRouter API key in Settings); rating-aware curation
 - **Tagnavi mode** — Enable "Rockbox smart playlists (tagnavi)" on a device to sync Smart playlists as live, auto-updating Rockbox tagtree entries instead of static `.m3u` files
 - **Via Rocksy** — Ask the chat to create a playlist in plain English. Name specific songs and Rocksy looks each one up and builds a Classic playlist; describe genres or history and it builds a Smart or Genius one. It can edit Classic playlists too

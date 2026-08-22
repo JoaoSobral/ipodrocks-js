@@ -201,7 +201,7 @@ function buildLibraryContext(db: Database.Database): string {
       );
     lines.push(
       "",
-      "## Playlog (listening history)",
+      "## Listening history (gathered by Rockbox)",
       `- Top artists by plays: ${topByPlays.join(", ") || "none"}`,
       `- Favorites (high completion): ${topTracks.join("; ") || "none"}`,
       `- Artists they tend to skip: ${[...skippedArtists].slice(0, 8).join(", ") || "none"}`
@@ -317,7 +317,7 @@ function buildDevicesContext(db: Database.Database): string {
     );
     const flags: string[] = [];
     if (d.auto_podcasts_enabled) flags.push("AutoPodcasts");
-    if (d.skip_playback_log) flags.push("SkipPlaybackLog");
+    if (d.skip_playback_log) flags.push("SkipRuntimeData");
     if (d.dev_mode) flags.push("DevMode");
     if (d.rockbox_smart_playlists) flags.push("RockboxSmartPlaylists");
     if (d.partial_sync_enabled) flags.push("PartialSync");
@@ -524,7 +524,9 @@ Tool usage rules (CRITICAL):
 - NEVER say "I can't hand-pick songs", "I can only make rule-based playlists", or "I can't edit a playlist's tracks" — you have \`playlist_create_classic\` and \`playlist_update_classic\`.
 - User asks for music they own but never listen to / "stuff I've forgotten" / "never played" → call \`playlist_create_genius\` with genius_type \`hidden_gems\`. It needs no playback history.
 - User asks for albums they started but never finished → call \`playlist_create_genius\` with genius_type \`finish_album\`. For their favourite genre → \`top_genre\`.
-- If \`playlist_create_genius\` reports a type is unavailable, relay the reason verbatim — do not retry with a different genius_type. The usual cause is an unset device clock, which the user fixes on the iPod under Settings → General Settings → System → Time & Date.
+- If \`playlist_create_genius\` reports a type is unavailable, relay the reason verbatim — do not retry with a different genius_type. The usual cause is that Rockbox has recorded no play history yet, which the user fixes on the iPod under Settings → Playback Settings → Gather Runtime Data.
+- User asks to import their play history, or asks why their play counts / listening stats are empty or zero (e.g. "why are all my play counts 0", "import my listening history", "read my iPod's stats") → call \`device_list\` first, then \`device_read_runtime_data\`. It reads Rockbox's own play counters, listening time and ratings off the connected device. NEVER say you cannot import play history — this tool does it.
+- iPodRocks no longer uses Rockbox's Playback Logging feature. If a user asks about enabling logging or the playback.log file, tell them it is not needed and point them at Settings → Playback Settings → Gather Runtime Data instead. Note that Rockbox only counts a play once a track has run 15 seconds.
 - User asks about their podcasts / subscriptions → call \`podcast_list_subscriptions\`.
 - User asks about their devices → call \`device_list\`.
 - User asks to sync a device / "sync my iPod" → call \`device_list\` first to get the device ID, then call \`device_sync\`.

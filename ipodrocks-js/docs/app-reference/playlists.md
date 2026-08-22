@@ -18,7 +18,7 @@ The Playlists panel has five tabs: **All**, **Classic**, **Smart**, **Genius**, 
 
 - **Classic** — When you know exactly which songs you want. See [Classic Playlists](./playlists-classic.md).
 - **Smart** — When you want a fixed set of rules (e.g. "Rock genre, 50 tracks").
-- **Genius** — When you want playlists based on what you actually listen to. Connect a device, load/recheck playback log, then generate.
+- **Genius** — When you want playlists based on what you actually listen to. Connect a device, load from database or import its runtime data, then generate.
 - **Savant** — When you want a playlist that matches a mood or intent ("chill evening", "workout mix"). The AI picks tracks and can order them harmonically.
 
 ## Playlists stay in sync with your library
@@ -37,7 +37,7 @@ The manual **Repair** button is still there for anything that goes wrong outside
 
 1. Start with **All** to see existing playlists and create new ones.
 2. For **Classic**, just pick your songs — no setup needed beyond a scanned library.
-3. For **Genius**, add a device and enable playback log. Load from database or recheck the device before generating.
+3. For **Genius**, add a device with **Gather Runtime Data** enabled in Rockbox. Load from database or import the device's runtime data before generating.
 4. For **Savant**, add your OpenRouter API key in Settings first. Enable harmonic extraction in Library for better key-aware mixing.
 
 ## Rocksy
