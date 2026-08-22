@@ -58,7 +58,7 @@ export function registerAppHandlers(): void {
         }
         setLastAutoUpdateCheckAt(now);
       } else {
-        // Cap manual checks at 4/hour so this app instance can't burn through
+        // Cap manual checks per hour so this app instance can't burn through
         // GitHub's unauthenticated 60/hour rate limit.
         const rate = checkRateLimit(getUpdateCheckTimestamps(), now);
         if (!rate.allowed) {

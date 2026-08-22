@@ -74,11 +74,14 @@ export function shouldAutoCheck(
 }
 
 /**
- * Manual update checks allowed per rolling window. Automatic checks are not
- * counted here — they have their own once-a-day throttle, so an app that sits
- * on the Welcome panel can never spend the budget the button needs.
+ * Manual update checks allowed per rolling window. One check costs one GitHub
+ * API request, and unauthenticated clients get 60/hour per IP — 50 keeps a
+ * margin for the daily automatic check and for anything else on the same IP.
+ * Automatic checks are not counted here (they have their own once-a-day
+ * throttle), so an app sitting on the Welcome panel can never spend the budget
+ * the button needs.
  */
-export const UPDATE_CHECK_RATE_LIMIT = 4;
+export const UPDATE_CHECK_RATE_LIMIT = 50;
 export const UPDATE_CHECK_WINDOW_MS = 60 * 60 * 1000;
 
 /**
