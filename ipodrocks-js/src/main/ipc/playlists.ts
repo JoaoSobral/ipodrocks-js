@@ -128,6 +128,8 @@ export function registerPlaylistHandlers(): void {
       let musicFolder = "Music";
       let codecName = "COPY";
       let preserveFolderStructure = true;
+      let albumGrouping: import("../../shared/types").AlbumGrouping =
+        "album-artist";
       if (deviceId != null) {
         const dc = getDevicesCore();
         const device = dc.getDeviceById(deviceId);
@@ -137,6 +139,7 @@ export function registerPlaylistHandlers(): void {
         }
         const prefs = getDeviceSyncPreferences(lib.getConnection(), deviceId);
         preserveFolderStructure = prefs?.preserveFolderStructure !== false;
+        albumGrouping = prefs?.albumGrouping ?? "album-artist";
       }
 
       return core.exportPlaylistM3u(playlistId, filePath, {
@@ -144,6 +147,7 @@ export function registerPlaylistHandlers(): void {
         codecName,
         libraryFolderPaths,
         preserveFolderStructure,
+        albumGrouping,
       });
     })
   );

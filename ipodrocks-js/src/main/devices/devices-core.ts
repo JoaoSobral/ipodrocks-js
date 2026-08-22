@@ -8,6 +8,7 @@ import {
 } from "../../shared/types";
 import { Device } from "./device";
 import { sanitizeMountPath } from "../path-allowlist";
+import { normalizeUsbId } from "./usb-devices";
 
 interface DeviceRow {
   id: number;
@@ -45,6 +46,9 @@ interface DeviceRow {
   dev_mode: number;
   auto_podcasts_enabled: number;
   vbr_enabled: number;
+  usb_vendor_id: string | null;
+  usb_product_id: string | null;
+  usb_serial: string | null;
 }
 
 const DEVICES_QUERY = `
@@ -54,6 +58,7 @@ const DEVICES_QUERY = `
          d.override_bitrate, d.override_quality, d.override_bits,
          d.partial_sync_enabled, d.skip_playback_log, d.skip_album_artwork, d.artwork_max_dimension, d.rockbox_smart_playlists, d.dev_mode,
          d.auto_podcasts_enabled, d.vbr_enabled, d.source_library_type, d.shadow_library_id,
+         d.usb_vendor_id, d.usb_product_id, d.usb_serial,
          dtm.name as transfer_mode_name,
          cc.name as codec_config_name, cc.bitrate_value, cc.quality_value,
          cc.bits_per_sample, c.name as codec_name,
@@ -91,6 +96,8 @@ const ALLOWED_UPDATE_FIELDS = new Set([
   "dev_mode",
   "auto_podcasts_enabled",
   "vbr_enabled",
+  // NOTE: the usb_* columns are deliberately absent. They are written as one
+  // unit by updateDevice(), never through the generic loop — see USB_IDENTITY_KEYS.
 ]);
 
 const FIELD_MAP: Record<string, string> = {
@@ -121,6 +128,13 @@ const FIELD_MAP: Record<string, string> = {
   vbrEnabled: "vbr_enabled",
 };
 
+/**
+ * Update keys that `updateDevice` resolves as a group rather than field by
+ * field. They are kept out of FIELD_MAP so the generic loop cannot write one of
+ * the three columns on its own and leave a half-formed identity behind.
+ */
+const USB_IDENTITY_KEYS = new Set(["usbVendorId", "usbProductId", "usbSerial"]);
+
 /** Allowed generated-cover dimensions (px). 300 default keeps iPods responsive. */
 export const ARTWORK_MAX_DIMENSIONS = [200, 300, 500, 750] as const;
 const DEFAULT_ARTWORK_MAX_DIMENSION = 300;
@@ -132,6 +146,53 @@ function sanitizeArtworkMaxDimension(value: unknown): number {
   return (ARTWORK_MAX_DIMENSIONS as readonly number[]).includes(n)
     ? n
     : DEFAULT_ARTWORK_MAX_DIMENSION;
+}
+
+
+/** A device's USB identity, normalized. `null` means "match by mount path". */
+export interface UsbIdentity {
+  vendorId: string;
+  productId: string;
+  serial: string;
+}
+
+/**
+ * Validate and canonicalize a USB identity.
+ *
+ * The three fields move together: supplying only some of them is a caller bug,
+ * not a partial identity. Serial is stored as '' rather than NULL when the
+ * device reports none, so the partial unique index still catches duplicates.
+ *
+ * Returns null only when all three are absent, which means "clear the binding
+ * and fall back to mount-path matching". A serial on its own is rejected rather
+ * than read as a clear: it looks like an edit to a bound device, and silently
+ * unbinding one is how a sync ends up on the wrong volume.
+ */
+export function normalizeUsbIdentity(
+  vendorId: unknown,
+  productId: unknown,
+  serial: unknown,
+): UsbIdentity | null {
+  const hasVendor = vendorId != null && vendorId !== "";
+  const hasProduct = productId != null && productId !== "";
+  const hasSerial = serial != null && serial !== "";
+  if (!hasVendor && !hasProduct) {
+    if (hasSerial) {
+      throw new Error(
+        "A USB serial cannot be set on its own — pass a vendor id and a product id too"
+      );
+    }
+    return null;
+  }
+  if (!hasVendor || !hasProduct) {
+    throw new Error("USB identity requires both a vendor id and a product id");
+  }
+
+  const vid = normalizeUsbId(String(vendorId), true);
+  const pid = normalizeUsbId(String(productId), true);
+  if (!vid || !pid) throw new Error("USB vendor and product ids must be 4-digit hex values");
+
+  return { vendorId: vid, productId: pid, serial: serial == null ? "" : String(serial) };
 }
 
 export class DevicesCore {
@@ -175,13 +236,21 @@ export class DevicesCore {
       throw new Error("Default transfer mode 'copy' not found");
     }
 
+    const usb = normalizeUsbIdentity(
+      config.usbVendorId,
+      config.usbProductId,
+      config.usbSerial
+    );
+    if (usb) this._assertUsbIdentityFree(usb, null);
+
     const info = this.db
       .prepare(
         `INSERT INTO devices
          (name, mount_path, music_folder, podcast_folder, audiobook_folder, playlist_folder,
           default_transfer_mode_id, default_codec_config_id, description,
-          model_id, source_library_type, shadow_library_id, skip_playback_log, rockbox_smart_playlists, dev_mode, vbr_enabled)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          model_id, source_library_type, shadow_library_id, skip_playback_log, rockbox_smart_playlists, dev_mode, vbr_enabled,
+          skip_album_artwork, artwork_max_dimension, usb_vendor_id, usb_product_id, usb_serial)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         config.name,
@@ -199,11 +268,37 @@ export class DevicesCore {
         config.skipPlaybackLog ? 1 : 0,
         config.rockboxSmartPlaylists ? 1 : 0,
         config.devMode ? 1 : 0,
-        config.vbrEnabled ? 1 : 0
+        config.vbrEnabled ? 1 : 0,
+        config.skipAlbumArtwork ? 1 : 0,
+        sanitizeArtworkMaxDimension(config.artworkMaxDimension),
+        usb?.vendorId ?? null,
+        usb?.productId ?? null,
+        usb?.serial ?? null
       );
 
     const newId = Number(info.lastInsertRowid);
     return this.getDeviceById(newId)!;
+  }
+
+  /**
+   * Reject binding a USB unit that another device already claims.
+   *
+   * The partial unique index enforces this too, but SQLite's constraint message
+   * is opaque; this produces one the user can act on.
+   */
+  private _assertUsbIdentityFree(usb: UsbIdentity, excludeId: number | null): void {
+    const row = this.db
+      .prepare(
+        `SELECT name FROM devices
+          WHERE usb_vendor_id = ? AND usb_product_id = ? AND usb_serial = ?
+            AND (? IS NULL OR id != ?)`
+      )
+      .get(usb.vendorId, usb.productId, usb.serial, excludeId, excludeId) as
+      | { name: string }
+      | undefined;
+    if (row) {
+      throw new Error(`That USB device is already assigned to '${row.name}'`);
+    }
   }
 
   updateDevice(
@@ -225,7 +320,24 @@ export class DevicesCore {
     const fields: string[] = [];
     const values: unknown[] = [];
 
+    // The three USB columns are one value, so they are resolved as a group and
+    // then excluded from the generic loop below. Clearing them all together
+    // drops the device back to mount-path matching; clearing only some of them
+    // throws (see normalizeUsbIdentity) rather than half-saving.
+    const touchesUsb = [...USB_IDENTITY_KEYS].some((k) => k in updates);
+    if (touchesUsb) {
+      const usb = normalizeUsbIdentity(
+        updates.usbVendorId,
+        updates.usbProductId,
+        updates.usbSerial
+      );
+      if (usb) this._assertUsbIdentityFree(usb, id);
+      fields.push("usb_vendor_id = ?", "usb_product_id = ?", "usb_serial = ?");
+      values.push(usb?.vendorId ?? null, usb?.productId ?? null, usb?.serial ?? null);
+    }
+
     for (const [key, value] of Object.entries(updates)) {
+      if (USB_IDENTITY_KEYS.has(key)) continue;
       const dbField = FIELD_MAP[key];
       if (!dbField || !ALLOWED_UPDATE_FIELDS.has(dbField)) continue;
       fields.push(`${dbField} = ?`);
@@ -386,6 +498,9 @@ export class DevicesCore {
       devMode: !!(row.dev_mode ?? 0),
       autoPodcastsEnabled: !!(row.auto_podcasts_enabled ?? 0),
       vbrEnabled: !!(row.vbr_enabled ?? 0),
+      usbVendorId: row.usb_vendor_id ?? null,
+      usbProductId: row.usb_product_id ?? null,
+      usbSerial: row.usb_serial ?? null,
     };
   }
 }

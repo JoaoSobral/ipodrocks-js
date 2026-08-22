@@ -86,11 +86,7 @@ describe.skipIf(!canRun)("album artwork failure reporting", () => {
       deviceDir,
       "music",
       { [trackPath]: { artist: "Blocked Artist", album: "Blocked Album" } },
-      undefined,
-      (e) => events.push(e as Event),
-      undefined,
-      false,
-      300
+      { progressCallback: (e) => events.push(e as Event), maxDim: 300 }
     );
 
     expect(result.errors).toBe(1);
@@ -115,11 +111,7 @@ describe.skipIf(!canRun)("album artwork failure reporting", () => {
       deviceDir,
       "music",
       { [trackPath]: { artist: "Fine Artist", album: "Fine Album" } },
-      undefined,
-      undefined,
-      undefined,
-      false,
-      300
+      { maxDim: 300 }
     );
 
     expect(result.copied).toBe(1);

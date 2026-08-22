@@ -3,6 +3,7 @@ import type {
   LibraryFolder,
   DeviceProfile,
   AddDeviceConfig,
+  UsbSnapshot,
   ScanResult,
   SyncOptions,
   ScanProgress,
@@ -263,6 +264,20 @@ export async function rebuildShadowLibrary(id: number): Promise<unknown> {
   return window.api.invoke("shadow:rebuild", id);
 }
 
+/**
+ * One-shot cleanup of files the main library no longer accounts for. Runs
+ * synchronously in main and returns what it removed.
+ */
+export async function pruneShadowOrphans(
+  id: number
+): Promise<{ deleted: number; bytesFreed: number; scanned: number }> {
+  return window.api.invoke("shadow:pruneOrphans", id) as Promise<{
+    deleted: number;
+    bytesFreed: number;
+    scanned: number;
+  }>;
+}
+
 export async function cancelShadowBuild(): Promise<{ cancelled: boolean }> {
   return window.api.invoke("shadow:cancelBuild") as Promise<{
     cancelled: boolean;
@@ -321,6 +336,18 @@ export async function updateDevice(
 ): Promise<DeviceProfile | { error: string }> {
   return window.api.invoke("device:update", deviceId, updates) as Promise<
     DeviceProfile | { error: string }
+  >;
+}
+
+/**
+ * Enumerate USB devices connected right now, for the device-identity dropdown.
+ *
+ * `available: false` means enumeration failed on this platform — show the user
+ * that we cannot tell, rather than an empty list implying nothing is plugged in.
+ */
+export async function listUsbDevices(): Promise<UsbSnapshot | { error: string }> {
+  return window.api.invoke("device:listUsb") as Promise<
+    UsbSnapshot | { error: string }
   >;
 }
 

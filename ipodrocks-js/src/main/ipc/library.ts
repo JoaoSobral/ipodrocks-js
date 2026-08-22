@@ -53,6 +53,7 @@ export function registerLibraryHandlers(): void {
       const allAdded: string[] = [];
       const allUpdated: string[] = [];
       const allRemovedIds: number[] = [];
+      const allRemovedShadowPaths: string[] = [];
       try {
         for (const folder of payload.folders) {
           const validated = validateFolderPath(folder.path);
@@ -76,6 +77,8 @@ export function registerLibraryHandlers(): void {
           if (result.addedTrackPaths?.length) allAdded.push(...result.addedTrackPaths);
           if (result.updatedTrackPaths?.length) allUpdated.push(...result.updatedTrackPaths);
           if (result.removedTrackIds?.length) allRemovedIds.push(...result.removedTrackIds);
+          if (result.removedShadowPaths?.length)
+            allRemovedShadowPaths.push(...result.removedShadowPaths);
           if (result.cancelled) {
             return {
               filesAdded: totalAdded,
@@ -89,9 +92,20 @@ export function registerLibraryHandlers(): void {
           }
         }
 
-        if (allAdded.length > 0 || allUpdated.length > 0 || allRemovedIds.length > 0) {
+        if (
+          allAdded.length > 0 ||
+          allUpdated.length > 0 ||
+          allRemovedIds.length > 0 ||
+          allRemovedShadowPaths.length > 0
+        ) {
           lib
-            .propagateScanToShadows(allAdded, allUpdated, allRemovedIds)
+            .propagateScanToShadows(
+              allAdded,
+              allUpdated,
+              allRemovedIds,
+              undefined,
+              allRemovedShadowPaths
+            )
             .catch((err) => console.error("[ipc] Shadow propagation error:", err));
         }
 
@@ -256,6 +270,23 @@ export function registerLibraryHandlers(): void {
     "shadow:delete",
     safe("shadow:delete", async (_event, shadowLibId: number, keepFilesOnDisk?: boolean) => {
       return getLibrary().deleteShadowLibrary(shadowLibId, !keepFilesOnDisk);
+    })
+  );
+
+  ipcMain.handle(
+    "shadow:pruneOrphans",
+    safe("shadow:pruneOrphans", async (_event, shadowLibId: number) => {
+      const lib = getLibrary();
+      const result = await lib.getShadowManager().pruneOrphanedFiles(shadowLibId);
+      const shadowLib = lib.getShadowLibraryById(shadowLibId);
+      if (result.deleted > 0) {
+        logActivity(
+          lib.getConnection(),
+          "shadow_prune",
+          `Pruned ${result.deleted} orphaned file(s) from shadow library: ${shadowLib?.name ?? shadowLibId}`
+        );
+      }
+      return result;
     })
   );
 

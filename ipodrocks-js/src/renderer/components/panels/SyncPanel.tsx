@@ -20,7 +20,13 @@ import {
 import { SyncProgressModal } from "../modals/SyncProgressModal";
 import { useAudiobooksStore } from "../../stores/audiobooks-store";
 import type { Track, Playlist, ShadowLibrary } from "@shared/types";
-import type { CustomSelectionMode, CustomSelections, ExtraTrackPolicy, SyncOptions, SyncType } from "@shared/types";
+import type { AlbumGrouping, CustomSelectionMode, CustomSelections, ExtraTrackPolicy, SyncOptions, SyncType } from "@shared/types";
+import {
+  albumEntryForTrack,
+  albumLabelForTrack,
+  albumLabelsForTrack,
+  buildAlbumDisplayMap,
+} from "@shared/album-label";
 
 interface SyncPrefsState {
   syncType: SyncType;
@@ -30,6 +36,7 @@ interface SyncPrefsState {
   fullIncludePlaylists: boolean;
   extraTrackPolicy: ExtraTrackPolicy;
   preserveFolderStructure: boolean;
+  albumGrouping: AlbumGrouping;
   customMode: CustomSelectionMode;
   selectedItems: Record<string, Set<string>>;
 }
@@ -51,6 +58,7 @@ const INITIAL_PREFS: SyncPrefsState = {
   fullIncludePlaylists: true,
   extraTrackPolicy: "keep",
   preserveFolderStructure: true,
+  albumGrouping: "album-artist",
   customMode: "include",
   selectedItems: EMPTY_SELECTIONS,
 };
@@ -65,6 +73,8 @@ type SyncPrefsAction =
   | { type: "setFullIncludePlaylists"; value: boolean }
   | { type: "setExtraTrackPolicy"; value: ExtraTrackPolicy }
   | { type: "setPreserveFolderStructure"; value: boolean }
+  | { type: "setAlbumGrouping"; value: AlbumGrouping }
+  | { type: "setAlbumSelections"; labels: string[] }
   | { type: "setCustomMode"; value: CustomSelectionMode }
   | { type: "toggleSelection"; category: string; label: string; checked: boolean };
 
@@ -81,6 +91,7 @@ function syncPrefsReducer(state: SyncPrefsState, action: SyncPrefsAction): SyncP
         fullIncludePlaylists: action.prefs.includePlaylists,
         extraTrackPolicy: action.prefs.extraTrackPolicy,
         preserveFolderStructure: action.prefs.preserveFolderStructure,
+        albumGrouping: action.prefs.albumGrouping ?? "album-artist",
         customMode: action.prefs.selections.mode === "exclude" ? "exclude" : "include",
         selectedItems: {
           albums: new Set(action.prefs.selections.albums),
@@ -98,6 +109,9 @@ function syncPrefsReducer(state: SyncPrefsState, action: SyncPrefsAction): SyncP
     case "setFullIncludePlaylists": return { ...state, fullIncludePlaylists: action.value };
     case "setExtraTrackPolicy": return { ...state, extraTrackPolicy: action.value };
     case "setPreserveFolderStructure": return { ...state, preserveFolderStructure: action.value };
+    case "setAlbumGrouping": return { ...state, albumGrouping: action.value };
+    case "setAlbumSelections":
+      return { ...state, selectedItems: { ...state.selectedItems, albums: new Set(action.labels) } };
     case "setCustomMode": return { ...state, customMode: action.value };
     case "toggleSelection": {
       const next = { ...state.selectedItems, [action.category]: new Set(state.selectedItems[action.category]) };
@@ -133,9 +147,11 @@ export function SyncPanel() {
   const [deviceId, setDeviceId] = useState<number | "">("");
   const pendingSyncDeviceId = useUIStore((s) => s.pendingSyncDeviceId);
   const setPendingSyncDeviceId = useUIStore((s) => s.setPendingSyncDeviceId);
+  const setPendingLibraryScan = useUIStore((s) => s.setPendingLibraryScan);
+  const navigateTo = useUIStore((s) => s.navigateTo);
   const [shadowLibs, setShadowLibs] = useState<ShadowLibrary[]>([]);
   const [prefs, dispatch] = useReducer(syncPrefsReducer, INITIAL_PREFS);
-  const { syncType, fullIncludeMusic, fullIncludePodcasts, fullIncludeAudiobooks, fullIncludePlaylists, extraTrackPolicy, preserveFolderStructure, customMode, selectedItems } = prefs;
+  const { syncType, fullIncludeMusic, fullIncludePodcasts, fullIncludeAudiobooks, fullIncludePlaylists, extraTrackPolicy, preserveFolderStructure, albumGrouping, customMode, selectedItems } = prefs;
 
   const [tracks, setTracks] = useState<Track[]>([]);
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
@@ -149,18 +165,88 @@ export function SyncPanel() {
     return new Set(audiobookSubs.map((s) => s.author ? `${s.title} — ${s.author}` : s.title));
   }, [audiobookSubs]);
 
-  const albums = useMemo(() => {
+  // Issue #113: one entry per (album, album artist) — grouping on the track
+  // artist made every compilation appear once per contributing artist.
+  //
+  // `albums` holds the selection KEYS ("Album — Artist"), which are persisted in
+  // custom_selections_json and matched in the main process. `albumDisplay` maps
+  // each key to what the row actually reads — the album name on its own, unless
+  // two albums share a title. Display and key are deliberately separate so the
+  // rows can be readable without invalidating a single saved selection.
+  const { albums, albumDisplay } = useMemo(() => {
     const list = Array.isArray(tracks) ? tracks : [];
-    const seen = new Set<string>();
+    const entries = list
+      .filter((t) => (t?.contentType || "music") === "music")
+      .map((t) => albumEntryForTrack(t, albumGrouping));
+    const keys = [...new Set(entries.map((e) => e.key))].sort();
+    return { albums: keys, albumDisplay: buildAlbumDisplayMap(entries) };
+  }, [tracks, albumGrouping]);
+
+  /**
+   * Whether any track actually carries an album artist distinct from its own
+   * artist. When none do, the two grouping options produce an identical list
+   * and the dropdown looks broken — so we say so rather than leaving the user
+   * clicking an inert control.
+   *
+   * Album-artist tags are read from the files during a library scan, so a
+   * library last scanned before this feature existed always lands here until
+   * it is scanned once more.
+   */
+  const albumArtistDataState = useMemo(() => {
+    const music = (Array.isArray(tracks) ? tracks : []).filter(
+      (t) => (t?.contentType || "music") === "music"
+    );
+    if (music.length === 0) return "empty" as const;
+    return music.some((t) => (t.albumArtist ?? "") !== (t.artist ?? ""))
+      ? ("present" as const)
+      : ("absent" as const);
+  }, [tracks]);
+
+  function scanLibraryForAlbumArtists() {
+    setPendingLibraryScan(true);
+    navigateTo?.("library");
+  }
+
+  /**
+   * Issue #113: selections saved before album-artist grouping hold
+   * "Album — TrackArtist" labels, which no longer appear in the picker. Remap
+   * the stale ones onto the label now shown so the checkboxes render ticked.
+   *
+   * The main-process matcher accepts both label forms, so a user's picks keep
+   * syncing either way — this only fixes what the UI displays. The normalized
+   * set is persisted on the next sync:start. Converges after one pass: once
+   * remapped, every label is valid and the effect no longer fires.
+   */
+  const legacyAlbumLabels = useMemo(() => {
+    const map = new Map<string, string>();
+    const list = Array.isArray(tracks) ? tracks : [];
     list
       .filter((t) => (t?.contentType || "music") === "music")
       .forEach((t) => {
-        const a = (t?.album || "Unknown Album").trim();
-        const r = (t?.artist || "Unknown Artist").trim();
-        seen.add(`${a} — ${r}`);
+        const current = albumLabelForTrack(t, albumGrouping);
+        for (const label of albumLabelsForTrack(t, albumGrouping)) {
+          if (label !== current) map.set(label, current);
+        }
       });
-    return [...seen].sort();
-  }, [tracks]);
+    return map;
+  }, [tracks, albumGrouping]);
+
+  useEffect(() => {
+    if (legacyAlbumLabels.size === 0 || selectedItems.albums.size === 0) return;
+    const valid = new Set(albums);
+    const next = new Set<string>();
+    let changed = false;
+    selectedItems.albums.forEach((label) => {
+      const remapped = legacyAlbumLabels.get(label);
+      if (!valid.has(label) && remapped) {
+        next.add(remapped);
+        changed = true;
+      } else {
+        next.add(label);
+      }
+    });
+    if (changed) dispatch({ type: "setAlbumSelections", labels: [...next] });
+  }, [albums, legacyAlbumLabels, selectedItems.albums]);
 
   const artists = useMemo(() => {
     const list = Array.isArray(tracks) ? tracks : [];
@@ -237,10 +323,9 @@ export function SyncPanel() {
         try {
           const playlistTracks = await getPlaylistTracks(pl.id);
           for (const t of playlistTracks) {
-            const album = (t.album ?? "Unknown Album").trim();
             const artist = (t.artist ?? "Unknown Artist").trim();
             const genre = (t.genre ?? "Unknown Genre").trim();
-            albumSet.add(`${album} — ${artist}`);
+            albumSet.add(albumLabelForTrack(t, albumGrouping));
             artistSet.add(artist);
             genreSet.add(genre);
           }
@@ -257,7 +342,7 @@ export function SyncPanel() {
     return () => {
       cancelled = true;
     };
-  }, [syncType, playlists, selectedPlaylistsKey]);
+  }, [syncType, playlists, selectedPlaylistsKey, albumGrouping]);
 
   const affectedItems = useMemo(() => {
     const selected: Record<string, Set<string>> = {
@@ -283,12 +368,14 @@ export function SyncPanel() {
     const audiobookTracks = trackList.filter((t) => (t?.contentType || "music") === "audiobook");
 
     const syncMusic = (t: Track) => {
-      const album = (t.album ?? "Unknown Album").trim();
       const artist = (t.artist ?? "Unknown Artist").trim();
       const genre = (t.genre ?? "Unknown Genre").trim();
-      const albumLabel = `${album} — ${artist}`;
+      // Accept the legacy track-artist label too, so selections saved before
+      // the album-artist change still show as selected after an upgrade.
       return (
-        selectedItems.albums.has(albumLabel) ||
+        albumLabelsForTrack(t, albumGrouping).some((l) =>
+          selectedItems.albums.has(l)
+        ) ||
         selectedItems.artists.has(artist) ||
         selectedItems.genres.has(genre)
       );
@@ -317,10 +404,9 @@ export function SyncPanel() {
     const syncedAudiobookLabels = new Set<string>();
 
     syncedMusic.forEach((t) => {
-      const a = (t.album ?? "Unknown Album").trim();
       const r = (t.artist ?? "Unknown Artist").trim();
       const g = (t.genre ?? "Unknown Genre").trim();
-      syncedAlbums.add(`${a} — ${r}`);
+      syncedAlbums.add(albumLabelForTrack(t, albumGrouping));
       syncedArtists.add(r);
       syncedGenres.add(g);
     });
@@ -499,6 +585,7 @@ export function SyncPanel() {
       syncType,
       extraTrackPolicy,
       preserveFolderStructure,
+      albumGrouping,
       selections,
       ...(syncType === "full" && {
         includeMusic: fullIncludeMusic,
@@ -534,6 +621,7 @@ export function SyncPanel() {
     fullIncludePlaylists,
     extraTrackPolicy,
     preserveFolderStructure,
+    albumGrouping,
     customMode,
     selectedItems,
     setResults,
@@ -679,7 +767,34 @@ export function SyncPanel() {
               <InfoTooltip text="Keep the device folder layout identical to your library, including album folder names with the year (e.g. 'Levels (2011)'). When off, paths are rebuilt from artist/album tags. Exported M3U playlists match the mirrored paths." />
             </span>
           </label>
+          <Select
+            label="Group albums by"
+            tooltip="Which artist identifies an album. Album artist keeps a compilation as one entry (e.g. 'Various Artists') instead of one per contributing track artist, and — when 'Mirror library folder structure' is off — puts the whole album in one folder on the device. Track artist reproduces the older per-track-artist behaviour."
+            value={albumGrouping}
+            onChange={(v) => dispatch({ type: "setAlbumGrouping", value: v as AlbumGrouping })}
+            options={[
+              { value: "album-artist", label: "Album artist" },
+              { value: "track-artist", label: "Track artist" },
+            ]}
+          />
         </div>
+        {albumGrouping === "album-artist" && albumArtistDataState === "absent" && (
+          <div className="mt-3 rounded-md border border-border bg-muted/30 p-3 text-xs text-muted-foreground leading-relaxed">
+            <p>
+              No album-artist tags are in use in your library, so both options
+              produce the same list. iPodRocks reads that tag from your files
+              during a library scan — if you have tagged album artists since your
+              last scan, run one to pick them up.
+            </p>
+            <Button
+              size="sm"
+              className="mt-2"
+              onClick={scanLibraryForAlbumArtists}
+            >
+              Scan library
+            </Button>
+          </div>
+        )}
       </Card>
 
       {/* Custom sync: grid of categories */}
@@ -747,7 +862,9 @@ export function SyncPanel() {
                             onChange={() => toggleSelection(key, label, !isSelected)}
                             className="accent-primary rounded"
                           />
-                          <span className="truncate min-w-0">{label}</span>
+                          <span className="truncate min-w-0" title={label}>
+                            {key === "albums" ? (albumDisplay.get(label) ?? label) : label}
+                          </span>
                           {isAutoAudiobook && (
                             <span
                               className="shrink-0 text-[10px] font-medium px-1 py-0.5 rounded bg-primary/10 text-primary"

@@ -1,5 +1,9 @@
 import type Database from "better-sqlite3";
-import type { CustomSelections, DeviceSyncPreferences } from "../../shared/types";
+import type {
+  AlbumGrouping,
+  CustomSelections,
+  DeviceSyncPreferences,
+} from "../../shared/types";
 
 export const emptySelections = (): CustomSelections => ({
   mode: "include",
@@ -37,8 +41,13 @@ type Row = {
   include_audiobooks: number;
   include_playlists: number;
   preserve_folder_structure: number;
+  album_grouping: string | null;
   custom_selections_json: string | null;
 };
+
+function parseAlbumGrouping(value: string | null | undefined): AlbumGrouping {
+  return value === "track-artist" ? "track-artist" : "album-artist";
+}
 
 export function getDeviceSyncPreferences(
   db: Database.Database,
@@ -59,6 +68,7 @@ export function getDeviceSyncPreferences(
     includeAudiobooks: row.include_audiobooks === 1,
     includePlaylists: row.include_playlists === 1,
     preserveFolderStructure: row.preserve_folder_structure !== 0,
+    albumGrouping: parseAlbumGrouping(row.album_grouping),
     selections: parseSelections(row.custom_selections_json),
   };
 }
@@ -72,8 +82,8 @@ export function saveDeviceSyncPreferences(
     INSERT INTO device_sync_preferences
       (device_id, sync_type, extra_track_policy, include_music, include_podcasts,
        include_audiobooks, include_playlists,
-       preserve_folder_structure, custom_selections_json, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+       preserve_folder_structure, album_grouping, custom_selections_json, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
     ON CONFLICT(device_id) DO UPDATE SET
       sync_type = excluded.sync_type,
       extra_track_policy = excluded.extra_track_policy,
@@ -82,6 +92,7 @@ export function saveDeviceSyncPreferences(
       include_audiobooks = excluded.include_audiobooks,
       include_playlists = excluded.include_playlists,
       preserve_folder_structure = excluded.preserve_folder_structure,
+      album_grouping = excluded.album_grouping,
       custom_selections_json = excluded.custom_selections_json,
       updated_at = CURRENT_TIMESTAMP
   `).run(
@@ -93,6 +104,7 @@ export function saveDeviceSyncPreferences(
     prefs.includeAudiobooks ? 1 : 0,
     prefs.includePlaylists ? 1 : 0,
     prefs.preserveFolderStructure ? 1 : 0,
+    parseAlbumGrouping(prefs.albumGrouping),
     JSON.stringify(prefs.selections)
   );
 }

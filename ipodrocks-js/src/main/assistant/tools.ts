@@ -13,7 +13,17 @@ import type Database from "better-sqlite3";
 import type { Library } from "../library/library";
 import type { PlaylistCore } from "../playlists/playlist-core";
 import type { DevicesCore } from "../devices/devices-core";
-import type { PodcastSearchResult, SmartPlaylistRule } from "../../shared/types";
+import type {
+  AlbumGrouping,
+  DeviceSyncPreferences,
+  PodcastSearchResult,
+  SmartPlaylistRule,
+} from "../../shared/types";
+import {
+  emptySelections,
+  getDeviceSyncPreferences,
+  saveDeviceSyncPreferences,
+} from "../sync/device-sync-preferences";
 import type { ToolDefinition } from "../llm/openRouterClient";
 import {
   listSubscriptions,
@@ -32,6 +42,7 @@ import { downloadCover as downloadAudiobookCover } from "../audiobooks/audiobook
 import { findDuplicateFileGroups } from "../library/duplicate-files";
 import { logActivity } from "../activity/activity-logger";
 import { invalidateAssistantCache } from "./assistantChat";
+import { listUsbDevices } from "../devices/usb-devices";
 import {
   getGeniusTypesWithAvailability,
   generateGeniusPlaylistFromDb,
@@ -207,6 +218,9 @@ const device_list: AiTool = {
       mountPath: d.profile.mountPath,
       model: d.profile.modelName,
       lastSyncDate: d.profile.lastSyncDate,
+      usbVendorId: d.profile.usbVendorId ?? null,
+      usbProductId: d.profile.usbProductId ?? null,
+      usbSerial: d.profile.usbSerial ?? null,
     }));
   },
 };
@@ -701,6 +715,173 @@ const device_update_settings: AiTool = {
   },
 };
 
+const usb_device_list: AiTool = {
+  name: "usb_device_list",
+  description:
+    "List USB devices currently connected to this computer, including vendor id, product id and serial number. Recognized iPod models are named. Use this to find the USB identity of a device before binding it with device_set_usb_identity.",
+  parameters: { type: "object", properties: {} },
+  kind: "read",
+  summarize: () => "List connected USB devices",
+  async run() {
+    const snapshot = await listUsbDevices();
+    if (!snapshot.available) {
+      return {
+        available: false,
+        note: "USB enumeration is not available on this system. Devices will be matched by mount path only.",
+        devices: [],
+      };
+    }
+    return { available: true, devices: snapshot.devices };
+  },
+};
+
+const device_set_usb_identity: AiTool = {
+  name: "device_set_usb_identity",
+  description:
+    "Bind a device to a physical USB unit, or clear that binding. When bound, the device is only considered connected if that exact USB device is plugged in — this is how two players that mount at the same path are told apart. Omit usb_vendor_id and usb_product_id (or pass them as null) to clear the binding and fall back to mount-path matching.",
+  parameters: {
+    type: "object",
+    properties: {
+      device_id: { type: "number", description: "Device ID (from device_list)" },
+      usb_vendor_id: {
+        type: "string",
+        description: "4-digit hex vendor id from usb_device_list, e.g. '05ac'. Null to clear.",
+      },
+      usb_product_id: {
+        type: "string",
+        description: "4-digit hex product id from usb_device_list, e.g. '1261'. Null to clear.",
+      },
+      usb_serial: {
+        type: "string",
+        description:
+          "Serial number from usb_device_list. Pass an empty string when the device reports none; the identity is then model-level and cannot distinguish two identical units.",
+      },
+    },
+    required: ["device_id"],
+  },
+  // Destructive: clearing an identity lets another drive at the same mount path
+  // be mistaken for this device, which can send a sync to the wrong volume.
+  kind: "write-destructive",
+  summarize: (a) =>
+    a.usb_vendor_id && a.usb_product_id
+      ? `Bind device #${a.device_id} to USB ${a.usb_vendor_id}:${a.usb_product_id}`
+      : `Clear the USB identity of device #${a.device_id} (mount-path matching only)`,
+  async run(args, ctx) {
+    const deviceId = Number(args.device_id);
+    if (!Number.isInteger(deviceId) || deviceId <= 0) throw new Error("Invalid device_id");
+    const device = ctx.getDevicesCore().getDeviceById(deviceId);
+    if (!device) throw new Error(`Device #${deviceId} not found`);
+
+    const clearing = !args.usb_vendor_id || !args.usb_product_id;
+    const ok = ctx.getDevicesCore().updateDevice(deviceId, {
+      usbVendorId: clearing ? null : String(args.usb_vendor_id),
+      usbProductId: clearing ? null : String(args.usb_product_id),
+      usbSerial: clearing ? null : String(args.usb_serial ?? ""),
+    });
+    if (!ok) throw new Error(`Failed to update device #${deviceId}`);
+
+    invalidateAssistantCache();
+    logActivity(
+      ctx.db,
+      "update_device",
+      clearing
+        ? `AI cleared the USB identity for device: ${device.profile.name}`
+        : `AI bound device ${device.profile.name} to USB ${args.usb_vendor_id}:${args.usb_product_id}`
+    );
+    return ctx.getDevicesCore().getDeviceById(deviceId)!.profile;
+  },
+};
+
+const device_set_sync_preferences: AiTool = {
+  name: "device_set_sync_preferences",
+  description:
+    "Update how a device lays out files during sync. 'preserve_folder_structure' mirrors the library folder tree 1:1 on the device (keeping album folder names such as 'Levels (2011)'); when off, paths are rebuilt from tags. 'album_grouping' chooses which artist identifies an album: 'album-artist' keeps a compilation as one album (e.g. 'Various Artists') in both the custom-sync album list and the rebuilt folder layout, while 'track-artist' splits it per contributing artist. Changing either setting means the next sync moves files into the new layout.",
+  parameters: {
+    type: "object",
+    properties: {
+      device_id: { type: "number", description: "Device ID (from device_list)" },
+      preserve_folder_structure: {
+        type: "boolean",
+        description: "Mirror the library folder structure 1:1 on the device.",
+      },
+      album_grouping: {
+        type: "string",
+        enum: ["album-artist", "track-artist"],
+        description:
+          "Which artist identifies an album. 'album-artist' keeps compilations as a single album; 'track-artist' is the older per-track-artist behaviour.",
+      },
+    },
+    required: ["device_id"],
+  },
+  kind: "write-safe",
+  summarize: (a) => {
+    const parts: string[] = [];
+    if (a.preserve_folder_structure !== undefined)
+      parts.push(`mirror folders = ${a.preserve_folder_structure}`);
+    if (a.album_grouping !== undefined) parts.push(`group albums by ${a.album_grouping}`);
+    return `Update device #${a.device_id} sync layout (${parts.join(", ") || "no changes"})`;
+  },
+  async run(args, ctx) {
+    const deviceId = Number(args.device_id);
+    if (!Number.isInteger(deviceId) || deviceId <= 0) throw new Error("Invalid device_id");
+    const device = ctx.getDevicesCore().getDeviceById(deviceId);
+    if (!device) throw new Error(`Device #${deviceId} not found`);
+
+    if (
+      args.preserve_folder_structure === undefined &&
+      args.album_grouping === undefined
+    ) {
+      throw new Error("No settings provided to update");
+    }
+    if (
+      args.album_grouping !== undefined &&
+      args.album_grouping !== "album-artist" &&
+      args.album_grouping !== "track-artist"
+    ) {
+      throw new Error("album_grouping must be 'album-artist' or 'track-artist'");
+    }
+
+    // Preferences may not exist yet for a device that has never been synced.
+    const current =
+      getDeviceSyncPreferences(ctx.db, deviceId) ??
+      ({
+        syncType: "full",
+        extraTrackPolicy: "keep",
+        includeMusic: true,
+        includePodcasts: true,
+        includeAudiobooks: true,
+        includePlaylists: true,
+        preserveFolderStructure: true,
+        albumGrouping: "album-artist",
+        selections: emptySelections(),
+      } satisfies DeviceSyncPreferences);
+
+    const next: DeviceSyncPreferences = {
+      ...current,
+      preserveFolderStructure:
+        args.preserve_folder_structure !== undefined
+          ? !!args.preserve_folder_structure
+          : current.preserveFolderStructure,
+      albumGrouping:
+        (args.album_grouping as AlbumGrouping | undefined) ?? current.albumGrouping,
+    };
+
+    saveDeviceSyncPreferences(ctx.db, deviceId, next);
+    invalidateAssistantCache();
+    logActivity(
+      ctx.db,
+      "update_device",
+      `AI updated sync layout for device: ${device.profile.name}`
+    );
+    return {
+      updated: true,
+      name: device.profile.name,
+      preserveFolderStructure: next.preserveFolderStructure,
+      albumGrouping: next.albumGrouping,
+    };
+  },
+};
+
 const device_sync: AiTool = {
   name: "device_sync",
   description: "Start a sync for a device using its saved sync preferences. Opens the Sync panel where you can watch progress.",
@@ -813,6 +994,67 @@ const shadow_rebuild: AiTool = {
       shadowLibraryName: lib.name,
       message: `Rebuilding "${lib.name}" — I've opened the Library panel so you can watch the progress. Files already encoded correctly are adopted instead of re-encoded, so this is usually quick.`,
     };
+  },
+};
+
+const shadow_prune_orphans: AiTool = {
+  name: "shadow_prune_orphans",
+  description:
+    "Delete files in a shadow library that the main library no longer has — the leftovers of albums that were renamed or deleted before the app learned to clean them up. A shadow library is meant to be a faithful copy of the library in another codec, so anything without a matching library track is dead weight. Album artwork for albums that still exist is kept. Use shadow_list first to get the id.",
+  parameters: {
+    type: "object",
+    properties: {
+      shadowLibraryId: {
+        type: "number",
+        description: "The id of the shadow library to prune (from shadow_list).",
+      },
+    },
+    required: ["shadowLibraryId"],
+  },
+  kind: "write-destructive",
+  summarize: (args) =>
+    `Prune orphaned files from shadow library #${(args as { shadowLibraryId?: number }).shadowLibraryId}`,
+  async run(args, ctx) {
+    const { shadowLibraryId } = args as { shadowLibraryId?: number };
+    if (typeof shadowLibraryId !== "number") {
+      return { ok: false, error: "shadowLibraryId is required" };
+    }
+    const lib = ctx
+      .getLibrary()
+      .getShadowLibraries()
+      .find((l) => l.id === shadowLibraryId);
+    if (!lib) return { ok: false, error: `No shadow library with id ${shadowLibraryId}` };
+
+    try {
+      const result = await ctx
+        .getLibrary()
+        .getShadowManager()
+        .pruneOrphanedFiles(shadowLibraryId);
+
+      if (result.deleted > 0) {
+        logActivity(
+          ctx.db,
+          "shadow_prune",
+          `AI pruned ${result.deleted} orphaned file(s) from shadow library: ${lib.name}`
+        );
+        invalidateAssistantCache();
+      }
+
+      return {
+        ok: true,
+        shadowLibraryName: lib.name,
+        ...result,
+        message:
+          result.deleted === 0
+            ? `Nothing to prune in "${lib.name}" — every file there belongs to your library.`
+            : `Removed ${result.deleted} orphaned file(s) from "${lib.name}", freeing ${Math.round(result.bytesFreed / 1_000_000)} MB.`,
+      };
+    } catch (err) {
+      return {
+        ok: false,
+        error: err instanceof Error ? err.message : "Prune failed",
+      };
+    }
   },
 };
 
@@ -1050,6 +1292,7 @@ export const AI_TOOLS: AiTool[] = [
   podcast_list_subscriptions,
   podcast_list_episodes,
   device_list,
+  usb_device_list,
   playlist_create_smart,
   playlist_create_genius,
   playlist_create_classic,
@@ -1059,10 +1302,13 @@ export const AI_TOOLS: AiTool[] = [
   device_check,
   device_remove,
   device_update_settings,
+  device_set_sync_preferences,
+  device_set_usb_identity,
   device_sync,
   library_scan,
   shadow_list,
   shadow_rebuild,
+  shadow_prune_orphans,
   shadow_delete,
   library_find_duplicates,
   podcast_download_now,

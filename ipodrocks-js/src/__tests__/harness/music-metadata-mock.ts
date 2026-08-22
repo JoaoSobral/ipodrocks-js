@@ -19,6 +19,7 @@ import type { IAudioMetadata, IPicture } from "music-metadata";
 export interface FixtureMetadata {
   title?: string;
   artist?: string;
+  albumArtist?: string;
   album?: string;
   genre?: string;
   trackNumber?: number;
@@ -38,6 +39,7 @@ export function buildMetadata(fields: FixtureMetadata): IAudioMetadata {
     common: {
       title: fields.title,
       artist: fields.artist,
+      albumartist: fields.albumArtist,
       album: fields.album,
       genre: fields.genre ? [fields.genre] : undefined,
       track: fields.trackNumber ? { no: fields.trackNumber, of: null } : undefined,

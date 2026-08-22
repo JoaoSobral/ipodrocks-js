@@ -35,6 +35,16 @@ vi.mock("../../main/sync/sync-executor", () => ({
 }));
 vi.mock("../../main/devices/device-online", () => ({
   isDeviceMountPathOnline: vi.fn().mockReturnValue(true),
+  isDeviceOnline: vi.fn().mockReturnValue(true),
+  deviceRowToOnlineInput: vi.fn((row) => row),
+}));
+// Keep tests off the real USB backends — they would spawn ioreg/PowerShell.
+vi.mock("../../main/devices/usb-devices", () => ({
+  refreshUsbSnapshot: vi.fn().mockResolvedValue({ available: false, devices: [] }),
+  getUsbSnapshot: vi.fn().mockReturnValue({ available: false, devices: [] }),
+  listUsbDevices: vi.fn().mockResolvedValue({ available: false, devices: [] }),
+  normalizeUsbId: vi.fn((v) => (v == null || v === "" ? null : String(v).toLowerCase().padStart(4, "0"))),
+  usbDeviceMatches: vi.fn().mockReturnValue(false),
 }));
 
 import { subscribe, upsertEpisode } from "../../main/podcasts/podcast-subscriptions";

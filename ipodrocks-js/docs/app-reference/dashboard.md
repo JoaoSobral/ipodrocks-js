@@ -7,7 +7,7 @@ The Dashboard gives you an at-a-glance view of your library, devices, shadow lib
 The Dashboard shows five cards:
 
 - **Library** — Total tracks, albums, artists, and total size. Updates when you scan or add folders.
-- **Devices** — List of configured devices with their mount paths and status.
+- **Devices** — List of configured devices with their mount paths and status. Devices pinned to a specific piece of hardware also show a `USB vvvv:pppp` badge.
 - **Shadow Libraries** — Pre-transcoded mirrors (e.g. FLAC → MPC) with track count, size, and sync status.
 - **Listening Stats** — Your top tracks, top artists, top genre, total plays, and total listening time, built from the `playback.log` data your Rockbox devices write and that iPodRocks reads during sync. A toggle in the card's top-right switches the period between **All Time**, **This Year**, and **This Month**.
 - **Recent Activity** — Last operations: syncs, library scans, folder adds, device adds, playback log reads, playlist generations.

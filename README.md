@@ -62,7 +62,7 @@ If you really like iPodRocks and want to keep it caffeinated, you can buy me a c
 
 ### Multiple Libraries & Shadow Libraries
 - **Multiple library folders** — Music, podcasts, audiobooks in one catalog
-- **Shadow libraries** — Pre-transcoded mirrors (e.g. FLAC → MPC) for lightning-fast sync to devices that need specific codecs
+- **Shadow libraries** — Pre-transcoded mirrors (e.g. FLAC → MPC) for lightning-fast sync to devices that need specific codecs. A shadow library is a faithful copy of your library differing only in codec: rename or delete an album and the shadow follows. A **⚙ → Prune orphan files** action clears out anything an older version left behind.
 - Build once, sync many — no re-encoding on every sync
 
 ### Multiple Devices
@@ -70,7 +70,8 @@ If you really like iPodRocks and want to keep it caffeinated, you can buy me a c
 - Per-device codec configs (direct copy, MP3, AAC, Musepack, Opus, OGG)
 - Device check: compare what’s on disk vs library, spot orphans
 - **Per-device icons** — iPod Classic, Nano, and Mini get their own artwork; other devices each get a distinct generic Rockbox icon so cards are easy to tell apart at a glance
-- **Live connection indicator** — A prominent green/red dot on each device card shows whether the mount path is currently reachable
+- **Live connection indicator** — A prominent green/red dot on each device card shows whether the device is currently reachable
+- **Identify a device by its USB hardware** — Own two iPods that both mount at `/Volumes/IPOD`? Pick the player from a dropdown of connected USB devices and iPodRocks pins that device row to its vendor id, product id and serial number, so the wrong player can never inherit the right one's sync history and ratings. Recognized iPod models are named automatically. Leave it unset and nothing changes — matching stays on the mount path, exactly as before. Works on macOS, Windows and Linux with no extra software to install.
 
 ### Classic, Smart & Genius Playlists
 - **Classic playlists — hand-pick your own songs** — Tick songs straight from your library in a virtualized picker with search plus artist/album/genre filters. **Your selection persists across every filter change**, so you can build one playlist out of several different searches. Tick order is play order, up to 500 songs. Classic is also the only playlist type you can **edit** after creating — reopen the picker with your songs already ticked.
@@ -123,6 +124,8 @@ If you really like iPodRocks and want to keep it caffeinated, you can buy me a c
 
 ### Sync & Conversion
 - **Full or custom sync** — Pick albums, artists, genres, playlists
+- **Albums grouped by album artist** — Compilations show up once, under "Various Artists", instead of once per contributing track artist, so the custom-sync album list stays usable. The same choice decides the on-device folder layout when you are not mirroring your library structure, so a 20-artist compilation lands in one folder rather than twenty. Switch to **Track artist** per device if you prefer the old grouping.
+- **Mirror library folder structure** — Reproduce your library's folder tree on the device 1:1, album folder names and all, instead of rebuilding paths from tags
 - FFmpeg conversion with metadata preserved
 - **Rockbox-compatible album art** — Generates a single baseline-JPEG `cover.jpg` per album folder, resized to a per-device maximum (default 300 px so iPods stay responsive), so artwork loads reliably on Rockbox. Uses folder art or embedded artwork as the source; no extra software required
 - Live progress feedback
@@ -186,7 +189,7 @@ If `mpcenc` is not on your PATH, iPodRocks will prompt when you select Musepack.
 ## Quick Start
 
 1. **Add library folder** — Open **Library**, click **Add Folder**, and choose your music root folder (for example, `/home/user/Music`). iPodRocks scans all subfolders recursively for audio files. Important to have your audio with tags
-2. **Add device** — Open **Devices**, click **+ Add Device**, and pick the **root mount path of the device** (for example, `/media/ipod`). The app will automatically create `music`, `podcasts`, and `audiobooks` folders on the device if they do not exist.
+2. **Add device** — Open **Devices**, click **+ Add Device**, and pick the **root mount path of the device** (for example, `/media/ipod`). The app will automatically create `music`, `podcasts`, and `audiobooks` folders on the device if they do not exist. If you own more than one player, also pick it from the optional **USB Device** dropdown so the two never get confused for each other.
 3. **Create playlists** (optional) — Open **Playlists** for Classic (hand-picked), Smart, Genius, or Savant playlists.
 4. **Sync** — Open **Sync**, select your device, choose full or custom sync, and click **Start Sync**.
 
@@ -239,6 +242,8 @@ If `mpcenc` is not on your PATH, iPodRocks will prompt when you select Musepack.
 
 - **Full sync** — Music, podcasts, audiobooks, playlists
 - **Custom sync** — Pick albums, artists, genres, playlists
+- **Mirror library folder structure** — On by default; keeps the device layout identical to your library, including album folders that carry the year (`Levels (2011)`). Turn it off to rebuild paths from tags as `Artist/Album/track.ext`
+- **Group albums by** — **Album artist** (default) keeps a compilation as one album in both the picker and the rebuilt folder layout; **Track artist** restores the older per-track-artist behaviour
 - Live progress feedback
 
 ### Settings

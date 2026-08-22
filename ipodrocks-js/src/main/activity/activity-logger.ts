@@ -22,7 +22,8 @@ export type ActivityOperation =
   | "podcast_downloaded"
   | "podcast_episodes_deleted"
   | "audiobook_subscribed"
-  | "audiobook_unsubscribed";
+  | "audiobook_unsubscribed"
+  | "shadow_prune";
 
 export interface ActivityEntry {
   id: number;

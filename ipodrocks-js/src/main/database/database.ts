@@ -29,9 +29,11 @@ export class AppDatabase {
     this.migratePodcasts();
     this.migratePodcastSource();
     this.migrateDeviceSyncPreferences();
+    this.migrateDeviceAlbumGrouping();
     this.migrateDeviceSkipAlbumArtwork();
     this.migrateDeviceArtworkMaxDimension();
     this.migrateVbrEnabled();
+    this.migrateDeviceUsbIdentity();
     this.migrateShadowPausedStatus();
     this.migrateShadowTrackStat();
     this.migrateClassicPlaylists();
@@ -138,6 +140,34 @@ export class AppDatabase {
     }
   }
 
+  /**
+   * Add the album_grouping column to device_sync_preferences (issue #113).
+   *
+   * Unlike migrateDeviceSyncPreferences above, existing rows are backfilled with
+   * the NEW default ('album-artist') rather than the old behaviour: the whole
+   * point of the issue is that per-track-artist grouping produced an unusable
+   * album list and a scattered on-device folder tree. Devices synced without
+   * folder mirroring will reorganise into album-artist folders on their next
+   * sync — a one-time reshuffle, after which the layout is stable.
+   */
+  private migrateDeviceAlbumGrouping(): void {
+    if (!this.db) return;
+    try {
+      const rows = this.db
+        .prepare("PRAGMA table_info(device_sync_preferences)")
+        .all() as { name: string }[];
+      if (!new Set(rows.map((r) => r.name)).has("album_grouping")) {
+        this.db
+          .prepare(
+            "ALTER TABLE device_sync_preferences ADD COLUMN album_grouping TEXT NOT NULL DEFAULT 'album-artist'"
+          )
+          .run();
+      }
+    } catch (err) {
+      console.error("[db] migration failed (migrateDeviceAlbumGrouping):", err);
+    }
+  }
+
   private migratePodcastSource(): void {
     if (!this.db) return;
     try {
@@ -188,6 +218,42 @@ export class AppDatabase {
       }
     } catch (err) {
       console.error("[db] migration failed (migrateDeviceArtworkMaxDimension):", err);
+    }
+  }
+
+  /**
+   * Add the optional USB hardware identity columns to devices.
+   *
+   * Existing devices keep NULL, which preserves today's behavior: they are
+   * matched by mount path alone. Only devices the user explicitly binds to a
+   * USB unit get a value.
+   */
+  private migrateDeviceUsbIdentity(): void {
+    if (!this.db) return;
+    try {
+      const rows = this.db
+        .prepare("PRAGMA table_info(devices)")
+        .all() as { name: string }[];
+      const existing = new Set(rows.map((r) => r.name));
+      for (const column of ["usb_vendor_id", "usb_product_id", "usb_serial"]) {
+        if (!existing.has(column)) {
+          this.db.prepare(`ALTER TABLE devices ADD COLUMN ${column} TEXT`).run();
+        }
+      }
+      // The index lives here rather than in SCHEMA_SQL on purpose. SCHEMA_SQL
+      // is exec'd first, and on an existing database CREATE TABLE IF NOT EXISTS
+      // is a no-op — so an index referencing these columns would fail with
+      // "no such column: usb_vendor_id" and take down initialize() before the
+      // ALTER TABLEs above ever ran.
+      this.db
+        .prepare(
+          `CREATE UNIQUE INDEX IF NOT EXISTS idx_devices_usb_identity
+             ON devices(usb_vendor_id, usb_product_id, usb_serial)
+             WHERE usb_vendor_id IS NOT NULL`,
+        )
+        .run();
+    } catch (err) {
+      console.error("[db] migration failed (migrateDeviceUsbIdentity):", err);
     }
   }
 

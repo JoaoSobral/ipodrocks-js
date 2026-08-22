@@ -43,6 +43,7 @@ import type {
   SyncOptions,
   DeviceSyncPreferences,
 } from "../../shared/types";
+import { albumLabelsForTrack } from "../../shared/album-label";
 
 let activeSyncAbort: AbortController | null = null;
 
@@ -63,10 +64,12 @@ export function registerSyncHandlers(): void {
         includeAudiobooks: opts.includeAudiobooks !== false,
         includePlaylists: opts.includePlaylists !== false,
         preserveFolderStructure: opts.preserveFolderStructure !== false,
+        albumGrouping: opts.albumGrouping ?? "album-artist",
         selections: opts.selections ?? emptySelections(),
       } satisfies DeviceSyncPreferences);
 
       const preserveFolderStructure = opts.preserveFolderStructure !== false;
+      const albumGrouping = opts.albumGrouping ?? "album-artist";
 
       activeSyncAbort = new AbortController();
       const syncSignal = activeSyncAbort.signal;
@@ -104,11 +107,24 @@ export function registerSyncHandlers(): void {
 
         const matchMusic = (t: Record<string, unknown>, p: string) => {
           if (playlistTrackPaths.has(p)) return true;
-          const album = (String(t.album ?? "Unknown Album")).trim();
           const artist = (String(t.artist ?? "Unknown Artist")).trim();
           const genre = (String(t.genre ?? "Unknown Genre")).trim();
-          const albumLabel = `${album} — ${artist}`;
-          return albumSet.has(albumLabel) || artistSet.has(artist) || genreSet.has(genre);
+          // Issue #113: check the label for the active grouping *and* the legacy
+          // track-artist label, so selections saved before the album-artist
+          // change keep matching after an upgrade instead of silently emptying.
+          const labels = albumLabelsForTrack(
+            {
+              album: t.album as string | undefined,
+              artist: t.artist as string | undefined,
+              albumArtist: t.albumArtist as string | undefined,
+            },
+            albumGrouping
+          );
+          return (
+            labels.some((label) => albumSet.has(label)) ||
+            artistSet.has(artist) ||
+            genreSet.has(genre)
+          );
         };
         const matchPodcast = (t: Record<string, unknown>, p: string) => {
           if (playlistTrackPaths.has(p)) return true;
@@ -201,6 +217,7 @@ export function registerSyncHandlers(): void {
         skipAlbumArtwork: device.profile.skipAlbumArtwork === true,
         artworkMaxDimension: device.profile.artworkMaxDimension,
         preserveFolderStructure,
+        albumGrouping,
         preloadedMtimes,
         profileCodecExtOverride: profileCodecExtOverride ?? undefined,
         progressCallback: (progressEvent) => {
@@ -487,6 +504,7 @@ export function registerSyncHandlers(): void {
               codecName,
               libraryFolderPaths,
               preserveFolderStructure,
+              albumGrouping,
             };
             const writeResult = await writePlaylistsToDevice({
               playlistFolder,

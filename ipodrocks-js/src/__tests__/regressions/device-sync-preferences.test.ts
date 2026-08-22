@@ -53,6 +53,7 @@ describe("device_sync_preferences — exclude mode persistence", () => {
       includeAudiobooks: true,
       includePlaylists: true,
       preserveFolderStructure: true,
+      albumGrouping: "album-artist",
       selections: {
         mode: "exclude",
         albums: ["Album A"],
@@ -83,6 +84,7 @@ describe("device_sync_preferences — exclude mode persistence", () => {
       includeAudiobooks: true,
       includePlaylists: true,
       preserveFolderStructure: true,
+      albumGrouping: "album-artist",
       selections: { ...emptySelections(), mode: "include", albums: ["X"] },
     });
 
@@ -103,6 +105,7 @@ describe("device_sync_preferences — exclude mode persistence", () => {
       includeAudiobooks: true,
       includePlaylists: true,
       preserveFolderStructure: false,
+      albumGrouping: "album-artist",
       selections: emptySelections(),
     });
     expect(getDeviceSyncPreferences(db, 5)!.preserveFolderStructure).toBe(false);
@@ -115,6 +118,7 @@ describe("device_sync_preferences — exclude mode persistence", () => {
       includeAudiobooks: true,
       includePlaylists: true,
       preserveFolderStructure: true,
+      albumGrouping: "album-artist",
       selections: emptySelections(),
     });
     expect(getDeviceSyncPreferences(db, 5)!.preserveFolderStructure).toBe(true);

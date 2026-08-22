@@ -10,6 +10,7 @@ import {
   ArtistInfo,
   AlbumInfo,
   GenreInfo,
+  AlbumGrouping,
   CLASSIC_PLAYLIST_MAX_TRACKS,
 } from "../../shared/types";
 import { computeDeviceRelativePath } from "../sync/sync-core";
@@ -31,6 +32,7 @@ interface TrackRow {
   filename: string;
   title: string | null;
   artist: string | null;
+  album_artist: string | null;
   album: string | null;
   genre: string | null;
   duration: number | null;
@@ -65,12 +67,14 @@ const PLAYLIST_SELECT = `
 const TRACK_SELECT = `
   SELECT t.id, t.path, t.filename, t.title,
          a.name AS artist, al.title AS album,
+         COALESCE(aa.name, a.name) AS album_artist,
          g.name AS genre, t.duration,
          t.library_folder_id
   FROM playlist_items pi
   JOIN tracks t ON pi.track_id = t.id
   LEFT JOIN artists a ON t.artist_id = a.id
   LEFT JOIN albums al ON t.album_id = al.id
+  LEFT JOIN artists aa ON al.artist_id = aa.id
   LEFT JOIN genres g ON t.genre_id = g.id
   WHERE pi.playlist_id = ?
   ORDER BY pi.position
@@ -196,6 +200,7 @@ export class PlaylistCore {
       filename: r.filename,
       title: r.title || r.filename,
       artist: r.artist || "Unknown",
+      albumArtist: r.album_artist || r.artist || "Unknown",
       album: r.album || "Unknown",
       genre: r.genre || "Unknown",
       duration: r.duration || 0,
@@ -829,12 +834,14 @@ export class PlaylistCore {
       .prepare(
         `SELECT DISTINCT t.id, t.path, t.filename, t.title,
                 a.name AS artist, al.title AS album,
+                COALESCE(aa.name, a.name) AS album_artist,
                 g.name AS genre, t.duration,
                 t.library_folder_id
          FROM playlist_items pi
          JOIN tracks t ON pi.track_id = t.id
          LEFT JOIN artists a ON t.artist_id = a.id
          LEFT JOIN albums al ON t.album_id = al.id
+         LEFT JOIN artists aa ON al.artist_id = aa.id
          LEFT JOIN genres g ON t.genre_id = g.id
          WHERE pi.playlist_id IN (${placeholders})
          ORDER BY t.artist_id, t.album_id, t.title`
@@ -856,6 +863,9 @@ export class PlaylistCore {
       codecName: string;
       libraryFolderPaths?: Map<number, string>;
       preserveFolderStructure?: boolean;
+      /** Issue #113: must match the value used to copy the files, or every
+       * playlist entry points at a path that does not exist on the device. */
+      albumGrouping?: AlbumGrouping;
     }
   ): string {
     const playlist = this.getPlaylistById(playlistId);
@@ -881,16 +891,15 @@ export class PlaylistCore {
 
       const trackInfo: Record<string, unknown> = {
         artist: track.artist,
+        albumArtist: track.albumArtist,
         album: track.album,
         libraryFolderId: track.libraryFolderId,
       };
-      let relPath = computeDeviceRelativePath(
-        trackPath,
-        trackInfo,
-        "music",
-        options.libraryFolderPaths,
-        options.preserveFolderStructure ?? false
-      );
+      let relPath = computeDeviceRelativePath(trackPath, trackInfo, "music", {
+        libraryFolderPaths: options.libraryFolderPaths,
+        preserveFolderStructure: options.preserveFolderStructure ?? false,
+        albumGrouping: options.albumGrouping ?? "album-artist",
+      });
       if (needsConversion) {
         relPath = updateExtension(relPath, codecLower);
       }
@@ -918,6 +927,7 @@ export class PlaylistCore {
       codecName: string;
       libraryFolderPaths?: Map<number, string>;
       preserveFolderStructure?: boolean;
+      albumGrouping?: AlbumGrouping;
     }
   ): string {
     const content = this.buildM3uContentForDevice(playlistId, options);
