@@ -1,6 +1,6 @@
 # Changelog
 
-## [2.3.0-beta] — 2026-08
+## [2.3.0-betar1] — 2026-08
 
 ### Features
 
@@ -13,6 +13,7 @@
 ### Fixes
 
 - **Deleted tracks no longer leave rating rows behind** — Removing a track from the library deletes its rows with the database's foreign-key enforcement switched off, so the `ON DELETE CASCADE` declared on the rating tables never fired: `device_track_ratings`, `rating_conflicts` and `rating_events` accumulated orphan rows for every track ever removed. All three are now deleted explicitly, along with the new runtime-data tables.
+- **Ratings and play counts were not imported at all from a device that transcodes** — Rockbox records its counters against the file as it sits on the iPod, so importing them means matching that file back to the track it came from. Every part of that match was built from the library's own spelling of the name, and the device's copy is spelled differently in three ways — which together meant that on the reporter's iPod not one of 2,411 runtime records found its track, and the sync reported them all as unmatched. First, the extension: a library of FLAC files synced as Musepack lands on the device as `.mpc`, and `track.flac` never equals `track.mpc`, so any device whose codec profile converts — the normal setup, not an edge case — matched nothing. Second, sanitisation: characters FAT cannot store are replaced when the file is written, so `AC/DC` becomes the folder `AC_DC` and `What Good Am I?.flac` becomes `What Good Am I_.mpc`; the match was built from the raw tags and compared them against the sanitised names. A slash was worse than a mismatch — it split the artist into two folders, so those tracks could not have matched under any spelling. Third, shadow libraries: for a device fed by a shadow library the exact path recorded by **Check Device** points at the transcode in the shadow folder, not at the library track, and the lookup that was supposed to be the reliable one found nothing — on precisely the configuration where the others also failed. Matching now ignores the file extension entirely, builds both sides of the comparison with the same code that lays the files out on the device, and follows a shadow library back to its source tracks. It still refuses an ambiguous match rather than guessing, so a rating cannot land on the wrong song. Re-run **Check Device** or sync once and your ratings, play counts and listening time appear. (Issue #117)
 - **Ratings could not be matched on a device you had not checked** — The rating importer looked up tracks through the table the Check Device walk fills in, so on a device that had never been checked it matched nothing at all and silently imported zero ratings. When it did match, it fell back to comparing filenames and took the first hit on a tie — two tracks with the same filename in different folders could take each other's rating. Matching now uses the exact path each file occupies on the device, recorded during the check, and refuses an ambiguous match outright rather than guessing.
 
 ### Changed

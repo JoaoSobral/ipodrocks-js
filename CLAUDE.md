@@ -57,6 +57,39 @@ reintroduced by `idx_device_synced_devpath` in 2.3.0-beta. **Put the column in
 the `ALTER TABLE`. Add a regression test that builds a database with the column
 stripped back out and asserts `initialize()` does not throw.
 
+## Hazard: the Rockbox runtime matcher must spell paths the way the sync does
+
+`buildDevicePathResolver()` (`src/main/rockbox/device-path-match.ts`) joins Rockbox's
+runtime counters to library tracks by rebuilding, from the library side, the path
+each file occupies on the device. It is therefore a *second implementation* of the
+device layout, and issue #117 is what happens when the two drift: every one of a
+reporter's 2411 runtime records went unmatched, silently, while the sync itself
+worked perfectly.
+
+Three rules keep them together:
+
+- **Never compare file extensions.** The device holds whatever the codec profile
+  produced. Every inexact tier compares through `codecAgnosticKey()`, which strips
+  the extension. A tier that matches on a full filename is a bug.
+- **Build both sides with `utils/device-path.ts`.** `sanitizeDevicePathComponent`
+  and `folderRelativePath` live there (re-exported by `sync/sync-core`) precisely so
+  the matcher and the sync layer cannot disagree. **Adding a sanitization rule or a
+  new device layout means the matcher picks it up for free only if it goes in that
+  module** — put it anywhere else and the matcher stops matching.
+- **`device_synced_tracks.library_path` is not always `tracks.path`.** On a device
+  whose `source_library_type` is `shadow` it is `shadow_tracks.shadow_path`. The
+  exact tier resolves through both; a new source of device files needs adding there
+  too.
+
+Every tier refuses an ambiguous key (the `-1` marker in `put`/`pick`) rather than
+picking one. Ignoring the extension *widens* what collides — a library holding both
+`song.flac` and `song.mp3` in one folder now produces one key — so that guard is
+load-bearing, not defensive decoration. Coverage:
+`tests/e2e/rockbox-runtime-transcoded.test.ts` (every codec, FAT-invalid names,
+shadow devices) and
+`src/__tests__/regressions/runtime-shadow-device-match.test.ts` (the shadow join in
+isolation from the tiers that mask it).
+
 ## Hazard: `foreign_keys = OFF` during track deletion
 
 `LibraryScanner.deleteRemovedTracks()` (`src/main/library/library-scanner.ts`) wraps its deletes in `PRAGMA foreign_keys = OFF`, so **no `ON DELETE CASCADE` declared in the schema fires there**. Every dependent table must be deleted by hand inside that transaction (`playback_logs`, `playback_stats`, `shadow_tracks`, `content_hashes`, `playlist_items`). The same applies to `cleanupOrphanedEntities()` in the same file.
