@@ -23,7 +23,7 @@
 - **Rocksy can do more — import play history**, list and bind USB devices, prune shadow libraries, and change device file layout.
 
 ### Fixes
-- **Ratings/play counts now import** from transcoding devices (the big one — previously 0 of 2,411 records matched because of file extensions, sanitized characters, and shadow-library paths). (#117)
+- **Ratings/play counts now import** from transcoding devices. (#117)
 - **Ratings now match on devices** you haven't run Check Device on, using exact file paths instead of guessing.
 - **Deleted tracks** no longer leave orphan rating rows behind.
 - **Mirror library folder** structure now works when your music root is a whole drive (M:\ or /).
