@@ -1,7 +1,7 @@
 import { ipcMain, type WebContents } from "electron";
 import { safe, getLibrary, getPlaylistCore, validateFolderPath } from "./common";
 import { LibraryScanner } from "../library/library-scanner";
-import { getHarmonicPrefs } from "../utils/prefs";
+import { getHarmonicPrefs, getRatingPrefs } from "../utils/prefs";
 import { logActivity, getRecentActivity } from "../activity/activity-logger";
 import { invalidateAssistantCache } from "../assistant/assistantChat";
 
@@ -42,6 +42,7 @@ export function registerLibraryHandlers(): void {
       const scanner = new LibraryScanner(lib.getConnection());
       activeScanAbort = new AbortController();
       const harmonicPrefs = getHarmonicPrefs();
+      const ratingPrefs = getRatingPrefs();
 
       let totalAdded = 0;
       let totalProcessed = 0;
@@ -66,7 +67,10 @@ export function registerLibraryHandlers(): void {
             folder.contentType,
             (progress) => event.sender.send("scan:progress", progress),
             activeScanAbort.signal,
-            { scanHarmonicData: harmonicPrefs.scanHarmonicData }
+            {
+              scanHarmonicData: harmonicPrefs.scanHarmonicData,
+              forceRatingFromTags: ratingPrefs.tagRatingAlwaysWins,
+            }
           );
           totalAdded += result.filesAdded;
           totalProcessed += result.filesProcessed;

@@ -113,6 +113,54 @@ one conflict per track the user had rated only in iPodRocks, and write `rating =
 Pinned in `src/__tests__/regressions/rating-zero-and-rebuild.test.ts` and
 `tests/e2e/rating-conflicts.test.ts`.
 
+## Hazard: a third rating source — the file's own tag — must only ever seed, never fight
+
+Issue #118: a library manager (Swinsian, in the report) can write a star rating
+into a file's own tag (ID3 POPM, a Vorbis `RATING` comment, …). iPodRocks reads
+that tag during a library scan, via `ratingFromCommonTags()`
+(`src/main/library/metadata-extractor.ts`) normalizing music-metadata's
+already-format-agnostic `common.rating` (0..1) onto the same 0-10 scale
+Rockbox and iPodRocks share. **iPodRocks does not write ratings back to the
+file** — the maintainer's stated principle on the issue — so this is a
+one-directional seed, not a sync participant:
+
+- `LibraryScanner`'s upsert only ever adopts the tag when the track has no
+  rating yet (`rating = CASE WHEN rating IS NULL THEN excluded.rating ELSE
+  rating END`). Once a device sync or an in-app edit has an opinion, the file
+  tag never gets a second say — unlike the device/library pair, there is no
+  3-way merge here, because there is no baseline to merge from.
+- **A plain rescan does not reach tracks a prior version of iPodRocks already
+  scanned**, because the mtime-skip means their tags are never re-read. Fixed
+  the same way issue #113's album-artist tags were: a one-shot backfill
+  (`rating-tag-backfill.ts`, sentinel `rating_tag_backfill_done` in
+  `app_settings`) that re-reads only the rating tag for currently-unrated
+  tracks, run once at the top of every `scanFolder()`.
+- No tag convention is special-cased. If a library manager's rating tag
+  doesn't match what music-metadata already normalizes, it simply never
+  seeds — that is by design, not a bug to chase per-tool.
+
+Pinned in `src/__tests__/regressions/rating-tag-import.test.ts`,
+`src/__tests__/regressions/rating-tag-backfill.test.ts`, and
+`tests/e2e/rating-tag-import.test.ts`.
+
+**The escape hatch is opt-in and off by default: `RatingPrefs.tagRatingAlwaysWins`**
+(`prefs.ts`, Settings → Ratings → "Library tags always win"). With it on, a scan
+reverses the rule above on purpose — `rating-tag-overwrite.ts`'s
+`overwriteRatingsFromTags()` makes the tag authoritative for every track in the
+scanned folder, including *clearing* a rating when the file is untagged, and
+closes out any open `rating_conflicts` on a touched track as `canonical_wins`.
+This is a deliberate "reset iPodRocks to match my library manager" action, not
+a mode meant to stay on: it runs on every scan while enabled, with no sentinel,
+and a rating set on a device or in-app survives only until the next scan. It
+does not attempt to clear a rating on-device — Rockbox's tagcache has no null
+(see the hazard above), so there is nothing today that can push "unrated" out
+to a player; only non-null overwrites propagate via the existing
+`computeRatingPropagations()`. Rocksy can flip it via `ratings_set_tag_priority`
+(`write-safe` — the setting alone changes nothing; the actual overwrite runs
+through the already-gated `library_scan`). Pinned in
+`src/__tests__/regressions/rating-tag-overwrite.test.ts` and
+`src/__tests__/regressions/rating-tag-always-wins.test.ts`.
+
 ## Hazard: `foreign_keys = OFF` during track deletion
 
 `LibraryScanner.deleteRemovedTracks()` (`src/main/library/library-scanner.ts`) wraps its deletes in `PRAGMA foreign_keys = OFF`, so **no `ON DELETE CASCADE` declared in the schema fires there**. Every dependent table must be deleted by hand inside that transaction (`playback_logs`, `playback_stats`, `shadow_tracks`, `content_hashes`, `playlist_items`). The same applies to `cleanupOrphanedEntities()` in the same file.

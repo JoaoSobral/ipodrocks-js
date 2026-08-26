@@ -24,6 +24,11 @@ import {
   backfillAlbumArtists,
   isAlbumArtistBackfillDone,
 } from "./album-artist-backfill";
+import {
+  backfillRatingTags,
+  isRatingTagBackfillDone,
+} from "./rating-tag-backfill";
+import { overwriteRatingsFromTags } from "./rating-tag-overwrite";
 import { escapeLike } from "../utils/sql-like";
 import {
   findDuplicateFileGroups,
@@ -58,6 +63,8 @@ interface TrackUpsertData {
   metadataHash: string;
   showTitle?: string;
   episodeNumber?: string;
+  /** Issue #118: a rating read from the file's own tag, 0-10 scale. */
+  rating: number | null;
 }
 
 /**
@@ -127,12 +134,12 @@ export class LibraryScanner {
         path, filename, title, track_number, disc_number, duration, bitrate,
         bits_per_sample, file_size, content_type, library_folder_id,
         artist_id, album_id, genre_id, codec_id, file_hash, metadata_hash,
-        show_title, episode_number
+        show_title, episode_number, rating
       ) VALUES (
         @path, @filename, @title, @trackNumber, @discNumber, @duration,
         @bitrate, @bitsPerSample, @fileSize, @contentType, @folderId,
         @artistId, @albumId, @genreId, @codecId, @fileHash, @metadataHash,
-        @showTitle, @episodeNumber
+        @showTitle, @episodeNumber, @rating
       )
       ON CONFLICT(path) DO UPDATE SET
         filename      = excluded.filename,
@@ -152,7 +159,12 @@ export class LibraryScanner {
         file_hash     = excluded.file_hash,
         metadata_hash = excluded.metadata_hash,
         show_title    = excluded.show_title,
-        episode_number = excluded.episode_number
+        episode_number = excluded.episode_number,
+        -- Issue #118: seed a rating from the file's own tag only while nothing
+        -- has rated the track yet. Once rating is non-null — from a device
+        -- sync, an in-app edit, or a prior tag read — the file tag must never
+        -- fight it; see mergeRating() in sync/rating-merge.ts.
+        rating        = CASE WHEN rating IS NULL THEN excluded.rating ELSE rating END
     `);
 
     this.loadMtimesStmt = db.prepare(
@@ -178,7 +190,9 @@ export class LibraryScanner {
    * @param contentType  "music", "podcast", or "audiobook"
    * @param progressCallback  Optional callback invoked for each file
    * @param signal  Optional AbortSignal for cancellation
-   * @param options  Optional: scanHarmonicData (default true) - extract key/BPM when true
+   * @param options  Optional: scanHarmonicData (default true) - extract key/BPM when true;
+   *   forceRatingFromTags (default false) - issue #118 follow-up, make the file's rating tag
+   *   authoritative for every track in this folder instead of only seeding an unrated one
    * @returns Summary of files processed and added
    */
   async scanFolder(
@@ -186,7 +200,7 @@ export class LibraryScanner {
     contentType: string = "music",
     progressCallback?: (progress: ScanProgress) => void,
     signal?: AbortSignal,
-    options?: { scanHarmonicData?: boolean }
+    options?: { scanHarmonicData?: boolean; forceRatingFromTags?: boolean }
   ): Promise<ScanResult> {
     const scanHarmonicData = options?.scanHarmonicData !== false;
 
@@ -194,6 +208,7 @@ export class LibraryScanner {
     // albums keyed on the track artist. The mtime skip below means a rescan
     // would never re-read those tags, so repoint them once, up front.
     await this.runAlbumArtistBackfill(progressCallback, signal);
+    await this.runRatingTagBackfill(progressCallback, signal);
 
     // `folder` (raw, as resolved from the OS) is used for all filesystem I/O;
     // `folderKey` (NFC) is the canonical form used for every DB lookup so
@@ -319,6 +334,7 @@ export class LibraryScanner {
           metadataHash,
           showTitle: metadata.showTitle,
           episodeNumber: metadata.episodeNumber,
+          rating: metadata.tagRating,
         });
 
         const trackRow = this.getTrackIdByPathStmt.get(dbPath) as
@@ -384,6 +400,10 @@ export class LibraryScanner {
 
     const { warnings: duplicateWarnings, duplicateFilesDetected } =
       this.detectDuplicateFiles(folderKey);
+
+    if (options?.forceRatingFromTags) {
+      await this.runRatingTagOverwrite(folderId, signal);
+    }
 
     progressCallback?.({
       file: "",
@@ -587,6 +607,62 @@ export class LibraryScanner {
       }
     } catch (err) {
       console.error("[scanner] album-artist backfill failed:", err);
+    }
+  }
+
+  /**
+   * Run the one-shot rating-tag backfill (issue #118) if it has not run yet.
+   * No-op on every scan after the first. Failures are logged and swallowed —
+   * a backfill problem must never abort the user's scan.
+   */
+  private async runRatingTagBackfill(
+    progressCallback?: (progress: ScanProgress) => void,
+    signal?: AbortSignal
+  ): Promise<void> {
+    if (isRatingTagBackfillDone(this.db)) return;
+    try {
+      const result = await backfillRatingTags(this.db, this.metadataExtractor, {
+        cancelSignal: signal,
+        onProgress: (processed, total) => {
+          progressCallback?.({
+            file: `Reading rating tags (${processed}/${total})`,
+            processed,
+            total,
+            status: "skipped",
+          });
+        },
+      });
+      if (result.seeded > 0) {
+        console.log(
+          `[scanner] rating-tag backfill seeded ${result.seeded} track(s)`
+        );
+      }
+    } catch (err) {
+      console.error("[scanner] rating-tag backfill failed:", err);
+    }
+  }
+
+  /**
+   * Run the "library tags always win" rating overwrite (issue #118 follow-up)
+   * for one folder, when the user has opted in via RatingPrefs. Failures are
+   * logged and swallowed — this must never abort the scan that triggered it.
+   */
+  private async runRatingTagOverwrite(
+    folderId: number,
+    signal?: AbortSignal
+  ): Promise<void> {
+    try {
+      const result = await overwriteRatingsFromTags(this.db, this.metadataExtractor, folderId, {
+        cancelSignal: signal,
+      });
+      if (result.changed > 0 || result.conflictsResolved > 0) {
+        console.log(
+          `[scanner] rating-tag overwrite: ${result.changed} rating(s) changed, ` +
+            `${result.conflictsResolved} conflict(s) resolved in the library's favor`
+        );
+      }
+    } catch (err) {
+      console.error("[scanner] rating-tag overwrite failed:", err);
     }
   }
 
@@ -1054,6 +1130,7 @@ export class LibraryScanner {
       metadataHash: data.metadataHash,
       showTitle: data.showTitle ?? null,
       episodeNumber,
+      rating: data.rating,
     });
   }
 }

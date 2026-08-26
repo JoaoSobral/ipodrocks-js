@@ -30,6 +30,13 @@ export interface FixtureMetadata {
   codec?: string;
   bitsPerSample?: number;
   picture?: IPicture[];
+  /**
+   * A file-embedded rating, on music-metadata's normalized 0..1 scale — the
+   * same shape `common.rating[].rating` carries for ID3 POPM, Vorbis
+   * `RATING` comments, etc. (see metadata-extractor.ts's
+   * `ratingFromCommonTags`). Omit to simulate a file with no rating tag.
+   */
+  rating?: number;
 }
 
 const registry = new Map<string, IAudioMetadata>();
@@ -46,6 +53,8 @@ export function buildMetadata(fields: FixtureMetadata): IAudioMetadata {
       disk: fields.discNumber ? { no: fields.discNumber, of: null } : undefined,
       year: fields.year,
       picture: fields.picture,
+      rating:
+        fields.rating !== undefined ? [{ rating: fields.rating }] : undefined,
     },
     format: {
       duration: fields.duration,

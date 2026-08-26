@@ -16,12 +16,26 @@ export interface HarmonicPrefs {
   analyzePercent?: number;
 }
 
+export interface RatingPrefs {
+  /**
+   * Issue #118 follow-up: when true, a library scan makes the file's own
+   * rating tag authoritative — overwriting `tracks.rating` (including
+   * clearing it when the file is untagged) instead of only seeding an unrated
+   * track, and resolving any open device conflicts on the tracks it touches
+   * in the library's favor. Off by default: normal scans only ever seed a
+   * rating no one has given yet (see rating-tag-backfill.ts / the upsert in
+   * library-scanner.ts).
+   */
+  tagRatingAlwaysWins?: boolean;
+}
+
 interface Prefs {
   mpcRemindDisabled?: boolean;
   openRouterConfig?: OpenRouterConfig;
   /** Encrypted API key (base64). Present only when safeStorage was used. */
   _encApiKey?: string;
   harmonic?: HarmonicPrefs;
+  ratings?: RatingPrefs;
   /** Unix ms timestamp — auto update check is suppressed until this time. */
   updateSnoozeUntil?: number;
   /** Unix ms timestamp of the last automatic update check, throttling it to one/day. */
@@ -243,6 +257,16 @@ export function getHarmonicPrefs(): HarmonicPrefs {
 export function setHarmonicPrefs(prefs: HarmonicPrefs): void {
   const all = readPrefs();
   all.harmonic = { ...all.harmonic, ...prefs };
+  writePrefs(all);
+}
+
+export function getRatingPrefs(): RatingPrefs {
+  return { tagRatingAlwaysWins: readPrefs().ratings?.tagRatingAlwaysWins ?? false };
+}
+
+export function setRatingPrefs(prefs: RatingPrefs): void {
+  const all = readPrefs();
+  all.ratings = { ...all.ratings, ...prefs };
   writePrefs(all);
 }
 
