@@ -7,7 +7,7 @@
 
 import path from "path";
 import { spawnSync } from "child_process";
-import { parseFile, parseBuffer } from "music-metadata";
+import { parseFile, parseBuffer, type ICommonTagsResult } from "music-metadata";
 import { normalizeKey, toCamelot } from "../harmonic/camelotWheel";
 import { getEncoderEnv } from "../utils/encoder-env";
 import { isMpcFile } from "../utils/audio-extensions";
@@ -31,6 +31,35 @@ export interface TrackMetadata {
   discNumber: string;
   showTitle?: string;
   episodeNumber?: string;
+  /**
+   * Issue #118: a star rating embedded in the file's own tag (ID3 POPM, a
+   * Vorbis `RATING` comment, iTunes, …), normalized to the same 0-10 scale
+   * Rockbox and iPodRocks already share (see `tcd-format.ts`'s TAG.rating and
+   * `tracks.rating`). Null when the file carries no rating tag at all — never
+   * guessed at, since 0 is a real half-star-below-one rating on that scale.
+   */
+  tagRating: number | null;
+}
+
+/**
+ * Normalize music-metadata's `common.rating` (a list of `{source, rating}`
+ * with `rating` on a 0..1 scale) to iPodRocks's 0-10 half-star scale.
+ *
+ * Takes the first entry with a numeric rating — most files carry at most one.
+ * This is deliberately format-agnostic: music-metadata already maps ID3v2
+ * POPM, Vorbis comments, MP4 and ASF ratings onto the same `common.rating`
+ * shape, so this one conversion covers whichever tag a given library manager
+ * happens to write, without special-casing any of them (see issue #118).
+ */
+export function ratingFromCommonTags(
+  common: Pick<ICommonTagsResult, "rating">
+): number | null {
+  for (const entry of common.rating ?? []) {
+    if (typeof entry.rating === "number" && Number.isFinite(entry.rating)) {
+      return Math.min(10, Math.max(0, Math.round(entry.rating * 10)));
+    }
+  }
+  return null;
 }
 
 /** Key, BPM, and Camelot for harmonic mixing (Savant). */
@@ -116,6 +145,7 @@ export class MetadataExtractor {
       const genre = common.genre?.[0] || "Unknown Genre";
       const trackNumber = common.track?.no?.toString() ?? "";
       const discNumber = common.disk?.no?.toString() ?? "";
+      const tagRating = ratingFromCommonTags(common);
 
       if (contentType === "podcast" || contentType === "audiobook") {
         const showTitle = common.album || "";
@@ -129,10 +159,20 @@ export class MetadataExtractor {
           discNumber,
           showTitle,
           episodeNumber: trackNumber,
+          tagRating,
         };
       }
 
-      return { title, artist, albumArtist, album, genre, trackNumber, discNumber };
+      return {
+        title,
+        artist,
+        albumArtist,
+        album,
+        genre,
+        trackNumber,
+        discNumber,
+        tagRating,
+      };
     } catch (err) {
       console.warn(`⚠️  Error reading metadata from ${filePath}:`, err);
       const stem = path.basename(filePath, path.extname(filePath));
@@ -146,7 +186,32 @@ export class MetadataExtractor {
         genre: "Unknown Genre",
         trackNumber: "",
         discNumber: "",
+        tagRating: null,
       };
+    }
+  }
+
+  /**
+   * Read only the embedded rating tag, normalized to iPodRocks's 0-10 scale.
+   *
+   * Used by the one-shot backfill (`rating-tag-backfill.ts`) for libraries
+   * scanned before issue #118 added rating-tag support: a plain rescan never
+   * revisits a file whose mtime hasn't changed, so already-tagged ratings
+   * would otherwise sit unread forever. Skips cover art and duration, which
+   * the backfill has no use for.
+   */
+  async extractRatingTag(filePath: string): Promise<number | null> {
+    // MPC tags come from our own APEv2 reader (see extractMpcMetadata), which
+    // does not carry a rating field.
+    if (isMpcFile(filePath)) return null;
+    try {
+      const metadata = await parseFile(filePath, {
+        skipCovers: true,
+        duration: false,
+      });
+      return ratingFromCommonTags(metadata.common);
+    } catch {
+      return null;
     }
   }
 
@@ -348,9 +413,29 @@ export class MetadataExtractor {
       const trackNumber = tags.track || tags.TRACK || "";
       const discNumber = tags.disc || tags.DISC || "";
       if (contentType === "podcast" || contentType === "audiobook") {
-        return { title, artist, albumArtist, album, genre, trackNumber, discNumber, showTitle: album, episodeNumber: trackNumber };
+        return {
+          title,
+          artist,
+          albumArtist,
+          album,
+          genre,
+          trackNumber,
+          discNumber,
+          showTitle: album,
+          episodeNumber: trackNumber,
+          tagRating: null,
+        };
       }
-      return { title, artist, albumArtist, album, genre, trackNumber, discNumber };
+      return {
+        title,
+        artist,
+        albumArtist,
+        album,
+        genre,
+        trackNumber,
+        discNumber,
+        tagRating: null,
+      };
     } catch {
       return null;
     }
@@ -400,10 +485,20 @@ export class MetadataExtractor {
         discNumber,
         showTitle: album,
         episodeNumber: trackNumber,
+        tagRating: null,
       };
     }
 
-    return { title, artist, albumArtist, album, genre, trackNumber, discNumber };
+    return {
+      title,
+      artist,
+      albumArtist,
+      album,
+      genre,
+      trackNumber,
+      discNumber,
+      tagRating: null,
+    };
   }
 
   /**

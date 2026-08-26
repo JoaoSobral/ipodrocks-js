@@ -677,6 +677,63 @@ export async function copyAlbumArtworkToDevice(
   return { copied, skipped, errors, totalCandidates: albums.size, failedAlbums };
 }
 
+export interface FindOrphanedAlbumArtOptions extends LayoutOptions {
+  /** When true, every existing cover.jpg under deviceContentPath is orphaned. */
+  skipAlbumArtwork?: boolean;
+}
+
+/**
+ * Find `cover.jpg` files on the device whose album folder no longer matches
+ * any track in `libraryTracks` — e.g. because the source album folder was
+ * renamed or removed, or because `skipAlbumArtwork` just got turned on.
+ *
+ * `Device.getTracks()` only walks `AUDIO_EXTENSIONS` (see
+ * `devices/device.ts`), so a generated cover is invisible to the normal
+ * extras/orphan-track comparison in `compareLibraries` and is left behind on
+ * the device forever — which is also what blocks `cleanEmptyDirectories` from
+ * ever removing the folder it sits in (issue #119). This walks the device
+ * tree directly to find them.
+ */
+export function findOrphanedAlbumArt(
+  deviceContentPath: string,
+  contentType: string,
+  libraryTracks: Record<string, Record<string, unknown>>,
+  options: FindOrphanedAlbumArtOptions = {}
+): string[] {
+  if (!fs.existsSync(deviceContentPath)) return [];
+
+  const expectedAlbumDirs = new Set<string>();
+  if (options.skipAlbumArtwork !== true) {
+    for (const [trackPath, trackInfo] of Object.entries(libraryTracks)) {
+      const relPath = computeDeviceRelativePath(trackPath, trackInfo, contentType, options);
+      expectedAlbumDirs.add(path.dirname(relPath).replace(/\\/g, "/"));
+    }
+  }
+
+  const orphans: string[] = [];
+  const walk = (dir: string): void => {
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        walk(full);
+        continue;
+      }
+      if (entry.name.toLowerCase() !== "cover.jpg") continue;
+      const relDir = path.relative(deviceContentPath, dir).replace(/\\/g, "/") || ".";
+      if (!expectedAlbumDirs.has(relDir)) orphans.push(full);
+    }
+  };
+  walk(deviceContentPath);
+
+  return orphans;
+}
+
 /**
  * Compute the relative path of a source directory within its library folder.
  * Used to mirror folder structure when copying artwork to shadow libraries.
@@ -852,6 +909,32 @@ export async function runSync(
     }
   }
 
+  // Issue #119: a renamed/removed album folder's cover.jpg (or every cover,
+  // once skipAlbumArtwork is on) is invisible to the track-level extras above,
+  // so it never gets swept up by them and never lets cleanEmptyDirectories
+  // remove the folder it sits in.
+  const orphanedArt = findOrphanedAlbumArt(deviceContentPath, contentType, libraryTracks, {
+    ...layout,
+    skipAlbumArtwork,
+  });
+  if (orphanedArt.length > 0) {
+    if (extraTrackPolicy === "remove" || extraTrackPolicy === "remove-all") {
+      const { removed } = removeExtraTracks(orphanedArt, progressCallback, cancelSignal);
+      removedCount += removed;
+      if (removed > 0) {
+        progressCallback?.({
+          event: "log",
+          message: `Removed ${removed} orphaned album cover(s) from device.`,
+        });
+      }
+    } else {
+      progressCallback?.({
+        event: "log",
+        message: `${orphanedArt.length} orphaned album cover(s) on device (kept — extra track policy is "keep").`,
+      });
+    }
+  }
+
   if (toSync > 0) {
     progressCallback?.({ event: "log", message: `Copying ${toSync} track(s) to device...` });
   }
@@ -934,7 +1017,7 @@ export async function runSync(
     status: errors > 0 || artworkErrors > 0 ? "error" : "completed",
     synced,
     removed: removedCount,
-    extras: extraTrackPolicy !== "remove" ? analysis.extras : [],
+    extras: extraTrackPolicy !== "remove" ? [...analysis.extras, ...orphanedArt] : [],
     missingFiles,
     errors,
     artworkErrors,
