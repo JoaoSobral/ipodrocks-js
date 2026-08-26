@@ -802,6 +802,21 @@ export async function resolveRatingConflict(
   ) as Promise<{ ok: boolean; newRating: number | null }>;
 }
 
+/**
+ * Answer every open conflict the same way, optionally for one device only.
+ * Returns how many were resolved.
+ */
+export async function resolveAllRatingConflicts(
+  resolution: "device_wins" | "canonical_wins",
+  deviceId?: number | null
+): Promise<{ ok: boolean; resolved: number }> {
+  return window.api.invoke(
+    "ratings:resolveAllConflicts",
+    resolution,
+    deviceId ?? null
+  ) as Promise<{ ok: boolean; resolved: number }>;
+}
+
 // ---------------------------------------------------------------------------
 // Event subscriptions
 // ---------------------------------------------------------------------------

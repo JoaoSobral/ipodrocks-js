@@ -4,7 +4,11 @@ import { Button } from "./common/Button";
 import { ErrorBox } from "./common/ErrorBox";
 import { Spinner } from "./common/Spinner";
 import { RatingStars } from "./RatingStars";
-import { getRatingConflicts, resolveRatingConflict } from "../ipc/api";
+import {
+  getRatingConflicts,
+  resolveAllRatingConflicts,
+  resolveRatingConflict,
+} from "../ipc/api";
 import type { RatingConflictRow } from "@shared/types";
 
 interface Props {
@@ -24,6 +28,8 @@ export function RatingConflictsModal({ open, onClose }: Props) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [rowState, setRowState] = useState<Record<number, RowState>>({});
+  const [applyAll, setApplyAll] = useState(false);
+  const [bulkBusy, setBulkBusy] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -37,6 +43,7 @@ export function RatingConflictsModal({ open, onClose }: Props) {
           initial[r.id] = { manualOpen: false, manualRating: r.canonical_rating, resolving: false, error: null };
         }
         setRowState(initial);
+        setApplyAll(false);
       })
       .catch((e) => setError(e instanceof Error ? e.message : String(e)))
       .finally(() => setLoading(false));
@@ -51,6 +58,23 @@ export function RatingConflictsModal({ open, onClose }: Props) {
     resolution: "device_wins" | "canonical_wins" | "manual",
     manualRating?: number
   ) {
+    // With the tick set, the choice made on one row is the answer for the whole
+    // queue. "Set Manually" is deliberately excluded — one star value applied to
+    // every conflicting track is not an answer anybody means to give.
+    if (applyAll && resolution !== "manual") {
+      setBulkBusy(true);
+      setError(null);
+      try {
+        await resolveAllRatingConflicts(resolution);
+        setConflicts([]);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      } finally {
+        setBulkBusy(false);
+      }
+      return;
+    }
+
     patchRow(conflict.id, { resolving: true, error: null });
     try {
       await resolveRatingConflict(conflict.id, resolution, manualRating);
@@ -72,6 +96,30 @@ export function RatingConflictsModal({ open, onClose }: Props) {
 
       {!loading && !error && conflicts.length === 0 && (
         <p className="text-center text-sm text-muted-foreground py-8">No rating conflicts — all resolved.</p>
+      )}
+
+      {!loading && !error && conflicts.length > 0 && (
+        <label
+          className="mb-3 flex items-start gap-2 rounded border border-border bg-secondary/40 p-3 cursor-pointer"
+          data-testid="rating-conflicts-apply-all"
+        >
+          <input
+            type="checkbox"
+            className="mt-0.5"
+            checked={applyAll}
+            disabled={bulkBusy}
+            onChange={(e) => setApplyAll(e.target.checked)}
+          />
+          <span className="text-xs text-muted-foreground">
+            <span className="text-foreground font-medium">
+              Apply my next choice to all {conflicts.length}
+            </span>
+            {" — "}
+            the <em>Keep Library</em> or <em>Use Device</em> button you press
+            next settles every conflict the same way, not just that one track.
+            There is no undo.
+          </span>
+        </label>
       )}
 
       {!loading && !error && conflicts.length > 0 && (
@@ -106,17 +154,17 @@ export function RatingConflictsModal({ open, onClose }: Props) {
                 <div className="flex items-center gap-2 flex-wrap">
                   <Button
                     size="sm"
-                    disabled={rs.resolving}
+                    disabled={rs.resolving || bulkBusy}
                     onClick={() => resolve(conflict, "canonical_wins")}
                   >
-                    Keep Library
+                    Keep Library{applyAll ? ` (all ${conflicts.length})` : ""}
                   </Button>
                   <Button
                     size="sm"
-                    disabled={rs.resolving}
+                    disabled={rs.resolving || bulkBusy}
                     onClick={() => resolve(conflict, "device_wins")}
                   >
-                    Use Device
+                    Use Device{applyAll ? ` (all ${conflicts.length})` : ""}
                   </Button>
                   <Button
                     size="sm"

@@ -90,6 +90,29 @@ shadow devices) and
 `src/__tests__/regressions/runtime-shadow-device-match.test.ts` (the shadow join in
 isolation from the tiers that mask it).
 
+## Hazard: Rockbox has no null rating
+
+Rockbox stores a rating of `0` for a track nobody has rated *and* for one rated
+zero — the format has no null. Anything that reads a device rating must decide
+which it is from the baseline in `device_track_ratings.last_seen_rating`, never
+from the value alone. Reading `0` as an assertion is what made a first sync queue
+one conflict per track the user had rated only in iPodRocks, and write `rating =
+0` over every unrated track in the library (issue #117).
+
+- `mergeRating()` (`src/main/sync/rating-merge.ts`) treats `deviceVal === 0` with
+  no baseline as *no opinion*: never adopted, never a conflict.
+- Anything selecting "rated" tracks wants `rating > 0`, not `rating IS NOT NULL`
+  — see `generateStarred()`.
+- **`detectRebuiltDatabase()` must be called before `ingestDeviceRatings()`, not
+  after it.** The merge is not reversible, so a verdict reached afterwards cannot
+  protect anything — the old code printed "ratings were skipped" over a merge
+  that had already happened. A rebuild is measured as *loss* (tracks this device
+  was last seen rating that now read 0), never as the share of zeros: a normal
+  library is nearly all zeros and would trip any such test on every sync.
+
+Pinned in `src/__tests__/regressions/rating-zero-and-rebuild.test.ts` and
+`tests/e2e/rating-conflicts.test.ts`.
+
 ## Hazard: `foreign_keys = OFF` during track deletion
 
 `LibraryScanner.deleteRemovedTracks()` (`src/main/library/library-scanner.ts`) wraps its deletes in `PRAGMA foreign_keys = OFF`, so **no `ON DELETE CASCADE` declared in the schema fires there**. Every dependent table must be deleted by hand inside that transaction (`playback_logs`, `playback_stats`, `shadow_tracks`, `content_hashes`, `playlist_items`). The same applies to `cleanupOrphanedEntities()` in the same file.

@@ -576,9 +576,9 @@ describe("Genius engine — type registry", () => {
     closeDb(db);
   });
 
-  itDb("offers 12 types, gating the counter-based ones on a fresh profile", () => {
+  itDb("offers 13 types, gating the counter-based ones on a fresh profile", () => {
     const res = getGeniusTypesWithAvailability(db);
-    expect(res.types).toHaveLength(12);
+    expect(res.types).toHaveLength(13);
     expect(res.tracksWithPlays).toBe(0);
     expect(res.totalPlays).toBe(0);
     expect(res.deviceCount).toBe(0);
@@ -586,6 +586,7 @@ describe("Genius engine — type registry", () => {
     const byValue = new Map(res.types.map((t) => [t.value, t]));
     // These read library metadata only, so they work with no device at all.
     expect(byValue.get("top_rated")?.available).toBe(true);
+    expect(byValue.get("starred")?.available).toBe(true);
     expect(byValue.get("hidden_gems")?.available).toBe(true);
     // Everything else needs counters, and says how to get them.
     expect(byValue.get("most_played")?.available).toBe(false);
@@ -622,6 +623,7 @@ describe("Genius engine — type registry", () => {
   itDb("getAvailableGeniusTypes filters out the gated ones", () => {
     const values = getAvailableGeniusTypes(db).map((t) => t.value);
     expect(values).toContain("top_rated");
+    expect(values).toContain("starred");
     expect(values).toContain("hidden_gems");
     expect(values).not.toContain("most_played");
     expect(values).not.toContain("top_genre");

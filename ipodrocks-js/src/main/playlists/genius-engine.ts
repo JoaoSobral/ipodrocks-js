@@ -330,6 +330,12 @@ const GENIUS_TYPES: GeniusTypeOption[] = [
     icon: "\u2B50",
   },
   {
+    value: "starred",
+    label: "Starred",
+    description: "Every track you've given a star, best rated first",
+    icon: "\u2728",
+  },
+  {
     value: "most_played",
     label: "Most Played",
     description: "Top tracks by total play count",
@@ -991,6 +997,47 @@ function generateTopRated(
 }
 
 /**
+ * Everything the user has starred, at any rating.
+ *
+ * Distinct from Top Rated on purpose: that one is a short list of the best of
+ * the best (4+ stars, 25 tracks), which is not what "play my rated music" asks
+ * for. This is the whole rated shelf, so its default limit is the size of a
+ * listening session rather than a top-N.
+ *
+ * ``rating > 0`` rather than ``IS NOT NULL``: Rockbox has no null rating, so a
+ * rating cleared on the device arrives as a 0 and must not count as starred.
+ */
+function generateStarred(
+  db: Database.Database,
+  opts: GeniusGenerateOptions
+): PlaylistGenerationResult {
+  const limit = opts.maxTracks ?? 100;
+
+  const rows = db
+    .prepare(
+      `${STAT_TRACK_SELECT}
+       WHERE t.content_type = 'music' AND t.rating IS NOT NULL AND t.rating > 0
+       ORDER BY t.rating DESC, play_count DESC, RANDOM()
+       LIMIT ?`
+    )
+    .all(limit) as LibTrackRow[];
+
+  const tracks = rows.map(rowToPlaylistTrack);
+
+  return {
+    playlistName: "Starred",
+    criteria:
+      tracks.length > 0
+        ? `${tracks.length} rated track${tracks.length === 1 ? "" : "s"}, by rating then play count`
+        : "No tracks are rated yet — star some music in the library, or rate it on the device and sync.",
+    tracks,
+    generatedAt: new Date().toISOString(),
+    type: "genius",
+    subtype: "starred",
+  };
+}
+
+/**
  * Library tracks that have never been played.
  *
  * "Never played" now means exactly what it says: Rockbox has no counter for
@@ -1222,11 +1269,14 @@ export function generateGeniusPlaylist(
   db: Database.Database,
   opts: GeniusGenerateOptions = {}
 ): PlaylistGenerationResult {
-  // top_rated and hidden_gems read library metadata and the *absence* of
-  // plays, so they work on a library that has never been near a device and
+  // top_rated, starred and hidden_gems read library metadata and the *absence*
+  // of plays, so they work on a library that has never been near a device and
   // must run before the "no play history" guard rather than be blocked by it.
   if (geniusType === "top_rated") {
     return generateTopRated(db, opts);
+  }
+  if (geniusType === "starred") {
+    return generateStarred(db, opts);
   }
   if (geniusType === "hidden_gems") {
     const gems = generateHiddenGems(db, opts);

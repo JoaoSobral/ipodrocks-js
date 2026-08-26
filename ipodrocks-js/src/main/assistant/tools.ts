@@ -358,6 +358,126 @@ const playlist_update_classic: AiTool = {
   },
 };
 
+const ratings_list_conflicts: AiTool = {
+  name: "ratings_list_conflicts",
+  description:
+    "List unresolved star-rating conflicts — tracks rated differently in the library and on a device. Use when the user asks what is waiting in the rating conflicts window, or how many conflicts they have.",
+  parameters: {
+    type: "object",
+    properties: {
+      limit: { type: "number", description: "Maximum rows to return (default 50)" },
+    },
+    required: [],
+  },
+  kind: "read",
+  summarize: () => "List unresolved rating conflicts",
+  async run(args, ctx) {
+    const limit = Math.max(1, Math.min(500, Number(args.limit ?? 50)));
+    const rows = ctx.db
+      .prepare(
+        `SELECT rc.id, rc.reported_rating, rc.canonical_rating,
+                t.title, COALESCE(a.name, 'Unknown Artist') AS artist,
+                d.name AS device_name
+           FROM rating_conflicts rc
+           JOIN tracks t ON t.id = rc.track_id
+           LEFT JOIN artists a ON a.id = t.artist_id
+           JOIN devices d ON d.id = rc.device_id
+          WHERE rc.resolved_at IS NULL
+          ORDER BY rc.reported_at DESC
+          LIMIT ?`
+      )
+      .all(limit) as Record<string, unknown>[];
+    const total = (
+      ctx.db
+        .prepare("SELECT COUNT(*) AS c FROM rating_conflicts WHERE resolved_at IS NULL")
+        .get() as { c: number }
+    ).c;
+    return { total, showing: rows.length, conflicts: rows };
+  },
+};
+
+const ratings_resolve_conflicts: AiTool = {
+  name: "ratings_resolve_conflicts",
+  description:
+    "Resolve star-rating conflicts in bulk, keeping either the library's rating or the device's for every conflict at once. Use when the user says something like 'keep my library ratings' or 'the iPod ratings are the right ones' rather than wanting to decide track by track.",
+  parameters: {
+    type: "object",
+    properties: {
+      keep: {
+        type: "string",
+        enum: ["library", "device"],
+        description: "Which side wins for every conflict resolved by this call",
+      },
+      device_id: {
+        type: "number",
+        description: "Limit to one device's conflicts (omit for all devices)",
+      },
+    },
+    required: ["keep"],
+  },
+  // Destructive: this rewrites ratings across the whole queue in one go and
+  // there is no undo, so it always goes through the confirm gate.
+  kind: "write-destructive",
+  summarize: (a) =>
+    `Resolve every open rating conflict${
+      a.device_id ? ` for device #${a.device_id}` : ""
+    } by keeping the ${a.keep === "device" ? "device's" : "library's"} rating`,
+  async run(args, ctx) {
+    const keep = String(args.keep ?? "");
+    if (keep !== "library" && keep !== "device") {
+      throw new Error('keep must be "library" or "device"');
+    }
+    const resolution = keep === "device" ? "device_wins" : "canonical_wins";
+    const deviceId = args.device_id == null ? null : Number(args.device_id);
+
+    const conflicts = ctx.db
+      .prepare(
+        `SELECT id, track_id, device_id, reported_rating, canonical_rating
+           FROM rating_conflicts
+          WHERE resolved_at IS NULL AND (? IS NULL OR device_id = ?)
+          ORDER BY id`
+      )
+      .all(deviceId, deviceId) as {
+      id: number;
+      track_id: number;
+      device_id: number;
+      reported_rating: number;
+      canonical_rating: number | null;
+    }[];
+
+    ctx.db.transaction(() => {
+      for (const c of conflicts) {
+        const newRating =
+          resolution === "device_wins" ? c.reported_rating : c.canonical_rating;
+        if (newRating !== c.canonical_rating) {
+          ctx.db
+            .prepare(
+              `UPDATE tracks SET rating = ?, rating_updated_at = CURRENT_TIMESTAMP,
+                      rating_version = rating_version + 1
+                WHERE id = ?`
+            )
+            .run(newRating, c.track_id);
+          ctx.db
+            .prepare(
+              `INSERT INTO rating_events (track_id, device_id, old_rating, new_rating, source)
+               VALUES (?, ?, ?, ?, 'conflict_resolved')`
+            )
+            .run(c.track_id, c.device_id, c.canonical_rating, newRating);
+        }
+        ctx.db
+          .prepare(
+            `UPDATE rating_conflicts SET resolved_at = CURRENT_TIMESTAMP, resolution = ?
+              WHERE id = ?`
+          )
+          .run(resolution, c.id);
+      }
+    })();
+
+    invalidateAssistantCache();
+    return { resolved: conflicts.length, kept: keep };
+  },
+};
+
 const playlist_create_genius: AiTool = {
   name: "playlist_create_genius",
   description: "Create a Genius playlist based on listening history (most played, favorites, hidden gems, etc.).",
@@ -1337,6 +1457,8 @@ export const AI_TOOLS: AiTool[] = [
   usb_device_list,
   playlist_create_smart,
   playlist_create_genius,
+  ratings_list_conflicts,
+  ratings_resolve_conflicts,
   device_read_runtime_data,
   playlist_create_classic,
   playlist_update_classic,

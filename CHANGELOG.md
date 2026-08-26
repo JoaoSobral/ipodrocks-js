@@ -1,5 +1,19 @@
 # Changelog
 
+## [2.3.1-alpha] — 2026-08
+
+### Features
+
+- **Starred — a Genius playlist of everything you've rated.** Every track carrying at least one star, best-rated first, play count breaking the tie. It reads ratings rather than play counters, so it works on a library that has never touched a device. **Top Rated** is unchanged and still does the narrower job (4+ stars, 25 tracks); Starred defaults to 100 and is meant to be the whole rated shelf. Rocksy can build it too.
+
+- **Answer every rating conflict at once.** The Rating Conflicts window asked one track at a time, which is unusable when hundreds disagree. Tick **Apply my next choice to all** and the next **Keep Library** or **Use Device** settles the whole queue. *Set Manually* stays per-track — one star value stamped across every conflict isn't an answer anyone means to give. Rocksy can do it too via `ratings_resolve_conflicts` (confirms first; there's no undo).
+
+### Fixes
+
+- **A first sync no longer asks you to arbitrate every song you'd rated.** (#117) Rockbox has no "unrated" — a track nobody rated stores 0, same as one rated zero. iPodRocks read that 0 as the device asserting a rating, so every track you'd starred in iPodRocks but not on the iPod came back as a conflict. Quieter and worse: a device that had never rated anything looked like it was reporting 0 for the whole library, so every unrated track was written down as "rated zero stars." A 0 from the device now means what it is — no opinion — so your library rating stands and gets pushed to the player. Genuine disagreements are still raised as before.
+
+- **The "database looks rebuilt" warning no longer fires on every sync.** (#117) It measured what share of the device's ratings read 0 and cried rebuild above a quarter — but on any normal library that's nearly all of them (43 rated of 2411 scored 98%). It now looks for actual loss: tracks this device was last seen rating that now read unrated. Rockbox's own signal still counts (a rebuild resets the play counter), and ratings that survived a rebuild no longer trigger it. **The warning also now tells the truth** — it used to say ratings "were skipped" while the check ran *after* the merge, so on a genuinely wiped device your library ratings had already been overwritten by the time you saw it. The verdict is reached before anything merges.
+
 ## [2.3.0] — 2026-08 (includes all pre-releases)
 
 ### Features

@@ -26,6 +26,7 @@ import { syncPodcastsToDevice } from "../podcasts/podcast-device-sync";
 import { syncAutoAudiobooksToDevice } from "../audiobooks/audiobook-device-sync";
 import { listSubscriptions as listAudiobookSubs } from "../audiobooks/audiobook-subscriptions";
 import {
+  detectRebuiltDatabase,
   ingestDeviceRatings,
   computeRatingPropagations,
   markRatingsPropagated,
@@ -313,28 +314,32 @@ export function registerSyncHandlers(): void {
       try {
         if (runtimeImport && runtimeImport.ratings.size > 0) {
           const db = lib.getConnection();
-          const ingestResult = ingestDeviceRatings(
+
+          // Decided before the merge, not after it. The old order ran the
+          // merge and then printed "ratings were skipped", which was never
+          // true: on a genuinely rebuilt device the library's ratings had
+          // already been overwritten by the time the warning appeared.
+          const rebuild = detectRebuiltDatabase(
             db,
             opts.deviceId,
-            runtimeImport.ratings
+            runtimeImport.ratings,
+            runtimeImport.serial
           );
 
-          // A rebuilt Rockbox database comes back with every rating at zero.
-          // The binary index says so outright — a rebuild resets the serial —
-          // which is a far better signal than inferring it from how many
-          // ratings happen to be zero.
-          const looksRebuilt =
-            runtimeImport.serial === 0 ||
-            (ingestResult.massZeroFraction > 0.25 &&
-              runtimeImport.ratings.size > 10);
-
-          if (looksRebuilt) {
+          if (rebuild.looksRebuilt) {
             syncOpts.progressCallback?.({
               event: "log",
               message:
-                "Warning: the device's ratings all read as unset — its database looks rebuilt. Ratings from the device were skipped pending review.",
+                `Warning: ${rebuild.reason} — the device's database looks rebuilt. ` +
+                "Its ratings were not imported and your library ratings are unchanged. " +
+                "Sync again once the device's database is back to normal.",
             });
           } else {
+            const ingestResult = ingestDeviceRatings(
+              db,
+              opts.deviceId,
+              runtimeImport.ratings
+            );
             const total =
               ingestResult.adopted + ingestResult.converged + ingestResult.conflicts;
             if (total > 0) {

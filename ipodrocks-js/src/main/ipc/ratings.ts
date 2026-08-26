@@ -63,52 +63,107 @@ export function registerRatingsHandlers(): void {
       async (
         _event,
         conflictId: number,
-        resolution: "device_wins" | "canonical_wins" | "manual",
+        resolution: ConflictResolution,
         manualRating?: number
       ) => {
         const db = getLibrary().getConnection();
         const conflict = db
           .prepare("SELECT * FROM rating_conflicts WHERE id = ?")
-          .get(conflictId) as {
-            id: number;
-            track_id: number;
-            device_id: number;
-            reported_rating: number;
-            canonical_rating: number | null;
-          } | undefined;
+          .get(conflictId) as ConflictRow | undefined;
         if (!conflict) throw new Error(`Conflict ${conflictId} not found`);
 
-        const newRating =
-          resolution === "device_wins"
-            ? conflict.reported_rating
-            : resolution === "canonical_wins"
-              ? conflict.canonical_rating
-              : (manualRating ?? conflict.canonical_rating);
-
+        let newRating: number | null = null;
         db.transaction(() => {
-          if (newRating !== conflict.canonical_rating) {
-            db.prepare(`
-              UPDATE tracks SET
-                rating = ?,
-                rating_updated_at = CURRENT_TIMESTAMP,
-                rating_version = rating_version + 1
-              WHERE id = ?
-            `).run(newRating, conflict.track_id);
-
-            db.prepare(`
-              INSERT INTO rating_events (track_id, device_id, old_rating, new_rating, source)
-              VALUES (?, ?, ?, ?, 'conflict_resolved')
-            `).run(conflict.track_id, conflict.device_id, conflict.canonical_rating, newRating);
-          }
-
-          db.prepare(`
-            UPDATE rating_conflicts SET resolved_at = CURRENT_TIMESTAMP, resolution = ?
-            WHERE id = ?
-          `).run(resolution, conflictId);
+          newRating = applyResolution(db, conflict, resolution, manualRating);
         })();
 
         return { ok: true, newRating };
       }
     )
   );
+
+  ipcMain.handle(
+    "ratings:resolveAllConflicts",
+    safe(
+      "ratings:resolveAllConflicts",
+      async (
+        _event,
+        resolution: "device_wins" | "canonical_wins",
+        deviceId?: number | null
+      ) => {
+        // One decision for the whole queue. A first sync can raise a conflict
+        // per rated track, and answering the same question several hundred
+        // times one row at a time is not a decision, it is data entry.
+        const db = getLibrary().getConnection();
+        const conflicts = db
+          .prepare(
+            `SELECT * FROM rating_conflicts
+              WHERE resolved_at IS NULL
+                AND (? IS NULL OR device_id = ?)
+              ORDER BY id`
+          )
+          .all(deviceId ?? null, deviceId ?? null) as ConflictRow[];
+
+        // One transaction for the lot: a partly-applied bulk answer would
+        // leave the user unable to tell which half they had already decided.
+        db.transaction(() => {
+          for (const conflict of conflicts) {
+            applyResolution(db, conflict, resolution);
+          }
+        })();
+
+        return { ok: true, resolved: conflicts.length };
+      }
+    )
+  );
+}
+
+type ConflictResolution = "device_wins" | "canonical_wins" | "manual";
+
+interface ConflictRow {
+  id: number;
+  track_id: number;
+  device_id: number;
+  reported_rating: number;
+  canonical_rating: number | null;
+}
+
+/**
+ * Apply one conflict's resolution. Caller owns the transaction, so the single
+ * and bulk handlers cannot drift apart on what "device wins" means.
+ */
+function applyResolution(
+  db: ReturnType<ReturnType<typeof getLibrary>["getConnection"]>,
+  conflict: ConflictRow,
+  resolution: ConflictResolution,
+  manualRating?: number
+): number | null {
+  const newRating =
+    resolution === "device_wins"
+      ? conflict.reported_rating
+      : resolution === "canonical_wins"
+        ? conflict.canonical_rating
+        : (manualRating ?? conflict.canonical_rating);
+
+  if (newRating !== conflict.canonical_rating) {
+    db.prepare(
+      `UPDATE tracks SET
+         rating = ?,
+         rating_updated_at = CURRENT_TIMESTAMP,
+         rating_version = rating_version + 1
+       WHERE id = ?`
+    ).run(newRating, conflict.track_id);
+
+    db.prepare(
+      `INSERT INTO rating_events (track_id, device_id, old_rating, new_rating, source)
+       VALUES (?, ?, ?, ?, 'conflict_resolved')`
+    ).run(conflict.track_id, conflict.device_id, conflict.canonical_rating, newRating);
+  }
+
+  db.prepare(
+    `UPDATE rating_conflicts SET resolved_at = CURRENT_TIMESTAMP, resolution = ?
+      WHERE id = ?`
+  ).run(resolution, conflict.id);
+
+  return newRating;
 }

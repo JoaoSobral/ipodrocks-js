@@ -24,7 +24,7 @@ test.afterEach(async () => {
   await launched.cleanup();
 });
 
-test("genius:types returns all 12 types, gating the counter-based ones on a fresh profile", async () => {
+test("genius:types returns all 13 types, gating the counter-based ones on a fresh profile", async () => {
   const window = await launched.app.firstWindow();
   await window.waitForLoadState("domcontentloaded");
 
@@ -47,7 +47,7 @@ test("genius:types returns all 12 types, gating the counter-based ones on a fres
   };
 
   expect(Array.isArray(typed.types)).toBe(true);
-  expect(typed.types.length).toBe(12);
+  expect(typed.types.length).toBe(13);
   expect(typed.tracksWithPlays).toBe(0);
   expect(typed.totalPlays).toBe(0);
   expect(typed.deviceCount).toBe(0);
@@ -57,6 +57,7 @@ test("genius:types returns all 12 types, gating the counter-based ones on a fres
   // These read library metadata only — ratings, and the absence of any play —
   // so they work on a library that has never been near a device.
   expect(byValue.get("top_rated")?.available).toBe(true);
+  expect(byValue.get("starred")?.available).toBe(true);
   expect(byValue.get("hidden_gems")?.available).toBe(true);
 
   // Everything else needs Rockbox's counters. Disabled with a reason the UI

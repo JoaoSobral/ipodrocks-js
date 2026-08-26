@@ -47,6 +47,19 @@ export function mergeRating(
 
   if (baseline === null) {
     // First observation on this device.
+    //
+    // Rockbox has no null rating: 0 is how it says "unrated". With no baseline
+    // there is nothing to say whether a 0 is a rating the user cleared or one
+    // they never gave, so it cannot be read as the device disagreeing with the
+    // library — it is the device having no opinion. Reading it as the value
+    // zero is what made a first sync queue one conflict for every track the
+    // user had rated in iPodRocks and not on the player, and write a rating of
+    // 0 over every unrated track in the library (issue #117).
+    if (deviceVal === 0) {
+      return libraryVal === null
+        ? { action: "noop", value: null }
+        : { action: "propagate_lib", value: libraryVal };
+    }
     if (libraryVal === null) return { action: "adopt_device", value: deviceVal };
     if (libraryVal === deviceVal) return { action: "converged", value: libraryVal };
     // Library exists and device disagrees — caller decides (usually queue conflict).
@@ -100,14 +113,99 @@ export interface IngestResult {
   converged: number;
   conflicts: number;
   noop: number;
-  massZeroFraction: number;
 }
+
+/**
+ * How confident we are that the device's Rockbox database was rebuilt, wiping
+ * the ratings it held.
+ *
+ * Worth being sure about in both directions: importing a wiped database clears
+ * the user's library ratings, and crying rebuild on a healthy one blocks the
+ * import they asked for.
+ */
+export interface RebuildSuspicion {
+  looksRebuilt: boolean;
+  /** Tracks this device was last seen holding a rating for. */
+  previouslyRated: number;
+  /** How many of those now read as unrated. */
+  cleared: number;
+  /** Why, in words, for the sync log. Null when nothing looks wrong. */
+  reason: string | null;
+}
+
+/**
+ * Decide whether the device's ratings can be trusted, *before* anything is
+ * merged into the library.
+ *
+ * The old test asked what fraction of the device's ratings read 0. That is not
+ * a rebuild signal, it is a description of a normal library: Rockbox has no
+ * null rating, so every track the user never rated reads 0, and the reporter's
+ * player — 43 rated tracks out of 2411 — scored 0.98 and tripped the warning on
+ * every sync (issue #117). Worse, the check ran *after* the merge, so the
+ * "ratings were skipped" it printed was not true of anything.
+ *
+ * What a rebuild actually looks like is loss: tracks this device was last seen
+ * holding a rating for now read as unrated. A library that is simply mostly
+ * unrated has nothing to lose and scores zero.
+ */
+export function detectRebuiltDatabase(
+  db: Database.Database,
+  deviceId: number,
+  currentDeviceRatings: Map<number, number>,
+  serial: number
+): RebuildSuspicion {
+  // Rockbox's own signal, and the only one available on a first import: the
+  // global play counter resets to 0 when the database is rebuilt. Ratings that
+  // survived the rebuild (Rockbox flags those records RESURRECTED) come back
+  // non-zero, so a reset serial with ratings still on the device is not a loss
+  // and must not be reported as one.
+  if (serial === 0 && [...currentDeviceRatings.values()].every((v) => v === 0)) {
+    return {
+      looksRebuilt: true,
+      previouslyRated: 0,
+      cleared: 0,
+      reason:
+        "the device's play counter has reset to zero and it holds no ratings at all",
+    };
+  }
+
+  const manifest = loadDeviceManifest(db, deviceId);
+  let previouslyRated = 0;
+  let cleared = 0;
+  for (const [trackId, current] of currentDeviceRatings) {
+    const baseline = manifest.get(trackId);
+    if (baseline === undefined || baseline <= 0) continue;
+    previouslyRated++;
+    if (current === 0) cleared++;
+  }
+
+  // Below the sample floor a couple of ratings cleared by hand would look like
+  // a wipe. A real rebuild clears every one of them, so the bar is set where
+  // ordinary editing cannot reach it.
+  const looksRebuilt =
+    previouslyRated >= REBUILD_MIN_SAMPLE &&
+    cleared / previouslyRated > REBUILD_CLEARED_FRACTION;
+
+  return {
+    looksRebuilt,
+    previouslyRated,
+    cleared,
+    reason: looksRebuilt
+      ? `${cleared} of the ${previouslyRated} tracks this device had rated now read as unrated`
+      : null,
+  };
+}
+
+/** Fewest previously-rated tracks that can support a rebuild verdict. */
+const REBUILD_MIN_SAMPLE = 5;
+/** Share of them that must have been cleared for it to be a wipe, not editing. */
+const REBUILD_CLEARED_FRACTION = 0.75;
 
 /**
  * Phase 1 INGEST: apply device ratings into canonical DB.
  *
- * Returns a summary and massZeroFraction so the caller can decide whether to
- * alert the user about a suspected Rockbox DB rebuild (fraction > 0.25).
+ * Call {@link detectRebuiltDatabase} first: this merges, and a merge from a
+ * wiped device is not something a later warning can undo.
  */
 export function ingestDeviceRatings(
   db: Database.Database,
@@ -123,13 +221,7 @@ export function ingestDeviceRatings(
     converged: 0,
     conflicts: 0,
     noop: 0,
-    massZeroFraction: 0,
   };
-
-  if (currentDeviceRatings.size > 0) {
-    const zeros = [...currentDeviceRatings.values()].filter((v) => v === 0).length;
-    result.massZeroFraction = zeros / currentDeviceRatings.size;
-  }
 
   if (changes.length === 0) return result;
 
