@@ -143,6 +143,24 @@ Pinned in `src/__tests__/regressions/rating-tag-import.test.ts`,
 `src/__tests__/regressions/rating-tag-backfill.test.ts`, and
 `tests/e2e/rating-tag-import.test.ts`.
 
+**The escape hatch is opt-in and off by default: `RatingPrefs.tagRatingAlwaysWins`**
+(`prefs.ts`, Settings → Ratings → "Library tags always win"). With it on, a scan
+reverses the rule above on purpose — `rating-tag-overwrite.ts`'s
+`overwriteRatingsFromTags()` makes the tag authoritative for every track in the
+scanned folder, including *clearing* a rating when the file is untagged, and
+closes out any open `rating_conflicts` on a touched track as `canonical_wins`.
+This is a deliberate "reset iPodRocks to match my library manager" action, not
+a mode meant to stay on: it runs on every scan while enabled, with no sentinel,
+and a rating set on a device or in-app survives only until the next scan. It
+does not attempt to clear a rating on-device — Rockbox's tagcache has no null
+(see the hazard above), so there is nothing today that can push "unrated" out
+to a player; only non-null overwrites propagate via the existing
+`computeRatingPropagations()`. Rocksy can flip it via `ratings_set_tag_priority`
+(`write-safe` — the setting alone changes nothing; the actual overwrite runs
+through the already-gated `library_scan`). Pinned in
+`src/__tests__/regressions/rating-tag-overwrite.test.ts` and
+`src/__tests__/regressions/rating-tag-always-wins.test.ts`.
+
 ## Hazard: `foreign_keys = OFF` during track deletion
 
 `LibraryScanner.deleteRemovedTracks()` (`src/main/library/library-scanner.ts`) wraps its deletes in `PRAGMA foreign_keys = OFF`, so **no `ON DELETE CASCADE` declared in the schema fires there**. Every dependent table must be deleted by hand inside that transaction (`playback_logs`, `playback_stats`, `shadow_tracks`, `content_hashes`, `playlist_items`). The same applies to `cleanupOrphanedEntities()` in the same file.

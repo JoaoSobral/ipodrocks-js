@@ -28,6 +28,7 @@ import {
   backfillRatingTags,
   isRatingTagBackfillDone,
 } from "./rating-tag-backfill";
+import { overwriteRatingsFromTags } from "./rating-tag-overwrite";
 import { escapeLike } from "../utils/sql-like";
 import {
   findDuplicateFileGroups,
@@ -189,7 +190,9 @@ export class LibraryScanner {
    * @param contentType  "music", "podcast", or "audiobook"
    * @param progressCallback  Optional callback invoked for each file
    * @param signal  Optional AbortSignal for cancellation
-   * @param options  Optional: scanHarmonicData (default true) - extract key/BPM when true
+   * @param options  Optional: scanHarmonicData (default true) - extract key/BPM when true;
+   *   forceRatingFromTags (default false) - issue #118 follow-up, make the file's rating tag
+   *   authoritative for every track in this folder instead of only seeding an unrated one
    * @returns Summary of files processed and added
    */
   async scanFolder(
@@ -197,7 +200,7 @@ export class LibraryScanner {
     contentType: string = "music",
     progressCallback?: (progress: ScanProgress) => void,
     signal?: AbortSignal,
-    options?: { scanHarmonicData?: boolean }
+    options?: { scanHarmonicData?: boolean; forceRatingFromTags?: boolean }
   ): Promise<ScanResult> {
     const scanHarmonicData = options?.scanHarmonicData !== false;
 
@@ -397,6 +400,10 @@ export class LibraryScanner {
 
     const { warnings: duplicateWarnings, duplicateFilesDetected } =
       this.detectDuplicateFiles(folderKey);
+
+    if (options?.forceRatingFromTags) {
+      await this.runRatingTagOverwrite(folderId, signal);
+    }
 
     progressCallback?.({
       file: "",
@@ -632,6 +639,30 @@ export class LibraryScanner {
       }
     } catch (err) {
       console.error("[scanner] rating-tag backfill failed:", err);
+    }
+  }
+
+  /**
+   * Run the "library tags always win" rating overwrite (issue #118 follow-up)
+   * for one folder, when the user has opted in via RatingPrefs. Failures are
+   * logged and swallowed — this must never abort the scan that triggered it.
+   */
+  private async runRatingTagOverwrite(
+    folderId: number,
+    signal?: AbortSignal
+  ): Promise<void> {
+    try {
+      const result = await overwriteRatingsFromTags(this.db, this.metadataExtractor, folderId, {
+        cancelSignal: signal,
+      });
+      if (result.changed > 0 || result.conflictsResolved > 0) {
+        console.log(
+          `[scanner] rating-tag overwrite: ${result.changed} rating(s) changed, ` +
+            `${result.conflictsResolved} conflict(s) resolved in the library's favor`
+        );
+      }
+    } catch (err) {
+      console.error("[scanner] rating-tag overwrite failed:", err);
     }
   }
 

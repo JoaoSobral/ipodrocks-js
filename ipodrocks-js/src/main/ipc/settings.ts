@@ -5,7 +5,10 @@ import {
   setOpenRouterConfig,
   getHarmonicPrefs,
   setHarmonicPrefs,
+  getRatingPrefs,
+  setRatingPrefs,
   type HarmonicPrefs,
+  type RatingPrefs,
 } from "../utils/prefs";
 import type { OpenRouterConfig } from "../../shared/types";
 
@@ -67,6 +70,18 @@ export function registerSettingsHandlers(): void {
     "settings:setHarmonicPrefs",
     safe("settings:setHarmonicPrefs", async (_event, prefs: HarmonicPrefs) => {
       setHarmonicPrefs(prefs);
+    })
+  );
+
+  ipcMain.handle(
+    "settings:getRatingPrefs",
+    safe("settings:getRatingPrefs", async () => getRatingPrefs())
+  );
+
+  ipcMain.handle(
+    "settings:setRatingPrefs",
+    safe("settings:setRatingPrefs", async (_event, prefs: RatingPrefs) => {
+      setRatingPrefs(prefs);
     })
   );
 }

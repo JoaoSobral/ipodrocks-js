@@ -774,6 +774,18 @@ export async function setHarmonicPrefs(prefs: HarmonicPrefs): Promise<void> {
   return window.api.invoke("settings:setHarmonicPrefs", prefs) as Promise<void>;
 }
 
+export interface RatingPrefs {
+  tagRatingAlwaysWins?: boolean;
+}
+
+export async function getRatingPrefs(): Promise<RatingPrefs> {
+  return window.api.invoke("settings:getRatingPrefs") as Promise<RatingPrefs>;
+}
+
+export async function setRatingPrefs(prefs: RatingPrefs): Promise<void> {
+  return window.api.invoke("settings:setRatingPrefs", prefs) as Promise<void>;
+}
+
 // ---------------------------------------------------------------------------
 // Ratings
 // ---------------------------------------------------------------------------

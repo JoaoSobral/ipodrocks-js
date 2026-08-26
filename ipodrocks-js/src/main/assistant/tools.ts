@@ -48,6 +48,7 @@ import {
   generateGeniusPlaylistFromDb,
 } from "../playlists/genius-engine";
 import { readAndIngestRuntimeData } from "../rockbox/runtime-ingest";
+import { getRatingPrefs, setRatingPrefs } from "../utils/prefs";
 
 export interface AiToolContext {
   db: Database.Database;
@@ -475,6 +476,44 @@ const ratings_resolve_conflicts: AiTool = {
 
     invalidateAssistantCache();
     return { resolved: conflicts.length, kept: keep };
+  },
+};
+
+const ratings_set_tag_priority: AiTool = {
+  name: "ratings_set_tag_priority",
+  description:
+    "Turn 'Library tags always win' on or off (it's off by default) — the Settings toggle that decides how a library scan reconciles a track's rating with the rating tag in the file itself (e.g. from Swinsian, Mp3tag). Off (the default): a scan only fills in a rating for a track nothing has rated yet — a device or in-app rating always keeps its value. On: the *next* scan makes the file's tag win for every track in the scanned folder, including clearing a track the file leaves untagged, and it closes out any open rating conflicts in the library's favor. Use when the user asks to reset ratings to match their library manager, or asks what this setting currently is (call with no `enabled` to just read it).",
+  parameters: {
+    type: "object",
+    properties: {
+      enabled: {
+        type: "boolean",
+        description: "Omit to just report the current setting; pass true/false to change it.",
+      },
+    },
+    required: [],
+  },
+  // Flipping the switch alone changes nothing; the actual overwrite only
+  // happens on the next library_scan, which already carries its own
+  // write-destructive confirm gate. This tool is just the setting.
+  kind: "write-safe",
+  summarize: (a) =>
+    a.enabled === undefined
+      ? "Check whether library tags always win"
+      : `Turn "library tags always win" ${a.enabled ? "on" : "off"}`,
+  async run(args, _ctx) {
+    if (args.enabled === undefined) {
+      return { tagRatingAlwaysWins: getRatingPrefs().tagRatingAlwaysWins ?? false };
+    }
+    const enabled = Boolean(args.enabled);
+    setRatingPrefs({ tagRatingAlwaysWins: enabled });
+    return {
+      ok: true,
+      tagRatingAlwaysWins: enabled,
+      message: enabled
+        ? "Library tags always win is now on — the next library scan will overwrite ratings from file tags and resolve open conflicts in the library's favor. Turn it back off afterward unless you want every scan to keep doing that."
+        : "Library tags always win is now off — scans go back to only seeding a rating for tracks that have never been rated.",
+    };
   },
 };
 
@@ -1459,6 +1498,7 @@ export const AI_TOOLS: AiTool[] = [
   playlist_create_genius,
   ratings_list_conflicts,
   ratings_resolve_conflicts,
+  ratings_set_tag_priority,
   device_read_runtime_data,
   playlist_create_classic,
   playlist_update_classic,

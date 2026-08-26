@@ -11,6 +11,8 @@ import {
   checkSavantKeyData,
   getHarmonicPrefs,
   setHarmonicPrefs,
+  getRatingPrefs,
+  setRatingPrefs,
   podcastGetSettings,
   podcastSetSettings,
   podcastBrowseDownloadDir,
@@ -56,15 +58,17 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
   const [backfillPercent, setBackfillPercent] = useState(100);
   const [analyzeWithEssentia, setAnalyzeWithEssentia] = useState(false);
   const [analyzePercent, setAnalyzePercent] = useState(10);
+  const [tagRatingAlwaysWins, setTagRatingAlwaysWins] = useState(false);
 
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
     (async () => {
-      const [config, data, harmonic, podcastCfg] = await Promise.all([
+      const [config, data, harmonic, ratingPrefs, podcastCfg] = await Promise.all([
         getOpenRouterConfig(),
         checkSavantKeyData(),
         getHarmonicPrefs(),
+        getRatingPrefs(),
         podcastGetSettings(),
       ]);
       if (!cancelled) {
@@ -76,6 +80,7 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
         setBackfillPercent(harmonic.backfillPercent ?? 100);
         setAnalyzeWithEssentia(harmonic.analyzeWithEssentia ?? false);
         setAnalyzePercent(harmonic.analyzePercent ?? 10);
+        setTagRatingAlwaysWins(ratingPrefs.tagRatingAlwaysWins ?? false);
         setPodcastSettings(podcastCfg);
         // Credentials are never sent to the renderer (F1); inputs stay blank
         // and the placeholder indicates whether a value is already stored.
@@ -153,6 +158,7 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
         analyzeWithEssentia,
         analyzePercent: Math.min(100, Math.max(1, analyzePercent)),
       });
+      await setRatingPrefs({ tagRatingAlwaysWins });
       const customDir = podcastDownloadDir.trim();
       const folderChanged = customDir !== podcastDownloadDirOriginal;
       // Only send credential fields when the user actually typed a value;
@@ -370,6 +376,37 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
                     setBackfillPercent(parseInt(e.target.value, 10) || 100)
                   }
                 />
+              </div>
+            </Card>
+
+            <Card
+              title="Ratings"
+              subtitle="Control how a library scan reconciles ratings with the file's own tag."
+            >
+              <div className="space-y-5">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium text-foreground">
+                      Library tags always win
+                    </p>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      Normally, a rating tag (from Swinsian, Mp3tag, …) only fills in a
+                      track that has never been rated — once a device or this app has
+                      rated it, the tag is ignored from then on. Turn this on to make
+                      the next scan overwrite every track's rating from its file tag
+                      instead, including clearing tracks the file leaves untagged, and
+                      resolving any open rating conflicts in the library's favor. Use
+                      this to reset iPodRocks to match your library manager; turn it
+                      back off afterward, or every future scan will keep overwriting
+                      ratings you set on a device or in-app.
+                    </p>
+                  </div>
+                  <Switch
+                    checked={tagRatingAlwaysWins}
+                    onChange={setTagRatingAlwaysWins}
+                    className="shrink-0"
+                  />
+                </div>
               </div>
             </Card>
           </div>
