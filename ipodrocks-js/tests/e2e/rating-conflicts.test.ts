@@ -27,6 +27,8 @@ import { test, expect, type Page } from "@playwright/test";
 import { launchApp, type LaunchedApp } from "./electron-launcher";
 import {
   writeTcdFixture,
+  readTcdNumericTag,
+  TCD_TAG,
   type TcdFixtureTrack,
 } from "../../src/__tests__/harness/tcd-fixture";
 
@@ -202,12 +204,15 @@ test("a device with no ratings of its own leaves the library's alone", async () 
   expect(logs.join("\n")).not.toMatch(/looks rebuilt/i);
 });
 
-test("a device that really lost its ratings is caught, and nothing is imported", async () => {
+test("a device that really lost its ratings is caught, and repaired in the same sync", async () => {
   const window = await readyWindow();
   const deviceId = await setUpSynced(window);
 
-  // First sync: the device holds ratings, and they are adopted.
-  fixture({ Alpha: 10, Beta: 8, Gamma: 8, Delta: 6, Epsilon: 6 });
+  // First sync: the device holds ratings, and they are adopted (and pushed
+  // back, setting last_pushed_rating — the exact bookkeeping a rebuild leaves
+  // stale and that used to block repair forever).
+  const expected: Record<string, number> = { Alpha: 10, Beta: 8, Gamma: 8, Delta: 6, Epsilon: 6 };
+  fixture(expected);
   await runSync(window, deviceId);
   expect(
     (await libraryTracks(window)).filter((t) => t.rating !== null)
@@ -223,6 +228,16 @@ test("a device that really lost its ratings is caught, and nothing is imported",
   const after = await libraryTracks(window);
   expect(after.filter((t) => t.rating !== null)).toHaveLength(5);
   expect(await conflicts(window)).toEqual([]);
+
+  // Not just "not lost" — actively repaired, in this same sync.
+  expect(logs.join("\n")).toMatch(/restored 5 rating/i);
+  TITLES.forEach((title, idxId) => {
+    expect(readTcdNumericTag(deviceDir, idxId, TCD_TAG.rating)).toBe(expected[title]);
+  });
+
+  // The deadlock: a genuinely-repaired device must not trip the warning again.
+  const logs2 = await runSync(window, deviceId);
+  expect(logs2.join("\n")).not.toMatch(/looks rebuilt/i);
 });
 
 test("a genuine disagreement is still raised, and can be answered for all at once", async () => {

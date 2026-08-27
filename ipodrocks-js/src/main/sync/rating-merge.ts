@@ -201,6 +201,68 @@ const REBUILD_MIN_SAMPLE = 5;
 /** Share of them that must have been cleared for it to be a wipe, not editing. */
 const REBUILD_CLEARED_FRACTION = 0.75;
 
+export interface RebuildRepairResult {
+  /** device_track_ratings rows whose last_pushed_rating was cleared. */
+  invalidated: number;
+  /** Previously-open rating_conflicts for this device closed as moot. */
+  conflictsResolved: number;
+}
+
+/**
+ * Undo what a rebuild verdict from {@link detectRebuiltDatabase} invalidates, so
+ * Phase 3 can repair the device in the *same* sync that caught the wipe.
+ *
+ * Phase 3's {@link computeRatingPropagations} only re-pushes a track when
+ * `last_pushed_rating` disagrees with (or is unset against) `tracks.rating`. A
+ * rebuild physically clears the device's values without touching
+ * `tracks.rating`, so if a rating had already been pushed successfully before
+ * the rebuild, `last_pushed_rating` still matches — the query excludes it, and
+ * it is never re-sent. Left alone, that also means `last_seen_rating` never
+ * gets updated (Phase 1 ingest is skipped whole on a rebuild verdict), so the
+ * next sync reads the same wiped device against the same stale baseline and
+ * calls it a rebuild again, forever (issue #117 follow-up).
+ *
+ * Clearing `last_pushed_rating` is enough to make every currently-rated track
+ * look "unpushed" again to Phase 3, which re-sends them this sync using the
+ * ordinary propagation path — no new merge logic, and {@link markRatingsPropagated}
+ * repopulates `last_pushed_rating` correctly right after.
+ *
+ * `last_seen_rating` is deliberately left untouched: once Phase 3 repairs the
+ * device this sync, its on-disk values become correct again, so the next
+ * sync's {@link detectRebuiltDatabase} — which compares fresh readings against
+ * this same baseline — no longer sees any previously-rated track read as
+ * cleared, and the rebuild verdict clears on its own.
+ *
+ * Any conflict left open against this device from before the rebuild is also
+ * moot: the device no longer holds the value it was disputing, so it is
+ * closed as `canonical_wins`, the same resolution `rating-tag-overwrite.ts`
+ * uses when the library is made authoritative outright.
+ */
+export function invalidatePushedRatings(
+  db: Database.Database,
+  deviceId: number
+): RebuildRepairResult {
+  const stmtClearPushed = db.prepare(`
+    UPDATE device_track_ratings
+    SET last_pushed_rating = NULL
+    WHERE device_id = ? AND last_pushed_rating IS NOT NULL
+  `);
+  const stmtResolveConflicts = db.prepare(`
+    UPDATE rating_conflicts
+    SET resolved_at = CURRENT_TIMESTAMP, resolution = 'canonical_wins'
+    WHERE device_id = ? AND resolved_at IS NULL
+  `);
+
+  let invalidated = 0;
+  let conflictsResolved = 0;
+  db.transaction(() => {
+    invalidated = stmtClearPushed.run(deviceId).changes;
+    conflictsResolved = stmtResolveConflicts.run(deviceId).changes;
+  })();
+
+  return { invalidated, conflictsResolved };
+}
+
 /**
  * Phase 1 INGEST: apply device ratings into canonical DB.
  *

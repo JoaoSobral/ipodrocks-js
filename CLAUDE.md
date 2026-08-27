@@ -109,6 +109,23 @@ one conflict per track the user had rated only in iPodRocks, and write `rating =
   that had already happened. A rebuild is measured as *loss* (tracks this device
   was last seen rating that now read 0), never as the share of zeros: a normal
   library is nearly all zeros and would trip any such test on every sync.
+- **A rebuild verdict must also invalidate what Phase 3 believes it already
+  pushed.** `computeRatingPropagations()` only re-sends a track when
+  `device_track_ratings.last_pushed_rating` disagrees with `tracks.rating` — it
+  has no idea the device was just wiped. Left alone, any track pushed *before*
+  the rebuild stayed permanently unrepaired: `last_seen_rating` never gets
+  refreshed either (Phase 1 ingest is skipped whole on a rebuild verdict), so the
+  next sync saw the same wiped device against the same stale baseline — a
+  self-sustaining "looks rebuilt" loop with no user action that escaped it
+  (issue #117 follow-up: the reporter rebuilt his device on purpose expecting his
+  library's ratings to sync back down, and they never did, on any later sync).
+  `invalidatePushedRatings()` clears `last_pushed_rating` for the device — so
+  Phase 3 re-sends every currently-rated track in the *same* sync — and closes
+  any of that device's open `rating_conflicts` as `canonical_wins`, since the
+  disputed device value no longer exists to disagree with anything. It
+  deliberately leaves `last_seen_rating` alone: once Phase 3 repairs the device
+  this sync, the next sync's fresh reading matches it and the verdict clears on
+  its own.
 
 Pinned in `src/__tests__/regressions/rating-zero-and-rebuild.test.ts` and
 `tests/e2e/rating-conflicts.test.ts`.

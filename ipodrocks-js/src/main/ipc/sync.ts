@@ -30,6 +30,7 @@ import {
   ingestDeviceRatings,
   computeRatingPropagations,
   markRatingsPropagated,
+  invalidatePushedRatings,
 } from "../sync/rating-merge";
 import { writeRating } from "../rockbox/tagcache-index";
 import { readAndIngestRuntimeData } from "../rockbox/runtime-ingest";
@@ -310,6 +311,10 @@ export function registerSyncHandlers(): void {
         console.error("[ipc] Runtime data import failed (non-fatal):", err);
       }
 
+      // Set when Phase 1 detects a rebuild, so Phase 3's log describes a
+      // repair rather than routine propagation.
+      let rebuildRepairPending = false;
+
       // Phase 1: INGEST — merge the device's ratings into the canonical DB
       try {
         if (runtimeImport && runtimeImport.ratings.size > 0) {
@@ -327,13 +332,23 @@ export function registerSyncHandlers(): void {
           );
 
           if (rebuild.looksRebuilt) {
+            const repair = invalidatePushedRatings(db, opts.deviceId);
+            rebuildRepairPending = true;
             syncOpts.progressCallback?.({
               event: "log",
               message:
                 `Warning: ${rebuild.reason} — the device's database looks rebuilt. ` +
-                "Its ratings were not imported and your library ratings are unchanged. " +
-                "Sync again once the device's database is back to normal.",
+                "Its ratings were not imported; your library ratings are unchanged " +
+                "and will be re-sent to the device later in this sync.",
             });
+            if (repair.conflictsResolved > 0) {
+              syncOpts.progressCallback?.({
+                event: "log",
+                message:
+                  `Closed ${repair.conflictsResolved} rating conflict(s) for this device — ` +
+                  "the disputed value no longer exists on the rebuilt device.",
+              });
+            }
           } else {
             const ingestResult = ingestDeviceRatings(
               db,
@@ -640,7 +655,9 @@ export function registerSyncHandlers(): void {
           if (written > 0) {
             syncOpts.progressCallback?.({
               event: "log",
-              message: `Wrote ${written} rating(s) to the device. Restart Rockbox for them to show on screen — the values are already saved.`,
+              message: rebuildRepairPending
+                ? `Restored ${written} rating(s) to the device after the rebuilt database was repaired.`
+                : `Wrote ${written} rating(s) to the device. Restart Rockbox for them to show on screen — the values are already saved.`,
             });
           }
         }

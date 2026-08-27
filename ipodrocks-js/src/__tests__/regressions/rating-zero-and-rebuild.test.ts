@@ -32,6 +32,9 @@ import {
 import {
   detectRebuiltDatabase,
   ingestDeviceRatings,
+  computeRatingPropagations,
+  markRatingsPropagated,
+  invalidatePushedRatings,
 } from "../../main/sync/rating-merge";
 
 const itDb = it.skipIf(!canRunDbTests);
@@ -246,5 +249,100 @@ describe("deciding whether a device's database was rebuilt", () => {
     }
 
     expect(detectRebuiltDatabase(db, deviceId, ratings, 0).looksRebuilt).toBe(false);
+  });
+});
+
+describe("repairing a device after a rebuild is detected (issue #117 follow-up)", () => {
+  let db: TestDb;
+  let deviceId: number;
+  let otherDeviceId: number;
+  let folderId: number;
+
+  beforeEach(() => {
+    if (!canRunDbTests) return;
+    db = createTestDb();
+    folderId = seedLibraryFolder(db, { name: "M", path: "/m", contentType: "music" });
+    deviceId = seedDevice(db, { name: "iPod", mountPath: "/mnt" });
+    otherDeviceId = seedDevice(db, { name: "iPod 2", mountPath: "/mnt2" });
+  });
+
+  afterEach(() => closeDb(db));
+
+  function pushedRatingFor(device: number, trackId: number): number | null {
+    return (
+      db
+        .prepare(
+          "SELECT last_pushed_rating FROM device_track_ratings WHERE device_id = ? AND track_id = ?"
+        )
+        .get(device, trackId) as { last_pushed_rating: number | null }
+    ).last_pushed_rating;
+  }
+
+  itDb("clears last_pushed_rating for this device only", () => {
+    const id = seedTrack(db, { path: "/m/a.flac", libraryFolderId: folderId, rating: 8 });
+    markRatingsPropagated(db, deviceId, [id]);
+    markRatingsPropagated(db, otherDeviceId, [id]);
+
+    const res = invalidatePushedRatings(db, deviceId);
+
+    expect(res.invalidated).toBe(1);
+    expect(pushedRatingFor(deviceId, id)).toBeNull();
+    expect(pushedRatingFor(otherDeviceId, id)).toBe(8); // untouched
+  });
+
+  itDb("makes an already-pushed rating eligible for re-propagation again", () => {
+    // The exact deadlock: pushed before the rebuild, so last_pushed_rating
+    // already equals tracks.rating, so computeRatingPropagations excludes it.
+    const id = seedTrack(db, { path: "/m/a.flac", libraryFolderId: folderId, rating: 8 });
+    markRatingsPropagated(db, deviceId, [id]);
+    expect(computeRatingPropagations(db, deviceId).size).toBe(0);
+
+    invalidatePushedRatings(db, deviceId);
+
+    const props = computeRatingPropagations(db, deviceId);
+    expect(props.get(id)).toBe(8);
+  });
+
+  itDb("closes this device's open conflicts as canonical_wins, leaves others alone", () => {
+    const id = seedTrack(db, { path: "/m/a.flac", libraryFolderId: folderId, rating: 8 });
+    const otherId = seedTrack(db, { path: "/m/b.flac", libraryFolderId: folderId, rating: 5 });
+    db.prepare(
+      `INSERT INTO rating_conflicts (track_id, device_id, reported_rating, baseline_rating, canonical_rating)
+       VALUES (?, ?, 2, 8, 8)`
+    ).run(id, deviceId);
+    db.prepare(
+      `INSERT INTO rating_conflicts (track_id, device_id, reported_rating, baseline_rating, canonical_rating)
+       VALUES (?, ?, 2, 5, 5)`
+    ).run(otherId, otherDeviceId);
+
+    const res = invalidatePushedRatings(db, deviceId);
+
+    expect(res.conflictsResolved).toBe(1);
+    const resolved = db
+      .prepare("SELECT resolved_at, resolution FROM rating_conflicts WHERE track_id = ? AND device_id = ?")
+      .get(id, deviceId) as { resolved_at: string | null; resolution: string | null };
+    expect(resolved.resolved_at).not.toBeNull();
+    expect(resolved.resolution).toBe("canonical_wins");
+
+    const untouched = db
+      .prepare("SELECT resolved_at FROM rating_conflicts WHERE track_id = ? AND device_id = ?")
+      .get(otherId, otherDeviceId) as { resolved_at: string | null };
+    expect(untouched.resolved_at).toBeNull();
+  });
+
+  itDb("does not touch an already-resolved conflict's resolution", () => {
+    const id = seedTrack(db, { path: "/m/a.flac", libraryFolderId: folderId, rating: 8 });
+    db.prepare(
+      `INSERT INTO rating_conflicts (track_id, device_id, reported_rating, baseline_rating, canonical_rating, resolved_at, resolution)
+       VALUES (?, ?, 2, 8, 8, CURRENT_TIMESTAMP, 'device_wins')`
+    ).run(id, deviceId);
+
+    const res = invalidatePushedRatings(db, deviceId);
+
+    expect(res.conflictsResolved).toBe(0);
+    const row = db
+      .prepare("SELECT resolution FROM rating_conflicts WHERE track_id = ?")
+      .get(id) as { resolution: string };
+    expect(row.resolution).toBe("device_wins");
   });
 });

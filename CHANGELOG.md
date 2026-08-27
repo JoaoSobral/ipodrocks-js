@@ -1,5 +1,19 @@
 # Changelog
 
+## [2.3.1-beta] — 2026-08
+
+### Features
+
+- **New setting: "Library tags always win."** Off by default, in Settings → Ratings. A library scan normally only ever fills in a rating for a track nothing has rated yet — a rating tag from Swinsian, Mp3tag, foobar2000, etc. never overrides a device or in-app rating. Turn this on and the *next* scan makes the file's tag win instead, for every track in the scanned folder — including clearing a track the file leaves untagged — and it resolves any open rating conflicts in the library's favor. Meant as a deliberate "reset iPodRocks to match my library manager" action; turn it back off afterward, since it re-applies on every scan while it's on. Rocksy can flip it via `ratings_set_tag_priority`.
+
+### Fixes
+
+- **A rating already sitting in a file's own tag now reaches the library.** (#118) iPodRocks previously only knew about ratings set in-app or synced from a device. It now reads the tag on a library scan — the same way Rockbox itself reads a rating — and seeds it in, without ever writing back to the file. Once a track has a rating from any source, the file's tag is never consulted again for that track. A one-time pass also picks this up for libraries scanned before this fix.
+
+- **Renamed or removed album folders no longer leave a `cover.jpg` stranded on the device.** (#119) A generated album cover wasn't checked against the current library layout the way tracks are, so after renaming an album on disk, its old cover — and the empty folder it sat in — stuck around on the device forever. Orphaned covers are now detected and removed (or reported, depending on your extra-track policy) like any other extra file.
+
+- **A rebuilt device now gets its ratings back in the same sync that catches the wipe.** (#117) Detecting a rebuilt Rockbox database correctly stopped a first sync from importing its all-zero ratings as real values — but nothing then told the sync to re-send the library's ratings back down, so a track already pushed *before* the rebuild stayed permanently unrepaired, and every later sync tripped the same warning with no way out. The device is now repaired in the same sync the rebuild is caught, and any of its rating conflicts left open from before the rebuild are closed automatically, since the value they were disputing no longer exists.
+
 ## [2.3.1-alpha] — 2026-08
 
 ### Features
