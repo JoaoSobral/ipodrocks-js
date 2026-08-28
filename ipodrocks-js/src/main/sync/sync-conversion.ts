@@ -282,6 +282,29 @@ export function runLoggedSubprocess(
   });
 }
 
+/**
+ * ffmpeg's MOV/MP4 muxer silently drops any custom metadata key (confirmed
+ * empirically — even an explicit per-stream `-metadata` override is dropped
+ * on encode), so AAC/ALAC (`.m4a`) output needs the same explicit ReplayGain
+ * write-back MPC gets via {@link writeMpcMetadata}. No-ops (and never touches
+ * the file) when the source has no ReplayGain tags.
+ */
+async function maybeWriteM4aReplayGain(
+  dest: string,
+  srcPath: string,
+  logCallback?: (line: string) => void
+): Promise<void> {
+  const sourceTags = await readSourceApeTags(srcPath);
+  const rgTags = pickReplayGainForM4a(sourceTags.extra);
+  if (Object.keys(rgTags).length === 0) return;
+
+  const { writeM4aReplayGainTags } = await import("../tagging/mp4/replaygain-writer");
+  const ok = writeM4aReplayGainTags(dest, rgTags);
+  if (!ok) {
+    logCallback?.("Warning: Could not write ReplayGain tags to M4A file (audio is fine)");
+  }
+}
+
 export async function convertWithCodec(
   src: string,
   dest: string,
@@ -326,6 +349,10 @@ export async function convertWithCodec(
       return false;
     }
 
+    if (codec === "aac" || codec === "alac") {
+      await maybeWriteM4aReplayGain(tmpDest, src, logCallback);
+    }
+
     moveConvertedFile(tmpDest, dest);
     logCallback?.(`Converted: ${path.basename(dest)}`);
     return true;
@@ -367,6 +394,11 @@ export async function convertWithFfmpeg(
     if (code !== 0) {
       throw new Error(`ffmpeg failed for ${path.basename(src)} (exit ${code})`);
     }
+
+    if (ext === ".m4a") {
+      await maybeWriteM4aReplayGain(tmpDest, src, logCallback);
+    }
+
     moveConvertedFile(tmpDest, dest);
     logCallback?.(`Converted: ${path.basename(src)}`);
   } catch (err) {
@@ -431,6 +463,63 @@ export function sanitizeTagText(value: string): string {
 }
 
 /**
+ * Build the four standard ReplayGain tag values (APEv2/Vorbis-comment naming,
+ * `"<n> dB"` for gain / bare ratio for peak — the format Rockbox's
+ * `parse_replaygain()` expects across every container it reads) from
+ * music-metadata's parsed `common` fields. Returns `undefined` when the
+ * source has no ReplayGain tags at all.
+ */
+export function extractReplayGainTags(common: {
+  replaygain_track_gain?: { dB: number };
+  replaygain_track_peak?: { ratio: number };
+  replaygain_album_gain?: { dB: number };
+  replaygain_album_peak?: { ratio: number };
+}): Record<string, string> | undefined {
+  const tags: Record<string, string> = {};
+  const setGain = (key: string, rg: { dB: number } | undefined) => {
+    if (rg == null) return;
+    tags[key] = `${rg.dB} dB`;
+  };
+  const setPeak = (key: string, rg: { ratio: number } | undefined) => {
+    if (rg == null) return;
+    tags[key] = String(rg.ratio);
+  };
+  setGain("REPLAYGAIN_TRACK_GAIN", common.replaygain_track_gain);
+  setPeak("REPLAYGAIN_TRACK_PEAK", common.replaygain_track_peak);
+  setGain("REPLAYGAIN_ALBUM_GAIN", common.replaygain_album_gain);
+  setPeak("REPLAYGAIN_ALBUM_PEAK", common.replaygain_album_peak);
+  return Object.keys(tags).length > 0 ? tags : undefined;
+}
+
+const REPLAYGAIN_KEYS = [
+  "replaygain_track_gain",
+  "replaygain_track_peak",
+  "replaygain_album_gain",
+  "replaygain_album_peak",
+] as const;
+
+/**
+ * Pick the ReplayGain entries out of an `ApeTags.extra` bucket (populated by
+ * {@link readSourceApeTags}, whether via {@link extractReplayGainTags} for a
+ * non-MPC source or via APEv2 passthrough for an MPC source), keyed
+ * case-insensitively and normalized to the lowercase names MP4 freeform-atom
+ * taggers conventionally use.
+ */
+export function pickReplayGainForM4a(
+  extra: Record<string, string> | undefined
+): Record<string, string> {
+  const result: Record<string, string> = {};
+  if (!extra) return result;
+  for (const [key, value] of Object.entries(extra)) {
+    const lower = key.toLowerCase();
+    if ((REPLAYGAIN_KEYS as readonly string[]).includes(lower)) {
+      result[lower] = value;
+    }
+  }
+  return result;
+}
+
+/**
  * Read tags directly from the source file and map them into APEv2 tag fields.
  * This is the MPC equivalent of ffmpeg's `-map_metadata 0`: since the MPC path
  * decodes through a tagless WAV, tags would otherwise be lost. Returns `{}` on
@@ -470,6 +559,9 @@ export async function readSourceApeTags(srcPath: string): Promise<ApeTags> {
     if (common.compilation === true) tags.compilation = "1";
     if (common.track?.no != null && common.track.no > 0) set("track", String(common.track.no));
     if (common.disk?.no != null && common.disk.no > 0) set("disc", String(common.disk.no));
+
+    const replayGain = extractReplayGainTags(common);
+    if (replayGain) tags.extra = replayGain;
 
     const pic = common.picture?.[0];
     if (pic?.data && pic.data.length > 0) {

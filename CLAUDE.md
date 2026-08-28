@@ -171,3 +171,36 @@ through the already-gated `library_scan`). Pinned in
 
 This has already caused three shipped bugs — orphaned `codec_configurations` (issue #105), orphaned `playlist_items` (playlists holding deleted songs), and orphaned shadow transcodes (shadow libraries accumulating a copy of every renamed album). **When adding a table that references `tracks(id)`, add its delete to `deleteRemovedTracks()` too**, and cover it with a regression test that deletes with FKs off (see `src/__tests__/regressions/playlist-reconcile.test.ts`).
 
+## Hazard: the M4A ReplayGain writer only ever appends to a trailing `moov`
+
+Issue #121 (extended past its filed scope): ffmpeg's own MOV/MP4 muxer silently
+drops any metadata key it doesn't recognize as a standard atom — confirmed
+empirically, even with an explicit per-stream `-metadata` override — so
+AAC/ALAC (`.m4a`) transcodes were losing ReplayGain tags the same way MPC was.
+`writeM4aReplayGainTags()` (`src/main/tagging/mp4/replaygain-writer.ts`) fixes
+this by appending iTunes-style `----` freeform atoms (`mean` =
+`"com.apple.iTunes"`, `name` = the lowercase key, e.g.
+`"replaygain_track_gain"` — Rockbox's `mp4.c` matches only on `name`, case-
+insensitively, and never reads `mean` at all) into `moov > udta > meta >
+ilst`, called from both `convertWithCodec` (codec `aac`/`alac`) and
+`convertWithFfmpeg` (profiles `aac_256`/`alac_16`) in `sync-conversion.ts`.
+
+**This is only safe because `moov` sits after every `mdat` in ffmpeg's output**
+(confirmed by hex-dumping real output; neither conversion path passes
+`-movflags +faststart`). Sample tables (`stco`/`co64`) store absolute byte
+offsets *into* `mdat`; since `mdat` is never touched and `moov` is the last
+top-level box, growing `moov` is a pure append with nothing else to
+renumber. The writer checks this at runtime — every top-level `mdat`'s end
+offset must be ≤ `moov`'s start offset — and refuses (returns `false`, leaves
+the file untouched) rather than write when that's not true. **If a future
+ffmpeg build or flag ever puts `moov` before `mdat`, do not relax that check**
+without also rewriting the sample-offset tables; that is real MP4 box
+surgery this module deliberately does not attempt.
+
+Pinned in `src/__tests__/mp4-replaygain-writer.test.ts` (including the guard
+firing when `moov` precedes `mdat`) and
+`src/__tests__/behaviors/m4a-transcode-replaygain.test.ts` (real ffmpeg
+pipeline, verified by ffmpeg's own `-i` probe as an independent oracle). The
+Musepack side of the same issue is pinned in `src/__tests__/mpc-source-tags.test.ts`
+and `src/__tests__/behaviors/mpc-transcode-tags.test.ts`.
+
