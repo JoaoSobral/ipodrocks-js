@@ -14,6 +14,8 @@
 
 - **A rebuilt device now gets its ratings back in the same sync that catches the wipe.** (#117) Detecting a rebuilt Rockbox database correctly stopped a first sync from importing its all-zero ratings as real values — but nothing then told the sync to re-send the library's ratings back down, so a track already pushed *before* the rebuild stayed permanently unrepaired, and every later sync tripped the same warning with no way out. The device is now repaired in the same sync the rebuild is caught, and any of its rating conflicts left open from before the rebuild are closed automatically, since the value they were disputing no longer exists.
 
+- **Un-rating a track no longer makes iPodRocks think your player was wiped.** (#117) Clearing a rating — one at a time, or wholesale by scanning with "Library tags always win" on — left iPodRocks still remembering that the player had held a rating for it. Since Rockbox has no way to say "unrated" other than 0, the player then read as having lost that rating on every sync from then on, which was enough on its own to keep the "database looks rebuilt" warning firing forever with nothing the user could do about it. Ratings you have cleared are no longer counted as losses, and a player reading 0 for a track your library does not rate is now correctly read as "neither side rates this" rather than as a disagreement — which previously could write a 0 over the blank rating, or raise a conflict offering a choice between 0 and nothing.
+
 ## [2.3.1-alpha] — 2026-08
 
 ### Features

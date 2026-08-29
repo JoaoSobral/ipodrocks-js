@@ -41,6 +41,26 @@ export function mergeRating(
   ratingVersionAtSync: number,
   ratingVersionNow: number
 ): MergeOutcome {
+  // Rockbox has no null: a device reading 0 is "nothing rated this", not a
+  // claim of the value zero. With the library holding no rating either, the two
+  // sides agree that there is no rating — whatever the baseline once was, and
+  // however either side got here. Nothing to adopt, nothing to push, and
+  // nothing a conflict could ask the user to choose between: "keep 0" and
+  // "keep nothing" are the same answer.
+  //
+  // The `baseline === null` arm below has always said this for a device seen
+  // for the first time. It has to hold with a baseline too, or clearing a
+  // rating in the library strands one above a null canonical (see
+  // loadRepairableBaselines) and the next ingest reads the device's honest 0 as
+  // a disagreement — writing 0 over the null when the library looks unchanged,
+  // and queueing an unanswerable conflict when it looks changed. Both were
+  // reachable the moment a rebuilt device got repaired (issue #117).
+  //
+  // Letting it fall through to noop also lets it heal: the caller updates
+  // last_seen_rating to 0 for every change it examines, so the stranded
+  // baseline is gone after one sync.
+  if (deviceVal === 0 && libraryVal === null) return { action: "noop", value: null };
+
   const deviceChanged = baseline !== deviceVal;
   const libraryChanged =
     libBaseAtLastSync !== libraryVal || ratingVersionNow > ratingVersionAtSync;
@@ -107,6 +127,43 @@ export function loadDeviceManifest(
   return manifest;
 }
 
+/**
+ * The subset of {@link loadDeviceManifest} a rebuild verdict can act on: tracks
+ * this device was last seen holding a rating for **and** that the library still
+ * rates.
+ *
+ * `last_seen_rating` records what the device said; it is deliberately never
+ * rewritten when the library's own rating changes, because it is a fact about
+ * the device and the 3-way merge needs it to stay true. So a track the user
+ * un-rates in the library — in-app via `ratings:setTrackRating`, or wholesale
+ * by scanning with "Library tags always win" on — keeps a baseline above zero
+ * while `tracks.rating` goes null. It then reads 0 on the device forever, and
+ * counting it as a loss made `detectRebuiltDatabase` report a rebuild on every
+ * sync with no action the user could take to clear it.
+ *
+ * Filtering here rather than at the write site is what makes that hold for
+ * every way a rating can be cleared, present and future, instead of one.
+ *
+ * `rating > 0`, not `IS NOT NULL`: Rockbox has no null, so a canonical 0 is
+ * "unrated" too and Phase 3 pushing it would change nothing on the device.
+ */
+function loadRepairableBaselines(
+  db: Database.Database,
+  deviceId: number
+): Map<number, number> {
+  const rows = db
+    .prepare(
+      `SELECT dtr.track_id, dtr.last_seen_rating
+         FROM device_track_ratings dtr
+         JOIN tracks t ON t.id = dtr.track_id
+        WHERE dtr.device_id = ?
+          AND dtr.last_seen_rating IS NOT NULL
+          AND t.rating > 0`
+    )
+    .all(deviceId) as { track_id: number; last_seen_rating: number }[];
+  return new Map(rows.map((r) => [r.track_id, r.last_seen_rating]));
+}
+
 export interface IngestResult {
   adopted: number;
   propagated: number;
@@ -125,7 +182,7 @@ export interface IngestResult {
  */
 export interface RebuildSuspicion {
   looksRebuilt: boolean;
-  /** Tracks this device was last seen holding a rating for. */
+  /** Tracks this device was last seen rating that the library still rates. */
   previouslyRated: number;
   /** How many of those now read as unrated. */
   cleared: number;
@@ -147,6 +204,13 @@ export interface RebuildSuspicion {
  * What a rebuild actually looks like is loss: tracks this device was last seen
  * holding a rating for now read as unrated. A library that is simply mostly
  * unrated has nothing to lose and scores zero.
+ *
+ * The sample is narrowed to what the verdict can act on — see
+ * {@link loadRepairableBaselines}. Both of its consequences (skipping the
+ * ingest, and re-pushing the library's ratings to repair the device) only ever
+ * touch tracks the library still rates, so a track the user un-rated in the
+ * library has nothing to lose and nothing to restore. Counting it made the
+ * warning permanent.
  */
 export function detectRebuiltDatabase(
   db: Database.Database,
@@ -169,7 +233,7 @@ export function detectRebuiltDatabase(
     };
   }
 
-  const manifest = loadDeviceManifest(db, deviceId);
+  const manifest = loadRepairableBaselines(db, deviceId);
   let previouslyRated = 0;
   let cleared = 0;
   for (const [trackId, current] of currentDeviceRatings) {

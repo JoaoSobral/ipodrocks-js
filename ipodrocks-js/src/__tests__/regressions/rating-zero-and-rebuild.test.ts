@@ -114,6 +114,80 @@ describe("a Rockbox rating of 0 is 'unrated', not the value zero", () => {
     expect(ratingOf(id)).toBe(6);
   });
 
+  itDb("does not write 0 over an unrated library track that has a baseline", () => {
+    // Same rule as the first-observation case, but with a baseline on record —
+    // the state a track lands in as soon as the library's rating is cleared.
+    // "Device changed, library unchanged" used to adopt the 0 outright.
+    const id = track("cleared-in-library");
+    db.prepare(
+      `INSERT INTO device_track_ratings (device_id, track_id, last_seen_rating, last_pushed_rating, last_seen_at)
+       VALUES (?, ?, 8, 8, CURRENT_TIMESTAMP)`
+    ).run(deviceId, id);
+
+    const res = ingestDeviceRatings(db, deviceId, new Map([[id, 0]]));
+
+    expect(ratingOf(id)).toBeNull();
+    expect(res.adopted).toBe(0);
+    expect(openConflicts()).toBe(0);
+  });
+
+  itDb("does not queue a conflict between a device 0 and no library rating", () => {
+    // There is no question to put to the user here: "keep 0" and "keep
+    // nothing" are the same answer, and the conflict row's canonical_rating is
+    // null so the UI has nothing to offer against the device's 0. Reachable as
+    // soon as a repaired device was read back (issue #117 follow-up).
+    const id = track("cleared-in-library");
+    db.prepare(
+      `INSERT INTO device_track_ratings (device_id, track_id, last_seen_rating, last_pushed_rating, last_seen_at)
+       VALUES (?, ?, 8, 8, CURRENT_TIMESTAMP)`
+    ).run(deviceId, id);
+    // Make the library side look changed too, which is what forced the
+    // divergent branch: rating_version has moved since the last sync.
+    db.prepare("UPDATE tracks SET rating_version = 3 WHERE id = ?").run(id);
+
+    const res = ingestDeviceRatings(db, deviceId, new Map([[id, 0]]));
+
+    expect(res.conflicts).toBe(0);
+    expect(openConflicts()).toBe(0);
+    expect(ratingOf(id)).toBeNull();
+  });
+
+  itDb("heals the stranded baseline so it cannot come back", () => {
+    // The baseline is what made the device's 0 look like a disagreement. Once
+    // the ingest has seen the device read 0, it records that, and the track is
+    // ordinary again.
+    const id = track("cleared-in-library");
+    db.prepare(
+      `INSERT INTO device_track_ratings (device_id, track_id, last_seen_rating, last_pushed_rating, last_seen_at)
+       VALUES (?, ?, 8, 8, CURRENT_TIMESTAMP)`
+    ).run(deviceId, id);
+
+    ingestDeviceRatings(db, deviceId, new Map([[id, 0]]));
+
+    expect(
+      (db
+        .prepare(
+          "SELECT last_seen_rating FROM device_track_ratings WHERE device_id = ? AND track_id = ?"
+        )
+        .get(deviceId, id) as { last_seen_rating: number }).last_seen_rating
+    ).toBe(0);
+  });
+
+  itDb("still adopts a device clearing a rating the library does hold", () => {
+    // The guard is only about a *null* library rating. A device that clears a
+    // rating iPodRocks still holds is a real edit and must go on working.
+    const id = track("cleared-on-device", 8);
+    db.prepare(
+      `INSERT INTO device_track_ratings (device_id, track_id, last_seen_rating, last_pushed_rating, last_seen_at)
+       VALUES (?, ?, 8, 8, CURRENT_TIMESTAMP)`
+    ).run(deviceId, id);
+
+    const res = ingestDeviceRatings(db, deviceId, new Map([[id, 0]]));
+
+    expect(res.adopted).toBe(1);
+    expect(ratingOf(id)).toBe(0);
+  });
+
   itDb("still adopts a real rating from a device seen for the first time", () => {
     const id = track("rated-on-device-only");
     const res = ingestDeviceRatings(db, deviceId, new Map([[id, 8]]));
@@ -167,9 +241,20 @@ describe("deciding whether a device's database was rebuilt", () => {
 
   afterEach(() => closeDb(db));
 
-  /** A track this device was last seen holding `seen` for. */
-  function seen(name: string, lastSeen: number): number {
+  /**
+   * A track this device was last seen holding `seen` for, which the library
+   * also rates (`libRating`, defaulting to the same value).
+   *
+   * The library side matters: only a track the library still rates counts
+   * towards the verdict, because only such a track can be lost or repaired.
+   * That is also the realistic shape — an ingest that adopts a device rating
+   * writes `tracks.rating` at the same time it writes the baseline.
+   */
+  function seen(name: string, lastSeen: number, libRating: number | null = lastSeen): number {
     const id = seedTrack(db, { path: `/m/${name}.flac`, libraryFolderId: folderId });
+    if (libRating !== null) {
+      db.prepare("UPDATE tracks SET rating = ? WHERE id = ?").run(libRating, id);
+    }
     db.prepare(
       `INSERT INTO device_track_ratings (device_id, track_id, last_seen_rating, last_seen_at)
        VALUES (?, ?, ?, CURRENT_TIMESTAMP)`
@@ -222,6 +307,69 @@ describe("deciding whether a device's database was rebuilt", () => {
     for (let i = 0; i < 2; i++) ratings.set(seen(`r${i}`, 8), 0);
 
     expect(detectRebuiltDatabase(db, deviceId, ratings, 446).looksRebuilt).toBe(false);
+  });
+
+  itDb("a rating the user cleared in the library is not evidence of a rebuild", () => {
+    // `last_seen_rating` says what the device reported and is never rewritten
+    // when the library's own rating changes, so un-rating a track in the
+    // library leaves a baseline above zero pointing at a null canonical.
+    // The device honestly still reads 0 for it, on this sync and every later
+    // one — Rockbox has no null to push "unrated" out with — so counting it as
+    // loss made the warning permanent with no action that could clear it.
+    const ratings = new Map<number, number>();
+    for (let i = 0; i < 20; i++) ratings.set(seen(`r${i}`, 8, null), 0);
+
+    const res = detectRebuiltDatabase(db, deviceId, ratings, 446);
+    expect(res.looksRebuilt).toBe(false);
+    expect(res.previouslyRated).toBe(0);
+    expect(res.reason).toBeNull();
+  });
+
+  itDb("counts a canonical 0 as un-rated too, not as something to restore", () => {
+    // Rockbox has no null: pushing a canonical 0 would change nothing on the
+    // device, so `rating > 0` is the test, not `IS NOT NULL`.
+    const ratings = new Map<number, number>();
+    for (let i = 0; i < 20; i++) ratings.set(seen(`r${i}`, 8, 0), 0);
+
+    expect(detectRebuiltDatabase(db, deviceId, ratings, 446).previouslyRated).toBe(0);
+  });
+
+  itDb("still catches a real rebuild among tracks the library un-rated", () => {
+    // Narrowing the sample must not blind the check: the tracks the library
+    // still rates are exactly the ones a rebuild can destroy, and they are the
+    // ones counted.
+    const ratings = new Map<number, number>();
+    for (let i = 0; i < 20; i++) ratings.set(seen(`cleared${i}`, 8, null), 0);
+    for (let i = 0; i < 8; i++) ratings.set(seen(`lost${i}`, 8), 0);
+
+    const res = detectRebuiltDatabase(db, deviceId, ratings, 446);
+    expect(res.looksRebuilt).toBe(true);
+    expect(res.previouslyRated).toBe(8);
+    expect(res.cleared).toBe(8);
+    expect(res.reason).toMatch(/8 of the 8/);
+  });
+
+  itDb("the verdict clears once the repaired ratings read back from the device", () => {
+    // The loop the reporter was stuck in, end to end: a rebuild is called, the
+    // repair re-pushes the library's ratings in that same sync, and the next
+    // sync — reading those values back — must not call it a rebuild again.
+    const ids = Array.from({ length: 10 }, (_, i) => seen(`r${i}`, 8));
+    markRatingsPropagated(db, deviceId, ids);
+
+    const wiped = new Map(ids.map((id) => [id, 0]));
+    expect(detectRebuiltDatabase(db, deviceId, wiped, 446).looksRebuilt).toBe(true);
+
+    // Phase 1's repair, then Phase 3 re-sending every rating it freed up.
+    invalidatePushedRatings(db, deviceId);
+    const props = computeRatingPropagations(db, deviceId);
+    expect(props.size).toBe(10);
+    markRatingsPropagated(db, deviceId, [...props.keys()]);
+
+    // Next sync: the device reads back what was written to it.
+    const repaired = new Map(ids.map((id) => [id, 8]));
+    const res = detectRebuiltDatabase(db, deviceId, repaired, 447);
+    expect(res.looksRebuilt).toBe(false);
+    expect(res.cleared).toBe(0);
   });
 
   itDb("a reset play counter with no ratings left is a rebuild", () => {
