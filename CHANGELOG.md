@@ -1,34 +1,24 @@
 # Changelog
 
-## [2.3.1-beta] — 2026-08
+## [2.3.1] — 2026-08
 
 ### Features
 
-- **New setting: "Library tags always win."** Off by default, in Settings → Ratings. A library scan normally only ever fills in a rating for a track nothing has rated yet — a rating tag from Swinsian, Mp3tag, foobar2000, etc. never overrides a device or in-app rating. Turn this on and the *next* scan makes the file's tag win instead, for every track in the scanned folder — including clearing a track the file leaves untagged — and it resolves any open rating conflicts in the library's favor. Meant as a deliberate "reset iPodRocks to match my library manager" action; turn it back off afterward, since it re-applies on every scan while it's on. Rocksy can flip it via `ratings_set_tag_priority`.
+- **Starred — a Genius playlist of everything you've rated.** Every track with at least one star, best-rated first, play count breaking ties. It reads ratings rather than play counters, so it works on a library that has never touched a device. **Top Rated** is unchanged (4+ stars, 25 tracks); Starred defaults to 100 and is meant to be the whole rated shelf. Rocksy can build it too.
+
+- **Answer every rating conflict at once.** Tick **Apply my next choice to all** and the next **Keep Library** or **Use Device** settles the whole queue. *Set Manually* stays per-track. Rocksy can do it too via `ratings_resolve_conflicts` (confirms first; there's no undo).
+
+- **New setting: "Library tags always win."** Off by default, in Settings → Ratings. A scan normally only fills in ratings for tracks nothing has rated yet; with this on, the file's tag wins for every track in the scanned folder — including clearing tracks the file leaves untagged — and resolves open conflicts in the library's favor. A deliberate "reset iPodRocks to match my library manager" action: turn it back off afterward, since it re-applies on every scan.
 
 ### Fixes
 
-- **A rating already sitting in a file's own tag now reaches the library.** (#118) iPodRocks previously only knew about ratings set in-app or synced from a device. It now reads the tag on a library scan — the same way Rockbox itself reads a rating — and seeds it in, without ever writing back to the file. Once a track has a rating from any source, the file's tag is never consulted again for that track. A one-time pass also picks this up for libraries scanned before this fix.
+- **A rating sitting in a file's own tag now reaches the library.** (#118) iPodRocks previously only knew about ratings set in-app or synced from a device. It now reads the tag on a library scan, without ever writing back to the file. Once a track has a rating from any source, its tag is never consulted again. A one-time pass picks this up for libraries scanned before this fix.
 
-- **Renamed or removed album folders no longer leave a `cover.jpg` stranded on the device.** (#119) A generated album cover wasn't checked against the current library layout the way tracks are, so after renaming an album on disk, its old cover — and the empty folder it sat in — stuck around on the device forever. Orphaned covers are now detected and removed (or reported, depending on your extra-track policy) like any other extra file.
+- **Renamed or removed album folders no longer leave a `cover.jpg` stranded on the device.** (#119) Orphaned covers — and the empty folders holding them — are now detected and removed (or reported, per your extra-track policy) like any other extra file.
 
-- **A rebuilt device now gets its ratings back in the same sync that catches the wipe.** (#117) Detecting a rebuilt Rockbox database correctly stopped a first sync from importing its all-zero ratings as real values — but nothing then told the sync to re-send the library's ratings back down, so a track already pushed *before* the rebuild stayed permanently unrepaired, and every later sync tripped the same warning with no way out. The device is now repaired in the same sync the rebuild is caught, and any of its rating conflicts left open from before the rebuild are closed automatically, since the value they were disputing no longer exists.
+- **A first sync no longer asks you to arbitrate every song you'd rated.** (#117) Rockbox has no "unrated" — a track nobody rated stores 0, same as one rated zero. Reading that 0 as an assertion turned every track you'd starred only in iPodRocks into a conflict, and quietly wrote "rated zero stars" over unrated tracks. A 0 from the device now means no opinion, so your library rating stands and gets pushed to the player. Genuine disagreements are still raised.
 
-- **Un-rating a track no longer makes iPodRocks think your player was wiped.** (#117) Clearing a rating — one at a time, or wholesale by scanning with "Library tags always win" on — left iPodRocks still remembering that the player had held a rating for it. Since Rockbox has no way to say "unrated" other than 0, the player then read as having lost that rating on every sync from then on, which was enough on its own to keep the "database looks rebuilt" warning firing forever with nothing the user could do about it. Ratings you have cleared are no longer counted as losses, and a player reading 0 for a track your library does not rate is now correctly read as "neither side rates this" rather than as a disagreement — which previously could write a 0 over the blank rating, or raise a conflict offering a choice between 0 and nothing.
-
-## [2.3.1-alpha] — 2026-08
-
-### Features
-
-- **Starred — a Genius playlist of everything you've rated.** Every track carrying at least one star, best-rated first, play count breaking the tie. It reads ratings rather than play counters, so it works on a library that has never touched a device. **Top Rated** is unchanged and still does the narrower job (4+ stars, 25 tracks); Starred defaults to 100 and is meant to be the whole rated shelf. Rocksy can build it too.
-
-- **Answer every rating conflict at once.** The Rating Conflicts window asked one track at a time, which is unusable when hundreds disagree. Tick **Apply my next choice to all** and the next **Keep Library** or **Use Device** settles the whole queue. *Set Manually* stays per-track — one star value stamped across every conflict isn't an answer anyone means to give. Rocksy can do it too via `ratings_resolve_conflicts` (confirms first; there's no undo).
-
-### Fixes
-
-- **A first sync no longer asks you to arbitrate every song you'd rated.** (#117) Rockbox has no "unrated" — a track nobody rated stores 0, same as one rated zero. iPodRocks read that 0 as the device asserting a rating, so every track you'd starred in iPodRocks but not on the iPod came back as a conflict. Quieter and worse: a device that had never rated anything looked like it was reporting 0 for the whole library, so every unrated track was written down as "rated zero stars." A 0 from the device now means what it is — no opinion — so your library rating stands and gets pushed to the player. Genuine disagreements are still raised as before.
-
-- **The "database looks rebuilt" warning no longer fires on every sync.** (#117) It measured what share of the device's ratings read 0 and cried rebuild above a quarter — but on any normal library that's nearly all of them (43 rated of 2411 scored 98%). It now looks for actual loss: tracks this device was last seen rating that now read unrated. Rockbox's own signal still counts (a rebuild resets the play counter), and ratings that survived a rebuild no longer trigger it. **The warning also now tells the truth** — it used to say ratings "were skipped" while the check ran *after* the merge, so on a genuinely wiped device your library ratings had already been overwritten by the time you saw it. The verdict is reached before anything merges.
+- **The "database looks rebuilt" warning is now accurate, honest, and self-clearing.** (#117) It measured what share of device ratings read 0 and cried rebuild above a quarter — nearly always true on a normal library (43 rated of 2411 scored 98%). It now looks for actual loss, and the verdict is reached *before* anything merges, so "ratings were skipped" is finally true. A genuinely rebuilt device is repaired in the same sync that catches it, with its stale conflicts closed automatically — previously tracks pushed before the rebuild stayed broken forever. Ratings you clear yourself no longer count as loss, so un-rating a track can't keep the warning firing.
 
 ## [2.3.0] — 2026-08 (includes all pre-releases)
 
