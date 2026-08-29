@@ -27,6 +27,8 @@ import { test, expect, type Page } from "@playwright/test";
 import { launchApp, type LaunchedApp } from "./electron-launcher";
 import {
   writeTcdFixture,
+  readTcdNumericTag,
+  TCD_TAG,
   type TcdFixtureTrack,
 } from "../../src/__tests__/harness/tcd-fixture";
 
@@ -132,8 +134,8 @@ async function runSync(window: Page, deviceId: number): Promise<string[]> {
 }
 
 /** Plant a Rockbox database describing the synced files. */
-function fixture(ratings: Record<string, number>): void {
-  const tracks: TcdFixtureTrack[] = TITLES.map((title, i) => ({
+function fixture(ratings: Record<string, number>, titles: string[] = TITLES): void {
+  const tracks: TcdFixtureTrack[] = titles.map((title, i) => ({
     path: `/<HDD0>/Music/${ARTIST}/${ALBUM}/${title}.flac`,
     playCount: i + 1,
     playTimeMs: (i + 1) * 200_000,
@@ -142,6 +144,14 @@ function fixture(ratings: Record<string, number>): void {
     lastPlayedSerial: i + 1,
   }));
   writeTcdFixture(deviceDir, tracks);
+}
+
+/** Extra tracks in the same album, for tests that need a bigger sample. */
+function seedMoreFiles(titles: string[]): void {
+  const albumDir = path.join(libraryDir, ARTIST, ALBUM);
+  for (const title of titles) {
+    fs.writeFileSync(path.join(albumDir, `${title}.flac`), Buffer.alloc(4096));
+  }
 }
 
 interface ConflictRow {
@@ -202,12 +212,15 @@ test("a device with no ratings of its own leaves the library's alone", async () 
   expect(logs.join("\n")).not.toMatch(/looks rebuilt/i);
 });
 
-test("a device that really lost its ratings is caught, and nothing is imported", async () => {
+test("a device that really lost its ratings is caught, and repaired in the same sync", async () => {
   const window = await readyWindow();
   const deviceId = await setUpSynced(window);
 
-  // First sync: the device holds ratings, and they are adopted.
-  fixture({ Alpha: 10, Beta: 8, Gamma: 8, Delta: 6, Epsilon: 6 });
+  // First sync: the device holds ratings, and they are adopted (and pushed
+  // back, setting last_pushed_rating — the exact bookkeeping a rebuild leaves
+  // stale and that used to block repair forever).
+  const expected: Record<string, number> = { Alpha: 10, Beta: 8, Gamma: 8, Delta: 6, Epsilon: 6 };
+  fixture(expected);
   await runSync(window, deviceId);
   expect(
     (await libraryTracks(window)).filter((t) => t.rating !== null)
@@ -223,6 +236,16 @@ test("a device that really lost its ratings is caught, and nothing is imported",
   const after = await libraryTracks(window);
   expect(after.filter((t) => t.rating !== null)).toHaveLength(5);
   expect(await conflicts(window)).toEqual([]);
+
+  // Not just "not lost" — actively repaired, in this same sync.
+  expect(logs.join("\n")).toMatch(/restored 5 rating/i);
+  TITLES.forEach((title, idxId) => {
+    expect(readTcdNumericTag(deviceDir, idxId, TCD_TAG.rating)).toBe(expected[title]);
+  });
+
+  // The deadlock: a genuinely-repaired device must not trip the warning again.
+  const logs2 = await runSync(window, deviceId);
+  expect(logs2.join("\n")).not.toMatch(/looks rebuilt/i);
 });
 
 test("a genuine disagreement is still raised, and can be answered for all at once", async () => {
@@ -316,4 +339,61 @@ test("Starred collects every rated track without any play history", async () => 
     {}
   );
   expect(top.tracks.map((t) => t.title)).toEqual([tracks[1].title]);
+});
+
+test("a rating cleared in the library does not keep the rebuild warning alive", async () => {
+  // The last hole in #117. `last_seen_rating` is what the device reported and
+  // is never rewritten when the library's rating changes, so un-rating a track
+  // in iPodRocks — one by one, or wholesale by scanning with "Library tags
+  // always win" on — leaves a baseline above zero over a null canonical. The
+  // device honestly reads 0 for it on every sync afterwards and nothing can
+  // ever change that: Rockbox has no null, so there is no "unrated" to push.
+  // Counted as loss, those tracks alone kept the verdict true forever, and the
+  // repair could not touch them because the library has no rating to re-send.
+  const window = await readyWindow();
+  const unrated = Array.from({ length: 20 }, (_, i) => `Extra${String(i + 1).padStart(2, "0")}`);
+  seedMoreFiles(unrated);
+  const all = [...TITLES, ...unrated];
+
+  const deviceId = await setUpSynced(window);
+
+  // Every track rated on the device, and adopted by the library.
+  fixture(Object.fromEntries(all.map((t) => [t, 8])), all);
+  await runSync(window, deviceId);
+  expect((await libraryTracks(window)).filter((t) => t.rating === 8)).toHaveLength(all.length);
+
+  // The user clears 20 of the 25 in the library, keeping the 5 originals.
+  for (const t of await libraryTracks(window)) {
+    if (unrated.includes(t.title)) {
+      await call(window, "ratings:setTrackRating", t.id, null);
+    }
+  }
+
+  // Now the device is rebuilt. The 5 the library still rates are a real loss
+  // and must still be caught — narrowing the sample must not blind the check.
+  fixture({}, all);
+  const logs = await runSync(window, deviceId);
+  expect(logs.join("\n")).toMatch(/looks rebuilt/i);
+  expect(logs.join("\n")).toMatch(/restored 5 rating/i);
+
+  // And now the point: the 20 cleared tracks still read 0 and always will, but
+  // they are not loss. 20 of 25 is past the 0.75 bar, so counting them meant
+  // the warning fired on this sync and every later one, with no action the
+  // user could take to clear it.
+  const logs2 = await runSync(window, deviceId);
+  expect(logs2.join("\n")).not.toMatch(/looks rebuilt/i);
+
+  // The repair really did restore only what the library still rates, and left
+  // the cleared ones alone rather than writing a rating back over them.
+  all.forEach((title, idxId) => {
+    expect(readTcdNumericTag(deviceDir, idxId, TCD_TAG.rating)).toBe(
+      TITLES.includes(title) ? 8 : 0
+    );
+  });
+
+  // Nothing was quietly resurrected in the library either.
+  const after = await libraryTracks(window);
+  expect(after.filter((t) => t.rating === 8)).toHaveLength(5);
+  expect(after.filter((t) => t.rating === null)).toHaveLength(20);
+  expect(await conflicts(window)).toEqual([]);
 });

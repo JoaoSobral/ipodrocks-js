@@ -100,7 +100,14 @@ one conflict per track the user had rated only in iPodRocks, and write `rating =
 0` over every unrated track in the library (issue #117).
 
 - `mergeRating()` (`src/main/sync/rating-merge.ts`) treats `deviceVal === 0` with
-  no baseline as *no opinion*: never adopted, never a conflict.
+  no baseline as *no opinion*: never adopted, never a conflict. **`deviceVal ===
+  0` against `libraryVal === null` is a noop at *any* baseline** — that guard
+  sits above the `baseline === null` arm on purpose. Both sides agree there is no
+  rating, so there is nothing to adopt and nothing a conflict could ask (the
+  row's `canonical_rating` would be null, leaving the UI to offer "keep 0"
+  against "keep nothing"). Without it the divergent branch queued exactly that
+  unanswerable conflict, and the "device changed, library didn't" branch wrote 0
+  over the null.
 - Anything selecting "rated" tracks wants `rating > 0`, not `rating IS NOT NULL`
   — see `generateStarred()`.
 - **`detectRebuiltDatabase()` must be called before `ingestDeviceRatings()`, not
@@ -109,6 +116,39 @@ one conflict per track the user had rated only in iPodRocks, and write `rating =
   that had already happened. A rebuild is measured as *loss* (tracks this device
   was last seen rating that now read 0), never as the share of zeros: a normal
   library is nearly all zeros and would trip any such test on every sync.
+- **A rebuild verdict must also invalidate what Phase 3 believes it already
+  pushed.** `computeRatingPropagations()` only re-sends a track when
+  `device_track_ratings.last_pushed_rating` disagrees with `tracks.rating` — it
+  has no idea the device was just wiped. Left alone, any track pushed *before*
+  the rebuild stayed permanently unrepaired: `last_seen_rating` never gets
+  refreshed either (Phase 1 ingest is skipped whole on a rebuild verdict), so the
+  next sync saw the same wiped device against the same stale baseline — a
+  self-sustaining "looks rebuilt" loop with no user action that escaped it
+  (issue #117 follow-up: the reporter rebuilt his device on purpose expecting his
+  library's ratings to sync back down, and they never did, on any later sync).
+  `invalidatePushedRatings()` clears `last_pushed_rating` for the device — so
+  Phase 3 re-sends every currently-rated track in the *same* sync — and closes
+  any of that device's open `rating_conflicts` as `canonical_wins`, since the
+  disputed device value no longer exists to disagree with anything. It
+  deliberately leaves `last_seen_rating` alone: once Phase 3 repairs the device
+  this sync, the next sync's fresh reading matches it and the verdict clears on
+  its own.
+- **`detectRebuiltDatabase()` measures only tracks the library still rates**
+  (`loadRepairableBaselines()` in `rating-merge.ts` — `rating > 0`, not `IS NOT
+  NULL`, since a canonical 0 pushes nothing). `last_seen_rating` is a fact about
+  the device and is deliberately never rewritten when the library's own rating
+  changes, so un-rating a track in the library — `ratings:setTrackRating(id,
+  null)`, or wholesale by scanning with `tagRatingAlwaysWins` on — strands a
+  baseline above zero over a null canonical. That track then reads 0 on the
+  device forever (there is no "unrated" to push), and counting it as loss made
+  the verdict permanently true with no user action that cleared it. Both
+  consequences of a verdict — skipping the ingest, and re-pushing to repair the
+  device — only ever touch tracks the library rates, so that is the sample.
+  **Fix this in the measure, never by clearing `last_seen_rating` at the write
+  sites**: dropping the baseline makes the next ingest classify the track
+  `first_observation`, and `mergeRating` then adopts the device's surviving
+  rating straight back into the library, silently undoing the clear. It would
+  also have to be repeated at every present and future path that nulls a rating.
 
 Pinned in `src/__tests__/regressions/rating-zero-and-rebuild.test.ts` and
 `tests/e2e/rating-conflicts.test.ts`.
