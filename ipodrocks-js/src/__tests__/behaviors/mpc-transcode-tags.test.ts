@@ -60,6 +60,10 @@ describe.skipIf(!canRun)("FLAC → Musepack tag preservation", () => {
       "-metadata", "originalyear=1999",
       "-metadata", "disc=2",
       "-metadata", "track=4",
+      "-metadata", "REPLAYGAIN_TRACK_GAIN=-3.38 dB",
+      "-metadata", "REPLAYGAIN_TRACK_PEAK=0.998054",
+      "-metadata", "REPLAYGAIN_ALBUM_GAIN=-2.32 dB",
+      "-metadata", "REPLAYGAIN_ALBUM_PEAK=0.821448",
       srcFlac,
     ];
     const r = spawnSync(getFfmpegPath(), cmd, { encoding: "utf8" });
@@ -94,6 +98,10 @@ describe.skipIf(!canRun)("FLAC → Musepack tag preservation", () => {
     expect(tag("Originalyear")).toBe("1999");
     expect(tag("Track")).toBe("4");
     expect(tag("DISCNUMBER")).toBe("2");
+    expect(tag("REPLAYGAIN_TRACK_GAIN")).toBe("-3.38 dB");
+    expect(tag("REPLAYGAIN_TRACK_PEAK")).toBe("0.998054");
+    expect(tag("REPLAYGAIN_ALBUM_GAIN")).toBe("-2.32 dB");
+    expect(tag("REPLAYGAIN_ALBUM_PEAK")).toBe("0.821448");
   }, 30000);
 
   it("scans the generated MPC back through the real MetadataExtractor", async () => {

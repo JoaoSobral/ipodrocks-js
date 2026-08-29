@@ -13,6 +13,8 @@ import {
   readSourceApeTags,
   buildMpcApeTags,
   sanitizeTagText,
+  extractReplayGainTags,
+  pickReplayGainForM4a,
 } from "../main/sync/sync-conversion";
 
 beforeEach(() => {
@@ -90,6 +92,67 @@ describe("readSourceApeTags", () => {
     parseFileMock.mockRejectedValue(new Error("corrupt"));
     const tags = await readSourceApeTags("/music/broken.flac");
     expect(tags).toEqual({});
+  });
+
+  it("carries ReplayGain into extra as REPLAYGAIN_* APEv2 keys", async () => {
+    parseFileMock.mockResolvedValue({
+      common: {
+        replaygain_track_gain: { dB: -3.38, ratio: 0.459 },
+        replaygain_track_peak: { dB: -0.0085, ratio: 0.998054 },
+        replaygain_album_gain: { dB: -2.32, ratio: 0.586 },
+        replaygain_album_peak: { dB: -0.854, ratio: 0.821448 },
+      },
+    });
+
+    const tags = await readSourceApeTags("/music/song.flac");
+
+    expect(tags.extra).toEqual({
+      REPLAYGAIN_TRACK_GAIN: "-3.38 dB",
+      REPLAYGAIN_TRACK_PEAK: "0.998054",
+      REPLAYGAIN_ALBUM_GAIN: "-2.32 dB",
+      REPLAYGAIN_ALBUM_PEAK: "0.821448",
+    });
+  });
+
+  it("omits extra when the source has no ReplayGain tags", async () => {
+    parseFileMock.mockResolvedValue({ common: { title: "Song" } });
+    const tags = await readSourceApeTags("/music/song.flac");
+    expect(tags.extra).toBeUndefined();
+  });
+});
+
+describe("extractReplayGainTags", () => {
+  it("formats gain with a dB suffix and peak as a bare ratio", () => {
+    const tags = extractReplayGainTags({
+      replaygain_track_gain: { dB: -3.38 },
+      replaygain_track_peak: { ratio: 0.998054 },
+    });
+    expect(tags).toEqual({
+      REPLAYGAIN_TRACK_GAIN: "-3.38 dB",
+      REPLAYGAIN_TRACK_PEAK: "0.998054",
+    });
+  });
+
+  it("returns undefined when nothing is present", () => {
+    expect(extractReplayGainTags({})).toBeUndefined();
+  });
+});
+
+describe("pickReplayGainForM4a", () => {
+  it("normalizes REPLAYGAIN_* keys to lowercase, case-insensitively", () => {
+    const picked = pickReplayGainForM4a({
+      REPLAYGAIN_TRACK_GAIN: "-3.38 dB",
+      Album: "Ignored",
+      replaygain_album_peak: "0.821448",
+    });
+    expect(picked).toEqual({
+      replaygain_track_gain: "-3.38 dB",
+      replaygain_album_peak: "0.821448",
+    });
+  });
+
+  it("returns an empty object when extra is undefined", () => {
+    expect(pickReplayGainForM4a(undefined)).toEqual({});
   });
 });
 
