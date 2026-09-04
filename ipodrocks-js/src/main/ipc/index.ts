@@ -12,6 +12,7 @@ import { registerRatingsHandlers } from "./ratings";
 import { registerPlayerHandlers } from "./player";
 import { registerPodcastHandlers } from "./podcasts";
 import { registerAudiobookHandlers } from "./audiobooks";
+import { registerMaintenanceHandlers } from "./maintenance";
 
 export { getLibraryDb, resumeInterruptedShadowBuilds };
 
@@ -37,4 +38,5 @@ export function registerIpcHandlers(): void {
   registerPlayerHandlers();
   registerPodcastHandlers();
   registerAudiobookHandlers();
+  registerMaintenanceHandlers();
 }

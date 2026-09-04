@@ -888,8 +888,12 @@ export async function runSync(
     path: String(analysis.missingPaths.length),
   });
 
+  // `remove` and `delete-all` both sweep; `keep` and `prompt` both report.
+  const extrasWereRemoved =
+    extraTrackPolicy === "remove" || extraTrackPolicy === "delete-all";
+
   let removedCount = 0;
-  if ((extraTrackPolicy === "remove" || extraTrackPolicy === "remove-all") && analysis.extras.length > 0) {
+  if (extrasWereRemoved && analysis.extras.length > 0) {
     const { removed } = removeExtraTracks(analysis.extras, progressCallback, cancelSignal);
     removedCount = removed;
   }
@@ -918,7 +922,7 @@ export async function runSync(
     skipAlbumArtwork,
   });
   if (orphanedArt.length > 0) {
-    if (extraTrackPolicy === "remove" || extraTrackPolicy === "remove-all") {
+    if (extrasWereRemoved) {
       const { removed } = removeExtraTracks(orphanedArt, progressCallback, cancelSignal);
       removedCount += removed;
       if (removed > 0) {
@@ -1017,7 +1021,10 @@ export async function runSync(
     status: errors > 0 || artworkErrors > 0 ? "error" : "completed",
     synced,
     removed: removedCount,
-    extras: extraTrackPolicy !== "remove" ? [...analysis.extras, ...orphanedArt] : [],
+    // Only report extras that are still on the device. Every policy that
+    // deletes them has already done so above, so listing them here again would
+    // hand the UI a list of files that no longer exist.
+    extras: extrasWereRemoved ? [] : [...analysis.extras, ...orphanedArt],
     missingFiles,
     errors,
     artworkErrors,

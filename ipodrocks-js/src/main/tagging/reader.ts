@@ -9,11 +9,11 @@
  */
 
 import * as fs from "fs";
-import { ITEM_TYPE_BINARY } from "./apev2/constants";
+import { ITEM_TYPE_BINARY, itemTypeFromFlags } from "./apev2/constants";
 import { locateApeBlock, type ApeBlockLocation } from "./apev2/locate";
-import type { ApeItem, ApeTags, CoverArt } from "./apev2/types";
+import type { ApeItem, ApeTags, CoverArt, RawApeItem } from "./apev2/types";
 
-const COVER_ART_KEY = "cover art (front)";
+export const COVER_ART_KEY = "cover art (front)";
 
 /**
  * Inverse of `writer.ts` `textFields`, keyed by lower-cased APEv2 key name.
@@ -48,12 +48,18 @@ export function readApeTags(filePath: string): ApeTags {
   const full = fs.readFileSync(filePath);
   const loc = locateApeBlock(full);
   if (!loc) return {};
-  return itemsToTags(parseItems(full, loc));
+  return itemsToTags(parseApeItems(full, loc));
 }
 
-/** Parse the item list. Stops (returning what it has) on any malformed read. */
-function parseItems(full: Buffer, loc: ApeBlockLocation): ApeItem[] {
-  const items: ApeItem[] = [];
+/**
+ * Parse the item list. Stops (returning what it has) on any malformed read.
+ *
+ * Exported for `mpc/repair.ts`, which needs the same item walk over a buffer
+ * holding only the tail of a file — the offsets in `loc` are relative to
+ * whatever buffer is passed in, so a tail read works unchanged.
+ */
+export function parseApeItems(full: Buffer, loc: ApeBlockLocation): RawApeItem[] {
+  const items: RawApeItem[] = [];
   const limit = Math.min(full.byteLength, loc.itemsStart + loc.itemsSize);
   let pos = loc.itemsStart;
 
@@ -75,11 +81,27 @@ function parseItems(full: Buffer, loc: ApeBlockLocation): ApeItem[] {
     const value = Buffer.from(full.subarray(pos, pos + valueSize));
     pos += valueSize;
 
-    const type = (flags & 3) === ITEM_TYPE_BINARY ? "binary" : "utf8";
-    items.push({ key, type, value });
+    items.push({ key, type: itemType(key, flags), value, flags });
   }
 
   return items;
+}
+
+/**
+ * Classify an item from its raw flags word.
+ *
+ * The spec answer is the type bits — but every MPC file iPodRocks wrote before
+ * the issue #125 fix spelled binary as `1`, i.e. "read-only UTF-8 text", so
+ * those bits say *text* for artwork that is plainly binary. The cover art key
+ * is the only binary item this writer has ever produced, so recognising it by
+ * name is exact rather than a heuristic, and it is what keeps the artwork in
+ * files already on disk readable — and, crucially, what stops
+ * `repairMpcTags()` from round-tripping a JPEG back out as a text item.
+ */
+function itemType(key: string, flags: number): ApeItem["type"] {
+  if (itemTypeFromFlags(flags) === ITEM_TYPE_BINARY) return "binary";
+  if (key.toLowerCase() === COVER_ART_KEY) return "binary";
+  return "utf8";
 }
 
 function itemsToTags(items: ApeItem[]): ApeTags {

@@ -10,6 +10,15 @@ export interface ApeItem {
   value: Buffer;
 }
 
+/**
+ * An item as read off disk. `flags` is the raw word, kept because the repair
+ * pass (issue #125) has to tell a correctly-flagged binary item from a legacy
+ * mis-flagged one, a distinction `type` deliberately erases.
+ */
+export interface RawApeItem extends ApeItem {
+  flags: number;
+}
+
 export interface CoverArt {
   data: Buffer;
   mimeType: "image/jpeg" | "image/png";

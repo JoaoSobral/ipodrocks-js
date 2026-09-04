@@ -124,6 +124,38 @@ describe("device_sync_preferences — exclude mode persistence", () => {
     expect(getDeviceSyncPreferences(db, 5)!.preserveFolderStructure).toBe(true);
   });
 
+  itDb("loads a stored 'remove-all' as 'remove', never as 'delete-all'", () => {
+    db = createTestDb();
+    seedDevice(db, 7);
+
+    // "Remove all" was retired when "Delete all" arrived. The old option swept
+    // orphans and unlinked recorded auto-podcast/extra-audiobook files; the new
+    // one erases the device's content folders. A user who ticked the old box
+    // once must not inherit a wipe from the rename, so it loads as "remove".
+    db.prepare(
+      `INSERT INTO device_sync_preferences
+       (device_id, sync_type, extra_track_policy, include_music, include_podcasts,
+        include_audiobooks, include_playlists, custom_selections_json)
+       VALUES (?, 'full', 'remove-all', 1, 1, 1, 1, ?)`
+    ).run(7, JSON.stringify(emptySelections()));
+
+    expect(getDeviceSyncPreferences(db, 7)!.extraTrackPolicy).toBe("remove");
+  });
+
+  itDb("round-trips the delete-all policy", () => {
+    db = createTestDb();
+    seedDevice(db, 8);
+
+    db.prepare(
+      `INSERT INTO device_sync_preferences
+       (device_id, sync_type, extra_track_policy, include_music, include_podcasts,
+        include_audiobooks, include_playlists, custom_selections_json)
+       VALUES (?, 'full', 'delete-all', 1, 1, 1, 1, ?)`
+    ).run(8, JSON.stringify(emptySelections()));
+
+    expect(getDeviceSyncPreferences(db, 8)!.extraTrackPolicy).toBe("delete-all");
+  });
+
   itDb("defaults preserveFolderStructure to true for fresh installs (issue #82)", () => {
     db = createTestDb();
     seedDevice(db, 6);

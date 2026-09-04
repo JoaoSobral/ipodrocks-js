@@ -1,5 +1,21 @@
 # Changelog
 
+## [2.3.2] — 2026-09
+
+### Features
+
+- **The Sync tab's "Orphan Policy" is now "Orphan & Reset Policy."** Two changes behind the new name. **Remove orphans** now sweeps podcasts and audiobooks as well as songs — it used to skip any content type the sync had nothing to copy to, so a device full of old podcasts came back untouched if your selection had no podcasts, with nothing to tell you it had been skipped. And **Remove all** becomes **Delete all**, which now does what it sounds like: it erases the device's Music, Podcasts and Audiobooks folders and rebuilds them from your library. It asks you to confirm before anything is deleted, and auto-podcast episodes are downloaded again afterwards. Ratings and listening history stored on the device are left alone. If you had the old "Remove all" saved, it loads as "Remove orphans" — nobody inherits a wipe from the rename. Rocksy can set the policy too, via `device_set_orphan_policy`.
+
+- **New: Settings → Maintenance → Repair Musepack tags.** A one-time repair for the bug below, for the `.mpc` files you already have. It checks every Musepack file in your shadow libraries and on connected devices and rewrites the tag in place. The audio is never re-encoded, and files keep their size and timestamp, so nothing gets re-transcoded and your next sync copies nothing extra. Safe to run more than once; Rocksy can run it with `mpc_repair_tags`.
+
+### Fixes
+
+- **Musepack files no longer get a cover art tag that hides their ReplayGain.** (#125) The artwork was written with the wrong APEv2 item type — "text" instead of "binary". Tag editors then read the JPEG as text and split it on the zero bytes inside it, which is where the hundreds of empty "Cover Art" fields came from, and Rockbox filled its tag buffer with the image before it ever reached the ReplayGain values that came after it. The type is now correct, and ReplayGain is written *ahead* of the artwork so it is reached either way. Files transcoded from now on are correct; use Settings → Maintenance to repair the ones you already have.
+
+### Security
+
+- Updated two build-time dependencies flagged by Dependabot: `browserslist` (4.28.2 → 4.28.9) and `@xmldom/xmldom` (0.8.13 → 0.8.15). Both are development tooling and were never part of the shipped app.
+
 ## [2.3.1] — 2026-08
 
 ### Features

@@ -77,6 +77,7 @@ const OPERATION_LABELS: Record<string, string> = {
   read_playback_log: "Read playback log",
   playlist_generated: "Playlist generated",
   shadow_prune: "Shadow library pruned",
+  mpc_tag_repair: "Musepack tags repaired",
 };
 
 function formatActivityTime(iso: string): string {

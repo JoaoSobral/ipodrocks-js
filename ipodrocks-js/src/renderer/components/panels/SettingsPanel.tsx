@@ -4,6 +4,7 @@ import { Button } from "../common/Button";
 import { Input } from "../common/Input";
 import { Card } from "../common/Card";
 import { Switch } from "../common/Switch";
+import { useUIStore } from "../../stores/ui-store";
 import {
   getOpenRouterConfig,
   setOpenRouterConfig,
@@ -27,6 +28,7 @@ interface SettingsPanelProps {
 }
 
 export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
+  const setPendingMpcTagRepair = useUIStore((s) => s.setPendingMpcTagRepair);
   const [apiKey, setApiKey] = useState("");
   const [model, setModel] = useState("anthropic/claude-sonnet-4.6");
   const [hasStoredKey, setHasStoredKey] = useState(false);
@@ -406,6 +408,39 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
                     onChange={setTagRatingAlwaysWins}
                     className="shrink-0"
                   />
+                </div>
+              </div>
+            </Card>
+
+            <Card
+              title="Maintenance"
+              subtitle="One-time repairs for files iPodRocks has already written."
+            >
+              <div className="space-y-5">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium text-foreground">
+                      Repair Musepack tags
+                    </p>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      Older versions wrote the cover art into Musepack (.mpc)
+                      files with the wrong tag type. Tag editors show it as
+                      hundreds of empty "Cover Art" fields, and Rockbox stops
+                      reading the ReplayGain tags that follow it. This checks
+                      every .mpc file in your shadow libraries and on connected
+                      devices and rewrites the tag in place — the audio is never
+                      re-encoded, and files keep their size and timestamp so
+                      nothing re-syncs. Safe to run more than once.
+                    </p>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    className="shrink-0"
+                    onClick={() => setPendingMpcTagRepair(true)}
+                  >
+                    Repair Musepack tags
+                  </Button>
                 </div>
               </div>
             </Card>

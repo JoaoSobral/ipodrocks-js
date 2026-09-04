@@ -16,6 +16,7 @@ import type { DevicesCore } from "../devices/devices-core";
 import type {
   AlbumGrouping,
   DeviceSyncPreferences,
+  ExtraTrackPolicy,
   PodcastSearchResult,
   SmartPlaylistRule,
 } from "../../shared/types";
@@ -1083,6 +1084,73 @@ const device_set_sync_preferences: AiTool = {
   },
 };
 
+/**
+ * write-safe on purpose: the setting alone deletes nothing. "Delete all" only
+ * bites when a sync actually runs, and `device_sync` is already gated — same
+ * reasoning as `ratings_set_tag_priority`.
+ */
+const device_set_orphan_policy: AiTool = {
+  name: "device_set_orphan_policy",
+  description:
+    "Set a device's Orphan & Reset Policy — what a sync does about content on the device it does not cover. 'keep' leaves it alone. 'remove' deletes anything the sync selection does not account for, across songs, podcasts and audiobooks. 'delete-all' erases the device's Music, Podcasts and Audiobooks folders and rebuilds them from the library (auto-podcast episodes are downloaded again); the user still confirms this in a dialog before the sync runs. 'prompt' reports the extras instead of deleting them.",
+  parameters: {
+    type: "object",
+    properties: {
+      device_id: { type: "number", description: "Device ID (from device_list)" },
+      policy: {
+        type: "string",
+        enum: ["keep", "remove", "delete-all", "prompt"],
+        description: "The policy to store for this device.",
+      },
+    },
+    required: ["device_id", "policy"],
+  },
+  kind: "write-safe",
+  summarize: (a) => `Set device #${a.device_id} orphan & reset policy to "${a.policy}"`,
+  async run(args, ctx) {
+    const deviceId = Number(args.device_id);
+    if (!Number.isInteger(deviceId) || deviceId <= 0) throw new Error("Invalid device_id");
+    const device = ctx.getDevicesCore().getDeviceById(deviceId);
+    if (!device) throw new Error(`Device #${deviceId} not found`);
+
+    const policy = String(args.policy) as ExtraTrackPolicy;
+    if (!["keep", "remove", "delete-all", "prompt"].includes(policy)) {
+      throw new Error("policy must be one of: keep, remove, delete-all, prompt");
+    }
+
+    const current =
+      getDeviceSyncPreferences(ctx.db, deviceId) ??
+      ({
+        syncType: "full",
+        extraTrackPolicy: "keep",
+        includeMusic: true,
+        includePodcasts: true,
+        includeAudiobooks: true,
+        includePlaylists: true,
+        preserveFolderStructure: true,
+        albumGrouping: "album-artist",
+        selections: emptySelections(),
+      } satisfies DeviceSyncPreferences);
+
+    saveDeviceSyncPreferences(ctx.db, deviceId, { ...current, extraTrackPolicy: policy });
+    invalidateAssistantCache();
+    logActivity(
+      ctx.db,
+      "update_device",
+      `AI set orphan & reset policy to "${policy}" for device: ${device.profile.name}`
+    );
+    return {
+      updated: true,
+      name: device.profile.name,
+      policy,
+      message:
+        policy === "delete-all"
+          ? `Set to Delete all. The next sync will erase ${device.profile.name}'s Music, Podcasts and Audiobooks folders and rebuild them — you'll get a confirmation dialog before anything is deleted.`
+          : `Orphan & reset policy for ${device.profile.name} is now "${policy}".`,
+    };
+  },
+};
+
 const device_sync: AiTool = {
   name: "device_sync",
   description: "Start a sync for a device using its saved sync preferences. Opens the Sync panel where you can watch progress.",
@@ -1256,6 +1324,31 @@ const shadow_prune_orphans: AiTool = {
         error: err instanceof Error ? err.message : "Prune failed",
       };
     }
+  },
+};
+
+/**
+ * Issue #125. Runs in the renderer, like `shadow_rebuild`: the pass walks every
+ * shadow library and every connected device, so the user gets the progress
+ * modal instead of a silent multi-thousand-file background job.
+ */
+const mpc_repair_tags: AiTool = {
+  name: "mpc_repair_tags",
+  description:
+    "Repair the cover-art tag in Musepack (.mpc) files iPodRocks has already written into shadow libraries or copied onto devices. Older versions wrote the artwork with the wrong APEv2 item type, which tag editors show as hundreds of empty 'Cover Art' fields and which stops Rockbox reading the ReplayGain tags that follow it. Rewrites only the tag — never the audio — and files keep their size and timestamp, so nothing is re-transcoded or re-synced. Safe to run more than once.",
+  parameters: { type: "object", properties: {} },
+  kind: "write-destructive",
+  summarize: () =>
+    "Repair Musepack cover-art tags in every shadow library and on every connected device",
+  async run() {
+    const { BrowserWindow } = await import("electron");
+    const win = BrowserWindow.getAllWindows()[0];
+    if (win) win.webContents.send("assistant:triggerMpcTagRepair");
+    return {
+      ok: true,
+      message:
+        "Repairing your Musepack tags — I've opened the progress window so you can watch it. Only the tag is rewritten, so nothing gets re-encoded and your next sync won't re-copy anything.",
+    };
   },
 };
 
@@ -1509,12 +1602,14 @@ export const AI_TOOLS: AiTool[] = [
   device_update_settings,
   device_set_sync_preferences,
   device_set_usb_identity,
+  device_set_orphan_policy,
   device_sync,
   library_scan,
   shadow_list,
   shadow_rebuild,
   shadow_prune_orphans,
   shadow_delete,
+  mpc_repair_tags,
   library_find_duplicates,
   podcast_download_now,
   podcast_delete_episodes,

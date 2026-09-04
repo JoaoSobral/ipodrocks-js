@@ -132,6 +132,10 @@ export function SyncPanel() {
   const [syncOptionsForModal, setSyncOptionsForModal] = useState<SyncOptions | null>(null);
   const [precheckError, setPrecheckError] = useState<string | null>(null);
   const [brokenGateModal, setBrokenGateModal] = useState<{ broken: { id: number; name: string; typeName: string; missingCount: number; totalCount: number }[]; pendingOptions: SyncOptions } | null>(null);
+  // "Delete all" erases the device's content folders before copying, so it is
+  // confirmed the same way the broken-playlist gate is: stash the options,
+  // resume on confirm.
+  const [deleteAllGate, setDeleteAllGate] = useState<SyncOptions | null>(null);
   const [repairing, setRepairing] = useState(false);
 
   const [deviceId, setDeviceId] = useState<number | "">("");
@@ -596,6 +600,11 @@ export function SyncPanel() {
       }
     }
 
+    if (syncOpts.extraTrackPolicy === "delete-all") {
+      setDeleteAllGate(syncOpts);
+      return;
+    }
+
     setSyncOptionsForModal(syncOpts);
     setShowSyncModal(true);
     })();
@@ -730,14 +739,15 @@ export function SyncPanel() {
             )}
           </div>
           <Select
-            label="Orphan Policy"
-            tooltip="What to do with files already on the device that are no longer part of the sync. Keep leaves them untouched. Remove orphans deletes library tracks that are no longer in the sync selection. Remove all does the same plus wipes every auto-podcast and extra audiobook off the device. Prompt asks you before making changes."
+            testId="orphan-reset-policy"
+            label="Orphan & Reset Policy"
+            tooltip="What to do with content already on the device that this sync does not cover. Keep leaves everything untouched. Remove orphans deletes anything on the device that is not part of the sync selection — songs, podcasts and audiobooks alike, including content types this sync has nothing to copy to. Delete all erases the Music, Podcasts and Audiobooks folders outright and rebuilds them from your library, so auto-podcast episodes are downloaded again. Prompt reports what it found instead of deleting it."
             value={extraTrackPolicy}
             onChange={(v) => dispatch({ type: "setExtraTrackPolicy", value: v as ExtraTrackPolicy })}
             options={[
               { value: "keep", label: "Keep" },
               { value: "remove", label: "Remove orphans" },
-              { value: "remove-all", label: "Remove all" },
+              { value: "delete-all", label: "Delete all" },
               { value: "prompt", label: "Prompt" },
             ]}
           />
@@ -929,8 +939,12 @@ export function SyncPanel() {
                     await Promise.all(brokenGateModal.broken.map((pl) => repairPlaylist(pl.id)));
                     const opts = brokenGateModal.pendingOptions;
                     setBrokenGateModal(null);
-                    setSyncOptionsForModal(opts);
-                    setShowSyncModal(true);
+                    if (opts.extraTrackPolicy === "delete-all") {
+                      setDeleteAllGate(opts);
+                    } else {
+                      setSyncOptionsForModal(opts);
+                      setShowSyncModal(true);
+                    }
                   } catch (e) {
                     console.error("Repair failed:", e);
                   } finally {
@@ -939,6 +953,46 @@ export function SyncPanel() {
                 }}
               >
                 {repairing ? "Repairing…" : "Repair all & continue"}
+              </Button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      {/* "Delete all" confirmation gate */}
+      <Modal
+        open={deleteAllGate !== null}
+        onClose={() => setDeleteAllGate(null)}
+        title="Erase and rebuild this device?"
+        className="max-w-md"
+      >
+        {deleteAllGate && (
+          <div className="flex flex-col gap-4">
+            <p className="text-sm text-foreground">
+              This deletes the <strong>Music</strong>, <strong>Podcasts</strong>{" "}
+              and <strong>Audiobooks</strong> folders on{" "}
+              <strong>{deviceList.find((d) => d.id === deleteAllGate.deviceId)?.name ?? "this device"}</strong>{" "}
+              and rebuilds them from your library.
+            </p>
+            <ul className="text-xs text-muted-foreground list-disc pl-5 space-y-1">
+              <li>Everything currently in those folders is removed, including files iPodRocks did not put there.</li>
+              <li>Auto-podcast episodes are downloaded again, so this can take a while.</li>
+              <li>Ratings and listening history stored on the device are not touched.</li>
+            </ul>
+            <div className="flex gap-2 justify-end pt-1">
+              <Button variant="ghost" onClick={() => setDeleteAllGate(null)}>
+                Cancel
+              </Button>
+              <Button
+                variant="danger"
+                onClick={() => {
+                  const opts = deleteAllGate;
+                  setDeleteAllGate(null);
+                  setSyncOptionsForModal(opts);
+                  setShowSyncModal(true);
+                }}
+              >
+                Erase and rebuild
               </Button>
             </div>
           </div>

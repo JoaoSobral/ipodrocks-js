@@ -11,6 +11,8 @@ interface UIState {
   setPendingLibraryScan: (v: boolean) => void;
   pendingShadowRebuildId: number | null;
   setPendingShadowRebuildId: (id: number | null) => void;
+  pendingMpcTagRepair: boolean;
+  setPendingMpcTagRepair: (v: boolean) => void;
 }
 
 export const useUIStore = create<UIState>((set) => ({
@@ -24,4 +26,6 @@ export const useUIStore = create<UIState>((set) => ({
   setPendingLibraryScan: (v) => set({ pendingLibraryScan: v }),
   pendingShadowRebuildId: null,
   setPendingShadowRebuildId: (id) => set({ pendingShadowRebuildId: id }),
+  pendingMpcTagRepair: false,
+  setPendingMpcTagRepair: (v) => set({ pendingMpcTagRepair: v }),
 }));
