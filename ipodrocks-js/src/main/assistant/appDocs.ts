@@ -56,17 +56,22 @@ Play history — leave "Do not import play history from this device" unchecked (
 
 Rockbox smart playlists (tagnavi) — when enabled on a device profile, smart playlists sync as live Rockbox tagnavi database queries instead of static .m3u files. Classic, Genius, and Savant playlists always sync as .m3u — they are static track selections with no rules to translate. After syncing, reboot the device and run Database → Initialize Now in Rockbox for entries to appear. After the first init, updates are automatic if tagcache_autoupdate is on.
 
-Orphans — files on device not in library. Controlled by Orphan Policy (Remove/Keep/Prompt) in the Sync panel.
-Codec mismatches — old-codec files on device are removed and replaced when syncing with Orphan Policy set to Remove.
+Orphans — files on device not in library. Controlled by Orphan & Reset Policy in the Sync panel.
+Codec mismatches — old-codec files on device are removed and replaced when syncing with Orphan & Reset Policy set to Remove orphans or Delete all.
 
 ---
 
 ### Sync
 Copies music, podcasts, audiobooks, and playlists from library (or shadow library) to device. One-way: computer → device.
 
-Full sync — copies everything. Set Orphan Policy to Remove for an exact mirror of the library.
+Full sync — copies everything. Set Orphan & Reset Policy to Remove orphans for an exact mirror of the library.
 Custom sync — pick specific albums, artists, genres, podcasts, audiobooks, playlists.
-Orphan Policy — Remove (deletes files not in library), Keep (leaves them), Prompt (asks each time).
+Orphan & Reset Policy — what to do about content on the device this sync does not cover.
+  Keep — leave it alone.
+  Remove orphans — delete anything on the device the sync selection does not account for, across songs, podcasts AND audiobooks. Content types this sync has nothing to copy to are still swept.
+  Delete all — erase the Music, Podcasts and Audiobooks folders outright and rebuild them from the library. Everything in those folders goes, including files iPodRocks did not put there, and auto-podcast episodes are downloaded again. Ratings and listening history stored on the device are not touched. Confirmed in a dialog before the sync starts.
+  Prompt — report what was found instead of deleting it.
+  A device that had the old "Remove all" saved loads as "Remove orphans", so no one inherits a wipe from the rename.
 Album artwork — copied by default (cover.jpg, folder.png, etc.). Uncheck "Skip album artwork" to disable.
 Device Status — the card at the bottom of the Sync panel shows what is on the target device right now: songs, podcasts and audiobooks synced (and how many are still to sync), playlist files, orphans, and space used (e.g. 30.0 / 300.0 GB). It runs the same check as Devices → Check Device, once per device, and refreshes itself after a sync. Press Refresh to re-run it.
 
@@ -189,8 +194,15 @@ Star badges in track table:
 ---
 
 ### Settings — Overview
-Opened from the gear icon (top right). Two sections: OpenRouter API and Harmonic Analysis.
+Opened from the gear icon (top right). Sections: OpenRouter API, Harmonic Analysis, Ratings, Maintenance and Auto Podcasts.
 Click Save to apply. Cancel discards changes.
+
+---
+
+### Settings — Maintenance
+One-time repairs for files iPodRocks has already written.
+
+Repair Musepack tags — versions before 2.3.2 wrote the cover art into .mpc files with the wrong APEv2 item type. Tag editors (MP3tag, foobar2000) show it as hundreds of empty "Cover Art" fields, and Rockbox stops reading the ReplayGain tags that come after it. This checks every .mpc file in every shadow library and on every connected device and rewrites the tag in place. The audio is never re-encoded and files keep their size and timestamp, so nothing is re-transcoded and the next sync copies nothing extra. Safe to run more than once. Rocksy can run it with mpc_repair_tags.
 
 ---
 

@@ -27,6 +27,12 @@ import { isMpcencAvailable } from "../../main/utils/mpcenc";
 import { getFfmpegPath } from "../../main/utils/ffmpeg-path";
 import { convertWithCodec } from "../../main/sync/sync-conversion";
 import { MetadataExtractor } from "../../main/library/metadata-extractor";
+import { readApeTags, parseApeItems } from "../../main/tagging/reader";
+import { locateApeBlock } from "../../main/tagging/apev2/locate";
+import {
+  ITEM_TYPE_BINARY,
+  itemTypeFromFlags,
+} from "../../main/tagging/apev2/constants";
 
 function ffmpegAvailable(): boolean {
   try {
@@ -70,6 +76,21 @@ describe.skipIf(!canRun)("FLAC → Musepack tag preservation", () => {
     if (r.status !== 0) {
       throw new Error(`ffmpeg fixture generation failed: ${r.stderr}`);
     }
+
+    // Issue #125: without a picture the write path never emits a *binary* APEv2
+    // item, which is exactly why the malformed cover art shipped untested. A
+    // real folder cover here makes `writeMpcMetadata` take that branch, and a
+    // JPEG is guaranteed to carry the NUL bytes that made the mis-flagged item
+    // read as thousands of empty text values.
+    const cover = spawnSync(
+      getFfmpegPath(),
+      ["-y", "-f", "lavfi", "-i", "color=c=red:s=64x64:d=1", "-frames:v", "1",
+       path.join(workDir, "cover.jpg")],
+      { encoding: "utf8" }
+    );
+    if (cover.status !== 0) {
+      throw new Error(`ffmpeg cover generation failed: ${cover.stderr}`);
+    }
   });
 
   afterAll(() => {
@@ -102,6 +123,46 @@ describe.skipIf(!canRun)("FLAC → Musepack tag preservation", () => {
     expect(tag("REPLAYGAIN_TRACK_PEAK")).toBe("0.998054");
     expect(tag("REPLAYGAIN_ALBUM_GAIN")).toBe("-2.32 dB");
     expect(tag("REPLAYGAIN_ALBUM_PEAK")).toBe("0.821448");
+  }, 30000);
+
+  it("embeds the folder cover as a binary item that does not swallow ReplayGain", async () => {
+    const ok = await convertWithCodec(srcFlac, destMpc, { codec: "mpc", quality: 5 });
+    expect(ok).toBe(true);
+
+    const full = fs.readFileSync(destMpc);
+    const loc = locateApeBlock(full);
+    expect(loc).not.toBeNull();
+    const items = parseApeItems(full, loc!);
+
+    const coverIndex = items.findIndex(
+      (i) => i.key.toLowerCase() === "cover art (front)"
+    );
+    expect(coverIndex).toBeGreaterThanOrEqual(0);
+
+    // The defect: type bits saying "text" for a JPEG. Bit 0 is read-only and is
+    // not part of the type, so the whole word must be exactly 2.
+    expect(itemTypeFromFlags(items[coverIndex].flags)).toBe(ITEM_TYPE_BINARY);
+    expect(items[coverIndex].flags).toBe(2);
+
+    // ...and every ReplayGain item sits ahead of the artwork, so a reader with
+    // a bounded tag buffer reaches them regardless.
+    const rgIndexes = items
+      .map((item, i) => (item.key.toLowerCase().startsWith("replaygain_") ? i : -1))
+      .filter((i) => i >= 0);
+    expect(rgIndexes).toHaveLength(4);
+    for (const i of rgIndexes) expect(i).toBeLessThan(coverIndex);
+
+    // The image itself round-trips intact.
+    const tags = readApeTags(destMpc);
+    expect(tags.coverArt?.mimeType).toBe("image/jpeg");
+    expect(tags.coverArt?.data.subarray(0, 2)).toEqual(Buffer.from([0xff, 0xd8]));
+
+    // Independent oracle: ffmpeg still reports the ReplayGain tags on a file
+    // that now carries several KB of artwork ahead of nothing.
+    const probe = spawnSync(getFfmpegPath(), ["-i", destMpc], { encoding: "utf8" });
+    const out = `${probe.stdout}${probe.stderr}`;
+    expect(out).toContain("REPLAYGAIN_TRACK_GAIN");
+    expect(out).toContain("REPLAYGAIN_ALBUM_PEAK");
   }, 30000);
 
   it("scans the generated MPC back through the real MetadataExtractor", async () => {

@@ -17,7 +17,7 @@ Smart playlists use the same rule engine as sync custom selection. Rules are sto
 If your device runs Rockbox firmware, you can configure it to receive smart playlists as a live tag-tree view instead of static `.m3u` snapshots. Enable **"Rockbox smart playlists (tagnavi)"** on the device profile (Devices → Edit). When this is on:
 
 - During sync, smart playlists are written to `<device>/.rockbox/tagnavi_user.config` as tagnavi query entries that are evaluated live against the device's tag database.
-- Smart-playlist `.m3u` files are no longer written to the device's Playlists folder; any leftover ones from prior syncs are cleaned up under the configured Orphan Policy.
+- Smart-playlist `.m3u` files are no longer written to the device's Playlists folder; any leftover ones from prior syncs are cleaned up under the configured Orphan & Reset Policy.
 - Other playlist kinds (Classic, Genius, Savant) still write `.m3u` — see below for why.
 - Inside Rockbox, the entries appear at the bottom of the main **Database** menu (one entry per smart playlist, named after the playlist).
 

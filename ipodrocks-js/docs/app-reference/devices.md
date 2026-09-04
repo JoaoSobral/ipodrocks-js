@@ -16,8 +16,8 @@ The Devices panel lets you add, edit, and check Rockbox and mountable players.
 - **USB Device (optional)** — Pin the device to a specific piece of physical hardware instead of relying on its mount path. See [Identifying a device](#identifying-a-device) below.
 - **Codec config** — Direct copy (no conversion) or transcode to MP3, AAC, Musepack, Opus, OGG. If you use a shadow library, set the device source to "Shadow" and pick the shadow — no transcoding during sync.
 - **Variable bitrate (VBR)** — When transcoding to a lossy codec (MP3, AAC, OGG, Opus), tick this to encode at a quality level derived from the chosen bitrate instead of a fixed bitrate. VBR usually gives better quality per file size. The option only appears for these codecs — it is hidden for lossless formats (FLAC/ALAC), which are always variable, and for Musepack, which is already quality-based.
-- **Check Device** — Scans the device filesystem and compares with the library. "Codec mismatch" means files use a different codec than the device profile (e.g. MP3 on device, OPUS profile); when you sync with **Orphan Policy set to "Remove"**, old-codec files are deleted and replaced by the new codec.
-- **Orphans** — Files on the device that are not in the library. You can remove them during sync **only when Orphan Policy is set to "Remove"** (the setting lives in the Sync panel); with "Keep" or "Prompt", orphans are not auto-deleted.
+- **Check Device** — Scans the device filesystem and compares with the library. "Codec mismatch" means files use a different codec than the device profile (e.g. MP3 on device, OPUS profile); when you sync with **Orphan & Reset Policy set to "Remove orphans"**, old-codec files are deleted and replaced by the new codec.
+- **Orphans** — Files on the device that are not in the library. You can remove them during sync **only when Orphan & Reset Policy is set to "Remove orphans"** (the setting lives in the Sync panel), which sweeps songs, podcasts and audiobooks alike; with "Keep" or "Prompt", orphans are not auto-deleted. "Delete all" goes further and rebuilds the content folders from scratch.
 
 ## Identifying a device
 

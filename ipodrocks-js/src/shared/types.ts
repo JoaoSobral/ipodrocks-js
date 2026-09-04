@@ -482,7 +482,25 @@ export type SyncType = "full" | "custom";
  * compilations as a single album.
  */
 export type AlbumGrouping = "album-artist" | "track-artist";
-export type ExtraTrackPolicy = "keep" | "remove" | "remove-all" | "prompt";
+/**
+ * What to do about content on the device that this sync does not cover.
+ *
+ * - `keep`   — leave it alone.
+ * - `remove` — delete anything on the device the sync selection does not
+ *              account for, across music, podcasts *and* audiobooks. Content
+ *              types the selection is empty for are still swept: an orphan is
+ *              an orphan whether or not this run had anything to copy there.
+ * - `delete-all` — erase the device's Music, Podcasts and Audiobooks folders
+ *              outright before copying, so the sync rebuilds them from
+ *              scratch. Destructive and gated behind a confirmation.
+ * - `prompt` — report the extras rather than acting on them.
+ *
+ * `remove-all` is the retired name of an option that swept orphans and unlinked
+ * the auto-podcast/extra-audiobook files iPodRocks had recorded. It is not in
+ * the union: `getDeviceSyncPreferences()` loads a stored `remove-all` as
+ * `remove` on purpose, so nobody who picked the old option inherits a wipe.
+ */
+export type ExtraTrackPolicy = "keep" | "remove" | "delete-all" | "prompt";
 export type PlaybackStrategy = "native" | "transcode";
 
 export interface DeviceSyncPreferences {

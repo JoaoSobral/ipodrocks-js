@@ -298,6 +298,59 @@ export function onShadowBuildProgress(
 }
 
 // ---------------------------------------------------------------------------
+// Maintenance — one-shot repairs the user runs from Settings
+// ---------------------------------------------------------------------------
+
+export interface MpcRepairScope {
+  label: string;
+  scanned: number;
+  repaired: number;
+  failed: number;
+}
+
+export interface MpcRepairSummary {
+  scanned: number;
+  repaired: number;
+  failed: number;
+  scopes: MpcRepairScope[];
+  cancelled: boolean;
+}
+
+export interface MpcRepairProgress {
+  label: string;
+  scanned: number;
+  repaired: number;
+  failed: number;
+  currentFile: string;
+}
+
+/**
+ * Rewrite the malformed APEv2 cover-art item (issue #125) in every Musepack
+ * file already written into a shadow library or copied onto a device. Resolves
+ * with the summary when the pass finishes.
+ */
+export async function repairMpcTags(): Promise<MpcRepairSummary & { error?: string }> {
+  return window.api.invoke("maintenance:repairMpcTags") as Promise<
+    MpcRepairSummary & { error?: string }
+  >;
+}
+
+export async function cancelRepairMpcTags(): Promise<{ cancelled: boolean }> {
+  return window.api.invoke("maintenance:cancelRepairMpcTags") as Promise<{
+    cancelled: boolean;
+  }>;
+}
+
+export function onMpcRepairProgress(
+  cb: (progress: MpcRepairProgress) => void,
+): () => void {
+  return window.api.on(
+    "maintenance:repairProgress",
+    cb as (...args: unknown[]) => void,
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Devices
 // ---------------------------------------------------------------------------
 

@@ -59,7 +59,11 @@ describe("tagging/apev2/items", () => {
       const buf = serializeItem(item);
       const valueLen = 5 + 1 + 3;
       expect(buf.readUInt32LE(0)).toBe(valueLen);
-      expect(buf.readUInt32LE(4)).toBe(1);
+      // Issue #125: the type lives in bits 1-2, so binary is 2 — not 1, which
+      // spells "read-only UTF-8 text" and made every reader split the image on
+      // its NUL bytes.
+      expect(buf.readUInt32LE(4)).toBe(2);
+      expect(buf.readUInt32LE(4) & 1).toBe(0);
     });
   });
 

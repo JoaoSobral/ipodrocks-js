@@ -226,6 +226,26 @@ function buildLibraryContext(db: Database.Database): string {
   return lines.join("\n");
 }
 
+/**
+ * Render the stored `extra_track_policy` the way the Sync panel labels it. A
+ * device saved before 2.3.2 can still hold the retired "remove-all"; it loads
+ * as "remove" everywhere else, so describe it that way here too rather than
+ * telling Rocksy about an option that no longer exists.
+ */
+function describeOrphanPolicy(value: string): string {
+  switch (value) {
+    case "remove":
+    case "remove-all":
+      return "Remove orphans (songs, podcasts and audiobooks)";
+    case "delete-all":
+      return "Delete all (erases and rebuilds the device's content folders)";
+    case "prompt":
+      return "Prompt";
+    default:
+      return "Keep";
+  }
+}
+
 function buildDevicesContext(db: Database.Database): string {
   const devices = db
     .prepare(
@@ -339,7 +359,7 @@ function buildDevicesContext(db: Database.Database): string {
       if (prefs.include_audiobooks) content.push("audiobooks");
       if (prefs.include_playlists) content.push("playlists");
       lines.push(
-        `- Sync config: ${prefs.sync_type}${content.length ? ` (${content.join(", ")})` : ""}, extra tracks: ${prefs.extra_track_policy}${prefs.skip_album_artwork ? ", no artwork" : ""}`
+        `- Sync config: ${prefs.sync_type}${content.length ? ` (${content.join(", ")})` : ""}, orphan & reset policy: ${describeOrphanPolicy(prefs.extra_track_policy)}${prefs.skip_album_artwork ? ", no artwork" : ""}`
       );
     }
   }
@@ -558,6 +578,12 @@ Tool usage rules (CRITICAL):
 - NEVER say "I can't rebuild a shadow library" or "you'll have to recreate it manually" — you have \`shadow_list\` and \`shadow_rebuild\`.
 - User says their shadow library has duplicate or leftover albums, holds albums they renamed or deleted, or is bigger than their library (e.g. "my MPC library has three copies of the same album", "I renamed albums in Swinsian and the shadow kept the old ones") → a shadow library is a faithful copy of the library in another codec, so those files are orphans. Call \`shadow_list\`, then \`shadow_prune_orphans\`, which asks the user to confirm first because it deletes files. Note that renames from now on are cleaned up automatically — the prune is for the backlog left by older versions.
 - NEVER say "I can't delete a shadow library" — you have \`shadow_delete\`.
+- User reports Musepack/.mpc tag trouble — duplicate, repeated or empty "Cover Art" fields in MP3tag/foobar2000, artwork that looks broken in a tag editor, or Rockbox not reading the ReplayGain tags on .mpc files → this is a bug in versions before 2.3.2: the cover art was written with the wrong APEv2 item type, which also hides the ReplayGain tags that follow it. Call \`mpc_repair_tags\`. It asks the user to confirm first because it rewrites files, but it only rewrites the tag — no audio is re-encoded, files keep their size and timestamp, so nothing is re-transcoded or re-synced afterwards, and running it twice is harmless. Files transcoded from now on are written correctly.
+- NEVER say "I can't fix your Musepack tags", "you'll have to fix each file in MP3tag" or "I can't do anything about the ReplayGain tags" — you have \`mpc_repair_tags\`.
+- User wants to control what happens to content on the device that a sync does not cover — orphans, leftovers, "files on my iPod that aren't in my library any more", "wipe it and start again" → call \`device_set_orphan_policy\`. The options are \`keep\`, \`remove\` (deletes anything the sync selection doesn't account for, across songs, podcasts AND audiobooks — including content types this sync has nothing to copy to), \`delete-all\` (erases the device's Music, Podcasts and Audiobooks folders and rebuilds them from the library) and \`prompt\`.
+- Before setting \`delete-all\`, tell the user plainly what it does: everything in those three folders goes, including files iPodRocks did not put there, and auto-podcast episodes are downloaded again. Ratings and listening history stored on the device survive. Setting the policy deletes nothing by itself — the erase happens on the next sync, and the Sync panel asks the user to confirm before it starts.
+- User complains that removing orphans left podcasts or audiobooks behind → that was a bug in versions before 2.3.2, where only content types the sync had something to copy to were swept. It is fixed; \`remove\` now covers all three. Reassure them rather than suggesting \`delete-all\`.
+- NEVER say "I can't change the orphan policy" or "you'll have to set that in the Sync panel yourself" — you have \`device_set_orphan_policy\`.
 - NEVER say "I can't find duplicates" or "I can't check for duplicate files" — you have \`library_find_duplicates\`.
 - NEVER tell the user to manually find an RSS feed — use \`podcast_search\` for name-based search, or \`podcast_add_by_url\` if they have a specific URL.
 - User asks to find, search, or look up a LibriVox or public-domain audiobook → call \`audiobook_search\` immediately.

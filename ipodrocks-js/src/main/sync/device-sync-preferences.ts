@@ -3,6 +3,7 @@ import type {
   AlbumGrouping,
   CustomSelections,
   DeviceSyncPreferences,
+  ExtraTrackPolicy,
 } from "../../shared/types";
 
 export const emptySelections = (): CustomSelections => ({
@@ -49,6 +50,21 @@ function parseAlbumGrouping(value: string | null | undefined): AlbumGrouping {
   return value === "track-artist" ? "track-artist" : "album-artist";
 }
 
+/**
+ * A stored `remove-all` predates the "Delete all" option and must NOT load as
+ * `delete-all`. The old option swept orphans and unlinked the auto-podcast and
+ * extra-audiobook files iPodRocks had recorded; the new one erases the device's
+ * content folders. Mapping it to `remove` — which now sweeps every content type
+ * — is the closest honest match, and it means nobody who ticked the old box
+ * once gets their device wiped by an upgrade.
+ */
+function parseExtraTrackPolicy(value: string | null | undefined): ExtraTrackPolicy {
+  if (value === "remove-all") return "remove";
+  return value === "remove" || value === "delete-all" || value === "prompt"
+    ? value
+    : "keep";
+}
+
 export function getDeviceSyncPreferences(
   db: Database.Database,
   deviceId: number
@@ -59,10 +75,7 @@ export function getDeviceSyncPreferences(
   if (!row) return null;
   return {
     syncType: row.sync_type === "custom" ? "custom" : "full",
-    extraTrackPolicy:
-      row.extra_track_policy === "remove" || row.extra_track_policy === "remove-all" || row.extra_track_policy === "prompt"
-        ? (row.extra_track_policy as import("../../shared/types").ExtraTrackPolicy)
-        : "keep",
+    extraTrackPolicy: parseExtraTrackPolicy(row.extra_track_policy),
     includeMusic: row.include_music === 1,
     includePodcasts: row.include_podcasts === 1,
     includeAudiobooks: row.include_audiobooks === 1,

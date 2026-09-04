@@ -201,6 +201,94 @@ through the already-gated `library_scan`). Pinned in
 `src/__tests__/regressions/rating-tag-overwrite.test.ts` and
 `src/__tests__/regressions/rating-tag-always-wins.test.ts`.
 
+## Hazard: APEv2 item flags put the type in bits 1-2, not bits 0-1
+
+Issue #125. `ITEM_TYPE_BINARY` was `1`. In APEv2 **bit 0 is the read-only flag
+and bits 1-2 are the value type**, so `1` does not mean "binary" — it means
+"read-only UTF-8 **text**". Every spec-conformant reader (MP3tag, foobar2000,
+ffmpeg's `APE_TAG_FLAG_IS_BINARY = 1<<1`, Rockbox's `(flags & 0x06) == 0`) then
+parsed the cover art as a text value; APEv2 text values are **NUL-separated
+multi-values**, so the NUL bytes inside a JPEG exploded one item into thousands
+of mostly-empty "Cover Art" values, and Rockbox's bounded tag buffer was
+consumed before it reached the `REPLAYGAIN_*` items the writer emitted *after*
+the artwork.
+
+The bug was invisible from inside the app because reader and writer shared the
+same wrong mask — `reader.ts` decoded with `(flags & 3)` — so the round-trip
+test passed. `items.test.ts` actively pinned `flags === 1`, and no test ever
+wrote a cover-art item through the real pipeline: the fixture FLAC in
+`behaviors/mpc-transcode-tags.test.ts` had no picture and no `cover.jpg` beside
+it, so the binary branch never ran. **A round-trip through your own code is not
+a format test.** That fixture now ships a real `cover.jpg` for exactly this
+reason.
+
+Three rules:
+
+- **`itemTypeFromFlags()` (`apev2/constants.ts`) is the only place the type bits
+  are read.** Never mask with `& 3` — that folds the read-only bit into the type.
+- **`reader.ts` must keep treating a `cover art (front)` item as binary however
+  its flags read.** Every file iPodRocks wrote before the fix says "text" there.
+  Without the compat the fixed reader drops that artwork into `tags.extra` as a
+  garbage string, and `repairMpcTags()` — which round-trips reader → writer —
+  rewrites the JPEG as a text item and destroys it. Cover art is the only binary
+  key this writer has ever produced, so keying the compat on the name is exact.
+- **`tagsToItems()` emits `extra` (ReplayGain) before the artwork.** Insurance
+  against any reader with a bounded tag buffer; costs nothing to keep.
+
+`tagging/mpc/repair.ts` fixes files already on disk, driven by
+`repair-scan.ts` over shadow-library folders and device content folders
+(`maintenance:repairMpcTags`, Settings → Maintenance, Rocksy's
+`mpc_repair_tags`). Two properties are load-bearing and pinned:
+
+- **It rewrites only the trailing tag block, never the audio.** `readAudioOnly()`
+  does a synchronous read of the whole file (see the note in
+  `shadow-reconcile.ts`); doing that per file from an ipcMain handler blocks the
+  main process for a full read of the library.
+- **It preserves size and mtime, so the pass is invisible downstream.** Size is
+  unchanged for free (same items, same value lengths — only a flags word and the
+  order). The mtime must be restored from a `{ bigint: true }` stat as fractional
+  *seconds*: passing the `Date` form loses ~0.9 ms, which is enough to shift
+  `Math.floor(mtimeMs)` by one — and that floored value is exactly what
+  `shadow_tracks.mtime` stores and compares for equality.
+
+Pinned in `src/__tests__/regressions/mpc-cover-art-item-flags.test.ts`,
+`src/__tests__/behaviors/mpc-transcode-tags.test.ts` and
+`tests/e2e/mpc-tag-repair.test.ts`.
+
+## Hazard: "Delete all" resolves folders that can collapse to the device root
+
+The Sync tab's **Orphan & Reset Policy** (`ExtraTrackPolicy`) gained
+`delete-all`, which erases the device's Music, Podcasts and Audiobooks folders
+and lets the sync rebuild them (`sync/device-reset.ts`).
+
+- **`resolveResettableFolders()` is the guard and must stay one.**
+  `Device.musicFolder` and friends fall back with `?? "Music"`, which does *not*
+  catch an **empty string** stored in the profile: `path.join(mount, "")`
+  resolves to the mount root, so an empty folder name would turn "clear the
+  Music folder" into "erase the device". Only a path strictly inside the mount
+  is ever accepted, and the three are deduped in case a profile points two
+  content types at one folder.
+- **The reset must run before `device.getTracks()`.** `runSync` compares the
+  library against the listing read off the device, so a wipe after that listing
+  leaves the sync convinced everything is still there — an empty device and a
+  "0 synced" report.
+- **A stored `remove-all` loads as `remove`, never as `delete-all`**
+  (`parseExtraTrackPolicy()` in `sync/device-sync-preferences.ts`). The old
+  option swept orphans and unlinked recorded auto-podcast/audiobook files; the
+  new one erases folders. Nobody who ticked the old box inherits a wipe.
+
+Related: **`remove` now sweeps every content type.** It used to visit only the
+ones this sync had something to copy to (`willRunPodcast` was
+`Object.keys(podcastLibraryTracks).length > 0`), so a device full of podcasts
+survived "remove orphans" untouched whenever the selection had no podcasts —
+silently. The sweep is gated on the policy being an explicit user choice so a
+library that came back empty from a failed scan can never be read as "delete
+everything".
+
+Pinned in `src/__tests__/regressions/delete-all-path-guard.test.ts`,
+`src/__tests__/behaviors/orphan-reset-policy.test.ts` and
+`tests/e2e/orphan-reset-policy.test.ts`.
+
 ## Hazard: `foreign_keys = OFF` during track deletion
 
 `LibraryScanner.deleteRemovedTracks()` (`src/main/library/library-scanner.ts`) wraps its deletes in `PRAGMA foreign_keys = OFF`, so **no `ON DELETE CASCADE` declared in the schema fires there**. Every dependent table must be deleted by hand inside that transaction (`playback_logs`, `playback_stats`, `shadow_tracks`, `content_hashes`, `playlist_items`). The same applies to `cleanupOrphanedEntities()` in the same file.

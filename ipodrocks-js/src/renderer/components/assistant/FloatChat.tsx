@@ -46,10 +46,14 @@ export function FloatChat() {
         useUIStore.getState().setPendingShadowRebuildId(payload.shadowLibraryId);
       }
     );
+    const unsubMpcRepair = window.api.on("assistant:triggerMpcTagRepair", () => {
+      useUIStore.getState().setPendingMpcTagRepair(true);
+    });
     return () => {
       unsubSync();
       unsubScan();
       unsubShadow();
+      unsubMpcRepair();
     };
   }, []);
 

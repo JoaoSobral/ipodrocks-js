@@ -35,9 +35,11 @@ import {
 import { writeRating } from "../rockbox/tagcache-index";
 import { readAndIngestRuntimeData } from "../rockbox/runtime-ingest";
 import { logActivity } from "../activity/activity-logger";
+import { resetDeviceContent } from "../sync/device-reset";
 import type {
   SyncOptions,
   DeviceSyncPreferences,
+  ContentType,
 } from "../../shared/types";
 import { albumLabelsForTrack } from "../../shared/album-label";
 
@@ -233,9 +235,29 @@ export function registerSyncHandlers(): void {
         artworkErrors: number;
       } = { status: "completed", synced: 0, removed: 0, extras: [], missingFiles: [], errors: 0, artworkErrors: 0 };
 
-      const willRunMusic = Object.keys(musicLibraryTracks).length > 0;
-      const willRunPodcast = Object.keys(podcastLibraryTracks).length > 0;
-      const willRunAudiobook = Object.keys(audiobookLibraryTracks).length > 0;
+      // A removing policy has to visit a content type even when this sync has
+      // nothing to copy there: an orphan on the device is an orphan whether or
+      // not the selection covers podcasts. `runSync` handles an empty library
+      // map correctly — no track is "missing", every device file is an extra —
+      // so the sweep needs no separate deletion path. Gated on the policy being
+      // an explicit user choice, never inferred, so a library that came back
+      // empty because a scan failed can't be read as "delete everything".
+      const sweepsOrphans =
+        opts.extraTrackPolicy === "remove" || opts.extraTrackPolicy === "delete-all";
+      const hasFilesOnDevice = (contentType: ContentType): boolean => {
+        const contentPath = device.getContentPath(contentType);
+        return !!contentPath && fs.existsSync(contentPath);
+      };
+
+      const willRunMusic =
+        Object.keys(musicLibraryTracks).length > 0 ||
+        (sweepsOrphans && hasFilesOnDevice("music"));
+      const willRunPodcast =
+        Object.keys(podcastLibraryTracks).length > 0 ||
+        (sweepsOrphans && hasFilesOnDevice("podcast"));
+      const willRunAudiobook =
+        Object.keys(audiobookLibraryTracks).length > 0 ||
+        (sweepsOrphans && hasFilesOnDevice("audiobook"));
       const hasAutoPodcasts = device.profile.autoPodcastsEnabled === true;
       const hasAutoAudiobooks = listAudiobookSubs(lib.getConnection()).length > 0;
       const isEmptyLibrary = !willRunMusic && !willRunPodcast && !willRunAudiobook;
@@ -369,6 +391,22 @@ export function registerSyncHandlers(): void {
         console.error("[ipc] Rating ingest failed (non-fatal):", err);
       }
 
+      // "Delete all" — erase the content folders BEFORE the device is
+      // enumerated. `runSync` compares the library against the listing read
+      // from the device, so a wipe after that listing would leave the sync
+      // convinced everything is still there and copy nothing back.
+      if (opts.extraTrackPolicy === "delete-all") {
+        const reset = await resetDeviceContent(device, lib.getConnection(), opts.deviceId, {
+          progressCallback: syncOpts.progressCallback,
+          cancelSignal: syncSignal,
+        });
+        if (syncSignal.aborted) throw new SyncCancelled();
+        syncOpts.progressCallback?.({
+          event: "log",
+          message: `Delete all: cleared ${reset.reset.length} content folder(s); rebuilding from the library.`,
+        });
+      }
+
       if (willRunMusic) {
         const deviceMusicRaw = await device.getTracks("music", { cancelSignal: syncSignal });
         if (syncSignal.aborted) throw new SyncCancelled();
@@ -484,43 +522,6 @@ export function registerSyncHandlers(): void {
         console.error("[ipc] Auto audiobook sync to device failed:", err);
       }
 
-      // "Remove all" — wipe auto podcasts and extra audiobooks off the device
-      if (opts.extraTrackPolicy === "remove-all") {
-        const db = lib.getConnection();
-        try {
-          const podcastRows = db
-            .prepare("SELECT device_relative_path FROM device_podcast_synced WHERE device_id = ?")
-            .all(opts.deviceId) as { device_relative_path: string }[];
-          for (const row of podcastRows) {
-            const abs = path.join(device.profile.mountPath, row.device_relative_path);
-            try { fs.unlinkSync(abs); } catch { /* ignore */ }
-          }
-          db.prepare("DELETE FROM device_podcast_synced WHERE device_id = ?").run(opts.deviceId);
-          if (podcastRows.length > 0) {
-            syncOpts.progressCallback?.({ event: "log", message: `Remove all: removed ${podcastRows.length} auto-podcast file(s) from device.` });
-            result.removed += podcastRows.length;
-          }
-        } catch (err) {
-          console.error("[ipc] remove-all: podcast cleanup failed:", err);
-        }
-        try {
-          const abRows = db
-            .prepare("SELECT device_relative_path FROM device_audiobook_synced WHERE device_id = ?")
-            .all(opts.deviceId) as { device_relative_path: string }[];
-          for (const row of abRows) {
-            const abs = path.join(device.profile.mountPath, row.device_relative_path);
-            try { fs.unlinkSync(abs); } catch { /* ignore */ }
-          }
-          db.prepare("DELETE FROM device_audiobook_synced WHERE device_id = ?").run(opts.deviceId);
-          if (abRows.length > 0) {
-            syncOpts.progressCallback?.({ event: "log", message: `Remove all: removed ${abRows.length} extra-audiobook file(s) from device.` });
-            result.removed += abRows.length;
-          }
-        } catch (err) {
-          console.error("[ipc] remove-all: extra audiobook cleanup failed:", err);
-        }
-      }
-
       if (result.errors > 0 || result.artworkErrors > 0) result.status = "error";
 
       const shouldWritePlaylists =
@@ -606,7 +607,7 @@ export function registerSyncHandlers(): void {
               event: "log",
               message: `${orphanPaths.length} orphan playlist(s) on device.`,
             });
-            if (opts.extraTrackPolicy === "remove" || opts.extraTrackPolicy === "remove-all") {
+            if (sweepsOrphans) {
               const { removed } = removeExtraTracks(
                 orphanPaths,
                 syncOpts.progressCallback,

@@ -43,16 +43,25 @@ export function tagsToItems(tags: ApeTags): ApeItem[] {
     }
   }
 
+  // `extra` — which is where the four REPLAYGAIN_* items live — is emitted
+  // BEFORE the cover art, deliberately. Rockbox parses the item list
+  // sequentially into a bounded buffer, so a several-hundred-KB artwork blob
+  // sitting ahead of them can consume it before they are ever read (issue
+  // #125). Cheap insurance that costs nothing to keep.
+  for (const [key, value] of Object.entries(tags.extra ?? {})) {
+    // A legacy file whose cover item was mis-flagged as text reads back through
+    // the compat path in `reader.ts`; belt and braces, never let a stray key
+    // spelling the cover art produce a second, textual cover item.
+    if (key.toLowerCase() === COVER_ART_KEY.toLowerCase()) continue;
+    if (value !== undefined && String(value).trim() !== "") {
+      items.push(buildTextItem(key, String(value).trim()));
+    }
+  }
+
   if (tags.coverArt) {
     const ext = tags.coverArt.mimeType === "image/png" ? "png" : "jpg";
     const filename = tags.coverArt.filename ?? `Cover Art (Front).${ext}`;
     items.push(buildBinaryItem(COVER_ART_KEY, filename, tags.coverArt.data));
-  }
-
-  for (const [key, value] of Object.entries(tags.extra ?? {})) {
-    if (value !== undefined && String(value).trim() !== "") {
-      items.push(buildTextItem(key, String(value).trim()));
-    }
   }
 
   return items;
