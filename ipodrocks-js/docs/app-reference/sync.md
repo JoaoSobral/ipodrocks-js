@@ -6,7 +6,7 @@ The Sync panel copies music, podcasts, audiobooks, and playlists from your libra
 
 - **Device** — Select which device to sync.
 - **Sync type** — Full (everything) or Custom (pick albums, artists, genres, playlists).
-- **Full sync options** — Include/exclude music, podcasts, audiobooks, playlists. Orphan Policy (keep, remove, prompt). Skip album artwork.
+- **Full sync options** — Include/exclude music, podcasts, audiobooks, playlists. Orphan & Reset Policy (keep, remove orphans, delete all, prompt). Skip album artwork.
 - **Custom sync** — Select specific albums, artists, genres, podcasts, audiobooks, and playlists. Choose **Include** (sync only the ticked items) or **Exclude** (sync everything *except* the ticked items). The Audiobooks box includes **Extra Audiobooks** subscribed from LibriVox (see [Extra Audiobooks](./audiobooks.md)).
 - **Mirror library folder structure** — On by default. Reproduces your library's folder tree on the device 1:1, keeping album folder names exactly as they are (including the year, e.g. `Levels (2011)`). Turn it off to rebuild device paths from tags instead, as `Artist/Album/track.ext`.
 - **Group albums by** — Which artist identifies an album: **Album artist** (default) or **Track artist**. See below.
@@ -21,11 +21,14 @@ The Sync panel copies music, podcasts, audiobooks, and playlists from your libra
   - **Shadow library** — Transcode the whole library once, up front, into a separate folder. Sync then just copies those pre-converted files to the device. Trade: uses extra disk space on your computer, but subsequent syncs are fast and can be reused across multiple devices that share the same codec.
   - **Sync in another format** — No pre-built mirror. The device profile specifies a target codec, and FFmpeg converts each missing track on the fly during the sync. Trade: no extra disk space, but every sync that adds tracks pays the conversion cost again.
 - **What sync does and does not propagate** — Sync is a **one-way file copy** from computer to device. It only transfers audio files and album artwork; it does not write play counts, ratings, or any other library metadata to the device. This also applies to shadow libraries: they hold pre-transcoded audio files only — no play counts, ratings, or listening history. Play counts flow the *other* direction: iPodRocks imports them from the counters Rockbox keeps on the device (see Devices → "Play history"). Ratings are the one exception to the one-way rule — they travel both ways, and a rating you set in iPodRocks is written into Rockbox's own database on the next sync.
-- **Orphan Policy** (labeled "Extra Track Policy" in some earlier versions) — Controls what happens to files that exist **on the device but are not in the library** (orphans):
-  - **Remove** — Delete them during sync so the device mirrors the library.
-  - **Keep** — Leave them alone. Useful if you manually copy files to the device outside of iPodRocks.
-  - **Prompt** — Ask you each time orphans are found.
-- **Codec mismatches** — When a device has files in a codec that no longer matches its profile (e.g. old Musepack files after switching the profile to Opus) and you sync with **Orphan Policy = "Remove"**, those old-codec files are removed and replaced by the new codec during sync.
+- **Orphan & Reset Policy** (called "Orphan Policy" before 2.3.2, and "Extra Track Policy" in some earlier versions) — Controls what happens to content that exists **on the device but is not part of the sync**:
+  - **Keep** — Leave it alone. Useful if you manually copy files to the device outside of iPodRocks.
+  - **Remove orphans** — Delete anything the sync selection does not account for, so the device mirrors the library. This covers **songs, podcasts and audiobooks alike**, including content types the current sync has nothing to copy to. (Before 2.3.2 those were skipped, so a device full of podcasts survived "remove" untouched if your selection had no podcasts.)
+  - **Delete all** — Erase the device's **Music**, **Podcasts** and **Audiobooks** folders outright, then rebuild them from the library in the same sync. Everything in those folders goes, including files iPodRocks did not put there, and auto-podcast episodes are downloaded again. The **Playlists** folder is left alone, and so are the ratings and listening history stored on the device. iPodRocks asks you to confirm before anything is deleted.
+  - **Prompt** — Report what was found instead of deleting it.
+
+  If a device had the retired **Remove all** option saved, it loads as **Remove orphans** — upgrading never turns an old setting into a wipe.
+- **Codec mismatches** — When a device has files in a codec that no longer matches its profile (e.g. old Musepack files after switching the profile to Opus) and you sync with **Orphan & Reset Policy = "Remove orphans"** (or "Delete all"), those old-codec files are removed and replaced by the new codec during sync.
 - **Album artwork** — Copied by default (`cover.jpg`, `folder.png`, etc.). The **Skip album artwork** option is a per-device setting (Devices panel), not a per-sync toggle.
 - **Extra Audiobooks** — LibriVox audiobooks are downloaded on demand during the sync (not pre-fetched). Each book's chapters and cover are copied to `<device>/<Audiobooks folder>/<Author - Title>/`. See [Extra Audiobooks](./audiobooks.md).
 - **Rockbox tagnavi (per-device option)** — If the device profile has "Rockbox smart playlists (tagnavi)" enabled, smart playlists are written to `<device>/.rockbox/tagnavi_custom.config` instead of `Playlists/<name>.m3u`. See [Devices](./devices.md) and [Smart Playlists](./playlists-smart.md).
@@ -33,7 +36,7 @@ The Sync panel copies music, podcasts, audiobooks, and playlists from your libra
 ## How to work with it
 
 1. **Select the device** and ensure it is mounted.
-2. **Full sync** — Use for a complete mirror. Set Orphan Policy to "Remove" if you want the device to match the library exactly.
+2. **Full sync** — Use for a complete mirror. Set Orphan & Reset Policy to "Remove orphans" if you want the device to match the library exactly.
 3. **Custom sync** — Use when you want only certain albums, artists, or playlists. Pick the **Mode** (Include or Exclude), tick items in the category boxes, and click Start Sync.
 4. **Check Device** first (in Devices) to see synced vs to-sync vs orphans before syncing.
 
@@ -60,13 +63,13 @@ The setting is per device and is saved with the rest of that device's sync prefe
 
 **If the two options look identical**, no album-artist tags are in use in your library and the panel says so. iPodRocks reads that tag **from your files during a library scan**, so this is what you see when the library was last scanned before v2.3.0, or when you tagged album artists after your last scan. The note has a **Scan library** button that runs one; the scan reads the tags and the list changes on your next visit.
 
-**Changing it moves files.** The grouping decides where tracks are written, so switching it (or switching **Mirror library folder structure**) means the next sync copies tracks to their new locations. Set the Orphan Policy to **Remove** on that sync if you want the old folders cleaned up in the same pass; with **Keep** they stay behind until you remove them yourself.
+**Changing it moves files.** The grouping decides where tracks are written, so switching it (or switching **Mirror library folder structure**) means the next sync copies tracks to their new locations. Set the Orphan & Reset Policy to **Remove orphans** on that sync if you want the old folders cleaned up in the same pass; with **Keep** they stay behind until you remove them yourself.
 
 **Upgrading from an earlier version.** Libraries scanned before v2.3.0 never had their `albumartist` tags read, so their compilations are still split per track artist. The next library scan re-reads those tags once and merges the duplicate album entries; it does not re-hash files or re-transcode shadow libraries, so it is quick. Album selections you had already saved keep working — the old labels are still matched, and the picker moves them onto the new ones for you.
 
 ## Per-Device Sync Preferences
 
-Selecting a device in the Sync panel automatically restores that device's last-used sync configuration: sync type, content toggles (music/podcasts/audiobooks/playlists), orphan policy, **Mirror library folder structure**, **Group albums by**, **the custom-sync Include/Exclude mode**, and any custom selections of albums, artists, genres, playlists, podcasts, and audiobooks.
+Selecting a device in the Sync panel automatically restores that device's last-used sync configuration: sync type, content toggles (music/podcasts/audiobooks/playlists), orphan & reset policy, **Mirror library folder structure**, **Group albums by**, **the custom-sync Include/Exclude mode**, and any custom selections of albums, artists, genres, playlists, podcasts, and audiobooks.
 
 The state is saved every time you click **Sync** for that device — even if the sync errors partway through, because the saved state captures your intent, not the outcome.
 

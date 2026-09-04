@@ -37,7 +37,7 @@ Adding a device profile, comparing it against the library, and pushing the right
 | **SyncCore** | Compares library against device and produces a sync plan. |
 | **SyncExecutor** | Carries out the plan — copies, transcodes, removes files. |
 | **SyncConversion** | Transcodes audio via FFmpeg or `mpcenc`. |
-| **DeviceSyncPreferences** | Per-device rules: which content types, which playlists, orphan policy. |
+| **DeviceSyncPreferences** | Per-device rules: which content types, which playlists, orphan & reset policy. |
 | **TagcacheIO** | Reads and writes the Rockbox `database_changelog.txt` on the device mount. Handles Phase 1 (ingest) and Phase 3 (propagate) of the ratings sync cycle. |
 
 ### Ratings
