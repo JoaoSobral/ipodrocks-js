@@ -48,6 +48,7 @@ Add Device — register with name, mount path, model, codec config, folder layou
 Edit Device — change any setting.
 Check Device — compare device vs library. Shows synced, codec mismatch, to-sync, and orphans.
 Set as default — used as default device for sync and Genius.
+Eject — unmount the device from inside iPodRocks so it can be unplugged, instead of using Finder. macOS and Linux only; the button is hidden on Windows. Refused while a sync is running, for dev-mode devices, and when the path is not a mounted volume. Rocksy tool: device_eject (confirms first).
 
 Codec options: Direct Copy (no conversion), MP3, AAC, Musepack (MPC), Opus, OGG.
 Use shadow libraries for pre-transcoded sync (faster, avoids on-the-fly conversion).

@@ -739,6 +739,8 @@ export interface ShadowBuildProgress {
 }
 
 export interface IpcApi {
+  /** Host platform, exposed by the preload bridge. */
+  platform: NodeJS.Platform;
   invoke(channel: string, ...args: unknown[]): Promise<unknown>;
   on(
     channel: string,

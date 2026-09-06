@@ -18,6 +18,8 @@ import {
   removeDevice,
   checkDevice,
   pingDevice,
+  ejectDevice,
+  ejectSupported,
   listUsbDevices,
   pickFolder,
   getDeviceModels,
@@ -113,6 +115,9 @@ export function DevicePanel() {
   const [editingDeviceId, setEditingDeviceId] = useState<number | null>(null);
   const [checkResults, setCheckResults] = useState<Record<number, CheckResult>>({});
   const [checking, setChecking] = useState<Set<number>>(new Set());
+  const [ejecting, setEjecting] = useState<Set<number>>(new Set());
+  // Stable for the life of the window; Windows has no eject path.
+  const canEject = ejectSupported();
   const [onlineStatus, setOnlineStatus] = useState<Record<number, boolean | null>>({});
 
   // Form state
@@ -452,6 +457,34 @@ export function DevicePanel() {
     fetchDevices();
   }
 
+  async function handleEject(id: number) {
+    setEjecting((prev) => new Set(prev).add(id));
+    try {
+      // `safe()` returns failures as data, never a rejection, so check `.error`.
+      const result = await ejectDevice(id);
+      if (result.error) {
+        toast.error(result.error);
+        return;
+      }
+      toast.success(`Ejected '${result.name}'. It is safe to unplug.`);
+      // Nothing pushes device state to the renderer, so update it here: the
+      // volume is gone, and the cached check result describes a device that is
+      // no longer there.
+      setOnlineStatus((prev) => ({ ...prev, [id]: false }));
+      setCheckResults((prev) => {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+    } finally {
+      setEjecting((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+    }
+  }
+
   async function handleCheck(id: number) {
     setChecking((prev) => new Set(prev).add(id));
     try {
@@ -728,6 +761,16 @@ export function DevicePanel() {
                   >
                     {checking.has(d?.id ?? 0) ? "Checking…" : "Check Device"}
                   </Button>
+                  {canEject && (
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      onClick={() => d?.id != null && handleEject(d.id)}
+                      disabled={ejecting.has(d?.id ?? 0)}
+                    >
+                      {ejecting.has(d?.id ?? 0) ? "Ejecting…" : "Eject"}
+                    </Button>
+                  )}
                   <Button size="sm" variant="secondary" onClick={() => d && openForEdit(d)}>
                     Edit
                   </Button>

@@ -432,6 +432,30 @@ export async function pingDevice(deviceId: number): Promise<{ online: boolean }>
   return window.api.invoke("device:ping", deviceId) as Promise<{ online: boolean }>;
 }
 
+export interface EjectDeviceResult {
+  ejected?: boolean;
+  name?: string;
+  /** Present when the eject was refused or failed. `safe()` returns errors as data. */
+  error?: string;
+}
+
+/**
+ * Unmount and eject a device. macOS and Linux only; `ejectSupported()` gates the
+ * button so this is never reached on Windows.
+ */
+export async function ejectDevice(deviceId: number): Promise<EjectDeviceResult> {
+  return window.api.invoke("device:eject", deviceId) as Promise<EjectDeviceResult>;
+}
+
+/**
+ * Whether this platform has an eject path at all. Called during render, so it
+ * tolerates a missing bridge rather than throwing.
+ */
+export function ejectSupported(): boolean {
+  const platform = window.api?.platform;
+  return platform === "darwin" || platform === "linux";
+}
+
 export interface ReadRuntimeDataResult {
   imported: number;
   unmatched: number;
