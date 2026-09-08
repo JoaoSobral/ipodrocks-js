@@ -27,6 +27,8 @@ Click **Repair Musepack tags** to fix the files you already have. It checks ever
 
 Files transcoded from 2.3.2 onward are written correctly, so this is a one-time catch-up. Rocksy can run it for you — just ask.
 
+A [shadow library rebuild](./library.md) runs the same repair over that library's own folder. Use this action instead when files have already been synced to a device: it covers connected devices too, which a rebuild does not reach.
+
 ## How to work with it
 
 1. Click the **gear icon** in the top-right of the app to open Settings.

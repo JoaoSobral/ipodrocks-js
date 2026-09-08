@@ -19,8 +19,9 @@ import * as os from "os";
 import * as path from "path";
 import { launchApp, type LaunchedApp } from "./electron-launcher";
 
-// Windows has no eject path at all — the handler refuses and the button is
-// hidden, so there is nothing here to assert.
+// Windows has no eject path at all: the handler refuses and the button is
+// greyed out. The greyed-out state is a pure function of the platform and is
+// covered in src/__tests__/device-eject.test.ts, which runs anywhere.
 test.skip(process.platform === "win32", "Eject is macOS/Linux only");
 
 let launched: LaunchedApp;
@@ -87,8 +88,8 @@ test("the preload bridge exposes the host platform", async () => {
   const platform = await window.evaluate(
     () => (window as unknown as { api: Api }).api.platform
   );
-  // This is what hides the button on Windows; without it the button would be
-  // offered everywhere and simply fail.
+  // This is what greys the button out on Windows; without it the button would
+  // be offered everywhere and simply fail.
   expect(platform).toBe(process.platform);
 });
 
@@ -143,29 +144,95 @@ test("ejecting an unknown device id reports not found, never a crash", async () 
   expect(result.error).toMatch(/not found/i);
 });
 
-test("the Eject button appears in the device card and surfaces the refusal", async () => {
-  const window = await readyWindow();
-  const mountPath = makeTmpDir("ipr-e2e-eject-ui-");
-  const name = `Eject UI ${Date.now()}`;
+/**
+ * Locate a device card by its heading, then climb to the nearest ancestor that
+ * holds an eject button — so the control under test is unambiguously the one on
+ * *this* device's card. Keyed on the aria-label, not the text: the button is an
+ * icon now and has no text to match.
+ */
+function ejectButtonOn(window: Page, deviceName: string) {
+  return window
+    .getByRole("heading", { name: deviceName })
+    .locator("xpath=ancestor::div[.//button[@aria-label='Eject']][1]")
+    .getByRole("button", { name: "Eject", exact: true });
+}
 
+async function addDeviceAndOpenPanel(
+  window: Page,
+  config: Record<string, unknown>
+): Promise<void> {
   await window.evaluate(async (cfg) => {
     const api = (window as unknown as { api: Api }).api;
     await api.invoke("device:add", cfg);
-  }, { name, mountPath });
-
+  }, config);
+  // Adding over IPC pushes nothing to the renderer, and re-clicking the tab the
+  // panel is already on remounts nothing. Leave and come back so the new device
+  // is actually fetched.
+  await window.getByRole("button", { name: "Dashboard" }).first().click();
   await window.getByRole("button", { name: "Devices" }).first().click();
+}
 
-  // Climb from this device's heading to the nearest enclosing card, so the
-  // button we click is unambiguously the one on *this* device's card.
-  const card = window
-    .getByRole("heading", { name })
-    .locator("xpath=ancestor::div[.//button[normalize-space()='Eject']][1]");
-  const ejectButton = card.getByRole("button", { name: "Eject", exact: true });
-  await expect(ejectButton).toBeVisible({ timeout: 15_000 });
+test("the Eject button confirms first, then surfaces the refusal", async () => {
+  const window = await readyWindow();
+  const name = `Eject UI ${Date.now()}`;
+  // Dev mode so the device reads as connected and the button enables; the main
+  // process then refuses it, which is what makes this safe to run anywhere.
+  await addDeviceAndOpenPanel(window, {
+    name,
+    mountPath: makeTmpDir("ipr-e2e-eject-ui-"),
+    devMode: true,
+  });
 
+  const ejectButton = ejectButtonOn(window, name);
+  await expect(ejectButton).toBeEnabled({ timeout: 15_000 });
   await ejectButton.click();
+
+  // Nothing is unmounted until this is answered.
+  const dialog = window.getByRole("dialog");
+  await expect(dialog.getByText(`Eject '${name}'?`)).toBeVisible({ timeout: 10_000 });
+  await dialog.getByRole("button", { name: "Eject", exact: true }).click();
 
   // The handler returns errors as data, so the panel must read `.error` and
   // toast it rather than relying on a rejected promise.
-  await expect(window.getByText(/not mounted/i).first()).toBeVisible({ timeout: 10_000 });
+  await expect(window.getByText(/dev-mode/i).first()).toBeVisible({ timeout: 10_000 });
+});
+
+test("cancelling the confirmation ejects nothing", async () => {
+  const window = await readyWindow();
+  const name = `Eject Cancel ${Date.now()}`;
+  await addDeviceAndOpenPanel(window, {
+    name,
+    mountPath: makeTmpDir("ipr-e2e-eject-cancel-"),
+    devMode: true,
+  });
+
+  await ejectButtonOn(window, name).click();
+
+  const dialog = window.getByRole("dialog");
+  await expect(dialog.getByText(`Eject '${name}'?`)).toBeVisible({ timeout: 10_000 });
+  await dialog.getByRole("button", { name: "Cancel" }).click();
+
+  await expect(window.getByRole("dialog")).toHaveCount(0);
+  // A refusal toast would mean the eject ran anyway — Cancel has to reach the
+  // gate, not just close the dialog.
+  await expect(window.getByText(/dev-mode|not mounted|ejected/i)).toHaveCount(0);
+});
+
+test("the Eject button is greyed out, with a reason, for a device that is not connected", async () => {
+  const window = await readyWindow();
+  const name = `Eject Offline ${Date.now()}`;
+  // An ordinary folder: it exists, but `isDeviceMountPathOnline` sees it shares
+  // st_dev with its parent, so the device reads as unplugged.
+  await addDeviceAndOpenPanel(window, {
+    name,
+    mountPath: makeTmpDir("ipr-e2e-eject-offline-"),
+  });
+
+  const ejectButton = ejectButtonOn(window, name);
+  await expect(ejectButton).toBeDisabled({ timeout: 15_000 });
+
+  // `Button` sets `disabled:pointer-events-none`, so the explanation has to
+  // hang off the wrapper or the user gets a dead control with no reason given.
+  const wrapper = ejectButton.locator("xpath=parent::span");
+  await expect(wrapper).toHaveAttribute("title", /is not connected/i);
 });

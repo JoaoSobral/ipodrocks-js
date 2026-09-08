@@ -9,6 +9,7 @@ import {
   unescapeMountField,
   EjectUnsupportedError,
 } from "../main/devices/device-eject";
+import { ejectDisabledReason } from "../renderer/ipc/api";
 
 /**
  * Trimmed from real /proc/mounts on a Linux desktop with a USB player plugged
@@ -106,5 +107,62 @@ describe("resolveBlockDevice", () => {
       "/dev/sdc1 /media/pedro/IPOD vfat rw 0 0",
     ].join("\n");
     expect(resolveBlockDevice("/media/pedro/IPOD", shadowed)).toBe("/dev/sdc1");
+  });
+});
+
+/**
+ * The renderer's half of the same gate. It is a pure function of (platform,
+ * online) precisely so the Windows branch is testable — the e2e spec skips
+ * itself on win32, so this is the only cover the greyed-out-on-Windows state
+ * gets.
+ */
+describe("ejectDisabledReason", () => {
+  it("names Windows, and what to use there instead", () => {
+    const reason = ejectDisabledReason({
+      platform: "win32",
+      online: true,
+      deviceName: "My iPod",
+    });
+    expect(reason).toMatch(/macOS and Linux only/i);
+    expect(reason).toMatch(/Safely Remove Hardware/i);
+  });
+
+  it("reports the platform before the connection state", () => {
+    // A Windows user with an unplugged device should not be told to plug it in:
+    // it would not help.
+    expect(
+      ejectDisabledReason({ platform: "win32", online: false, deviceName: "My iPod" })
+    ).toMatch(/macOS and Linux only/i);
+  });
+
+  it("names the device when it is not connected", () => {
+    expect(
+      ejectDisabledReason({ platform: "darwin", online: false, deviceName: "My iPod" })
+    ).toBe("'My iPod' is not connected. Plug it in to eject it.");
+  });
+
+  it("treats an unresolved ping as offline", () => {
+    // `onlineStatus[id]` is null until the ping lands. Enabling the button in
+    // that window would let a click through for a device that turns out to be
+    // unplugged.
+    for (const online of [null, undefined]) {
+      expect(
+        ejectDisabledReason({ platform: "linux", online, deviceName: "My iPod" })
+      ).toMatch(/not connected/i);
+    }
+  });
+
+  it("returns null on a supported platform with the device connected", () => {
+    for (const platform of ["darwin", "linux"] as const) {
+      expect(
+        ejectDisabledReason({ platform, online: true, deviceName: "My iPod" })
+      ).toBeNull();
+    }
+  });
+
+  it("refuses a missing preload bridge rather than assuming a platform", () => {
+    expect(
+      ejectDisabledReason({ platform: undefined, online: true, deviceName: "My iPod" })
+    ).toMatch(/macOS and Linux only/i);
   });
 });

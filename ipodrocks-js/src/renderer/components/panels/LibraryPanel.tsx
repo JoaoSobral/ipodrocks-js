@@ -68,6 +68,26 @@ type SortField =
   | "rating";
 type SortDir = "asc" | "desc";
 
+/**
+ * A build runs three passes before it reports done, and the bar sweeps once per
+ * pass. Name the pass or each reset reads as a glitch.
+ */
+const BUILD_PHASE_STEP: Record<
+  NonNullable<ShadowBuildProgress["phase"]>,
+  string
+> = {
+  reconcile: "Step 1 of 3 — checking existing files",
+  verify: "Step 2 of 3 — checking tags",
+  convert: "Step 3 of 3 — converting",
+  artwork: "Step 3 of 3 — copying album artwork",
+};
+
+function buildPhaseVerb(phase: ShadowBuildProgress["phase"]): string {
+  if (phase === "reconcile") return "Checking";
+  if (phase === "verify") return "Checking tags";
+  return "Converting";
+}
+
 const columns: { field: SortField; label: string; width: string; minW?: string }[] = [
   { field: "title", label: "Title", width: "flex-[3]", minW: "120px" },
   { field: "artist", label: "Artist", width: "flex-[2]", minW: "100px" },
@@ -389,10 +409,7 @@ export function LibraryPanel() {
       if (p.logMessage) {
         addShadowLog(p.logMessage, p.logLevel ?? "info");
       } else if (p.currentFile) {
-        addShadowLog(
-          `${p.phase === "reconcile" ? "Checking" : "Converting"}: ${p.currentFile}`,
-          "info"
-        );
+        addShadowLog(`${buildPhaseVerb(p.phase)}: ${p.currentFile}`, "info");
       }
       if (
         p.status === "complete" ||
@@ -1265,14 +1282,9 @@ export function LibraryPanel() {
         className="max-w-xl"
       >
         <div className="flex flex-col gap-4">
-          {/* A build checks existing files before it encodes anything, so the
-              bar sweeps once per stage. Name the stage or the reset looks
-              like a glitch. */}
           {shadowBuildProgress?.status === "building" && (
             <p className="text-xs text-muted-foreground">
-              {shadowBuildProgress.phase === "reconcile"
-                ? "Step 1 of 2 — checking existing files"
-                : "Step 2 of 2 — converting"}
+              {BUILD_PHASE_STEP[shadowBuildProgress.phase ?? "convert"]}
             </p>
           )}
           <ProgressBar
@@ -1298,11 +1310,9 @@ export function LibraryPanel() {
               {shadowBuildProgress?.status === "error"
                 ? "Build failed"
                 : shadowBuildProgress?.currentFile
-                  ? `${
-                      shadowBuildProgress.phase === "reconcile"
-                        ? "Checking"
-                        : "Converting"
-                    }: ${shadowBuildProgress.currentFile}`
+                  ? `${buildPhaseVerb(shadowBuildProgress.phase)}: ${
+                      shadowBuildProgress.currentFile
+                    }`
                   : "Preparing…"}
             </span>
             <span className="tabular-nums shrink-0">

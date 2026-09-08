@@ -23,6 +23,7 @@ import * as os from "os";
 import * as path from "path";
 import { test, expect, type Page } from "@playwright/test";
 import { launchApp, type LaunchedApp } from "./electron-launcher";
+import { AUDIO, COVER, itemFlags, itemOffset, writeLegacyMpc } from "../../src/__tests__/harness/legacy-mpc";
 
 let launched: LaunchedApp;
 let rootDir: string;
@@ -33,81 +34,6 @@ interface ApiWindow {
     invoke: (channel: string, ...args: unknown[]) => Promise<unknown>;
     on: (channel: string, cb: (...args: unknown[]) => void) => () => void;
   };
-}
-
-/** "MP+" SV7 magic plus filler, so the file is a plausible Musepack. */
-const AUDIO = Buffer.concat([
-  Buffer.from([0x4d, 0x50, 0x2b, 0x07]),
-  Buffer.alloc(2048, 0xa5),
-]);
-
-/** JPEG-ish, riddled with the NUL bytes that made one item read as thousands. */
-const COVER = Buffer.concat([
-  Buffer.from([0xff, 0xd8, 0xff, 0xe0]),
-  Buffer.alloc(96, 0x00),
-  Buffer.from([0x11, 0x22, 0x00, 0x33]),
-]);
-
-function textItem(key: string, value: string): Buffer {
-  const val = Buffer.from(value, "utf8");
-  const head = Buffer.alloc(8);
-  head.writeUInt32LE(val.byteLength, 0);
-  head.writeUInt32LE(0, 4); // UTF-8 text
-  return Buffer.concat([head, Buffer.from(key, "ascii"), Buffer.alloc(1, 0), val]);
-}
-
-/** The cover item exactly as the buggy writer emitted it: flags = 1. */
-function legacyCoverItem(): Buffer {
-  const val = Buffer.concat([Buffer.from("cover.jpg", "utf8"), Buffer.alloc(1, 0), COVER]);
-  const head = Buffer.alloc(8);
-  head.writeUInt32LE(val.byteLength, 0);
-  head.writeUInt32LE(1, 4); // <- the defect: read-only TEXT, not binary
-  return Buffer.concat([
-    head,
-    Buffer.from("Cover Art (Front)", "ascii"),
-    Buffer.alloc(1, 0),
-    val,
-  ]);
-}
-
-/** Write an .mpc with the pre-fix tag: artwork ahead of the ReplayGain items. */
-function writeLegacyMpc(filePath: string): void {
-  const items = [
-    textItem("Title", "Legacy Track"),
-    legacyCoverItem(),
-    textItem("REPLAYGAIN_TRACK_GAIN", "-3.38 dB"),
-    textItem("REPLAYGAIN_ALBUM_GAIN", "-4.10 dB"),
-  ];
-  const body = Buffer.concat(items);
-  const tagSize = body.byteLength + 32;
-
-  const head = (isHeader: boolean): Buffer => {
-    const buf = Buffer.alloc(32, 0);
-    buf.write("APETAGEX", 0, "ascii");
-    buf.writeUInt32LE(2000, 8);
-    buf.writeUInt32LE(tagSize, 12);
-    buf.writeUInt32LE(items.length, 16);
-    let flags = (1 << 31) | (1 << 30);
-    if (isHeader) flags |= 1 << 29;
-    buf.writeUInt32LE(flags >>> 0, 20);
-    return buf;
-  };
-
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  fs.writeFileSync(filePath, Buffer.concat([AUDIO, head(true), body, head(false)]));
-}
-
-/** Byte offset of an APEv2 item's key, and the flags word that precedes it. */
-function itemFlags(file: Buffer, key: string): number {
-  const at = file.indexOf(Buffer.from(`${key}\0`, "ascii"));
-  if (at < 0) throw new Error(`item "${key}" not found`);
-  return file.readUInt32LE(at - 4);
-}
-
-function itemOffset(file: Buffer, key: string): number {
-  const at = file.indexOf(Buffer.from(`${key}\0`, "ascii"));
-  if (at < 0) throw new Error(`item "${key}" not found`);
-  return at;
 }
 
 test.beforeEach(async () => {
