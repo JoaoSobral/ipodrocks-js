@@ -91,6 +91,13 @@ function attachContextMenu(win: BrowserWindow): void {
   });
 }
 
+/**
+ * Run without showing the window. Set only by `tests/e2e/electron-launcher.ts`;
+ * nothing in a shipped build sets it, and an app that never shows a window is
+ * useless to a user, so this must stay opt-in.
+ */
+const HEADLESS = process.env.IPODROCKS_HEADLESS === "1";
+
 function createWindow(): BrowserWindow {
   const preloadPath = path.join(__dirname, "preload.js");
   const iconPath = getIconPath();
@@ -103,11 +110,21 @@ function createWindow(): BrowserWindow {
     backgroundColor: "#0d1015",
     titleBarStyle: "hiddenInset",
     icon: iconPath,
+    // The e2e suite drives the renderer over CDP, which needs a live window but
+    // not a visible one. Keeping it off screen stops ninety-odd Electron
+    // launches stealing focus from whatever the developer is doing; CI gets the
+    // same effect from its virtual display.
+    show: !HEADLESS,
     webPreferences: {
       preload: preloadPath,
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      // Chromium throttles timers in a window that is hidden or occluded, which
+      // would turn every test that waits on one into a slow flake. Only relaxed
+      // for the hidden window above — a real backgrounded window should still
+      // throttle.
+      backgroundThrottling: !HEADLESS,
     },
   });
 
@@ -143,6 +160,9 @@ function createWindow(): BrowserWindow {
 }
 
 app.whenReady().then(() => {
+  // A hidden window still puts the app in the Dock and pulls focus there on
+  // launch, which is most of what the headless mode exists to avoid.
+  if (HEADLESS) app.dock?.hide();
   cleanupPlayerTemp();
   registerMediaProtocol();
   registerIpcHandlers();

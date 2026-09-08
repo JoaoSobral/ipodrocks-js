@@ -4,6 +4,16 @@
 
 Every time a feature or functionality is added or changed, the corresponding end-to-end tests **must** be created or updated in the same change. No feature work ships without end-to-end coverage of the new/modified behavior. Prefer E2E tests (Playwright, `npm run test:e2e`) over unit/integration tests.
 
+The e2e suite runs the app **hidden**: `tests/e2e/electron-launcher.ts` sets
+`IPODROCKS_HEADLESS=1`, which `src/main/index.ts` turns into `show: false` plus
+`backgroundThrottling: false` on the `BrowserWindow`, and `app.dock.hide()` on
+macOS. Playwright drives the renderer over CDP, so nothing needs the window on
+screen — without this a full run is ninety-odd Electron launches stealing focus
+for two minutes. **Run `IPODROCKS_HEADLESS=0 npx playwright test <file>` to watch
+one happen**, which is the first thing to try when a UI test fails only in CI.
+The flag is checked as `=== "1"` and is set nowhere else: an app that never
+shows a window is useless to a user, so it must stay opt-in.
+
 ## AI Assistant (Rocksy) Tool Policy
 
 Every new user-facing action or feature **must** have a corresponding tool in `src/main/assistant/tools.ts` so Rocksy can perform it on the user's behalf. Tool tiers:
