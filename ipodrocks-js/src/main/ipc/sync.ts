@@ -45,6 +45,17 @@ import { albumLabelsForTrack } from "../../shared/album-label";
 
 let activeSyncAbort: AbortController | null = null;
 
+/**
+ * Is a sync running right now?
+ *
+ * Exposed for `device:eject`, which must refuse mid-sync: unmounting under a
+ * running copy leaves half-written files behind, and the OS would fail the
+ * unmount with an opaque "Resource busy" anyway.
+ */
+export function isSyncActive(): boolean {
+  return activeSyncAbort !== null;
+}
+
 export function registerSyncHandlers(): void {
   ipcMain.handle(
     "sync:start",

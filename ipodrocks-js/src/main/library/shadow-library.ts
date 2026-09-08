@@ -15,6 +15,10 @@ import {
   copyArtworkToShadowLibrary,
   SyncCancelled,
 } from "../sync/sync-core";
+import {
+  repairMpcTagsInTree,
+  type RepairScanResult,
+} from "../tagging/mpc/repair-scan";
 import { findOnDisk, normalizePath } from "../utils/normalize-path";
 import { decidePrune, type ShadowFileEntry } from "./shadow-prune";
 import { MetadataExtractor } from "./metadata-extractor";
@@ -37,6 +41,13 @@ const RECONCILE_YIELD_EVERY = 50;
 
 /** Pending row writes buffered before a transaction flush. */
 const RECONCILE_FLUSH_EVERY = 500;
+
+/**
+ * How often the tag-verify phase is allowed to emit a progress frame. The walk
+ * calls back on every file examined, which on a clean library is faster than
+ * the renderer can paint.
+ */
+const VERIFY_PROGRESS_THROTTLE_MS = 200;
 
 /**
  * Files handled between event-loop yields during the orphan prune. Each step is
@@ -754,6 +765,37 @@ export class ShadowLibraryManager {
       });
     }
 
+    // A rebuild never re-opens a file it is about to skip: `_transcodeTrack`
+    // returns "skipped" on row+file existence alone, and the reconcile above
+    // trusts a stored size+mtime without parsing an MPC file at all. So a
+    // defect in what an *earlier* version of the transcoder wrote survives
+    // every rebuild and every rescan — which is issue #130. Check the tag block
+    // itself here. It is cheap (a clean file costs one 160-byte read) and the
+    // repair preserves size and mtime, so the stat baseline the reconcile just
+    // verified stays valid and nothing re-encodes or re-copies because of it.
+    const tagRepair = await this._verifyShadowTags(
+      lib,
+      shadowLibId,
+      total,
+      progressCallback,
+      signal
+    );
+
+    if (signal?.aborted) {
+      this.stmtSetStatus.run("paused", shadowLibId);
+      progressCallback?.({
+        shadowLibraryId: shadowLibId,
+        processed: 0,
+        total,
+        currentFile: "",
+        status: "paused",
+        phase: "verify",
+        logMessage: "Build paused while checking tags — will resume on next launch",
+        logLevel: "info",
+      });
+      return;
+    }
+
     const settings = this._buildConversionSettings(codecConfig, lib.vbrEnabled);
 
     let converted = 0;
@@ -953,7 +995,7 @@ export class ShadowLibraryManager {
       status: hasErrors ? "error" : "complete",
       logMessage: `${hasErrors ? "Build failed" : "Build complete"} — ${converted} converted, ${skipped} skipped${
         rec.adopted > 0 ? ` (${rec.adopted} adopted)` : ""
-      }, ${errors} errors`,
+      }${tagRepair.repaired > 0 ? `, ${tagRepair.repaired} tags repaired` : ""}, ${errors} errors`,
       logLevel: hasErrors ? "error" : "info",
     });
   }
@@ -1276,6 +1318,88 @@ export class ShadowLibraryManager {
     } catch {
       return null;
     }
+  }
+
+  /**
+   * Walk the shadow folder and repair any Musepack tag block still carrying the
+   * issue #125 defect — a cover-art item flagged as text, or ReplayGain items
+   * sitting behind the artwork where a bounded reader never reaches them.
+   *
+   * This is a separate tree walk rather than a per-track check because the
+   * transcode loop is exactly what cannot see these files: it skips them. It is
+   * deliberately *not* gated on the library's codec — `repairMpcTagsInTree`
+   * already filters to `.mpc`, and a folder can hold Musepack files a later
+   * codec change left behind. Settings -> Maintenance walks every shadow
+   * library the same way, for the same reason.
+   */
+  private async _verifyShadowTags(
+    lib: ShadowLibrary,
+    shadowLibId: number,
+    total: number,
+    progressCallback?: (progress: ShadowBuildProgress) => void,
+    signal?: AbortSignal
+  ): Promise<RepairScanResult> {
+    const empty: RepairScanResult = { scanned: 0, repaired: 0, failed: 0 };
+
+    // The same guard the reconcile uses: an unreachable root is not "every file
+    // is broken", it is "there is nothing here to look at".
+    const root = this._statOnDisk(lib.path);
+    if (root === null || !root.isDirectory()) return empty;
+
+    let lastLogTime = 0;
+    const result = await repairMpcTagsInTree(lib.path, {
+      cancelSignal: signal,
+      onProgress: (p) => {
+        if (!progressCallback) return;
+        const now = Date.now();
+        if (now - lastLogTime < VERIFY_PROGRESS_THROTTLE_MS) return;
+        lastLogTime = now;
+        progressCallback({
+          shadowLibraryId: shadowLibId,
+          processed: Math.min(total, p.scanned),
+          total,
+          currentFile: path.basename(p.currentFile),
+          status: "building",
+          phase: "verify",
+        });
+      },
+    });
+
+    if (result.repaired > 0 || result.failed > 0) {
+      const parts = [`${result.repaired} repaired`];
+      if (result.failed > 0) {
+        parts.push(`${result.failed} could not be written`);
+      }
+      progressCallback?.({
+        shadowLibraryId: shadowLibId,
+        processed: total,
+        total,
+        currentFile: "",
+        status: "building",
+        phase: "verify",
+        logMessage: `Checked tags on ${result.scanned} Musepack file(s) — ${parts.join(", ")}`,
+        logLevel: result.failed > 0 ? "error" : "success",
+      });
+    }
+
+    if (result.repaired > 0) {
+      // The repair keeps the file's size and mtime, which is what stops it
+      // re-encoding here — and equally what stops the sync noticing. Copies
+      // already on a device still carry the old tag.
+      progressCallback?.({
+        shadowLibraryId: shadowLibId,
+        processed: total,
+        total,
+        currentFile: "",
+        status: "building",
+        phase: "verify",
+        logMessage:
+          "Files already copied to a device keep the old tag — run Settings → Maintenance → Repair Musepack tags to fix those too.",
+        logLevel: "info",
+      });
+    }
+
+    return result;
   }
 
   private async _transcodeTrack(

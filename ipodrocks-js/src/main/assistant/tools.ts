@@ -44,6 +44,9 @@ import { findDuplicateFileGroups } from "../library/duplicate-files";
 import { logActivity } from "../activity/activity-logger";
 import { invalidateAssistantCache } from "./assistantChat";
 import { listUsbDevices } from "../devices/usb-devices";
+import { ejectDevice, isEjectSupported } from "../devices/device-eject";
+import { isDeviceMountPathOnline } from "../devices/device-online";
+import { isSyncActive } from "../ipc/sync";
 import {
   getGeniusTypesWithAvailability,
   generateGeniusPlaylistFromDb,
@@ -861,6 +864,46 @@ const device_remove: AiTool = {
   },
 };
 
+const device_eject: AiTool = {
+  name: "device_eject",
+  description:
+    "Safely eject (unmount) a connected device so it can be unplugged. macOS and Linux only. Refuses while a sync is running, and for dev-mode or unmounted devices. Does not delete anything.",
+  parameters: {
+    type: "object",
+    properties: {
+      device_id: { type: "number", description: "Device ID to eject (from device_list)" },
+    },
+    required: ["device_id"],
+  },
+  kind: "write-destructive",
+  summarize: (a) => `Eject device #${a.device_id} so it can be unplugged`,
+  async run(args, ctx) {
+    const deviceId = Number(args.device_id);
+    if (!Number.isInteger(deviceId) || deviceId <= 0) throw new Error("Invalid device_id");
+    const device = ctx.getDevicesCore().getDeviceById(deviceId);
+    if (!device) throw new Error(`Device #${deviceId} not found`);
+    const { name, mountPath } = device.profile;
+
+    if (!isEjectSupported()) {
+      throw new Error("Ejecting from iPodRocks is not supported on this platform yet.");
+    }
+    if (isSyncActive()) {
+      throw new Error("A sync is running. Wait for it to finish before ejecting.");
+    }
+    if (device.profile.devMode) {
+      throw new Error(`'${name}' is a dev-mode device, so there is nothing to eject.`);
+    }
+    if (!isDeviceMountPathOnline(mountPath)) {
+      throw new Error(`'${name}' is not mounted.`);
+    }
+
+    const result = await ejectDevice(mountPath);
+    if (!result.ok) throw new Error(result.reason);
+    logActivity(ctx.db, "update_device", `AI ejected device: ${name}`);
+    return { ejected: true, name };
+  },
+};
+
 const device_update_settings: AiTool = {
   name: "device_update_settings",
   description:
@@ -1598,6 +1641,7 @@ export const AI_TOOLS: AiTool[] = [
   podcast_subscribe,
   podcast_add_by_url,
   device_check,
+  device_eject,
   device_remove,
   device_update_settings,
   device_set_sync_preferences,

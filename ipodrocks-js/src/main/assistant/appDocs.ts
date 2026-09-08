@@ -35,6 +35,7 @@ Add Folder — adds a root folder for music, podcasts, or audiobooks. Scans recu
 Scan Library — re-scans all folders. Uses content hashes to skip unchanged files.
 Clear scan cache — forces a full re-scan next time (use when tags changed outside iPodRocks).
 Shadow Libraries — pre-transcoded mirrors (e.g. FLAC → MPC). Create once, sync fast to multiple devices that need a specific codec. Shadow libraries hold audio files and artwork only — no play counts, ratings, or listening history.
+Rebuild (the ⟳ button on a shadow library row) — adopts files that are already correctly encoded rather than re-encoding them, and checks the Musepack tags in the folder, repairing any still carrying the pre-2.3.2 cover-art defect. It does not reach copies already on a device: those need Settings → Maintenance → Repair Musepack tags.
 Tracks / Playlists — switch between track list and library playlists. Search, sort, filter by device, type, sync status.
 
 Tip: enable "Extract harmonic data" and "Analyze with Essentia" in Settings before scanning if you want key/BPM data for Savant and harmonic mixing.
@@ -48,6 +49,7 @@ Add Device — register with name, mount path, model, codec config, folder layou
 Edit Device — change any setting.
 Check Device — compare device vs library. Shows synced, codec mismatch, to-sync, and orphans.
 Set as default — used as default device for sync and Genius.
+Eject — unmount the device from inside iPodRocks so it can be unplugged, instead of using Finder. macOS and Linux only; the button is hidden on Windows. Refused while a sync is running, for dev-mode devices, and when the path is not a mounted volume. Rocksy tool: device_eject (confirms first).
 
 Codec options: Direct Copy (no conversion), MP3, AAC, Musepack (MPC), Opus, OGG.
 Use shadow libraries for pre-transcoded sync (faster, avoids on-the-fly conversion).
@@ -202,7 +204,7 @@ Click Save to apply. Cancel discards changes.
 ### Settings — Maintenance
 One-time repairs for files iPodRocks has already written.
 
-Repair Musepack tags — versions before 2.3.2 wrote the cover art into .mpc files with the wrong APEv2 item type. Tag editors (MP3tag, foobar2000) show it as hundreds of empty "Cover Art" fields, and Rockbox stops reading the ReplayGain tags that come after it. This checks every .mpc file in every shadow library and on every connected device and rewrites the tag in place. The audio is never re-encoded and files keep their size and timestamp, so nothing is re-transcoded and the next sync copies nothing extra. Safe to run more than once. Rocksy can run it with mpc_repair_tags.
+Repair Musepack tags — the same repair a shadow library rebuild now runs, but over connected devices as well, which a rebuild does not reach. Versions before 2.3.2 wrote the cover art into .mpc files with the wrong APEv2 item type. Tag editors (MP3tag, foobar2000) show it as hundreds of empty "Cover Art" fields, and Rockbox stops reading the ReplayGain tags that come after it. This checks every .mpc file in every shadow library and on every connected device and rewrites the tag in place. The audio is never re-encoded and files keep their size and timestamp, so nothing is re-transcoded and the next sync copies nothing extra. Safe to run more than once. Rocksy can run it with mpc_repair_tags.
 
 ---
 

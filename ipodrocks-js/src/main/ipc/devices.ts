@@ -9,7 +9,9 @@ import {
   buildLibraryTrackMaps,
   remapTrackMapToShadow,
 } from "./common";
-import { isDeviceOnline } from "../devices/device-online";
+import { isDeviceOnline, isDeviceMountPathOnline } from "../devices/device-online";
+import { ejectDevice, isEjectSupported } from "../devices/device-eject";
+import { isSyncActive } from "./sync";
 import { refreshUsbSnapshot, listUsbDevices } from "../devices/usb-devices";
 import { getDeviceSyncPreferences } from "../sync/device-sync-preferences";
 import {
@@ -137,6 +139,45 @@ export function registerDeviceHandlers(): void {
       if (!device) return { online: false };
       await refreshUsbSnapshot();
       return { online: isDeviceOnline(device.profile) };
+    })
+  );
+
+  ipcMain.handle(
+    "device:eject",
+    safe("device:eject", async (_event, deviceId: number) => {
+      if (!isEjectSupported()) {
+        return { error: "Ejecting from iPodRocks is not supported on this platform yet." };
+      }
+      const device = getDevicesCore().getDeviceById(deviceId);
+      if (!device) return { error: "Device not found" };
+      const { name, mountPath } = device.profile;
+
+      // Unmounting under a running sync leaves half-copied files behind. The OS
+      // would refuse anyway, but "Resource busy" tells the user nothing.
+      if (isSyncActive()) {
+        return { error: "A sync is running. Wait for it to finish before ejecting." };
+      }
+      // A dev-mode device is an ordinary folder that `isDeviceOnline` reports as
+      // online unconditionally — there is no volume to eject.
+      if (device.profile.devMode) {
+        return { error: `'${name}' is a dev-mode device, so there is nothing to eject.` };
+      }
+      // The st_dev check is what separates a live volume from a plain directory
+      // or the orphan left behind by a previous eject. Without it we would hand
+      // an arbitrary folder to `diskutil eject`.
+      if (!isDeviceMountPathOnline(mountPath)) {
+        return { error: `'${name}' is not mounted.` };
+      }
+
+      const result = await ejectDevice(mountPath);
+      if (!result.ok) return { error: result.reason };
+
+      logActivity(
+        getLibrary().getConnection(),
+        "update_device",
+        `Ejected device: ${name}`
+      );
+      return { ejected: true, name };
     })
   );
 

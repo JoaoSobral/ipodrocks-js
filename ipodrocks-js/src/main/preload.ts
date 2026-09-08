@@ -27,6 +27,13 @@ function isAllowedChannel(channel: string): boolean {
 }
 
 const api = {
+  /**
+   * The host platform, so the renderer can hide controls that only exist on
+   * some OSes (the device Eject button). A cloned primitive — it exposes no
+   * capability the renderer did not already have.
+   */
+  platform: process.platform as NodeJS.Platform,
+
   invoke(channel: string, ...args: unknown[]): Promise<unknown> {
     if (!isAllowedChannel(channel)) {
       return Promise.reject(new Error(`Channel not allowed: ${channel}`));

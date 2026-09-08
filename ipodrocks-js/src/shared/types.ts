@@ -730,15 +730,18 @@ export interface ShadowBuildProgress {
   status: "building" | "complete" | "error" | "cancelled" | "paused";
   /**
    * Which stage of the build this frame belongs to. Absent means "convert",
-   * so pre-existing emitters keep their meaning. The reconcile stage runs
-   * before any encoding and sweeps processed/total on its own.
+   * so pre-existing emitters keep their meaning. The reconcile and verify
+   * stages both run before any encoding and sweep processed/total on their
+   * own.
    */
-  phase?: "reconcile" | "convert" | "artwork";
+  phase?: "reconcile" | "verify" | "convert" | "artwork";
   logMessage?: string;
   logLevel?: "info" | "success" | "skip" | "error";
 }
 
 export interface IpcApi {
+  /** Host platform, exposed by the preload bridge. */
+  platform: NodeJS.Platform;
   invoke(channel: string, ...args: unknown[]): Promise<unknown>;
   on(
     channel: string,

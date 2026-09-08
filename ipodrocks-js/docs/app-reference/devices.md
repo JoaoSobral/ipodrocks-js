@@ -9,6 +9,7 @@ The Devices panel lets you add, edit, and check Rockbox and mountable players.
 - **Check Device** — Compare what is on the device with the library. Shows synced, codec mismatch, to sync, and orphans.
 - **Recheck** — Re-read the device after changes (e.g. after a sync or manual file changes).
 - **Set as default** — Use this device as the default for sync and Genius.
+- **Eject** (the ⏏ button) — Unmount the device from inside iPodRocks so you can unplug it, instead of switching to Finder. It asks you to confirm first. The button is greyed out when it cannot be used — on Windows, and whenever the device is not connected — and hovering it says which of the two it is.
 
 ## How it works
 
@@ -18,6 +19,31 @@ The Devices panel lets you add, edit, and check Rockbox and mountable players.
 - **Variable bitrate (VBR)** — When transcoding to a lossy codec (MP3, AAC, OGG, Opus), tick this to encode at a quality level derived from the chosen bitrate instead of a fixed bitrate. VBR usually gives better quality per file size. The option only appears for these codecs — it is hidden for lossless formats (FLAC/ALAC), which are always variable, and for Musepack, which is already quality-based.
 - **Check Device** — Scans the device filesystem and compares with the library. "Codec mismatch" means files use a different codec than the device profile (e.g. MP3 on device, OPUS profile); when you sync with **Orphan & Reset Policy set to "Remove orphans"**, old-codec files are deleted and replaced by the new codec.
 - **Orphans** — Files on the device that are not in the library. You can remove them during sync **only when Orphan & Reset Policy is set to "Remove orphans"** (the setting lives in the Sync panel), which sweeps songs, podcasts and audiobooks alike; with "Keep" or "Prompt", orphans are not auto-deleted. "Delete all" goes further and rebuilds the content folders from scratch.
+
+### Ejecting
+
+Eject unmounts the device's volume — on macOS via `diskutil eject` (the same
+thing Finder's eject button does), on Linux via `udisksctl`, falling back to
+`umount`. Nothing is deleted and no files are written. It asks you to confirm
+before unmounting.
+
+The ⏏ button is greyed out rather than hidden when it is unavailable, so you can
+hover it and find out why:
+
+- **On Windows**, where there is no dependable command-line eject — use
+  Explorer's Safely Remove Hardware there.
+- **When the device is not connected.** If a device you have plugged in still
+  shows as disconnected, see [Identifying a device](#identifying-a-device): a
+  device with a USB identity is only online when *that exact unit* is plugged in
+  and its mount path is a live volume.
+
+It is refused, with an explanation, in three cases: a sync is running (unmounting
+mid-copy would leave half-written files), the device is in dev mode (its mount
+path is an ordinary folder, so there is no volume to eject), or the path is not
+actually a mounted volume. That last check is also what stops an eject being
+aimed at the empty folder macOS sometimes leaves behind after a previous eject.
+
+Rocksy can eject for you too, via `device_eject` — it confirms first.
 
 ## Identifying a device
 

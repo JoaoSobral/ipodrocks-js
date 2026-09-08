@@ -432,6 +432,52 @@ export async function pingDevice(deviceId: number): Promise<{ online: boolean }>
   return window.api.invoke("device:ping", deviceId) as Promise<{ online: boolean }>;
 }
 
+export interface EjectDeviceResult {
+  ejected?: boolean;
+  name?: string;
+  /** Present when the eject was refused or failed. `safe()` returns errors as data. */
+  error?: string;
+}
+
+/**
+ * Unmount and eject a device. macOS and Linux only; `ejectDisabledReason()`
+ * greys the button out so this is never reached on Windows, and the main
+ * process refuses it there regardless.
+ */
+export async function ejectDevice(deviceId: number): Promise<EjectDeviceResult> {
+  return window.api.invoke("device:eject", deviceId) as Promise<EjectDeviceResult>;
+}
+
+/**
+ * Why the Eject button is unavailable, or null when it is available.
+ *
+ * The string doubles as the hover text on the greyed-out button, so it has to
+ * say which of the two conditions failed — a disabled control with no reason is
+ * indistinguishable from a broken one.
+ *
+ * `platform` is a parameter rather than a read of `window.api` so the Windows
+ * branch can be tested from any host. This is presentation only: the main
+ * process re-checks the platform and that the path is a live mount before it
+ * unmounts anything (`ipc/devices.ts`, `device:eject`).
+ */
+export function ejectDisabledReason(opts: {
+  platform: NodeJS.Platform | undefined;
+  /** `null` while the connection ping is still in flight. */
+  online: boolean | null | undefined;
+  deviceName: string;
+}): string | null {
+  if (opts.platform !== "darwin" && opts.platform !== "linux") {
+    return "Ejecting from iPodRocks works on macOS and Linux only. On Windows, use Explorer's Safely Remove Hardware.";
+  }
+  // Anything but a confirmed `true` counts as offline, including the brief
+  // window before the ping resolves: better a button that enables a moment late
+  // than one that is briefly clickable for an unplugged device.
+  if (opts.online !== true) {
+    return `'${opts.deviceName}' is not connected. Plug it in to eject it.`;
+  }
+  return null;
+}
+
 export interface ReadRuntimeDataResult {
   imported: number;
   unmatched: number;

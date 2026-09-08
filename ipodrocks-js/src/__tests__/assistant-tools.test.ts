@@ -279,6 +279,7 @@ describe("podcast_subscribe (write-safe)", () => {
 const DESTRUCTIVE_TOOLS = [
   "device_check",
   "device_remove",
+  "device_eject",
   "device_sync",
   "library_scan",
   "podcast_download_now",
@@ -294,6 +295,19 @@ describe("write-destructive classification", () => {
       expect(getToolByName(name)?.kind).toBe("write-destructive");
     });
   }
+});
+
+describe("device_eject (write-destructive)", () => {
+  it("summarize mentions the device id", () => {
+    expect(getToolByName("device_eject")!.summarize({ device_id: 7 })).toContain("7");
+  });
+
+  it("rejects a non-positive device_id before touching the device", () => {
+    const ctx = makeCtx();
+    return expect(
+      getToolByName("device_eject")!.run({ device_id: 0 }, ctx)
+    ).rejects.toThrow(/Invalid device_id/);
+  });
 });
 
 describe("device_remove (write-destructive)", () => {

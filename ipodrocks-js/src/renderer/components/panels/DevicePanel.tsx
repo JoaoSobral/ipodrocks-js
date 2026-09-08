@@ -11,6 +11,7 @@ import { ProgressBar } from "../common/ProgressBar";
 import { Select } from "../common/Select";
 import { Spinner } from "../common/Spinner";
 import { EmptyState } from "../common/EmptyState";
+import { ConfirmDialog } from "../modals/ConfirmDialog";
 import { useDeviceStore } from "../../stores/device-store";
 import {
   addDevice,
@@ -18,6 +19,8 @@ import {
   removeDevice,
   checkDevice,
   pingDevice,
+  ejectDevice,
+  ejectDisabledReason,
   listUsbDevices,
   pickFolder,
   getDeviceModels,
@@ -100,6 +103,18 @@ function usbLabel(device: UsbDeviceInfo): string {
   return device.serial ? base : `${base} (no serial)`;
 }
 
+/**
+ * The standard eject glyph — a triangle over a bar — drawn inline like every
+ * other icon in this app (there is no icon package).
+ */
+function EjectIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4" aria-hidden="true">
+      <path d="M12 4.5 4 14h16zM4 16h16v3H4z" />
+    </svg>
+  );
+}
+
 export function DevicePanel() {
   const devices = useDeviceStore((s) => s.devices);
   const loading = useDeviceStore((s) => s.loading);
@@ -113,6 +128,9 @@ export function DevicePanel() {
   const [editingDeviceId, setEditingDeviceId] = useState<number | null>(null);
   const [checkResults, setCheckResults] = useState<Record<number, CheckResult>>({});
   const [checking, setChecking] = useState<Set<number>>(new Set());
+  const [ejecting, setEjecting] = useState<Set<number>>(new Set());
+  // Nothing unmounts until this is answered.
+  const [ejectGate, setEjectGate] = useState<{ id: number; name: string } | null>(null);
   const [onlineStatus, setOnlineStatus] = useState<Record<number, boolean | null>>({});
 
   // Form state
@@ -452,6 +470,34 @@ export function DevicePanel() {
     fetchDevices();
   }
 
+  async function handleEject(id: number) {
+    setEjecting((prev) => new Set(prev).add(id));
+    try {
+      // `safe()` returns failures as data, never a rejection, so check `.error`.
+      const result = await ejectDevice(id);
+      if (result.error) {
+        toast.error(result.error);
+        return;
+      }
+      toast.success(`Ejected '${result.name}'. It is safe to unplug.`);
+      // Nothing pushes device state to the renderer, so update it here: the
+      // volume is gone, and the cached check result describes a device that is
+      // no longer there.
+      setOnlineStatus((prev) => ({ ...prev, [id]: false }));
+      setCheckResults((prev) => {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+    } finally {
+      setEjecting((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+    }
+  }
+
   async function handleCheck(id: number) {
     setChecking((prev) => new Set(prev).add(id));
     try {
@@ -516,6 +562,12 @@ export function DevicePanel() {
             const cr = checkResults[d?.id];
             const isDefaultDev = defaultDeviceId === d?.id;
             const status = d?.id != null ? onlineStatus[d.id] : null;
+            const isEjecting = ejecting.has(d?.id ?? 0);
+            const ejectReason = ejectDisabledReason({
+              platform: window.api?.platform,
+              online: status,
+              deviceName: d?.name ?? "this device",
+            });
             return (
               <Card key={d?.id ?? `device-${idx}`}>
                 <div className="flex items-start gap-3 mb-4">
@@ -728,6 +780,24 @@ export function DevicePanel() {
                   >
                     {checking.has(d?.id ?? 0) ? "Checking…" : "Check Device"}
                   </Button>
+                  {/* The title lives on the wrapper, not the button: `Button`
+                      sets `disabled:pointer-events-none`, so a disabled button
+                      never receives the hover that would show its own. */}
+                  <span title={ejectReason ?? "Eject"} className="inline-flex">
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      className="!px-2"
+                      aria-label="Eject"
+                      onClick={() =>
+                        d?.id != null &&
+                        setEjectGate({ id: d.id, name: d.name ?? "this device" })
+                      }
+                      disabled={ejectReason !== null || isEjecting}
+                    >
+                      {isEjecting ? <Spinner size="sm" className="!w-4 !h-4" /> : <EjectIcon />}
+                    </Button>
+                  </span>
                   <Button size="sm" variant="secondary" onClick={() => d && openForEdit(d)}>
                     Edit
                   </Button>
@@ -1095,6 +1165,17 @@ export function DevicePanel() {
           </Button>
         </div>
       </Modal>
+
+      <ConfirmDialog
+        open={ejectGate !== null}
+        onClose={() => setEjectGate(null)}
+        onConfirm={() => {
+          if (ejectGate) void handleEject(ejectGate.id);
+        }}
+        title={`Eject '${ejectGate?.name ?? ""}'?`}
+        message="This unmounts the volume so you can safely unplug the device. Nothing is deleted and nothing is written to it."
+        confirmLabel="Eject"
+      />
 
       <MpcUnavailableModal
         open={showMpcModal}

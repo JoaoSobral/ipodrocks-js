@@ -255,6 +255,53 @@ Pinned in `src/__tests__/regressions/mpc-cover-art-item-flags.test.ts`,
 `src/__tests__/behaviors/mpc-transcode-tags.test.ts` and
 `tests/e2e/mpc-tag-repair.test.ts`.
 
+## Hazard: a shadow rebuild never re-opens a file that already exists
+
+Issue #130. Nothing in a build reads a byte of an already-transcoded shadow
+file, so a defect in what an *earlier* version of the transcoder wrote survives
+every rebuild, every rescan and every "clear scan cache". Two independent skips
+stack up:
+
+- `reconcileShadowLibrary()` classifies a file as `verified` when the stored
+  `shadow_tracks.file_size`/`mtime` still match the file on disk, and never
+  opens it. For MPC it would not open it anyway — `canSkipProbe()`
+  (`library/shadow-reconcile.ts`) returns true because `readAudioOnly()` is a
+  synchronous whole-file read.
+- `_transcodeTrack()` then returns `"skipped"` on a `synced` row plus an
+  existing file. It compares nothing else: not the source mtime, not a content
+  hash, not the tag. `propagateAddedOrUpdated()` (the post-scan path) goes
+  through the same function, which is why clearing the scan cache does not help
+  either.
+
+So **anything that has to reach existing output must be its own tree walk.**
+`buildShadowLibrary()` runs `_verifyShadowTags()` between the reconcile and the
+transcode loop; it delegates to `repairMpcTagsInTree()`, the same pass
+`maintenance:repairMpcTags` drives, so the two can never disagree about what a
+broken tag is. It is deliberately **not** gated on the library's codec — the
+walk already filters to `.mpc`, and a folder can hold Musepack files a later
+codec change left behind. It *is* gated on the root being reachable, using the
+same guard as the reconcile: `rec.skipped` is the wrong signal, since that is
+also set for `UNRECONCILABLE_CODECS`.
+
+Two consequences worth keeping in mind:
+
+- **The repair preserves size and mtime, which cuts both ways.** That is what
+  stops it cascading into a re-transcode here and a re-copy at the next sync —
+  and equally what stops the sync ever noticing a device copy that still carries
+  the old tag. A rebuild therefore tells the user, in the build log, to run
+  Settings → Maintenance for anything already on a device. Do not "fix" this by
+  touching the mtime.
+- **Tag *content* drift is still not handled.** Editing an album or title tag in
+  the library after the transcode never reaches the shadow, for exactly the
+  reason above — `docs/app-reference/library.md` used to claim otherwise. Out of
+  scope for #130 and left deliberately unfixed; fixing it means either a
+  comparison pass or a forced re-encode for non-MPC codecs.
+
+Pinned in `src/__tests__/regressions/shadow-rebuild-retag.test.ts` (the case
+where reconcile verifies everything and nothing is converted) and
+`tests/e2e/shadow-rebuild-tag-repair.test.ts`. The legacy-tag fixture is shared
+by every spec that needs one: `src/__tests__/harness/legacy-mpc.ts`.
+
 ## Hazard: "Delete all" resolves folders that can collapse to the device root
 
 The Sync tab's **Orphan & Reset Policy** (`ExtraTrackPolicy`) gained
