@@ -27,3 +27,26 @@ export function getTranscodableCodecConfigs(
         mpcAvailable || (cc?.codec_name ?? "").toUpperCase() !== "MPC"
     );
 }
+
+/**
+ * Whether to show the "mpcenc is not installed" reminder.
+ *
+ * Every input arrives from its own IPC round trip, and they resolve in whatever
+ * order they resolve. The reminder is shown once per session and latched, so
+ * deciding on incomplete information is not recoverable — a user who ticked
+ * "don't remind me" saw the modal anyway whenever that preference happened to
+ * answer last. `remindDisabled: null` therefore means "not known yet", and is
+ * never treated as "not disabled".
+ */
+export function shouldRemindMpcUnavailable(opts: {
+  codecConfigs: CodecConfig[] | undefined;
+  /** Result of the mpcenc probe. */
+  mpcAvailable: boolean;
+  /** The stored preference, or null while it is still being read. */
+  remindDisabled: boolean | null;
+}): boolean {
+  if (opts.remindDisabled !== false) return false;
+  if (opts.mpcAvailable) return false;
+  const configs = Array.isArray(opts.codecConfigs) ? opts.codecConfigs : [];
+  return configs.some((c) => (c?.codec_name ?? "").toUpperCase() === "MPC");
+}

@@ -35,7 +35,11 @@ import {
 } from "../../ipc/api";
 import { MpcUnavailableModal } from "../modals/MpcUnavailableModal";
 import { formatCodecLabel, formatGb } from "../../utils/format";
-import { getTranscodableCodecConfigs, isVbrCapableCodec } from "../../utils/codec";
+import {
+  getTranscodableCodecConfigs,
+  isVbrCapableCodec,
+  shouldRemindMpcUnavailable,
+} from "../../utils/codec";
 import { createDeviceIconResolver } from "../../utils/device-icon";
 import { DeviceIcon } from "../common/DeviceIcon";
 import type { CheckResult, DeviceModel, CodecConfig } from "../../ipc/api";
@@ -170,7 +174,12 @@ export function DevicePanel() {
   const [defaultDeviceId, setDefaultDeviceId] = useState<number | null>(null);
   const [shadowLibs, setShadowLibs] = useState<ShadowLibrary[]>([]);
   const [mpcAvailable, setMpcAvailable] = useState(true);
-  const [mpcRemindDisabled, setMpcRemindDisabledState] = useState(false);
+  // `null` until the preference has actually been read. It cannot default to
+  // `false`: the reminder effect below fires as soon as the codec list and the
+  // mpcenc probe land, and those are separate promises that can resolve first —
+  // so a user who ticked "don't remind me" got the modal anyway whenever this
+  // one happened to answer last, and the ref latched it open for the session.
+  const [mpcRemindDisabled, setMpcRemindDisabledState] = useState<boolean | null>(null);
   const [showMpcModal, setShowMpcModal] = useState(false);
   const mpcModalShownRef = useRef(false);
 
@@ -197,9 +206,13 @@ export function DevicePanel() {
 
   useEffect(() => {
     if (mpcModalShownRef.current) return;
-    const configs = Array.isArray(codecConfigs) ? codecConfigs : [];
-    const hasMpc = configs.some((c) => (c?.codec_name ?? "").toUpperCase() === "MPC");
-    if (hasMpc && !mpcAvailable && !mpcRemindDisabled) {
+    if (
+      shouldRemindMpcUnavailable({
+        codecConfigs,
+        mpcAvailable,
+        remindDisabled: mpcRemindDisabled,
+      })
+    ) {
       mpcModalShownRef.current = true;
       setShowMpcModal(true);
     }
