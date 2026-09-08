@@ -45,6 +45,12 @@ export async function launchApp(
       ...process.env,
       // Avoid auto-update checks while running tests
       IPODROCKS_DISABLE_UPDATE_CHECK: "1",
+      // Keep the window off screen and out of the Dock. Playwright drives the
+      // renderer over CDP, so nothing here needs it visible — and a full run
+      // launches the app once per file, which otherwise means a couple of
+      // minutes of windows stealing focus. Set IPODROCKS_HEADLESS=0 to watch a
+      // run happen, which is worth doing when a UI test fails only in CI.
+      IPODROCKS_HEADLESS: process.env.IPODROCKS_HEADLESS ?? "1",
       ...extraEnv,
     },
   });
