@@ -1,4 +1,4 @@
-import { ChildProcess, spawn } from "child_process";
+import { ChildProcess, spawn, spawnSync } from "child_process";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
@@ -476,12 +476,16 @@ export function extractReplayGainTags(common: {
   replaygain_album_peak?: { ratio: number };
 }): Record<string, string> | undefined {
   const tags: Record<string, string> = {};
+  // music-metadata's toRatio() splits on a space, so a value written without
+  // one ("-3.38dB") comes back as { dB: null }. Emitting that verbatim writes
+  // the literal string "null dB" into the file, which is worse than writing
+  // nothing: the ffprobe top-up below can still recover the real value.
   const setGain = (key: string, rg: { dB: number } | undefined) => {
-    if (rg == null) return;
+    if (rg == null || !Number.isFinite(rg.dB)) return;
     tags[key] = `${rg.dB} dB`;
   };
   const setPeak = (key: string, rg: { ratio: number } | undefined) => {
-    if (rg == null) return;
+    if (rg == null || !Number.isFinite(rg.ratio)) return;
     tags[key] = String(rg.ratio);
   };
   setGain("REPLAYGAIN_TRACK_GAIN", common.replaygain_track_gain);
@@ -490,6 +494,14 @@ export function extractReplayGainTags(common: {
   setPeak("REPLAYGAIN_ALBUM_PEAK", common.replaygain_album_peak);
   return Object.keys(tags).length > 0 ? tags : undefined;
 }
+
+/** The four tag names, as written into the file, upper-cased for matching. */
+const REPLAYGAIN_TAG_NAMES = new Set([
+  "REPLAYGAIN_TRACK_GAIN",
+  "REPLAYGAIN_TRACK_PEAK",
+  "REPLAYGAIN_ALBUM_GAIN",
+  "REPLAYGAIN_ALBUM_PEAK",
+]);
 
 const REPLAYGAIN_KEYS = [
   "replaygain_track_gain",
@@ -560,24 +572,161 @@ export async function readSourceApeTags(srcPath: string): Promise<ApeTags> {
     if (common.track?.no != null && common.track.no > 0) set("track", String(common.track.no));
     if (common.disk?.no != null && common.disk.no > 0) set("disc", String(common.disk.no));
 
-    const replayGain = extractReplayGainTags(common);
+    // ReplayGain reaches `common` only for the key spellings music-metadata's
+    // per-container tables happen to list. When it comes back empty, ask
+    // ffmpeg rather than concluding the file has none — the values are the
+    // whole point of the tag for a Rockbox player, and issue #130 is what it
+    // looks like when they quietly go missing. This costs one probe per track
+    // that genuinely has no ReplayGain, which is small beside the encode that
+    // follows it.
+    const replayGain =
+      extractReplayGainTags(common) ?? readReplayGainFromFile(srcPath);
     if (replayGain) tags.extra = replayGain;
 
-    const pic = common.picture?.[0];
-    if (pic?.data && pic.data.length > 0) {
-      const format = (pic.format ?? "").toLowerCase();
-      if (format.includes("png") || format.includes("jpeg") || format.includes("jpg")) {
-        tags.coverArt = {
-          data: Buffer.from(pic.data),
-          mimeType: format.includes("png") ? "image/png" : "image/jpeg",
-        };
-      }
-    }
+    // Artwork is deliberately not read here: iPodRocks no longer embeds a
+    // picture into the .mpc it writes (see writeMpcMetadata).
 
     return tags;
-  } catch {
-    return {};
+  } catch (err) {
+    // Never swallow this. Returning {} is indistinguishable from "the source
+    // had no tags", and that is exactly how issue #130 shipped: every tag the
+    // DB does not carry — year, album artist, and all four ReplayGain values —
+    // vanished from the transcode with nothing said. MetadataExtractor has
+    // always logged and fallen back here; so does this now.
+    console.warn(`⚠️  Could not read source tags from ${srcPath}:`, err);
+    return readSourceTagsViaFfprobe(srcPath);
   }
+}
+
+/** Tags ffprobe reports, merged stream-then-format with format winning. */
+function probeTagsViaFfprobe(srcPath: string): Record<string, string> | null {
+  try {
+    const result = spawnSync(
+      "ffprobe",
+      ["-v", "quiet", "-print_format", "json", "-show_format", "-show_streams", srcPath],
+      { encoding: "utf8", timeout: 5000, env: getEncoderEnv() }
+    );
+    if (result.status !== 0 || !result.stdout) return null;
+    const probe = JSON.parse(result.stdout) as {
+      format?: { tags?: Record<string, string> };
+      streams?: Array<{ tags?: Record<string, string> }>;
+    };
+    const streamTags = probe.streams?.find((s) => s.tags)?.tags ?? {};
+    return { ...streamTags, ...probe.format?.tags };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The same, scraped from `ffmpeg -i`. Less precise than ffprobe's JSON, but
+ * **ffmpeg is the binary this app ships** — only it is guaranteed to be there.
+ * `ffprobe` is whatever the user happens to have installed, so it cannot be
+ * the only way to read a tag the transcode depends on.
+ */
+function probeTagsViaFfmpeg(srcPath: string): Record<string, string> | null {
+  try {
+    // `-i` with no output is an error exit by design; the metadata still goes
+    // to stderr, which is what we are here for.
+    const result = spawnSync(getFfmpegPath(), ["-i", srcPath], {
+      encoding: "utf8",
+      timeout: 5000,
+      env: getEncoderEnv(),
+    });
+    const out = `${result.stdout ?? ""}${result.stderr ?? ""}`;
+    if (!out) return null;
+
+    const tags: Record<string, string> = {};
+    for (const line of out.split(/\r?\n/)) {
+      // Metadata lines are indented under a "Metadata:" header and padded to a
+      // colon; "Duration:" and "Stream #0:0" sit at a shallower indent.
+      const m = line.match(/^ {4,}([A-Za-z0-9_\-. ]+?)\s*:\s*(.+)$/);
+      if (!m) continue;
+      const key = m[1].trim();
+      if (key === "" || key.startsWith("Stream")) continue;
+      if (!(key in tags)) tags[key] = m[2].trim();
+    }
+    return Object.keys(tags).length > 0 ? tags : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Whatever tags an external probe can see, however it has to get them. */
+function probeTags(srcPath: string): Record<string, string> | null {
+  return probeTagsViaFfprobe(srcPath) ?? probeTagsViaFfmpeg(srcPath);
+}
+
+/**
+ * The four ReplayGain values as an external probe sees them, matched
+ * case-insensitively and passed through verbatim — the probe reports the raw
+ * tag string, which is already the format Rockbox parses.
+ */
+export function readReplayGainFromFile(
+  srcPath: string
+): Record<string, string> | undefined {
+  const tags = probeTags(srcPath);
+  if (!tags) return undefined;
+
+  const found: Record<string, string> = {};
+  for (const [key, value] of Object.entries(tags)) {
+    const upper = key.toUpperCase();
+    if (!REPLAYGAIN_TAG_NAMES.has(upper)) continue;
+    const clean = sanitizeTagText(String(value ?? ""));
+    if (clean !== "") found[upper] = clean;
+  }
+  return Object.keys(found).length > 0 ? found : undefined;
+}
+
+/**
+ * Last-resort tag read for a source music-metadata could not parse at all.
+ * Covers much less than the parser does, but the alternative is a transcode
+ * carrying only what the library database happens to know.
+ */
+function readSourceTagsViaFfprobe(srcPath: string): ApeTags {
+  const probed = probeTags(srcPath);
+  if (!probed) return {};
+
+  // ffprobe's key case varies by container; normalize once and look up lower.
+  const tags: ApeTags = {};
+  const lower: Record<string, string> = {};
+  for (const [key, value] of Object.entries(probed)) {
+    if (value != null) lower[key.toLowerCase()] = String(value);
+  }
+  const set = (field: keyof ApeTags, ...keys: string[]) => {
+    for (const key of keys) {
+      const clean = sanitizeTagText(lower[key] ?? "");
+      if (clean !== "") {
+        (tags as Record<string, unknown>)[field] = clean;
+        return;
+      }
+    }
+  };
+
+  set("title", "title");
+  set("artist", "artist");
+  set("album", "album");
+  set("albumArtist", "album_artist", "albumartist");
+  set("genre", "genre");
+  set("composer", "composer");
+  set("comment", "comment");
+  // ffprobe reports a full date ("2001-05-01") and "3/12"-style counts; the
+  // tag wants the leading number on its own.
+  const leading = (value: string | undefined, len: number): string => {
+    const match = sanitizeTagText(value ?? "").match(/^\d+/);
+    return match && match[0].length <= len ? match[0] : "";
+  };
+  const year = leading(lower["date"] ?? lower["year"], 4);
+  if (year !== "") tags.year = year;
+  const track = leading(lower["track"], 4);
+  if (track !== "") tags.track = track;
+  const disc = leading(lower["disc"] ?? lower["discnumber"], 4);
+  if (disc !== "") tags.disc = disc;
+
+  const replayGain = readReplayGainFromFile(srcPath);
+  if (replayGain) tags.extra = replayGain;
+
+  return tags;
 }
 
 /**
@@ -608,6 +757,12 @@ export function buildMpcApeTags(
  * Uses the tagging module: strip existing tags, write new ones atomically.
  * Tags are read from the source file (so albumArtist/year/originalYear/etc. are
  * preserved) and merged with any explicit ConversionMetadata overrides.
+ *
+ * No artwork is written. Rockbox reads album art from the `cover.jpg` the
+ * shadow build already generates beside the audio — resized to 300px by
+ * `copyArtworkToShadowLibrary` — so embedding a second copy only added the
+ * source image at its original resolution to every single file (issue #130:
+ * 1500x1500 covers inside every track).
  */
 async function writeMpcMetadata(
   mpcPath: string,
@@ -618,27 +773,11 @@ async function writeMpcMetadata(
 ): Promise<boolean> {
   const tags = buildMpcApeTags(await readSourceApeTags(srcPath), metadata);
 
-  // Fall back to a folder cover image only when the source had no embedded art.
-  if (!tags.coverArt) {
-    const albumDir = path.dirname(srcPath);
-    const coverNames = ["cover.jpg", "cover.jpeg", "cover.png"];
-    for (const name of coverNames) {
-      const coverPath = path.join(albumDir, name);
-      try {
-        if (fs.existsSync(coverPath)) {
-          const data = fs.readFileSync(coverPath);
-          const ext = path.extname(name).toLowerCase();
-          tags.coverArt = {
-            data,
-            mimeType: ext === ".png" ? "image/png" : "image/jpeg",
-            filename: name,
-          };
-          break;
-        }
-      } catch {
-        /* skip if unreadable */
-      }
-    }
+  // Surfaced in the shadow-library build log on purpose. ReplayGain silently
+  // not being there is the whole of issue #130, and "the source has none" and
+  // "we failed to read it" were indistinguishable from outside the app.
+  if (!tags.extra || Object.keys(tags.extra).length === 0) {
+    logCallback?.(`No ReplayGain tags found in source: ${path.basename(srcPath)}`);
   }
 
   try {

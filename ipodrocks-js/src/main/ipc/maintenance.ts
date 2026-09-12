@@ -8,11 +8,15 @@
  */
 
 import { ipcMain } from "electron";
+import * as fs from "fs";
 
 import { safe, getLibrary, getDevicesCore } from "./common";
 import { logActivity } from "../activity/activity-logger";
 import { repairMpcTagsInTree, type RepairScanResult } from "../tagging/mpc/repair-scan";
+import { readReplayGainFromFile } from "../sync/sync-conversion";
+import { normalizePath } from "../utils/normalize-path";
 import type { ContentType } from "../../shared/types";
+import type Database from "better-sqlite3";
 
 let activeRepairAbort: AbortController | null = null;
 
@@ -41,6 +45,48 @@ export interface MpcRepairProgress {
   currentFile: string;
 }
 
+/**
+ * Resolve a file inside a shadow library back to the library track it was
+ * transcoded from, so the repair can read the ReplayGain the transcode lost.
+ *
+ * Paths are matched through `normalizePath` because `shadow_tracks.shadow_path`
+ * is stored NFC-normalized while the walk yields whatever the filesystem spells
+ * (NFD on macOS) — comparing the raw strings would match nothing on exactly the
+ * machines this reporter's library lives on.
+ */
+function makeShadowSourceResolver(
+  db: Database.Database,
+  shadowLibraryId: number
+): (mpcPath: string) => Record<string, string> | null {
+  const rows = db
+    .prepare(
+      `SELECT st.shadow_path AS shadowPath, t.path AS sourcePath
+         FROM shadow_tracks st
+         JOIN tracks t ON t.id = st.source_track_id
+        WHERE st.shadow_library_id = ?`
+    )
+    .all(shadowLibraryId) as { shadowPath: string; sourcePath: string }[];
+
+  const sourceByShadow = new Map<string, string>();
+  for (const row of rows) {
+    if (row.shadowPath && row.sourcePath) {
+      sourceByShadow.set(normalizePath(row.shadowPath), row.sourcePath);
+    }
+  }
+
+  // Probing spawns a subprocess, so never do it twice for one source — two
+  // shadow rows can point at the same track when a library holds a duplicate.
+  const cache = new Map<string, Record<string, string> | null>();
+  return (mpcPath) => {
+    const source = sourceByShadow.get(normalizePath(mpcPath));
+    if (!source) return null;
+    if (!cache.has(source)) {
+      cache.set(source, readReplayGainFromFile(source) ?? null);
+    }
+    return cache.get(source) ?? null;
+  };
+}
+
 export function registerMaintenanceHandlers(): void {
   ipcMain.handle(
     "maintenance:repairMpcTags",
@@ -56,14 +102,29 @@ export function registerMaintenanceHandlers(): void {
 
       // Roots are collected first so the summary can name every scope even when
       // one of them turns out to be empty or unreachable.
-      const roots: Array<{ label: string; path: string }> = [];
+      const db = lib.getConnection();
+      const roots: Array<{
+        label: string;
+        path: string;
+        /** Only a shadow library can resolve a file back to its source track. */
+        shadowLibraryId?: number;
+      }> = [];
 
       for (const shadow of lib.getShadowLibraries()) {
         if (shadow.path) {
-          roots.push({ label: `Shadow library: ${shadow.name}`, path: shadow.path });
+          roots.push({
+            label: `Shadow library: ${shadow.name}`,
+            path: shadow.path,
+            shadowLibraryId: shadow.id,
+          });
         }
       }
 
+      // Device files get the artwork stripped but no ReplayGain put back:
+      // `device_synced_tracks.device_path` is mount-relative and casefolded, so
+      // it cannot be matched against the absolute paths this walk yields. It
+      // does not need to be. Repairing the shadow copy changes its size, the
+      // next sync sees the mismatch and re-copies the fully-repaired file.
       for (const device of getDevicesCore().getDevices()) {
         if (!device.mountPath) continue;
         for (const contentType of DEVICE_CONTENT_TYPES) {
@@ -77,12 +138,35 @@ export function registerMaintenanceHandlers(): void {
         }
       }
 
+      const updateShadowStat = db.prepare(
+        `UPDATE shadow_tracks
+            SET file_size = ?, mtime = ?
+          WHERE shadow_library_id = ? AND shadow_path = ?`
+      );
+
       try {
         for (const root of roots) {
           if (signal.aborted) break;
 
           const result = await repairMpcTagsInTree(root.path, {
             cancelSignal: signal,
+            replayGainFor:
+              root.shadowLibraryId != null
+                ? makeShadowSourceResolver(db, root.shadowLibraryId)
+                : undefined,
+            onRepaired: (mpcPath, newSize) => {
+              // The repair changes the file's size, so the stat baseline the
+              // reconcile pass trusts is now stale. Left alone it would treat
+              // every repaired file as a candidate to re-probe on the next
+              // build. The mtime is unchanged by the repair, so re-use it.
+              if (root.shadowLibraryId == null) return;
+              try {
+                const mtime = Math.floor(fs.statSync(mpcPath).mtimeMs);
+                updateShadowStat.run(newSize, mtime, root.shadowLibraryId, mpcPath);
+              } catch {
+                /* the next reconcile re-probes it; not worth failing over */
+              }
+            },
             onProgress: (p) => {
               if (event.sender.isDestroyed()) return;
               event.sender.send("maintenance:repairProgress", {

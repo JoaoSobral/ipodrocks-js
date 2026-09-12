@@ -37,6 +37,18 @@ export interface FixtureMetadata {
    * `ratingFromCommonTags`). Omit to simulate a file with no rating tag.
    */
   rating?: number;
+  /**
+   * ReplayGain, in the shape music-metadata hands back after `toRatio()`:
+   * gains carry `dB`, peaks carry `ratio`. Without this every fixture parsed
+   * as "this file has no ReplayGain", which is why the shadow-library
+   * transcode path had no ReplayGain coverage at all when issue #130 shipped.
+   */
+  replayGain?: {
+    trackGainDb?: number;
+    trackPeakRatio?: number;
+    albumGainDb?: number;
+    albumPeakRatio?: number;
+  };
 }
 
 const registry = new Map<string, IAudioMetadata>();
@@ -55,6 +67,22 @@ export function buildMetadata(fields: FixtureMetadata): IAudioMetadata {
       picture: fields.picture,
       rating:
         fields.rating !== undefined ? [{ rating: fields.rating }] : undefined,
+      replaygain_track_gain:
+        fields.replayGain?.trackGainDb !== undefined
+          ? { dB: fields.replayGain.trackGainDb, ratio: 0 }
+          : undefined,
+      replaygain_track_peak:
+        fields.replayGain?.trackPeakRatio !== undefined
+          ? { dB: 0, ratio: fields.replayGain.trackPeakRatio }
+          : undefined,
+      replaygain_album_gain:
+        fields.replayGain?.albumGainDb !== undefined
+          ? { dB: fields.replayGain.albumGainDb, ratio: 0 }
+          : undefined,
+      replaygain_album_peak:
+        fields.replayGain?.albumPeakRatio !== undefined
+          ? { dB: 0, ratio: fields.replayGain.albumPeakRatio }
+          : undefined,
     },
     format: {
       duration: fields.duration,

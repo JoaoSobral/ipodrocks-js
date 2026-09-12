@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.3.3] — 2026-09
+
+### Fixes
+
+- **ReplayGain no longer goes missing from Musepack files.** (#130) The values were read from the source track in exactly one place, and that read ended in a silent catch: if the source failed to parse for any reason, every tag it carried was thrown away without a word, and the transcode fell back to the handful of fields the library database holds — no year, no album artist, and no ReplayGain. It now says so in the log and falls back to reading the file with ffmpeg instead. ReplayGain is also re-checked with ffmpeg whenever the parser reports none, so an unusual tag spelling can no longer lose it either. The same read feeds AAC and ALAC shadow libraries, which were losing ReplayGain the same way.
+
+- **Album artwork is no longer embedded into Musepack files.** (#130) Every track carried a full-resolution copy of the album cover — 1500×1500 in the reported case — which is pure weight on a player: Rockbox reads the `cover.jpg` iPodRocks already writes beside the audio, resized to 300px. Nothing is embedded any more, and **Settings → Maintenance → Repair Musepack tags** strips it from the files you already have, putting back any ReplayGain they are missing at the same time. Those files get noticeably smaller, so your next sync re-copies them.
+
 ## [2.3.2] — 2026-09
 
 ### Features

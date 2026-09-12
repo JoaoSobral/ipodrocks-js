@@ -45,6 +45,17 @@ function ffmpegAvailable(): boolean {
 
 const canRun = ffmpegAvailable() && isMpcencAvailable();
 
+if (!canRun) {
+  // Say so. This suite is the only real FLAC → Musepack coverage there is, and
+  // it silently did not run on any machine without mpcenc — including every CI
+  // runner — which is how issue #130's ReplayGain loss reached a release.
+  console.warn(
+    `⚠️  Skipping FLAC → Musepack tag tests: ${
+      ffmpegAvailable() ? "mpcenc is not installed" : "ffmpeg is not available"
+    }`
+  );
+}
+
 describe.skipIf(!canRun)("FLAC → Musepack tag preservation", () => {
   let workDir: string;
   let srcFlac: string;
@@ -125,7 +136,11 @@ describe.skipIf(!canRun)("FLAC → Musepack tag preservation", () => {
     expect(tag("REPLAYGAIN_ALBUM_PEAK")).toBe("0.821448");
   }, 30000);
 
-  it("embeds the folder cover as a binary item that does not swallow ReplayGain", async () => {
+  it("embeds no artwork at all, and puts ReplayGain in the file (#130)", async () => {
+    // There is a cover.jpg beside the source and a picture inside it. Neither
+    // belongs in the output any more: Rockbox reads the cover.jpg the shadow
+    // build writes next to the audio, and embedding a second copy put the
+    // source image, at its original resolution, inside every single track.
     const ok = await convertWithCodec(srcFlac, destMpc, { codec: "mpc", quality: 5 });
     expect(ok).toBe(true);
 
@@ -134,35 +149,55 @@ describe.skipIf(!canRun)("FLAC → Musepack tag preservation", () => {
     expect(loc).not.toBeNull();
     const items = parseApeItems(full, loc!);
 
-    const coverIndex = items.findIndex(
-      (i) => i.key.toLowerCase() === "cover art (front)"
-    );
-    expect(coverIndex).toBeGreaterThanOrEqual(0);
+    expect(items.some((i) => i.key.toLowerCase() === "cover art (front)")).toBe(false);
+    expect(items.some((i) => i.type === "binary")).toBe(false);
+    expect(readApeTags(destMpc).coverArt).toBeUndefined();
 
-    // The defect: type bits saying "text" for a JPEG. Bit 0 is read-only and is
-    // not part of the type, so the whole word must be exactly 2.
-    expect(itemTypeFromFlags(items[coverIndex].flags)).toBe(ITEM_TYPE_BINARY);
-    expect(items[coverIndex].flags).toBe(2);
+    // Not a size heuristic — the folder cover's actual bytes are nowhere in
+    // the output. (The fixture cover is tiny; a real one is megabytes, which
+    // is what made this worth fixing.)
+    const folderCover = fs.readFileSync(path.join(workDir, "cover.jpg"));
+    expect(full.includes(folderCover)).toBe(false);
 
-    // ...and every ReplayGain item sits ahead of the artwork, so a reader with
-    // a bounded tag buffer reaches them regardless.
-    const rgIndexes = items
-      .map((item, i) => (item.key.toLowerCase().startsWith("replaygain_") ? i : -1))
-      .filter((i) => i >= 0);
-    expect(rgIndexes).toHaveLength(4);
-    for (const i of rgIndexes) expect(i).toBeLessThan(coverIndex);
+    // ReplayGain is present — the thing that actually matters to a player.
+    const rg = items.filter((i) => i.key.toLowerCase().startsWith("replaygain_"));
+    expect(rg).toHaveLength(4);
 
-    // The image itself round-trips intact.
-    const tags = readApeTags(destMpc);
-    expect(tags.coverArt?.mimeType).toBe("image/jpeg");
-    expect(tags.coverArt?.data.subarray(0, 2)).toEqual(Buffer.from([0xff, 0xd8]));
-
-    // Independent oracle: ffmpeg still reports the ReplayGain tags on a file
-    // that now carries several KB of artwork ahead of nothing.
+    // Independent oracle: ffmpeg agrees.
     const probe = spawnSync(getFfmpegPath(), ["-i", destMpc], { encoding: "utf8" });
     const out = `${probe.stdout}${probe.stderr}`;
     expect(out).toContain("REPLAYGAIN_TRACK_GAIN");
     expect(out).toContain("REPLAYGAIN_ALBUM_PEAK");
+  }, 30000);
+
+  it("keeps ReplayGain when the shadow library overlays its own metadata", async () => {
+    // The path that actually broke. `_transcodeTrack` always passes a
+    // ConversionMetadata built from the library row; the assertions above run
+    // without one, so nothing covered the combination.
+    const ok = await convertWithCodec(srcFlac, destMpc, {
+      codec: "mpc",
+      quality: 5,
+      metadata: {
+        title: "Renamed In Library",
+        artist: "Renamed Artist",
+        album: "Renamed Album",
+        trackNumber: 7,
+      },
+    });
+    expect(ok).toBe(true);
+
+    const tags = readApeTags(destMpc);
+    // The database wins for the fields it carries...
+    expect(tags.title).toBe("Renamed In Library");
+    expect(tags.track).toBe("7");
+    // ...and everything it does not carry still comes from the source.
+    expect(tags.albumArtist).toBe("Various Artists");
+    expect(tags.year).toBe("2003");
+    expect(tags.extra?.REPLAYGAIN_TRACK_GAIN).toBe("-3.38 dB");
+    expect(tags.extra?.REPLAYGAIN_TRACK_PEAK).toBe("0.998054");
+    expect(tags.extra?.REPLAYGAIN_ALBUM_GAIN).toBe("-2.32 dB");
+    expect(tags.extra?.REPLAYGAIN_ALBUM_PEAK).toBe("0.821448");
+    expect(tags.coverArt).toBeUndefined();
   }, 30000);
 
   it("scans the generated MPC back through the real MetadataExtractor", async () => {

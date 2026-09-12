@@ -77,21 +77,34 @@ describe("readSourceApeTags", () => {
     expect(tags.year).toBeUndefined();
   });
 
-  it("maps embedded PNG cover art", async () => {
+  it("ignores embedded cover art — nothing is embedded any more (#130)", async () => {
+    // Artwork used to be copied into the .mpc at the source's own resolution,
+    // which put a 1500x1500 JPEG inside every track. Rockbox reads the
+    // cover.jpg written beside the audio instead.
     parseFileMock.mockResolvedValue({
       common: {
+        artist: "The Artist",
         picture: [{ format: "image/png", data: Buffer.from([1, 2, 3]) }],
       },
     });
     const tags = await readSourceApeTags("/music/song.flac");
-    expect(tags.coverArt?.mimeType).toBe("image/png");
-    expect(tags.coverArt?.data.length).toBe(3);
+    expect(tags.artist).toBe("The Artist");
+    expect(tags.coverArt).toBeUndefined();
   });
 
-  it("returns empty tags when parsing fails", async () => {
+  it("falls back to ffprobe rather than reporting no tags when parsing fails", async () => {
+    // The path is not a real file, so ffprobe finds nothing either and the
+    // result is still empty — but it is empty because two readers agreed, not
+    // because an exception was swallowed. The real-file case is covered in
+    // regressions/replaygain-source-read.test.ts.
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     parseFileMock.mockRejectedValue(new Error("corrupt"));
+
     const tags = await readSourceApeTags("/music/broken.flac");
+
     expect(tags).toEqual({});
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
   });
 
   it("carries ReplayGain into extra as REPLAYGAIN_* APEv2 keys", async () => {

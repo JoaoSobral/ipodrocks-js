@@ -265,6 +265,81 @@ Pinned in `src/__tests__/regressions/mpc-cover-art-item-flags.test.ts`,
 `src/__tests__/behaviors/mpc-transcode-tags.test.ts` and
 `tests/e2e/mpc-tag-repair.test.ts`.
 
+## Hazard: `readSourceApeTags()` is the only producer of ReplayGain
+
+Issue #130. Every ReplayGain value iPodRocks writes — into `.mpc` via the APEv2
+writer, and into `.m4a` via `maybeWriteM4aReplayGain` — comes from
+`readSourceApeTags()` in `sync/sync-conversion.ts`, and from nowhere else. It
+used to end in a bare `catch { return {}; }`.
+
+**An empty tag set is indistinguishable from a file that has no tags.** When
+that catch fired, the transcode silently fell back to the six fields
+`trackToConversionMetadata()` carries (title, artist, album, genre, track,
+disc) — no year, no album artist, no ReplayGain — and nothing anywhere said so.
+`MetadataExtractor.extractMetadata()` reads the same files and has always
+logged and fallen back to ffprobe; this one did not. It does now, and the
+shadow build log carries a line per track that ends up with no ReplayGain.
+
+- **Two fallbacks, for two different failures.** A parse that *throws* falls
+  back to a full external tag read. A parse that *succeeds but maps no
+  ReplayGain* gets a top-up for those four keys only — music-metadata maps them
+  through fixed per-container tables, so an unusual spelling reads as "this file
+  has none". Keep both; they are not the same bug.
+- **The probe tries `ffprobe`, then falls back to scraping `ffmpeg -i`.**
+  Only ffmpeg is bundled (`getFfmpegPath()`); `ffprobe` is whatever the user
+  happens to have installed, so it must never be the only way to read a tag the
+  transcode depends on. `getEncoderEnv()` does not add the bundled directory to
+  `PATH`, which is why the ffmpeg call resolves an absolute path and the ffprobe
+  one does not.
+- **`extractReplayGainTags()` must reject non-finite numbers.** music-metadata's
+  `toRatio()` splits on a space, so a value written as `-3.38dB` comes back as
+  `{ dB: null }` and used to be written out as the literal string `"null dB"`.
+  Dropping it lets the ffprobe top-up supply the real value instead.
+
+## Decision: nothing embeds album artwork into a Musepack file
+
+Also issue #130. `writeMpcMetadata()` used to embed the source's own picture,
+or the folder `cover.jpg` beside it, **at its original resolution** — a
+1500x1500 cover inside every single track. It is gone, and it should stay gone:
+Rockbox reads album art from the `cover.jpg` that `copyArtworkToShadowLibrary()`
+writes beside the audio, already resized to `DEFAULT_COVER_MAX_DIMENSION`
+(300px). Embedding a second copy bought nothing.
+
+`tagging/writer.ts` still knows how to serialize a binary item and
+`tagging/reader.ts` still resolves a legacy mis-flagged cover back to binary by
+name — both are needed to read and repair the files already out there. Only the
+population is gone.
+
+**`repairMpcTags()` strips the artwork, so the tag block now shrinks.** That
+retires the old "same size, always" invariant:
+
+- The guard is now *must not grow*, not *must match*. The tag is the last thing
+  in the file, so a shorter block truncates cleanly while a longer one would
+  mean moving bytes this module refuses to move.
+- Anything after the block — an ID3v1 tag — is read off the tail and written
+  back down with it, then the file is truncated. Losing that was the easy bug
+  to write here.
+- **The mtime is still restored**, for the reason in the file's docblock. The
+  *size* deliberately is not preserved, so `maintenance:repairMpcTags` refreshes
+  `shadow_tracks.file_size` for every file it rewrites, or the next reconcile
+  treats them all as candidates.
+- Device copies get the artwork stripped but no ReplayGain put back:
+  `device_synced_tracks.device_path` is mount-relative and casefolded and cannot
+  be matched against the absolute paths the walk yields. It does not need to be
+  — repairing the shadow copy changes its size, and the next sync re-copies the
+  fully-repaired file over the device's.
+
+Pinned in `src/__tests__/regressions/replaygain-source-read.test.ts` (real
+ffmpeg-made FLACs, with `parseFile` mocked to throw),
+`src/__tests__/regressions/mpc-repair-artwork-replaygain.test.ts` (the shrink,
+the ID3v1 move, the ReplayGain restore) and
+`src/__tests__/behaviors/mpc-transcode-tags.test.ts`.
+
+> **Test-coverage note:** that behaviour suite is the only real FLAC to Musepack
+> coverage there is, and it `describe.skipIf`s itself when `mpcenc` is absent —
+> which is every CI runner. It now prints why it skipped. Anything that must
+> hold on CI needs an assertion that does not need `mpcenc`.
+
 ## Hazard: a shadow rebuild never re-opens a file that already exists
 
 Issue #130. Nothing in a build reads a byte of an already-transcoded shadow

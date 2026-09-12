@@ -111,6 +111,7 @@ describe("Shadow rebuild — repairs the tags it skips (#130)", () => {
     const dest = path.join(shadowDir, "Artist", "Album", "song.mpc");
     writeLegacyMpc(dest);
     expect(itemFlags(fs.readFileSync(dest), "Cover Art (Front)")).toBe(1);
+    expect(fs.readFileSync(dest).includes(COVER)).toBe(true);
 
     const beforeStat = fs.statSync(dest);
 
@@ -132,26 +133,27 @@ describe("Shadow rebuild — repairs the tags it skips (#130)", () => {
 
     const after = fs.readFileSync(dest);
 
-    // The defect is gone, and the payload survived.
-    expect(itemFlags(after, "Cover Art (Front)")).toBe(2);
-    expect(itemOffset(after, "REPLAYGAIN_TRACK_GAIN")).toBeLessThan(
-      itemOffset(after, "Cover Art (Front)")
-    );
-    expect(after.includes(COVER)).toBe(true);
+    // The artwork is gone entirely — iPodRocks no longer embeds any (#130) —
+    // while everything that is not the image survived.
+    expect(after.includes(COVER)).toBe(false);
+    expect(itemOffset(after, "REPLAYGAIN_TRACK_GAIN")).toBeGreaterThan(0);
     expect(after.subarray(0, AUDIO.byteLength).equals(AUDIO)).toBe(true);
 
-    // Size and floored mtime are what `shadow_tracks` compares. Change either
-    // and the repair cascades into a re-transcode here and a re-copy at the
-    // next sync.
+    // The file is smaller for exactly that reason, but the floored mtime is
+    // untouched — the value `shadow_tracks.mtime` stores and compares.
     const afterStat = fs.statSync(dest);
-    expect(afterStat.size).toBe(beforeStat.size);
+    expect(afterStat.size).toBeLessThan(beforeStat.size);
     expect(Math.floor(afterStat.mtimeMs)).toBe(Math.floor(beforeStat.mtimeMs));
 
+    // The row still points at the file and still trusts its mtime. Its
+    // recorded size is now the pre-repair one: `maintenance:repairMpcTags`
+    // refreshes that for the files it rewrites, and a build that repairs on
+    // its way past leaves it to the next reconcile, which re-stats a candidate
+    // and moves on. Either way nothing re-encodes.
     const row = db
-      .prepare("SELECT status, file_size, mtime FROM shadow_tracks WHERE shadow_library_id = ?")
-      .get(libId) as { status: string; file_size: number; mtime: number };
+      .prepare("SELECT status, mtime FROM shadow_tracks WHERE shadow_library_id = ?")
+      .get(libId) as { status: string; mtime: number };
     expect(row.status).toBe("synced");
-    expect(row.file_size).toBe(afterStat.size);
     expect(row.mtime).toBe(Math.floor(afterStat.mtimeMs));
   });
 

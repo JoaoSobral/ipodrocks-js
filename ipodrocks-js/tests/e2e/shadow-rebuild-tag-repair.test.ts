@@ -148,31 +148,26 @@ test("a rebuild repairs a legacy Musepack tag already in the shadow folder", asy
 
   const after = fs.readFileSync(broken);
 
-  // The defect is gone: the artwork is a binary item, and never read-only.
-  expect(itemFlags(after, "Cover Art (Front)")).toBe(2);
+  // The artwork is gone outright — nothing embeds any now (#130).
+  expect(after.includes(COVER)).toBe(false);
+  expect(() => itemOffset(after, "Cover Art (Front)")).toThrow();
 
-  // ReplayGain now sits ahead of the artwork, where a bounded reader reaches it.
-  expect(itemOffset(after, "REPLAYGAIN_TRACK_GAIN")).toBeLessThan(
-    itemOffset(after, "Cover Art (Front)")
-  );
-
-  // The image survives byte for byte, and so does the audio.
-  expect(after.includes(COVER)).toBe(true);
+  // ReplayGain and the audio survive.
+  expect(itemOffset(after, "REPLAYGAIN_TRACK_GAIN")).toBeGreaterThan(0);
   expect(after.subarray(0, AUDIO.byteLength).equals(AUDIO)).toBe(true);
 
-  // Same size and same mtime. This is what stops the repair cascading into a
-  // re-transcode here and a re-copy at the next sync — `shadow_tracks.mtime`
-  // stores `Math.floor(mtimeMs)` and compares it for equality.
+  // Smaller, because the image came out — but the floored mtime is unchanged,
+  // which is what `shadow_tracks.mtime` stores and compares, so the rebuild
+  // does not cascade into re-encoding the track it just repaired.
   const afterStat = fs.statSync(broken);
-  expect(afterStat.size).toBe(beforeStat.size);
+  expect(afterStat.size).toBeLessThan(beforeStat.size);
   expect(Math.floor(afterStat.mtimeMs)).toBe(Math.floor(beforeStat.mtimeMs));
 
   // Nothing else in the folder was touched.
   expect(fs.readFileSync(untouched, "utf8")).toBe("leave me alone");
 
   // The build log says what happened, and points at the one place that can fix
-  // the copies already sitting on a device — the size+mtime the repair
-  // preserves is exactly what stops a sync noticing them.
+  // the copies already sitting on a device.
   expect(logs.some((l) => /1 repaired/.test(l))).toBe(true);
   expect(logs.some((l) => /Repair Musepack tags/.test(l))).toBe(true);
 });

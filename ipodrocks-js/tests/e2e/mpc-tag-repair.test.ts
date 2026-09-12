@@ -129,24 +129,23 @@ test("the Settings action repairs Musepack files already in a shadow library", a
 
   const after = fs.readFileSync(broken);
 
-  // The defect is gone: the artwork is a binary item, and never read-only.
-  expect(itemFlags(after, "Cover Art (Front)")).toBe(2);
+  // The artwork is gone outright — iPodRocks no longer embeds any, so the
+  // repair removes what earlier versions put there (#130). That is what the
+  // reporter's 1500x1500 covers inside every track became.
+  expect(after.includes(COVER)).toBe(false);
+  expect(() => itemOffset(after, "Cover Art (Front)")).toThrow();
 
-  // ReplayGain now sits ahead of the artwork, where a bounded reader reaches it.
-  expect(itemOffset(after, "REPLAYGAIN_TRACK_GAIN")).toBeLessThan(
-    itemOffset(after, "Cover Art (Front)")
-  );
-
-  // The image survives byte for byte, and so does the audio.
-  expect(after.includes(COVER)).toBe(true);
+  // ReplayGain and the ordinary tags survive, and so does the audio.
+  expect(itemOffset(after, "REPLAYGAIN_TRACK_GAIN")).toBeGreaterThan(0);
+  expect(itemOffset(after, "Title")).toBeGreaterThan(0);
   expect(after.subarray(0, AUDIO.byteLength).equals(AUDIO)).toBe(true);
 
-  // Same size and same mtime, so nothing re-transcodes or re-syncs. Compared
-  // at whole-millisecond resolution because that is what reads it:
+  // The file is smaller — the image came out — but the mtime is unchanged.
+  // Compared at whole-millisecond resolution because that is what reads it:
   // `shadow_tracks.mtime` stores `Math.floor(mtimeMs)`, and restoring through
   // `utimes` drops any fractional millisecond the original had.
   const afterStat = fs.statSync(broken);
-  expect(afterStat.size).toBe(beforeStat.size);
+  expect(afterStat.size).toBeLessThan(beforeStat.size);
   expect(Math.floor(afterStat.mtimeMs)).toBe(Math.floor(beforeStat.mtimeMs));
 
   // Nothing else in the folder was touched.

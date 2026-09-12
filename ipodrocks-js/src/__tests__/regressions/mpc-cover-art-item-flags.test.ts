@@ -175,7 +175,7 @@ describe("issue #125 — APEv2 cover-art item type flags", () => {
   });
 
   describe("repairMpcTags", () => {
-    it("fixes a legacy file without touching the audio, its size or its mtime", async () => {
+    it("fixes a legacy file without touching the audio or its mtime", async () => {
       const file = path.join(workDir, "repair.mpc");
       writeLegacyFile(file);
 
@@ -194,30 +194,34 @@ describe("issue #125 — APEv2 cover-art item type flags", () => {
       const after = fs.readFileSync(file);
       const afterStat = fs.statSync(file, { bigint: true });
 
-      expect(after.byteLength).toBe(before.byteLength);
-      expect(afterStat.size).toBe(beforeStat.size);
+      // The size is NOT preserved any more: the artwork this legacy file
+      // carries comes out, which is the point (#130). The mtime still is, so
+      // the device sync's name+size+mtime compare re-copies the repaired file
+      // rather than the pass going unnoticed on both sides.
+      expect(after.byteLength).toBeLessThan(before.byteLength);
       expect(Math.floor(Number(afterStat.mtimeNs) / 1e6)).toBe(
         Math.floor(Number(beforeStat.mtimeNs) / 1e6)
       );
       expect(after.subarray(0, AUDIO.byteLength).equals(AUDIO)).toBe(true);
     });
 
-    it("leaves the artwork byte-identical and reorders ReplayGain ahead of it", async () => {
+    it("removes the artwork and keeps every text item (#130)", async () => {
       const file = path.join(workDir, "roundtrip.mpc");
       writeLegacyFile(file);
       await repairMpcTags(file);
 
       const tags = readApeTags(file);
-      expect(tags.coverArt?.data.equals(COVER)).toBe(true);
+      expect(tags.coverArt).toBeUndefined();
+      expect(fs.readFileSync(file).includes(COVER)).toBe(false);
+
+      // Everything that is not the image survives, including the ReplayGain
+      // the legacy layout had buried behind it.
       expect(tags.title).toBe("Test Title");
       expect(tags.extra?.REPLAYGAIN_TRACK_GAIN).toBe("-3.38 dB");
 
       const items = readItems(file);
-      const cover = items[indexOfKey(items, "Cover Art (Front)")];
-      expect(itemTypeFromFlags(cover.flags)).toBe(ITEM_TYPE_BINARY);
-      expect(indexOfKey(items, "REPLAYGAIN_TRACK_GAIN")).toBeLessThan(
-        indexOfKey(items, "Cover Art (Front)")
-      );
+      expect(indexOfKey(items, "Cover Art (Front)")).toBe(-1);
+      expect(items.every((i) => itemTypeFromFlags(i.flags) !== ITEM_TYPE_BINARY)).toBe(true);
     });
 
     it("is idempotent — a second pass reports nothing to do", async () => {
@@ -229,13 +233,27 @@ describe("issue #125 — APEv2 cover-art item type flags", () => {
       expect(await repairMpcTags(file)).toBe("ok");
     });
 
-    it("leaves a file this writer produced alone", async () => {
+    it("leaves a file this pipeline produced alone", async () => {
+      // `writeTags` can still serialize a binary item — that contract is
+      // pinned above — but nothing hands it one any more, so a file written by
+      // the current transcode has no artwork and nothing left to repair.
       const file = path.join(workDir, "already-good.mpc");
       fs.writeFileSync(file, AUDIO);
-      await writeTags(file, TAGS);
+      await writeTags(file, { ...TAGS, coverArt: undefined });
 
       expect(await needsApeRepair(file)).toBe(false);
       expect(await repairMpcTags(file)).toBe("ok");
+    });
+
+    it("still strips artwork from a file that was written with some", async () => {
+      const file = path.join(workDir, "correct-but-arty.mpc");
+      fs.writeFileSync(file, AUDIO);
+      await writeTags(file, TAGS); // correct flags, but artwork present
+
+      expect(await needsApeRepair(file)).toBe(true);
+      expect(await repairMpcTags(file)).toBe("repaired");
+      expect(readApeTags(file).coverArt).toBeUndefined();
+      expect(readApeTags(file).extra?.REPLAYGAIN_TRACK_GAIN).toBe("-3.38 dB");
     });
 
     it("ignores a tagged file with no artwork, and an untagged one", async () => {

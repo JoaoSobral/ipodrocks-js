@@ -31,6 +31,15 @@ export interface RepairScanResult {
 export interface RepairScanOptions {
   cancelSignal?: AbortSignal;
   onProgress?: (progress: RepairScanResult & { currentFile: string }) => void;
+  /**
+   * ReplayGain values for the library track a given `.mpc` was transcoded
+   * from, so the repair can put back what the transcode lost (issue #130).
+   * Returning null — no mapping, or a source with none — leaves that file's
+   * ReplayGain alone; the artwork strip still happens.
+   */
+  replayGainFor?: (mpcPath: string) => Record<string, string> | null;
+  /** Called for each file the repair actually rewrote, with its new size. */
+  onRepaired?: (mpcPath: string, newSize: number) => void;
 }
 
 function yieldToEventLoop(): Promise<void> {
@@ -46,7 +55,7 @@ export async function repairMpcTagsInTree(
   root: string,
   options: RepairScanOptions = {}
 ): Promise<RepairScanResult> {
-  const { cancelSignal, onProgress } = options;
+  const { cancelSignal, onProgress, replayGainFor, onRepaired } = options;
   const result: RepairScanResult = { scanned: 0, repaired: 0, failed: 0 };
 
   const walk = async (dir: string): Promise<void> => {
@@ -73,10 +82,19 @@ export async function repairMpcTagsInTree(
       if (!isMpcFile(entry.name)) continue;
 
       result.scanned++;
-      if (await needsApeRepair(full)) {
-        const outcome = await repairMpcTags(full);
-        if (outcome === "repaired") result.repaired++;
-        else if (outcome === "failed") result.failed++;
+      const replayGain = replayGainFor?.(full) ?? undefined;
+      if (await needsApeRepair(full, replayGain)) {
+        const outcome = await repairMpcTags(full, replayGain);
+        if (outcome === "repaired") {
+          result.repaired++;
+          try {
+            onRepaired?.(full, (await fsp.stat(full)).size);
+          } catch {
+            /* the repair stands even if the stat for the baseline fails */
+          }
+        } else if (outcome === "failed") {
+          result.failed++;
+        }
       }
       onProgress?.({ ...result, currentFile: full });
 
