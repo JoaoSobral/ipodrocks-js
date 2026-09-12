@@ -12,6 +12,17 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+
+// `device_sync` reaches for BrowserWindow to tell the renderer to start. This
+// used to sit inside the test that needs it, which read as scoped but never
+// was — vitest hoists every `vi.mock` to the top of the file, so it always
+// applied to the whole of it. Since vitest 5 writing it there is an error, so
+// it now says where it really takes effect.
+vi.mock("electron", () => ({
+  BrowserWindow: {
+    getAllWindows: vi.fn().mockReturnValue([{ webContents: { send: vi.fn() } }]),
+  },
+}));
 import {
   AI_TOOLS,
   buildToolDefinitions,
@@ -375,9 +386,6 @@ describe("device_sync (write-destructive)", () => {
   });
 
   it("returns ok:true and deviceName on success", async () => {
-    vi.mock("electron", () => ({
-      BrowserWindow: { getAllWindows: vi.fn().mockReturnValue([{ webContents: { send: vi.fn() } }]) },
-    }));
     const ctx = makeCtx();
     const result = await getToolByName("device_sync")!.run({ device_id: 1 }, ctx) as Record<string, unknown>;
     expect(result.ok).toBe(true);

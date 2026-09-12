@@ -102,12 +102,40 @@ export function resetMusicMetadataMock(): void {
 }
 
 /**
- * Installs `vi.mock("music-metadata")` with a `parseFile` that consults the
- * shared registry. Call at module scope of the test file.
+ * Whether `parseFile` should answer from the registry or from the real parser.
+ *
+ * The `vi.mock` below has to sit at module top level — vitest hoists it there
+ * regardless, and since v5 it refuses to run when written inside a function.
+ * But this module is re-exported from `harness/index.ts`, so merely importing
+ * any harness helper evaluates it, and half the suites that do that want the
+ * *real* music-metadata. So the mock is always registered and defaults to
+ * delegating; `installMusicMetadataMock()` is what switches it over.
+ *
+ * Note this replaces `parseFile` only. Everything else the module exports —
+ * `parseBuffer`, which the MPC branch of `MetadataExtractor` uses — stays real
+ * even in a mocked test, where it used to be absent entirely.
+ */
+let useRegistry = false;
+
+/**
+ * Answer `parseFile` from the shared registry instead of reading the file.
+ * Call at module scope of the test file, as before.
  */
 export function installMusicMetadataMock(): void {
-  vi.mock("music-metadata", () => ({
-    parseFile: vi.fn(async (filePath: string) => {
+  useRegistry = true;
+}
+
+vi.mock("music-metadata", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("music-metadata")>();
+  return {
+    ...actual,
+    parseFile: vi.fn(async (filePath: string, ...rest: unknown[]) => {
+      if (!useRegistry) {
+        return (actual.parseFile as (...a: unknown[]) => Promise<IAudioMetadata>)(
+          filePath,
+          ...rest
+        );
+      }
       const hit = registry.get(filePath);
       if (hit) return hit;
       return {
@@ -115,5 +143,5 @@ export function installMusicMetadataMock(): void {
         format: {},
       } as unknown as IAudioMetadata;
     }),
-  }));
-}
+  };
+});

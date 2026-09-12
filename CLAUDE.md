@@ -4,6 +4,26 @@
 
 Every time a feature or functionality is added or changed, the corresponding end-to-end tests **must** be created or updated in the same change. No feature work ships without end-to-end coverage of the new/modified behavior. Prefer E2E tests (Playwright, `npm run test:e2e`) over unit/integration tests.
 
+**`vi.mock` must be written at the top level of its own module.** Vitest hoists
+every `vi.mock` to the top of the file it appears in, so one written inside a
+function only *looked* scoped — it always applied to the whole file. Vitest 5
+(here since Dependabot's `@vitest/mocker` bump) makes writing it there a hard
+error that fails the suite at load time, so it took out 43 of them at once. Two
+consequences worth keeping:
+
+- `harness/ipc-harness.ts` registers the electron mock at module scope;
+  `installElectronMock()` survives as the marker at the top of a test file.
+  That is safe only because `harness/index.ts` does **not** re-export it.
+- `harness/music-metadata-mock.ts` *is* re-exported from the index, and half the
+  suites that import a harness helper want the real parser. So its mock is
+  always registered and delegates to the real `parseFile` until
+  `installMusicMetadataMock()` flips it. Do not "simplify" that into an
+  unconditional mock.
+
+**When CI disagrees with a local run, check the installed version before
+anything else** — `node_modules` can sit well behind `package-lock.json`, and
+CI's `npm ci` never does. `npm ci` locally reproduces it exactly.
+
 The e2e suite runs the app **hidden**: `tests/e2e/electron-launcher.ts` sets
 `IPODROCKS_HEADLESS=1`, which `src/main/index.ts` turns into `show: false` plus
 `backgroundThrottling: false` on the `BrowserWindow`, and `app.dock.hide()` on

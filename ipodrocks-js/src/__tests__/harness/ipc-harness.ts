@@ -27,69 +27,76 @@ const sentRendererEvents: Array<{ channel: string; payload: unknown }> = [];
 let appPathRoot = "/tmp/ipodrocks-test";
 
 /**
- * Installs the `vi.mock("electron")` stub. Call this at module scope in your
- * test file BEFORE any `import` of app code that transitively pulls electron.
+ * Kept as the explicit marker at the top of a test file that this harness is
+ * what supplies `electron`. The mock itself is registered below, at module top
+ * level: vitest hoists `vi.mock` there regardless, and since v5 it refuses to
+ * run one written inside a function. Importing this module is what installs
+ * it — which is safe because, unlike `music-metadata-mock`, nothing
+ * re-exports this from `harness/index.ts`, so it is only ever pulled in by a
+ * test that wants it.
  */
 export function installElectronMock(): void {
-  vi.mock("electron", () => {
-    const fakeSender = {
-      send: (channel: string, payload: unknown) => {
-        sentRendererEvents.push({ channel, payload });
-      },
-      isDestroyed: () => false,
-    };
-
-    return {
-      app: {
-        getPath: (name: string) => `${appPathRoot}/${name}`,
-        getAppPath: () => appPathRoot,
-        getName: () => "ipodrocks-test",
-        getVersion: () => "0.0.0-test",
-        on: vi.fn(),
-        whenReady: () => Promise.resolve(),
-        quit: vi.fn(),
-      },
-      BrowserWindow: class FakeBrowserWindow {
-        webContents = fakeSender;
-        static getAllWindows() {
-          return [];
-        }
-        static getFocusedWindow() {
-          return null;
-        }
-      },
-      ipcMain: {
-        handle: (
-          channel: string,
-          fn: (event: unknown, ...args: unknown[]) => Promise<unknown>
-        ) => {
-          capturedHandlers.set(channel, fn);
-        },
-        on: vi.fn(),
-        removeHandler: (channel: string) => {
-          capturedHandlers.delete(channel);
-        },
-      },
-      dialog: {
-        showOpenDialog: vi.fn().mockResolvedValue({ canceled: true, filePaths: [] }),
-        showSaveDialog: vi.fn().mockResolvedValue({ canceled: true, filePath: undefined }),
-        showMessageBox: vi.fn().mockResolvedValue({ response: 0 }),
-      },
-      shell: {
-        openPath: vi.fn().mockResolvedValue(""),
-        openExternal: vi.fn().mockResolvedValue(undefined),
-        showItemInFolder: vi.fn(),
-      },
-      net: {
-        fetch: vi.fn(),
-      },
-      protocol: {
-        registerSchemesAsPrivileged: vi.fn(),
-        handle: vi.fn(),
-      },
-    };
-  });
+  /* no-op; see above */
 }
+
+vi.mock("electron", () => {
+  const fakeSender = {
+    send: (channel: string, payload: unknown) => {
+      sentRendererEvents.push({ channel, payload });
+    },
+    isDestroyed: () => false,
+  };
+
+  return {
+    app: {
+      getPath: (name: string) => `${appPathRoot}/${name}`,
+      getAppPath: () => appPathRoot,
+      getName: () => "ipodrocks-test",
+      getVersion: () => "0.0.0-test",
+      on: vi.fn(),
+      whenReady: () => Promise.resolve(),
+      quit: vi.fn(),
+    },
+    BrowserWindow: class FakeBrowserWindow {
+      webContents = fakeSender;
+      static getAllWindows() {
+        return [];
+      }
+      static getFocusedWindow() {
+        return null;
+      }
+    },
+    ipcMain: {
+      handle: (
+        channel: string,
+        fn: (event: unknown, ...args: unknown[]) => Promise<unknown>
+      ) => {
+        capturedHandlers.set(channel, fn);
+      },
+      on: vi.fn(),
+      removeHandler: (channel: string) => {
+        capturedHandlers.delete(channel);
+      },
+    },
+    dialog: {
+      showOpenDialog: vi.fn().mockResolvedValue({ canceled: true, filePaths: [] }),
+      showSaveDialog: vi.fn().mockResolvedValue({ canceled: true, filePath: undefined }),
+      showMessageBox: vi.fn().mockResolvedValue({ response: 0 }),
+    },
+    shell: {
+      openPath: vi.fn().mockResolvedValue(""),
+      openExternal: vi.fn().mockResolvedValue(undefined),
+      showItemInFolder: vi.fn(),
+    },
+    net: {
+      fetch: vi.fn(),
+    },
+    protocol: {
+      registerSchemesAsPrivileged: vi.fn(),
+      handle: vi.fn(),
+    },
+  };
+});
 
 export interface IpcSession {
   invoke: <T = unknown>(channel: string, ...args: unknown[]) => Promise<T>;
