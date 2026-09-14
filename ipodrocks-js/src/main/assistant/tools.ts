@@ -1378,11 +1378,11 @@ const shadow_prune_orphans: AiTool = {
 const mpc_repair_tags: AiTool = {
   name: "mpc_repair_tags",
   description:
-    "Repair the cover-art tag in Musepack (.mpc) files iPodRocks has already written into shadow libraries or copied onto devices. Older versions wrote the artwork with the wrong APEv2 item type, which tag editors show as hundreds of empty 'Cover Art' fields and which stops Rockbox reading the ReplayGain tags that follow it. Rewrites only the tag — never the audio — and files keep their size and timestamp, so nothing is re-transcoded or re-synced. Safe to run more than once.",
+    "Repair the Musepack (.mpc) files iPodRocks has already written into shadow libraries or copied onto devices. Moves ReplayGain into the file's stream header, which is the only place a Musepack player — Rockbox included — reads it: older versions wrote it into the APEv2 tag, so no volume levelling was applied at all. Also removes the cover art older versions wrote with the wrong APEv2 item type, which tag editors show as hundreds of empty 'Cover Art' fields. Never re-encodes the audio, and timestamps are kept, so nothing is re-transcoded. Ask the user to connect their player first so the copies already on it are covered. Safe to run more than once.",
   parameters: { type: "object", properties: {} },
   kind: "write-destructive",
   summarize: () =>
-    "Repair Musepack cover-art tags in every shadow library and on every connected device",
+    "Repair Musepack tags and ReplayGain in every shadow library and on every connected device",
   async run() {
     const { BrowserWindow } = await import("electron");
     const win = BrowserWindow.getAllWindows()[0];

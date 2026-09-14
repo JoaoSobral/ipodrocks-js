@@ -268,18 +268,22 @@ Three rules:
 `tagging/mpc/repair.ts` fixes files already on disk, driven by
 `repair-scan.ts` over shadow-library folders and device content folders
 (`maintenance:repairMpcTags`, Settings → Maintenance, Rocksy's
-`mpc_repair_tags`). Two properties are load-bearing and pinned:
+`mpc_repair_tags`). Three properties are load-bearing and pinned:
 
-- **It rewrites only the trailing tag block, never the audio.** `readAudioOnly()`
-  does a synchronous read of the whole file (see the note in
-  `shadow-reconcile.ts`); doing that per file from an ipcMain handler blocks the
-  main process for a full read of the library.
+- **It rewrites only the trailing tag block and nine bytes of the stream header,
+  never the audio.** `readAudioOnly()` does a synchronous read of the whole file
+  (see the note in `shadow-reconcile.ts`); doing that per file from an ipcMain
+  handler blocks the main process for a full read of the library.
 - **It preserves size and mtime, so the pass is invisible downstream.** Size is
   unchanged for free (same items, same value lengths — only a flags word and the
   order). The mtime must be restored from a `{ bigint: true }` stat as fractional
   *seconds*: passing the `Date` form loses ~0.9 ms, which is enough to shift
   `Math.floor(mtimeMs)` by one — and that floored value is exactly what
   `shadow_tracks.mtime` stores and compares for equality.
+- **Both writes happen under one mtime restore**, the stat taken before either of
+  them. A header-only repair still returns `"repaired"` — nothing downstream would
+  notice it otherwise — and a "must not grow" refusal must not throw away a header
+  write that already succeeded: it restores the mtime and reports the repair.
 
 Pinned in `src/__tests__/regressions/mpc-cover-art-item-flags.test.ts`,
 `src/__tests__/behaviors/mpc-transcode-tags.test.ts` and
@@ -287,10 +291,17 @@ Pinned in `src/__tests__/regressions/mpc-cover-art-item-flags.test.ts`,
 
 ## Hazard: `readSourceApeTags()` is the only producer of ReplayGain
 
-Issue #130. Every ReplayGain value iPodRocks writes — into `.mpc` via the APEv2
-writer, and into `.m4a` via `maybeWriteM4aReplayGain` — comes from
-`readSourceApeTags()` in `sync/sync-conversion.ts`, and from nowhere else. It
-used to end in a bare `catch { return {}; }`.
+Issue #130. Every ReplayGain value iPodRocks writes — into a `.mpc` **stream
+header** via `maybeWriteMpcReplayGainHeader` (#137), into `.m4a` via
+`maybeWriteM4aReplayGain`, and into an APEv2 tag for the files whose header
+cannot take it — comes from `readSourceApeTags()` in `sync/sync-conversion.ts`,
+and from nowhere else. It used to end in a bare `catch { return {}; }`.
+
+The four key names and their parsing live in `tagging/replaygain-keys.ts`, which
+imports nothing: `sync/` may import `tagging/` and never the other way round, so
+that is the only place both sides can share them from. A Musepack *source* is
+topped up from its own header there too, since we no longer leave a tag copy in
+one.
 
 **An empty tag set is indistinguishable from a file that has no tags.** When
 that catch fired, the transcode silently fell back to the six fields
@@ -315,6 +326,79 @@ shadow build log carries a line per track that ends up with no ReplayGain.
   `toRatio()` splits on a space, so a value written as `-3.38dB` comes back as
   `{ dB: null }` and used to be written out as the literal string `"null dB"`.
   Dropping it lets the ffprobe top-up supply the real value instead.
+
+## Hazard: Musepack ReplayGain lives in the stream header, and that packet is fixed-size
+
+Issue #137. Musepack was the first format with native ReplayGain and it keeps the
+values in the **stream header**, not the tag — the SV8 `RG` packet, which the spec
+makes mandatory. Rockbox reads only that packet; `read_ape_tags()` runs afterwards
+and `parse_replaygain()` never overwrites a value already set, so the `REPLAYGAIN_*`
+items are a fallback for other tools and nothing more.
+
+**`mpcenc` reserves the packet and leaves every field zero.** It has no ReplayGain
+option, and the encode is fed a tagless WAV by ffmpeg anyway, so every value in
+there is one iPodRocks put there. The head of a real 1.30.1 output, which is also
+the fixture in `src/__tests__/harness/sv8-mpc.ts`:
+
+```
+MPCK | SH size 14 @4 | RG size 12 @18: 01 0000 0000 0000 0000 | EI @30 | SO @37 | AP @45
+                       payload @21: version, then title_gain(s16) title_peak(u16)
+                                    album_gain(s16) album_peak(u16), big-endian
+```
+
+`gain = round((64.82 - dB) * 256)`, `peak = round(20*log10(linear*32768) * 256)` —
+Rockbox's `SV8_TO_SV7_CONVERT_GAIN` (6482) and `SV8_TO_SV7_CONVERT_PEAK` (23119)
+are the same two constants. **`0` means "not computed"**, so `encodeGain`/`encodePeak`
+(`tagging/mpc/replaygain-header.ts`) never return it for a value we hold.
+
+Three rules, all of them from `lib/rbcodec/metadata/mpc.c`:
+
+- **The `RG` packet must sit immediately after `SH`.** `get_musepack_metadata()`
+  reads 32 bytes from offset 6 and jumps `SH_size - 2` to find it. So the writer
+  **patches in place and never inserts or moves a packet** — a file whose packet is
+  anywhere else is refused (`"unsupported"`) and keeps its tag ReplayGain instead.
+  Inserting would also break the `SO` packet's absolute seek-table offset, and would
+  move the APEv2 block whose position `repairMpcTags()` computed before the patch.
+- **A gain whose peak decodes to 0 is ignored entirely** (`if (peak != 0)` in
+  `set_replaygain_sv8()`). Gain and peak are therefore written as a pair:
+  `computeTargetRaws()` gives a gain that arrives without a peak a full-scale one
+  (23119) rather than dropping it. Half a pair makes the file look tagged and does
+  nothing.
+- **The header wins over the tag**, which is what makes dropping the tag copy safe.
+
+Consequences worth keeping:
+
+- **The strip is authorized by a successful header write, never by the attempt.**
+  `writeMpcMetadata()` and `repairMpcTags()` drop the four `REPLAYGAIN_*` items only
+  on `"written"`/`"unchanged"`. **SV7 (`MP+`) is deliberately never written** —
+  different layout and scale, nothing the app produces — so those files keep their
+  tag copy and the pre-#137 restore path whole. `tests/e2e/mpc-tag-repair.test.ts`
+  pins exactly that with its SV7 fixture.
+- **The patch is nine bytes inside a fixed-size packet**, so the file's length and
+  every absolute offset in it are unchanged. That is what lets the repair read the
+  tag block's position first, patch the header, and then rewrite the block.
+- **The cheap check and the writer share `computeTargetRaws()`.** If they computed
+  the target differently, the scan would report files it then leaves untouched.
+- **A header-only repair changes neither size nor mtime**, so no sync will ever
+  re-copy the fixed file. That is why `maintenance:repairMpcTags` walks connected
+  devices and repairs their copies from those files' own tags — the old "repair the
+  shadow copy, the next sync carries it across" story does not hold here — and why
+  the UI tells the user to plug the player in.
+
+> **Test-coverage note:** music-metadata parses SV8 but skips the `RG` packet
+> outright (`MpcSv8Parser.js`: `case 'RG': … ignore`), so there is no library to
+> check this against. The fixture is hand-assembled from the bytes above, for the
+> same reason `legacy-mpc.ts` is: a round trip through our own code is not a format
+> test.
+
+Pinned in `src/__tests__/regressions/mpc-replaygain-header.test.ts` (the codec
+against the spec's own examples and Rockbox's integer arithmetic, the refusals, the
+in-place patch), `src/__tests__/regressions/mpc-header-repair-migration.test.ts`
+(tag → header, the per-field merge, one mtime restore),
+`src/__tests__/behaviors/mpc-transcode-tags.test.ts` (real mpcenc, including the
+control that its own `RG` packet is all zeros),
+`tests/e2e/mpc-tag-repair.test.ts` and
+`tests/e2e/shadow-rebuild-tag-repair.test.ts`.
 
 ## Decision: nothing embeds album artwork into a Musepack file
 
@@ -343,11 +427,12 @@ retires the old "same size, always" invariant:
   *size* deliberately is not preserved, so `maintenance:repairMpcTags` refreshes
   `shadow_tracks.file_size` for every file it rewrites, or the next reconcile
   treats them all as candidates.
-- Device copies get the artwork stripped but no ReplayGain put back:
+- Device copies cannot be matched back to a library track:
   `device_synced_tracks.device_path` is mount-relative and casefolded and cannot
-  be matched against the absolute paths the walk yields. It does not need to be
-  — repairing the shadow copy changes its size, and the next sync re-copies the
-  fully-repaired file over the device's.
+  be matched against the absolute paths the walk yields. They are still repaired
+  in full from what they carry themselves — artwork out, and their own
+  `REPLAYGAIN_*` items into the stream header (#137). Only the source-resolved
+  top-up, for a file whose tag lost its ReplayGain entirely, stays shadow-only.
 
 Pinned in `src/__tests__/regressions/replaygain-source-read.test.ts` (real
 ffmpeg-made FLACs, with `parseFile` mocked to throw),
@@ -384,7 +469,10 @@ transcode loop; it delegates to `repairMpcTagsInTree()`, the same pass
 `maintenance:repairMpcTags` drives, so the two can never disagree about what a
 broken tag is. It is deliberately **not** gated on the library's codec — the
 walk already filters to `.mpc`, and a folder can hold Musepack files a later
-codec change left behind. It *is* gated on the root being reachable, using the
+codec change left behind. It passes the same `replayGainFor` resolver Settings →
+Maintenance uses (`library/shadow-replaygain-source.ts`), which probes lazily and
+caches per source track, so a folder of already-correct files still spawns
+nothing. It *is* gated on the root being reachable, using the
 same guard as the reconcile: `rec.skipped` is the wrong signal, since that is
 also set for `UNRECONCILABLE_CODECS`.
 

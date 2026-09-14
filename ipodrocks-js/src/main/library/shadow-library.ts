@@ -21,6 +21,7 @@ import {
 } from "../tagging/mpc/repair-scan";
 import { findOnDisk, normalizePath } from "../utils/normalize-path";
 import { decidePrune, type ShadowFileEntry } from "./shadow-prune";
+import { makeShadowSourceResolver } from "./shadow-replaygain-source";
 import { MetadataExtractor } from "./metadata-extractor";
 import {
   audioMatchesCodecConfig,
@@ -1321,9 +1322,10 @@ export class ShadowLibraryManager {
   }
 
   /**
-   * Walk the shadow folder and repair any Musepack tag block still carrying the
-   * issue #125 defect — a cover-art item flagged as text, or ReplayGain items
-   * sitting behind the artwork where a bounded reader never reaches them.
+   * Walk the shadow folder and repair any Musepack file still carrying a defect
+   * an earlier version wrote: the issue #125 cover-art item flagged as text,
+   * artwork of any kind (#130), or ReplayGain that never reached the stream
+   * header where a player reads it (#137).
    *
    * This is a separate tree walk rather than a per-track check because the
    * transcode loop is exactly what cannot see these files: it skips them. It is
@@ -1349,6 +1351,11 @@ export class ShadowLibraryManager {
     let lastLogTime = 0;
     const result = await repairMpcTagsInTree(lib.path, {
       cancelSignal: signal,
+      // Same resolver Settings -> Maintenance uses, so the two passes can never
+      // disagree about a file's values. It probes only for files that need
+      // something and caches per source, so a folder of already-correct files
+      // spawns nothing.
+      replayGainFor: makeShadowSourceResolver(this.db, shadowLibId),
       onProgress: (p) => {
         if (!progressCallback) return;
         const now = Date.now();

@@ -423,14 +423,17 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
                       Repair Musepack tags
                     </p>
                     <p className="text-xs text-muted-foreground mt-0.5">
-                      Older versions wrote the cover art into Musepack (.mpc)
-                      files with the wrong tag type. Tag editors show it as
-                      hundreds of empty "Cover Art" fields, and Rockbox stops
-                      reading the ReplayGain tags that follow it. This checks
+                      Musepack keeps its ReplayGain in the file's stream header,
+                      and that is the only place Rockbox reads it — older
+                      versions wrote it into the tag instead, so no volume
+                      levelling was applied at all. Older versions also wrote
+                      the cover art with the wrong tag type, which tag editors
+                      show as hundreds of empty "Cover Art" fields. This checks
                       every .mpc file in your shadow libraries and on connected
-                      devices and rewrites the tag in place — the audio is never
-                      re-encoded, and files keep their size and timestamp so
-                      nothing re-syncs. Safe to run more than once.
+                      devices and fixes both in place — the audio is never
+                      re-encoded and timestamps are kept, so nothing is
+                      re-transcoded. Plug your player in first so the copies
+                      already on it are covered. Safe to run more than once.
                     </p>
                   </div>
                   <Button

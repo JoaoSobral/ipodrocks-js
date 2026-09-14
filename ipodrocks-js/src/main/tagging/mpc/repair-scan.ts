@@ -33,9 +33,12 @@ export interface RepairScanOptions {
   onProgress?: (progress: RepairScanResult & { currentFile: string }) => void;
   /**
    * ReplayGain values for the library track a given `.mpc` was transcoded
-   * from, so the repair can put back what the transcode lost (issue #130).
-   * Returning null — no mapping, or a source with none — leaves that file's
-   * ReplayGain alone; the artwork strip still happens.
+   * from, so the repair can put back what the transcode lost (issue #130) and
+   * fill the stream header with it (issue #137). Returning null — no mapping,
+   * or a source with none — is no longer "nothing to do": a file's own
+   * `REPLAYGAIN_*` items still feed its header, and the artwork strip still
+   * happens. Called at most once per file, and only for files that might need
+   * it, because a resolver typically spawns a probe.
    */
   replayGainFor?: (mpcPath: string) => Record<string, string> | null;
   /** Called for each file the repair actually rewrote, with its new size. */
@@ -82,7 +85,13 @@ export async function repairMpcTagsInTree(
       if (!isMpcFile(entry.name)) continue;
 
       result.scanned++;
-      const replayGain = replayGainFor?.(full) ?? undefined;
+      // Resolved lazily and at most once: `needsApeRepair` and the repair share
+      // the same answer, and a file that needs nothing never asks for one.
+      let resolved: Record<string, string> | null | undefined;
+      const replayGain = () => {
+        if (resolved === undefined) resolved = replayGainFor?.(full) ?? null;
+        return resolved;
+      };
       if (await needsApeRepair(full, replayGain)) {
         const outcome = await repairMpcTags(full, replayGain);
         if (outcome === "repaired") {

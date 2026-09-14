@@ -33,6 +33,12 @@ import {
   ITEM_TYPE_BINARY,
   itemTypeFromFlags,
 } from "../../main/tagging/apev2/constants";
+import {
+  decodeGain,
+  decodePeak,
+  locateSv8ReplayGainPacket,
+  readMpcReplayGainHeader,
+} from "../../main/tagging/mpc/replaygain-header";
 
 function ffmpegAvailable(): boolean {
   try {
@@ -130,10 +136,11 @@ describe.skipIf(!canRun)("FLAC → Musepack tag preservation", () => {
     expect(tag("Originalyear")).toBe("1999");
     expect(tag("Track")).toBe("4");
     expect(tag("DISCNUMBER")).toBe("2");
-    expect(tag("REPLAYGAIN_TRACK_GAIN")).toBe("-3.38 dB");
-    expect(tag("REPLAYGAIN_TRACK_PEAK")).toBe("0.998054");
-    expect(tag("REPLAYGAIN_ALBUM_GAIN")).toBe("-2.32 dB");
-    expect(tag("REPLAYGAIN_ALBUM_PEAK")).toBe("0.821448");
+
+    // ReplayGain is not among them any more: Musepack keeps it in the stream
+    // header, which is the only place a compliant player reads it (#137).
+    expect(tag("REPLAYGAIN_TRACK_GAIN")).toBeUndefined();
+    expect(tag("REPLAYGAIN_ALBUM_GAIN")).toBeUndefined();
   }, 30000);
 
   it("embeds no artwork at all, and puts ReplayGain in the file (#130)", async () => {
@@ -159,15 +166,16 @@ describe.skipIf(!canRun)("FLAC → Musepack tag preservation", () => {
     const folderCover = fs.readFileSync(path.join(workDir, "cover.jpg"));
     expect(full.includes(folderCover)).toBe(false);
 
-    // ReplayGain is present — the thing that actually matters to a player.
+    // ReplayGain — the thing that actually matters to a player — is in the
+    // stream header now, and nowhere else (#137).
     const rg = items.filter((i) => i.key.toLowerCase().startsWith("replaygain_"));
-    expect(rg).toHaveLength(4);
+    expect(rg).toHaveLength(0);
 
-    // Independent oracle: ffmpeg agrees.
+    // Independent oracle: ffmpeg reads the tag and sees none either.
     const probe = spawnSync(getFfmpegPath(), ["-i", destMpc], { encoding: "utf8" });
     const out = `${probe.stdout}${probe.stderr}`;
-    expect(out).toContain("REPLAYGAIN_TRACK_GAIN");
-    expect(out).toContain("REPLAYGAIN_ALBUM_PEAK");
+    expect(out).not.toContain("REPLAYGAIN_TRACK_GAIN");
+    expect(out).not.toContain("REPLAYGAIN_ALBUM_PEAK");
   }, 30000);
 
   it("keeps ReplayGain when the shadow library overlays its own metadata", async () => {
@@ -193,11 +201,57 @@ describe.skipIf(!canRun)("FLAC → Musepack tag preservation", () => {
     // ...and everything it does not carry still comes from the source.
     expect(tags.albumArtist).toBe("Various Artists");
     expect(tags.year).toBe("2003");
-    expect(tags.extra?.REPLAYGAIN_TRACK_GAIN).toBe("-3.38 dB");
-    expect(tags.extra?.REPLAYGAIN_TRACK_PEAK).toBe("0.998054");
-    expect(tags.extra?.REPLAYGAIN_ALBUM_GAIN).toBe("-2.32 dB");
-    expect(tags.extra?.REPLAYGAIN_ALBUM_PEAK).toBe("0.821448");
+    // ...including its ReplayGain, which the overlay must not lose — it just
+    // travels in the stream header now rather than in the tag (#137).
+    expect(tags.extra?.REPLAYGAIN_TRACK_GAIN).toBeUndefined();
+    const raw = (await readMpcReplayGainHeader(destMpc))!;
+    expect(decodeGain(raw.trackGain)!).toBeCloseTo(-3.38, 2);
+    expect(decodeGain(raw.albumGain)!).toBeCloseTo(-2.32, 2);
     expect(tags.coverArt).toBeUndefined();
+  }, 30000);
+
+  it("writes ReplayGain into the SV8 stream header, where Rockbox reads it (#137)", async () => {
+    const ok = await convertWithCodec(srcFlac, destMpc, { codec: "mpc", quality: 5 });
+    expect(ok).toBe(true);
+
+    // Pins mpcenc's own layout: Rockbox jumps `SH_size - 2` from a 32-byte read
+    // at offset 6, so an RG packet anywhere but directly after SH is invisible
+    // to it. If a future encoder moves it, this fails rather than the player.
+    const full = fs.readFileSync(destMpc);
+    expect(full.toString("ascii", 18, 20)).toBe("RG");
+    const loc = locateSv8ReplayGainPacket(full.subarray(0, 64));
+    expect(loc?.rockboxVisible).toBe(true);
+
+    const raw = (await readMpcReplayGainHeader(destMpc))!;
+    expect(decodeGain(raw.trackGain)!).toBeCloseTo(-3.38, 2);
+    expect(decodePeak(raw.trackPeak)!).toBeCloseTo(0.998054, 3);
+    expect(decodeGain(raw.albumGain)!).toBeCloseTo(-2.32, 2);
+    expect(decodePeak(raw.albumPeak)!).toBeCloseTo(0.821448, 3);
+  }, 30000);
+
+  it("mpcenc itself leaves every ReplayGain field zero", async () => {
+    // The experiment behind #137, kept as executable documentation: the encoder
+    // reserves the packet and fills in nothing, and has no option to. Anything
+    // in that packet is there because iPodRocks put it there.
+    const wav = path.join(workDir, "plain.wav");
+    const plainMpc = path.join(workDir, "plain.mpc");
+    spawnSync(
+      getFfmpegPath(),
+      ["-y", "-f", "lavfi", "-i", "sine=frequency=440:duration=1",
+       "-ac", "2", "-ar", "44100", "-acodec", "pcm_s16le", wav],
+      { encoding: "utf8" }
+    );
+    const enc = spawnSync("mpcenc", ["--silent", "--quality", "5.0", wav, plainMpc], {
+      encoding: "utf8",
+    });
+    expect(enc.status).toBe(0);
+
+    expect(await readMpcReplayGainHeader(plainMpc)).toEqual({
+      trackGain: 0,
+      trackPeak: 0,
+      albumGain: 0,
+      albumPeak: 0,
+    });
   }, 30000);
 
   it("scans the generated MPC back through the real MetadataExtractor", async () => {

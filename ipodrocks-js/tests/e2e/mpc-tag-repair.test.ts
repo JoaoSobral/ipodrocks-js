@@ -1,11 +1,15 @@
 /**
- * E2E — Settings → Maintenance → Repair Musepack tags (issue #125).
+ * E2E — Settings → Maintenance → Repair Musepack tags (issues #125 and #137).
  *
  * Versions before 2.3.2 wrote the APEv2 cover-art item with the type bits
  * spelling "read-only UTF-8 text". Tag editors split the JPEG on its NUL bytes
  * into hundreds of empty "Cover Art" values, and Rockbox's bounded tag buffer
  * was consumed before it reached the REPLAYGAIN_* items that followed. The
  * Settings action is the one-shot repair for files already on disk.
+ *
+ * Since 2.3.4 the same action also moves ReplayGain out of the tag and into the
+ * SV8 stream header, which is the only place a Musepack-compliant player reads
+ * it — the encoder leaves that packet zeroed, so nothing was ever applied.
  *
  * Drives the real built app: creates a shadow library, plants .mpc files
  * carrying the legacy broken tag in its folder, opens the gear and clicks the
@@ -24,6 +28,12 @@ import * as path from "path";
 import { test, expect, type Page } from "@playwright/test";
 import { launchApp, type LaunchedApp } from "./electron-launcher";
 import { AUDIO, COVER, itemFlags, itemOffset, writeLegacyMpc } from "../../src/__tests__/harness/legacy-mpc";
+import { writeSv8Mpc } from "../../src/__tests__/harness/sv8-mpc";
+import {
+  decodeGain,
+  decodePeak,
+  readMpcReplayGainHeader,
+} from "../../src/main/tagging/mpc/replaygain-header";
 
 let launched: LaunchedApp;
 let rootDir: string;
@@ -135,7 +145,11 @@ test("the Settings action repairs Musepack files already in a shadow library", a
   expect(after.includes(COVER)).toBe(false);
   expect(() => itemOffset(after, "Cover Art (Front)")).toThrow();
 
-  // ReplayGain and the ordinary tags survive, and so does the audio.
+  // ReplayGain and the ordinary tags survive, and so does the audio. The
+  // ReplayGain item staying put is the point, not an oversight: this fixture is
+  // SV7, which has no stream-header packet to move it into, so the tag is the
+  // only copy it has. The strip is authorized by a successful header write and
+  // never by the attempt (#137) — see the SV8 test below for the other half.
   expect(itemOffset(after, "REPLAYGAIN_TRACK_GAIN")).toBeGreaterThan(0);
   expect(itemOffset(after, "Title")).toBeGreaterThan(0);
   expect(after.subarray(0, AUDIO.byteLength).equals(AUDIO)).toBe(true);
@@ -152,10 +166,66 @@ test("the Settings action repairs Musepack files already in a shadow library", a
   expect(fs.readFileSync(untouched, "utf8")).toBe("leave me alone");
 });
 
+test("the Settings action moves ReplayGain into the SV8 stream header", async () => {
+  const window = await readyWindow();
+  await createShadowLib(window, shadowDir);
+
+  // Exactly what every .mpc iPodRocks wrote before 2.3.4 looks like: the values
+  // in the tag, the header's RG packet reserved and zeroed.
+  const track = path.join(shadowDir, "Artist", "Album", "01 - Levelled.mpc");
+  writeSv8Mpc(track, {
+    ape: {
+      Title: "Levelled",
+      REPLAYGAIN_TRACK_GAIN: "-3.38 dB",
+      REPLAYGAIN_TRACK_PEAK: "0.998054",
+      REPLAYGAIN_ALBUM_GAIN: "-2.32 dB",
+      REPLAYGAIN_ALBUM_PEAK: "0.821448",
+    },
+  });
+  const beforeStat = fs.statSync(track);
+  expect(await readMpcReplayGainHeader(track)).toEqual({
+    trackGain: 0,
+    trackPeak: 0,
+    albumGain: 0,
+    albumPeak: 0,
+  });
+
+  await window.getByRole("button", { name: "Settings" }).click();
+  await window
+    .getByRole("button", { name: "Repair Musepack tags" })
+    .click({ timeout: 10_000 });
+  const done = window.getByRole("button", { name: "Done" });
+  await done.waitFor({ timeout: 30_000 });
+  await expect(window.getByTestId("mpc-repair-repaired")).toHaveText("1 repaired");
+  await done.click();
+
+  // The header now carries all four, and the tag carries none of them.
+  const raw = (await readMpcReplayGainHeader(track))!;
+  expect(decodeGain(raw.trackGain)!).toBeCloseTo(-3.38, 2);
+  expect(decodePeak(raw.trackPeak)!).toBeCloseTo(0.998054, 3);
+  expect(decodeGain(raw.albumGain)!).toBeCloseTo(-2.32, 2);
+  expect(decodePeak(raw.albumPeak)!).toBeCloseTo(0.821448, 3);
+
+  const after = fs.readFileSync(track);
+  expect(() => itemOffset(after, "REPLAYGAIN_TRACK_GAIN")).toThrow();
+  expect(itemOffset(after, "Title")).toBeGreaterThan(0);
+
+  // The header patch is a fixed-size overwrite, so the only thing that changed
+  // the file's length is the four items leaving the tag — and the mtime is
+  // restored across both writes.
+  const afterStat = fs.statSync(track);
+  expect(afterStat.size).toBeLessThan(beforeStat.size);
+  expect(Math.floor(afterStat.mtimeMs)).toBe(Math.floor(beforeStat.mtimeMs));
+});
+
 test("a second run reports nothing left to repair", async () => {
   const window = await readyWindow();
   await createShadowLib(window, shadowDir);
   writeLegacyMpc(path.join(shadowDir, "Artist", "Album", "01 - Legacy.mpc"));
+  // Idempotence is now a property of two writers, not one.
+  writeSv8Mpc(path.join(shadowDir, "Artist", "Album", "02 - Levelled.mpc"), {
+    ape: { REPLAYGAIN_TRACK_GAIN: "-3.38 dB", REPLAYGAIN_TRACK_PEAK: "0.998054" },
+  });
 
   const runRepair = () =>
     window.evaluate(
@@ -165,6 +235,6 @@ test("a second run reports nothing left to repair", async () => {
         )) as { scanned: number; repaired: number; failed: number }
     );
 
-  expect(await runRepair()).toMatchObject({ scanned: 1, repaired: 1, failed: 0 });
-  expect(await runRepair()).toMatchObject({ scanned: 1, repaired: 0, failed: 0 });
+  expect(await runRepair()).toMatchObject({ scanned: 2, repaired: 2, failed: 0 });
+  expect(await runRepair()).toMatchObject({ scanned: 2, repaired: 0, failed: 0 });
 });

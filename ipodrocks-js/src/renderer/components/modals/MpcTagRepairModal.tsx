@@ -17,8 +17,9 @@ interface MpcTagRepairModalProps {
 }
 
 /**
- * Issue #125 — repairs the malformed APEv2 cover-art item in Musepack files
- * iPodRocks already wrote into shadow libraries and onto devices.
+ * Issues #125 and #137 — repairs the Musepack files iPodRocks already wrote
+ * into shadow libraries and onto devices: the malformed APEv2 cover-art item,
+ * and ReplayGain that never reached the stream header a player reads.
  *
  * Self-starting, like BackfillProgressModal: opening it kicks off the job and
  * subscribes, so the Settings panel needs no job state of its own. The total is
@@ -90,8 +91,9 @@ export function MpcTagRepairModal({ open, onClose }: MpcTagRepairModalProps) {
       <div className="flex flex-col gap-4">
         <p className="text-xs text-muted-foreground">
           Checking every Musepack file in your shadow libraries and on connected
-          devices, and rewriting the cover-art tag where it was written
-          incorrectly. Only the tag is touched — the audio is never re-encoded.
+          devices: moving ReplayGain into the stream header where Rockbox reads
+          it, and removing cover art written with the wrong tag type. Only the
+          tag and that header are touched — the audio is never re-encoded.
         </p>
 
         <div className="flex items-center justify-between text-xs text-muted-foreground">

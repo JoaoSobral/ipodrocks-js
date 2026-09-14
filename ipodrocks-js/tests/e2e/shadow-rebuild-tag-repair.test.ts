@@ -21,6 +21,11 @@ import * as path from "path";
 import { test, expect, type Page } from "@playwright/test";
 import { launchApp, type LaunchedApp } from "./electron-launcher";
 import { AUDIO, COVER, itemFlags, itemOffset, writeLegacyMpc } from "../../src/__tests__/harness/legacy-mpc";
+import { writeSv8Mpc } from "../../src/__tests__/harness/sv8-mpc";
+import {
+  decodeGain,
+  readMpcReplayGainHeader,
+} from "../../src/main/tagging/mpc/replaygain-header";
 
 let launched: LaunchedApp;
 let rootDir: string;
@@ -170,6 +175,30 @@ test("a rebuild repairs a legacy Musepack tag already in the shadow folder", asy
   // the copies already sitting on a device.
   expect(logs.some((l) => /1 repaired/.test(l))).toBe(true);
   expect(logs.some((l) => /Repair Musepack tags/.test(l))).toBe(true);
+});
+
+test("a rebuild fills the ReplayGain header of a file already in the folder", async () => {
+  const window = await readyWindow();
+  const shadowLibId = await createShadowLib(window, shadowDir);
+
+  // The rebuild adopts an already-encoded file without ever opening it, so the
+  // verify walk is the only thing that reaches this (#130) — and what it has to
+  // fix now is a zeroed RG packet with the values sitting in the tag (#137).
+  const track = path.join(shadowDir, "Artist", "Album", "01 - Levelled.mpc");
+  writeSv8Mpc(track, {
+    ape: {
+      Title: "Levelled",
+      REPLAYGAIN_TRACK_GAIN: "-3.38 dB",
+      REPLAYGAIN_TRACK_PEAK: "0.998054",
+    },
+  });
+
+  const logs = await rebuild(window, shadowLibId);
+
+  const raw = (await readMpcReplayGainHeader(track))!;
+  expect(decodeGain(raw.trackGain)!).toBeCloseTo(-3.38, 2);
+  expect(() => itemOffset(fs.readFileSync(track), "REPLAYGAIN_TRACK_GAIN")).toThrow();
+  expect(logs.some((l) => /1 repaired/.test(l))).toBe(true);
 });
 
 test("a second rebuild finds nothing left to repair", async () => {

@@ -7,6 +7,17 @@ import { getEncoderEnv } from "../utils/encoder-env";
 import { getFfmpegPath } from "../utils/ffmpeg-path";
 import { isMpcFile } from "../utils/audio-extensions";
 import { readApeTags } from "../tagging/reader";
+import {
+  dropReplayGainStrings,
+  hasAnyReplayGain,
+  pickReplayGainStrings,
+  replayGainValuesFromStrings,
+  REPLAYGAIN_ALBUM_GAIN,
+  REPLAYGAIN_ALBUM_PEAK,
+  REPLAYGAIN_TAG_NAME_SET,
+  REPLAYGAIN_TRACK_GAIN,
+  REPLAYGAIN_TRACK_PEAK,
+} from "../tagging/replaygain-keys";
 import type { ApeTags } from "../tagging/apev2/types";
 
 /** Metadata to write into converted files (e.g. MPC). */
@@ -305,6 +316,65 @@ async function maybeWriteM4aReplayGain(
   }
 }
 
+/**
+ * The stream header's ReplayGain, spelled the way a tag carries it, so a
+ * Musepack source feeds the same `extra` bucket as every other format.
+ */
+async function readReplayGainFromMpcHeader(
+  srcPath: string
+): Promise<Record<string, string> | undefined> {
+  const { readMpcReplayGainHeader, decodeGain, decodePeak } = await import(
+    "../tagging/mpc/replaygain-header"
+  );
+  const raw = await readMpcReplayGainHeader(srcPath);
+  if (!raw) return undefined;
+
+  const found: Record<string, string> = {};
+  const gain = (key: string, stored: number) => {
+    const db = decodeGain(stored);
+    if (db != null) found[key] = `${db.toFixed(2)} dB`;
+  };
+  const peak = (key: string, stored: number) => {
+    const linear = decodePeak(stored);
+    if (linear != null) found[key] = linear.toFixed(6);
+  };
+  gain(REPLAYGAIN_TRACK_GAIN, raw.trackGain);
+  peak(REPLAYGAIN_TRACK_PEAK, raw.trackPeak);
+  gain(REPLAYGAIN_ALBUM_GAIN, raw.albumGain);
+  peak(REPLAYGAIN_ALBUM_PEAK, raw.albumPeak);
+  return Object.keys(found).length > 0 ? found : undefined;
+}
+
+/**
+ * Write ReplayGain into the `.mpc`'s stream header, which is the only place a
+ * Musepack-compliant player — Rockbox included — reads it (issue #137). mpcenc
+ * reserves the packet and leaves it zeroed, so without this nothing was ever
+ * applied on the player, however complete the tag looked.
+ *
+ * True when the header now carries the values, which is what authorizes the
+ * caller to leave them out of the tag. A file we cannot patch (SV7, no packet)
+ * keeps its tag copy instead, and neither outcome fails the transcode.
+ */
+async function maybeWriteMpcReplayGainHeader(
+  mpcPath: string,
+  tags: ApeTags,
+  logCallback?: (line: string) => void
+): Promise<boolean> {
+  const values = replayGainValuesFromStrings(tags.extra);
+  if (!hasAnyReplayGain(values)) return false;
+
+  const { writeMpcReplayGainHeader } = await import("../tagging/mpc/replaygain-header");
+  const outcome = await writeMpcReplayGainHeader(mpcPath, values, logCallback);
+  if (outcome === "unsupported") {
+    logCallback?.(
+      `No SV8 ReplayGain packet to fill, keeping the tag values: ${path.basename(mpcPath)}`
+    );
+  } else if (outcome === "failed") {
+    logCallback?.("Warning: Could not write the ReplayGain header (audio is fine)");
+  }
+  return outcome === "written" || outcome === "unchanged";
+}
+
 export async function convertWithCodec(
   src: string,
   dest: string,
@@ -495,21 +565,6 @@ export function extractReplayGainTags(common: {
   return Object.keys(tags).length > 0 ? tags : undefined;
 }
 
-/** The four tag names, as written into the file, upper-cased for matching. */
-const REPLAYGAIN_TAG_NAMES = new Set([
-  "REPLAYGAIN_TRACK_GAIN",
-  "REPLAYGAIN_TRACK_PEAK",
-  "REPLAYGAIN_ALBUM_GAIN",
-  "REPLAYGAIN_ALBUM_PEAK",
-]);
-
-const REPLAYGAIN_KEYS = [
-  "replaygain_track_gain",
-  "replaygain_track_peak",
-  "replaygain_album_gain",
-  "replaygain_album_peak",
-] as const;
-
 /**
  * Pick the ReplayGain entries out of an `ApeTags.extra` bucket (populated by
  * {@link readSourceApeTags}, whether via {@link extractReplayGainTags} for a
@@ -521,12 +576,8 @@ export function pickReplayGainForM4a(
   extra: Record<string, string> | undefined
 ): Record<string, string> {
   const result: Record<string, string> = {};
-  if (!extra) return result;
-  for (const [key, value] of Object.entries(extra)) {
-    const lower = key.toLowerCase();
-    if ((REPLAYGAIN_KEYS as readonly string[]).includes(lower)) {
-      result[lower] = value;
-    }
+  for (const [key, value] of Object.entries(pickReplayGainStrings(extra))) {
+    result[key.toLowerCase()] = value;
   }
   return result;
 }
@@ -541,11 +592,20 @@ export async function readSourceApeTags(srcPath: string): Promise<ApeTags> {
   // music-metadata's parseFile throws (and detaches an unhandled rejection) on
   // tagged SV8 MPC sources, so read APEv2 directly for Musepack inputs.
   if (isMpcFile(srcPath)) {
+    let tags: ApeTags;
     try {
-      return readApeTags(srcPath);
+      tags = readApeTags(srcPath);
     } catch {
-      return {};
+      tags = {};
     }
+    // Musepack keeps ReplayGain in the stream header, which is where iPodRocks
+    // now writes it and where it no longer leaves a tag copy (#137). Reading
+    // the APEv2 items alone would hand the transcode a track with none.
+    if (!hasAnyReplayGain(replayGainValuesFromStrings(tags.extra))) {
+      const fromHeader = await readReplayGainFromMpcHeader(srcPath);
+      if (fromHeader) tags.extra = { ...(tags.extra ?? {}), ...fromHeader };
+    }
+    return tags;
   }
   try {
     const { common } = await parseFile(srcPath);
@@ -671,7 +731,7 @@ export function readReplayGainFromFile(
   const found: Record<string, string> = {};
   for (const [key, value] of Object.entries(tags)) {
     const upper = key.toUpperCase();
-    if (!REPLAYGAIN_TAG_NAMES.has(upper)) continue;
+    if (!REPLAYGAIN_TAG_NAME_SET.has(upper)) continue;
     const clean = sanitizeTagText(String(value ?? ""));
     if (clean !== "") found[upper] = clean;
   }
@@ -758,6 +818,12 @@ export function buildMpcApeTags(
  * Tags are read from the source file (so albumArtist/year/originalYear/etc. are
  * preserved) and merged with any explicit ConversionMetadata overrides.
  *
+ * ReplayGain does not travel in the tag. Musepack keeps it in the stream
+ * header, which is the only place a compliant player reads it, so the values go
+ * there first and the tag items are dropped once they have landed (issue #137).
+ * A file whose header cannot take them — SV7, or an SV8 without the packet —
+ * keeps them in its tag, which is the only copy it can have.
+ *
  * No artwork is written. Rockbox reads album art from the `cover.jpg` the
  * shadow build already generates beside the audio — resized to 300px by
  * `copyArtworkToShadowLibrary` — so embedding a second copy only added the
@@ -776,8 +842,13 @@ async function writeMpcMetadata(
   // Surfaced in the shadow-library build log on purpose. ReplayGain silently
   // not being there is the whole of issue #130, and "the source has none" and
   // "we failed to read it" were indistinguishable from outside the app.
-  if (!tags.extra || Object.keys(tags.extra).length === 0) {
+  if (!hasAnyReplayGain(replayGainValuesFromStrings(tags.extra))) {
     logCallback?.(`No ReplayGain tags found in source: ${path.basename(srcPath)}`);
+  } else if (await maybeWriteMpcReplayGainHeader(mpcPath, tags, logCallback)) {
+    // The header is the only copy a player reads, so the tag no longer carries
+    // one. Authorized by the write having succeeded, never by the attempt: a
+    // file whose header we could not reach keeps its tag ReplayGain (#137).
+    tags.extra = dropReplayGainStrings(tags.extra);
   }
 
   try {

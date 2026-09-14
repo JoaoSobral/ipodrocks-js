@@ -13,10 +13,8 @@ import * as fs from "fs";
 import { safe, getLibrary, getDevicesCore } from "./common";
 import { logActivity } from "../activity/activity-logger";
 import { repairMpcTagsInTree, type RepairScanResult } from "../tagging/mpc/repair-scan";
-import { readReplayGainFromFile } from "../sync/sync-conversion";
-import { normalizePath } from "../utils/normalize-path";
+import { makeShadowSourceResolver } from "../library/shadow-replaygain-source";
 import type { ContentType } from "../../shared/types";
-import type Database from "better-sqlite3";
 
 let activeRepairAbort: AbortController | null = null;
 
@@ -43,48 +41,6 @@ export interface MpcRepairProgress {
   repaired: number;
   failed: number;
   currentFile: string;
-}
-
-/**
- * Resolve a file inside a shadow library back to the library track it was
- * transcoded from, so the repair can read the ReplayGain the transcode lost.
- *
- * Paths are matched through `normalizePath` because `shadow_tracks.shadow_path`
- * is stored NFC-normalized while the walk yields whatever the filesystem spells
- * (NFD on macOS) — comparing the raw strings would match nothing on exactly the
- * machines this reporter's library lives on.
- */
-function makeShadowSourceResolver(
-  db: Database.Database,
-  shadowLibraryId: number
-): (mpcPath: string) => Record<string, string> | null {
-  const rows = db
-    .prepare(
-      `SELECT st.shadow_path AS shadowPath, t.path AS sourcePath
-         FROM shadow_tracks st
-         JOIN tracks t ON t.id = st.source_track_id
-        WHERE st.shadow_library_id = ?`
-    )
-    .all(shadowLibraryId) as { shadowPath: string; sourcePath: string }[];
-
-  const sourceByShadow = new Map<string, string>();
-  for (const row of rows) {
-    if (row.shadowPath && row.sourcePath) {
-      sourceByShadow.set(normalizePath(row.shadowPath), row.sourcePath);
-    }
-  }
-
-  // Probing spawns a subprocess, so never do it twice for one source — two
-  // shadow rows can point at the same track when a library holds a duplicate.
-  const cache = new Map<string, Record<string, string> | null>();
-  return (mpcPath) => {
-    const source = sourceByShadow.get(normalizePath(mpcPath));
-    if (!source) return null;
-    if (!cache.has(source)) {
-      cache.set(source, readReplayGainFromFile(source) ?? null);
-    }
-    return cache.get(source) ?? null;
-  };
 }
 
 export function registerMaintenanceHandlers(): void {
@@ -120,11 +76,15 @@ export function registerMaintenanceHandlers(): void {
         }
       }
 
-      // Device files get the artwork stripped but no ReplayGain put back:
+      // Device files cannot be resolved back to a library track:
       // `device_synced_tracks.device_path` is mount-relative and casefolded, so
-      // it cannot be matched against the absolute paths this walk yields. It
-      // does not need to be. Repairing the shadow copy changes its size, the
-      // next sync sees the mismatch and re-copies the fully-repaired file.
+      // it cannot be matched against the absolute paths this walk yields. They
+      // are still repaired in full from what they carry themselves — the
+      // artwork comes out, and their own `REPLAYGAIN_*` items go into the
+      // stream header (#137). That matters here: a header-only repair changes
+      // neither size nor mtime, so no sync would ever re-copy a fixed shadow
+      // copy over a stale device one. Only the source-resolved top-up, for a
+      // file whose tag lost its ReplayGain entirely, stays shadow-only.
       for (const device of getDevicesCore().getDevices()) {
         if (!device.mountPath) continue;
         for (const contentType of DEVICE_CONTENT_TYPES) {

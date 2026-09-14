@@ -1,5 +1,11 @@
 # Changelog
 
+## [2.3.4] — 2026-09
+
+### Fixes
+
+- **ReplayGain now actually works on Musepack files in Rockbox.** (#137) Musepack is the one format that keeps its ReplayGain in the file's stream header rather than in its tag, and the header is the only place Rockbox looks. iPodRocks wrote the values into the tag — where every desktop player reads them, and your iPod does not — while the header stayed as the encoder left it: zeroed. So nothing was ever applied on the player. Not the album gain that prompted this, and not the track gain either. New transcodes write all four values into the header, and **Settings → Maintenance → Repair Musepack tags** fills it in for the files you already have, reading the values out of each file's own tags (or out of the library track it came from, if the tags lost them). Once the header carries them the tag copy is removed, so there is one source of truth. Nothing is re-encoded and a file whose header was the only thing missing keeps its size and timestamp, so your next sync copies nothing extra — which is exactly why you should **run it with your player plugged in**: the repair fixes the copies on the device directly, because no later sync would ever carry that fix across on its own. Older SV7 (`MP+`) Musepack files have no such header; they are left alone and keep using their tag.
+
 ## [2.3.3] — 2026-09
 
 ### Fixes
