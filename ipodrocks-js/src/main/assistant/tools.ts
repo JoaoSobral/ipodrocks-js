@@ -1370,31 +1370,6 @@ const shadow_prune_orphans: AiTool = {
   },
 };
 
-/**
- * Issue #125. Runs in the renderer, like `shadow_rebuild`: the pass walks every
- * shadow library and every connected device, so the user gets the progress
- * modal instead of a silent multi-thousand-file background job.
- */
-const mpc_repair_tags: AiTool = {
-  name: "mpc_repair_tags",
-  description:
-    "Repair the Musepack (.mpc) files iPodRocks has already written into shadow libraries or copied onto devices. Moves ReplayGain into the file's stream header, which is the only place a Musepack player — Rockbox included — reads it: older versions wrote it into the APEv2 tag, so no volume levelling was applied at all. Also removes the cover art older versions wrote with the wrong APEv2 item type, which tag editors show as hundreds of empty 'Cover Art' fields. Never re-encodes the audio, and timestamps are kept, so nothing is re-transcoded. Ask the user to connect their player first so the copies already on it are covered. Safe to run more than once.",
-  parameters: { type: "object", properties: {} },
-  kind: "write-destructive",
-  summarize: () =>
-    "Repair Musepack tags and ReplayGain in every shadow library and on every connected device",
-  async run() {
-    const { BrowserWindow } = await import("electron");
-    const win = BrowserWindow.getAllWindows()[0];
-    if (win) win.webContents.send("assistant:triggerMpcTagRepair");
-    return {
-      ok: true,
-      message:
-        "Repairing your Musepack tags — I've opened the progress window so you can watch it. Only the tag is rewritten, so nothing gets re-encoded and your next sync won't re-copy anything.",
-    };
-  },
-};
-
 const shadow_delete: AiTool = {
   name: "shadow_delete",
   description:
@@ -1653,7 +1628,6 @@ export const AI_TOOLS: AiTool[] = [
   shadow_rebuild,
   shadow_prune_orphans,
   shadow_delete,
-  mpc_repair_tags,
   library_find_duplicates,
   podcast_download_now,
   podcast_delete_episodes,

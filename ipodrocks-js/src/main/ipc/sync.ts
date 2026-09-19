@@ -28,11 +28,9 @@ import { listSubscriptions as listAudiobookSubs } from "../audiobooks/audiobook-
 import {
   detectRebuiltDatabase,
   ingestDeviceRatings,
-  computeRatingPropagations,
-  markRatingsPropagated,
   invalidatePushedRatings,
 } from "../sync/rating-merge";
-import { writeRating } from "../rockbox/tagcache-index";
+import { propagateRatingsToDevice } from "../sync/rating-propagate";
 import { readAndIngestRuntimeData } from "../rockbox/runtime-ingest";
 import { logActivity } from "../activity/activity-logger";
 import { resetDeviceContent } from "../sync/device-reset";
@@ -638,38 +636,87 @@ export function registerSyncHandlers(): void {
 
       result.synced += playlistsWritten;
 
-      // Phase 3: PROPAGATE — push canonical ratings back to the device
+      // Phase 3: PROPAGATE — push canonical ratings back to the device.
+      //
+      // The loop itself lives in `sync/rating-propagate.ts` so it can be tested;
+      // inline here it never was, and three silent-loss bugs lived in it until
+      // issue #138. This side only reports what it did.
       try {
-        const db = lib.getConnection();
-        const propagations = computeRatingPropagations(db, opts.deviceId);
-
-        if (propagations.size > 0 && runtimeImport) {
-          // Write each rating straight into the record Rockbox reads, exactly
-          // as Rockbox does internally. The index positions come from this
-          // sync's own read, because a "Database → Initialize Now" on the
-          // device renumbers every entry — they are never cached across runs.
-          const propagatedIds: number[] = [];
-          let written = 0;
-
-          for (const [trackId, rating] of propagations) {
-            const idxId = runtimeImport.idxIds.get(trackId);
-            if (idxId === undefined) continue;
-            // Returns false when the device already holds this rating, so a
-            // second sync with nothing to say writes no bytes at all.
-            if (writeRating(device.mountPath, idxId, rating)) written++;
-            propagatedIds.push(trackId);
+        // `state.kind === "ok"` and not merely a non-null `runtimeImport`:
+        // `readAndIngestRuntimeData` returns a fully empty result — `idxIds`
+        // included — for a device with runtime data turned off, no `.rockbox`
+        // database, an unreadable one, one Rockbox is mid-update, and one that
+        // has never recorded a play. Running the loop against an empty `idxIds`
+        // cannot write anything, and would count every rated track as "waiting
+        // for the device's database" and hand the user an instruction that
+        // cannot help. Those states already printed their own message above.
+        if (runtimeImport && runtimeImport.state.kind === "ok") {
+          // The index positions come from this sync's own read, because a
+          // "Database → Initialize Now" on the device renumbers every entry —
+          // they are never cached across runs.
+          // What this sync actually sent here, so a rating "waiting for the
+          // device's database" can be told from one belonging to a track that was
+          // never sent at all — a partial selection, or a second, smaller player.
+          // Read off the same maps `runSync` copied from, after the shadow remap,
+          // which keeps the library track id either way.
+          const selectedTrackIds = new Set<number>();
+          for (const map of [
+            musicLibraryTracks,
+            podcastLibraryTracks,
+            audiobookLibraryTracks,
+          ]) {
+            for (const info of Object.values(map)) {
+              const id = info.id;
+              if (typeof id === "number") selectedTrackIds.add(id);
+            }
           }
 
-          if (propagatedIds.length > 0) {
-            markRatingsPropagated(db, opts.deviceId, propagatedIds);
-          }
+          const report = propagateRatingsToDevice(
+            lib.getConnection(),
+            opts.deviceId,
+            device.mountPath,
+            runtimeImport.idxIds,
+            selectedTrackIds
+          );
 
-          if (written > 0) {
+          if (report.written > 0) {
             syncOpts.progressCallback?.({
               event: "log",
               message: rebuildRepairPending
-                ? `Restored ${written} rating(s) to the device after the rebuilt database was repaired.`
-                : `Wrote ${written} rating(s) to the device. Restart Rockbox for them to show on screen — the values are already saved.`,
+                ? `Restored ${report.written} rating(s) to the device after the rebuilt database was repaired.`
+                : `Wrote ${report.written} rating(s) to the device. Restart Rockbox for them to show on screen — the values are already saved.`,
+            });
+          }
+
+          // The reporter's actual complaint: an album copied this sync cannot
+          // have its ratings written, because Rockbox does not know the files
+          // exist until its database is updated. Saying nothing made that look
+          // like ratings being dropped (issue #138).
+          if (report.notInDeviceDb > 0) {
+            syncOpts.progressCallback?.({
+              event: "log",
+              message:
+                `${report.notInDeviceDb} rating(s) are waiting for the device's database — ` +
+                "those tracks aren't in it yet. On the player, run Database → Update now " +
+                "(or restart it with Auto Update on), then sync again.",
+            });
+          }
+
+          if (report.unavailable > 0) {
+            syncOpts.progressCallback?.({
+              event: "log",
+              message:
+                `Could not write ${report.unavailable} rating(s): the device's database is ` +
+                "missing, or Rockbox is updating it. They'll be re-sent on the next sync.",
+            });
+          }
+
+          if (report.failed > 0) {
+            syncOpts.progressCallback?.({
+              event: "log",
+              message:
+                `Warning: ${report.failed} rating(s) could not be written to the device's ` +
+                "database. They'll be retried on the next sync.",
             });
           }
         }

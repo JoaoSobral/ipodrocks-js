@@ -54,9 +54,9 @@ export function readApeTags(filePath: string): ApeTags {
 /**
  * Parse the item list. Stops (returning what it has) on any malformed read.
  *
- * Exported for `mpc/repair.ts`, which needs the same item walk over a buffer
- * holding only the tail of a file — the offsets in `loc` are relative to
- * whatever buffer is passed in, so a tail read works unchanged.
+ * Exported so a caller can walk the items of a buffer holding only the tail of a
+ * file — the offsets in `loc` are relative to whatever buffer is passed in, so a
+ * tail read works unchanged.
  */
 export function parseApeItems(full: Buffer, loc: ApeBlockLocation): RawApeItem[] {
   const items: RawApeItem[] = [];
@@ -95,8 +95,8 @@ export function parseApeItems(full: Buffer, loc: ApeBlockLocation): RawApeItem[]
  * those bits say *text* for artwork that is plainly binary. The cover art key
  * is the only binary item this writer has ever produced, so recognising it by
  * name is exact rather than a heuristic, and it is what keeps the artwork in
- * files already on disk readable — and, crucially, what stops
- * `repairMpcTags()` from round-tripping a JPEG back out as a text item.
+ * files already on disk readable instead of decoding a JPEG into a garbage
+ * string that any write-back would then destroy.
  */
 function itemType(key: string, flags: number): ApeItem["type"] {
   if (itemTypeFromFlags(flags) === ITEM_TYPE_BINARY) return "binary";

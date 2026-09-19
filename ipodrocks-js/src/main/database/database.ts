@@ -848,6 +848,7 @@ export class AppDatabase {
             track_id            INTEGER NOT NULL REFERENCES tracks(id)  ON DELETE CASCADE,
             last_seen_rating    INTEGER,
             last_pushed_rating  INTEGER,
+            last_pushed_rating_version INTEGER,
             last_seen_at        TIMESTAMP,
             last_pushed_at      TIMESTAMP,
             PRIMARY KEY (device_id, track_id)
@@ -886,6 +887,47 @@ export class AppDatabase {
           );
           CREATE INDEX idx_re_track ON rating_events(track_id, created_at DESC);
         `);
+      }
+
+      // `last_pushed_rating_version` — tracks.rating_version as of the push.
+      //
+      // Without it `ingestDeviceRatings` had to assume 0, which made
+      // `libraryChanged` permanently true for any track whose rating was ever
+      // set in-app (every rating writer bumps rating_version). A later
+      // device-only edit then took the both-sides-changed branch: a spurious
+      // conflict, or a silent revert to the higher of the two when they were
+      // one step apart (issue #138).
+      //
+      // No index: an index in SCHEMA_SQL over a column added here throws on
+      // every upgrading install (see CLAUDE.md, and the 2.3.0 usb_vendor_id
+      // regression).
+      const dtrCols = this.db
+        .prepare("PRAGMA table_info(device_track_ratings)")
+        .all() as { name: string }[];
+      if (!new Set(dtrCols.map((r) => r.name)).has("last_pushed_rating_version")) {
+        this.db
+          .prepare(
+            "ALTER TABLE device_track_ratings ADD COLUMN last_pushed_rating_version INTEGER"
+          )
+          .run();
+        // Backfill, so an existing library is repaired now rather than one
+        // track at a time as each gets pushed again. Where what we last pushed
+        // still equals the library's rating, the library demonstrably has not
+        // changed since — that is exactly what the column records. Where they
+        // differ it genuinely has, and leaving NULL is right: the
+        // `last_pushed_rating !== rating` half of the test already says so.
+        this.db
+          .prepare(
+            `UPDATE device_track_ratings
+                SET last_pushed_rating_version = (
+                      SELECT rating_version FROM tracks WHERE tracks.id = device_track_ratings.track_id
+                    )
+              WHERE last_pushed_rating IS NOT NULL
+                AND last_pushed_rating = (
+                      SELECT rating FROM tracks WHERE tracks.id = device_track_ratings.track_id
+                    )`
+          )
+          .run();
       }
 
       // Ensure rating index exists even if tracks table was already present

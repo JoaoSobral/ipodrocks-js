@@ -19,7 +19,9 @@ export const FLAG_IS_HEADER = 1 << 29;
  * `1` rather than `2`) marks the item "read-only UTF-8 text" instead, and since
  * APEv2 text values are NUL-separated multi-values, every reader then splits a
  * JPEG into thousands of mostly-empty values and never reaches the items that
- * follow it. That shipped, and is issue #125 — see `tagging/mpc/repair.ts`.
+ * follow it. That shipped, and is issue #125; a file written by one of those
+ * versions is read back correctly by `tagging/reader.ts`, which resolves a
+ * cover-art item to binary by name whatever its flags say.
  */
 export const ITEM_TYPE_MASK = 0b110;
 export const ITEM_TYPE_UTF8 = 0b000;

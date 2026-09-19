@@ -19,7 +19,6 @@ const ALLOWED_CHANNEL_PREFIXES = [
   "player:",
   "podcast:",
   "audiobook:",
-  "maintenance:",
 ];
 
 function isAllowedChannel(channel: string): boolean {

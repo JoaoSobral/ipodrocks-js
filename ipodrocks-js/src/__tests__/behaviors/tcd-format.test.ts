@@ -248,7 +248,7 @@ describe("Rockbox tagcache format", () => {
         { path: "/<HDD0>/Music/b.mp3" },
       ]);
 
-      expect(writeRating(mount, 1, 9)).toBe(true);
+      expect(writeRating(mount, 1, 9)).toBe("written");
       expect(readTcdNumericTag(mount, 1, TCD_TAG.rating)).toBe(9);
       expect(readTcdNumericTag(mount, 1, TCD_TAG.flag) & FLAG.DIRTYNUM).toBe(
         FLAG.DIRTYNUM
@@ -288,7 +288,7 @@ describe("Rockbox tagcache format", () => {
       writeTcdFixture(mount, [{ path: "/<HDD0>/Music/a.mp3", rating: 7 }]);
       const before = fs.readFileSync(IDX(mount));
 
-      expect(writeRating(mount, 0, 7)).toBe(false);
+      expect(writeRating(mount, 0, 7)).toBe("unchanged");
 
       expect(fs.readFileSync(IDX(mount)).equals(before)).toBe(true);
     });
@@ -309,9 +309,18 @@ describe("Rockbox tagcache format", () => {
     });
 
     it("refuses to write while Rockbox is mid-update", () => {
+      // "unavailable", never "unchanged": the caller must be able to tell this
+      // apart from success, or it records the rating as pushed and never retries
+      // (issue #138).
       writeTcdFixture(mount, [{ path: "/<HDD0>/Music/a.mp3" }], { dirty: 1 });
-      expect(writeRating(mount, 0, 8)).toBe(false);
+      expect(writeRating(mount, 0, 8)).toBe("unavailable");
       expect(readTcdNumericTag(mount, 0, TCD_TAG.rating)).toBe(0);
+    });
+
+    it("reports an absent database as unavailable, not as nothing to do", () => {
+      writeTcdFixture(mount, [{ path: "/<HDD0>/Music/a.mp3" }]);
+      fs.rmSync(IDX(mount));
+      expect(writeRating(mount, 0, 8)).toBe("unavailable");
     });
 
     it("refuses an index id the header does not account for", () => {
@@ -330,7 +339,7 @@ describe("Rockbox tagcache format", () => {
         bigEndian: true,
       });
 
-      expect(writeRating(mount, 0, 6)).toBe(true);
+      expect(writeRating(mount, 0, 6)).toBe("written");
       expect(readTcdNumericTag(mount, 0, TCD_TAG.rating, true)).toBe(6);
       expect(readRuntimeIndex(mount)!.entries[0].rating).toBe(6);
     });

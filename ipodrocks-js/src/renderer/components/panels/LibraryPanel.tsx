@@ -69,22 +69,20 @@ type SortField =
 type SortDir = "asc" | "desc";
 
 /**
- * A build runs three passes before it reports done, and the bar sweeps once per
- * pass. Name the pass or each reset reads as a glitch.
+ * A build runs several passes before it reports done, and the bar sweeps once
+ * per pass. Name the pass or each reset reads as a glitch.
  */
 const BUILD_PHASE_STEP: Record<
   NonNullable<ShadowBuildProgress["phase"]>,
   string
 > = {
-  reconcile: "Step 1 of 3 — checking existing files",
-  verify: "Step 2 of 3 — checking tags",
-  convert: "Step 3 of 3 — converting",
-  artwork: "Step 3 of 3 — copying album artwork",
+  reconcile: "Step 1 of 2 — checking existing files",
+  convert: "Step 2 of 2 — converting",
+  artwork: "Step 2 of 2 — copying album artwork",
 };
 
 function buildPhaseVerb(phase: ShadowBuildProgress["phase"]): string {
   if (phase === "reconcile") return "Checking";
-  if (phase === "verify") return "Checking tags";
   return "Converting";
 }
 

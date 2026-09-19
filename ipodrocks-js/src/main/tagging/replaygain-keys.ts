@@ -5,8 +5,8 @@
  * This module imports nothing on purpose. `sync/` already imports `tagging/`
  * and nothing in `tagging/` imports `sync/`, so the shared names have to live
  * on this side of that line: `sync/sync-conversion.ts` produces the values,
- * `tagging/mpc/replaygain-header.ts` and `tagging/mpc/repair.ts` consume them,
- * and none of it forms a cycle.
+ * `tagging/mpc/replaygain-header.ts` consumes them, and none of it forms a
+ * cycle.
  */
 
 export const REPLAYGAIN_TRACK_GAIN = "REPLAYGAIN_TRACK_GAIN";
