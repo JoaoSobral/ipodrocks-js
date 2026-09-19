@@ -96,7 +96,9 @@ describe("rating sync over Rockbox's own database", () => {
    * it (issue #138). It now calls the same function the sync does.
    */
   function propagate(idxIds: Map<number, number>): number {
-    return propagateRatingsToDevice(db, deviceId, mount, idxIds).written;
+    // The one track this suite seeds is the whole of this sync's selection.
+    return propagateRatingsToDevice(db, deviceId, mount, idxIds, new Set([trackId]))
+      .written;
   }
 
   function libraryRating(): number | null {

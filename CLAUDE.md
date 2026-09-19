@@ -223,6 +223,25 @@ sync either.
   record to write into. `notInDeviceDb` counts them and the sync tells the user to
   run Database → Update now and sync again. This is the reporter's actual symptom;
   silence is what made it look like data loss.
+- **That count must mean what it says, which is why Phase 3 takes the sync's own
+  selection.** Since the join was widened, `computeRatingPropagations()` offers
+  every rated track in the library, so a track missing from `idxIds` is ambiguous:
+  on the device and not yet indexed (actionable), or never sent here at all
+  (nothing to say). Without the split a 20,000-track library syncing a 500-track
+  selection announced "19,500 rating(s) are waiting for the device's database" on
+  every sync. **`device_synced_tracks` is the wrong source for this** — only the
+  `device:check` handler ever writes it, so on a device the user syncs without
+  running a check it is empty and every actionable rating is silently filed as
+  "not on this device". `ipc/sync.ts` builds the set from the same maps `runSync`
+  copied from, after the shadow remap, which keeps the library track id either way
+  (`remapTrackMapToShadow`).
+- **Phase 3 is gated on `runtimeImport.state.kind === "ok"`, not on a non-null
+  `runtimeImport`.** `readAndIngestRuntimeData()` returns a fully empty result —
+  `idxIds` included — for runtime data turned off, no `.rockbox` database, an
+  unreadable one, one Rockbox is mid-update, and one that has never recorded a
+  play. Those cannot write anything, and running the loop against an empty
+  `idxIds` counted every rated track as waiting and handed the user an instruction
+  that could not help. Each of those states already prints its own message.
 
 Separately, `ingestDeviceRatings()` hardcoded `ratingVersionAtSync = 0` because
 nothing stored `tracks.rating_version` as of the last push. Every rating writer does
@@ -235,6 +254,18 @@ silent `converged` to `Math.max`, i.e. their device edit thrown away.
 - **It is written by `markRatingsPropagated()` and cleared by
   `invalidatePushedRatings()`**, always alongside `last_pushed_rating`: the version
   means nothing without the value it belongs to.
+- **`adopt_device` must not write when the adopted value already equals
+  `tracks.rating`** — guarded exactly like the `converged` arm beside it, and for
+  a sharper reason than tidiness. The commonest adoption of all is the device
+  reading back a rating Phase 3 pushed to it last sync: baseline 0, device now 8,
+  library already 8. Writing that bumps `rating_version` for a value that did not
+  change, and Phase 3 then has nothing to propagate, so nothing refreshes
+  `last_pushed_rating_version` — it is left one behind for good, `libraryChanged`
+  is permanently true again, and the next device-side edit is a spurious conflict.
+  The fix below looked complete for exactly one sync without this.
+- **A test for any of this must run two syncs before the device-side edit.** A
+  single ingest that establishes the baseline with the same value takes the
+  `converged` path, which was always guarded, and hides the whole defect.
 - **The migration backfills it** where `last_pushed_rating = tracks.rating`, which is
   exactly "the library has not moved since we pushed". Where they differ it stays
   NULL, and `libBaseAtLastSync !== libraryVal` already carries that answer.
@@ -328,7 +359,7 @@ Three rules:
 
 **There is no in-place repair for files already on disk.** `tagging/mpc/repair.ts`,
 `repair-scan.ts`, `ipc/maintenance.ts` (Settings → Maintenance → "Repair Musepack
-tags") and Rocksy's `mpc_repair_tags` were all deleted in 2.3.4: re-encoding is the
+tags") and Rocksy's `mpc_repair_tags` were all deleted in 2.3.3: re-encoding is the
 better answer, and maintaining a second writer that had to reproduce the transcode's
 every decision was the expensive half. The remedy for a badly tagged `.mpc` is to
 **delete the shadow library including its files and create it again** — see the
@@ -488,7 +519,7 @@ stack up:
   either.
 
 **So a rebuild cannot fix an existing file, and nothing in the app tries to.**
-2.3.4 removed the `_verifyShadowTags()` pass that used to run between the
+2.3.3 removed the `_verifyShadowTags()` pass that used to run between the
 reconcile and the transcode loop, along with the whole of `tagging/mpc/repair.ts`
 (see the APEv2 item-flags hazard above). The remedy for a file an older version
 wrote badly is to **delete the shadow library with its files**

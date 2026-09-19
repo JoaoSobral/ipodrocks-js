@@ -49,6 +49,7 @@ import {
   markRatingsPropagated,
 } from "../../main/sync/rating-merge";
 import { propagateRatingsToDevice } from "../../main/sync/rating-propagate";
+import { remapTrackMapToShadow } from "../../main/ipc/common";
 
 const itDb = it.skipIf(!canRunDbTests);
 
@@ -69,12 +70,19 @@ describe("ratings reach a track the device has never reported (#138)", () => {
       contentType: "music",
     });
     deviceId = seedDevice(db, { name: "iPod", mountPath: mount });
+    selected = new Set();
   });
 
   afterEach(() => {
     closeDb(db);
     cleanupTmp(mount);
   });
+
+  /**
+   * Library track ids this "sync" sent to the device — what `ipc/sync.ts` builds
+   * from its own selection maps and hands to `propagateRatingsToDevice`.
+   */
+  let selected: Set<number>;
 
   /** A library track that is on the device, with a rating only iPodRocks knows. */
   function seedSyncedTrack(name: string, rating: number | null): number {
@@ -88,6 +96,7 @@ describe("ratings reach a track the device has never reported (#138)", () => {
     db.prepare(
       "INSERT INTO device_synced_tracks (device_id, library_path, device_path) VALUES (?, ?, ?)"
     ).run(deviceId, libraryPath, `Music/${name}.mpc`);
+    selected.add(id);
     return id;
   }
 
@@ -122,7 +131,8 @@ describe("ratings reach a track the device has never reported (#138)", () => {
       db,
       deviceId,
       mount,
-      new Map(ids.map((id, i) => [id, idxIds[i]]))
+      new Map(ids.map((id, i) => [id, idxIds[i]])),
+      selected
     );
 
     expect(report.written).toBe(3);
@@ -180,7 +190,7 @@ describe("ratings reach a track the device has never reported (#138)", () => {
     // only invalidating frees them; the album has no row at all, which is what
     // the inner join could never reach.
     invalidatePushedRatings(db, deviceId);
-    const report = propagateRatingsToDevice(db, deviceId, mount, imported.idxIds);
+    const report = propagateRatingsToDevice(db, deviceId, mount, imported.idxIds, selected);
 
     expect(report.written).toBe(9);
     for (const [i, id] of old.entries()) {
@@ -204,7 +214,8 @@ describe("ratings reach a track the device has never reported (#138)", () => {
       db,
       deviceId,
       mount,
-      new Map([[onDevice, idxIds[0]]])
+      new Map([[onDevice, idxIds[0]]]),
+      selected
     );
 
     expect(first.written).toBe(1);
@@ -223,7 +234,8 @@ describe("ratings reach a track the device has never reported (#138)", () => {
       new Map([
         [onDevice, bothIdx[0]],
         [justCopied, bothIdx[1]],
-      ])
+      ]),
+      selected
     );
 
     expect(second.written).toBe(1);
@@ -245,7 +257,8 @@ describe("ratings reach a track the device has never reported (#138)", () => {
       db,
       deviceId,
       mount,
-      new Map([[id, idxIds[0]]])
+      new Map([[id, idxIds[0]]]),
+      selected
     );
 
     expect(report.unavailable).toBe(1);
@@ -256,7 +269,7 @@ describe("ratings reach a track the device has never reported (#138)", () => {
     // Retried, and written, once Rockbox has finished.
     writeTcdFixture(mount, [{ path: "/<HDD0>/Music/Busy.mpc" }]);
     expect(
-      propagateRatingsToDevice(db, deviceId, mount, new Map([[id, idxIds[0]]])).written
+      propagateRatingsToDevice(db, deviceId, mount, new Map([[id, idxIds[0]]]), selected).written
     ).toBe(1);
     expect(pushedRating(id)).toBe(5);
   });
@@ -270,7 +283,8 @@ describe("ratings reach a track the device has never reported (#138)", () => {
       db,
       deviceId,
       mount,
-      new Map([[id, idxIds[0]]])
+      new Map([[id, idxIds[0]]]),
+      selected
     );
 
     expect(report.unavailable).toBe(1);
@@ -298,7 +312,8 @@ describe("ratings reach a track the device has never reported (#138)", () => {
         [good, idxIds[0]],
         [bad, 999], // past header.entryCount
         [alsoGood, idxIds[1]],
-      ])
+      ]),
+      selected
     );
 
     expect(report.failed).toBe(1);
@@ -318,13 +333,57 @@ describe("ratings reach a track the device has never reported (#138)", () => {
       db,
       deviceId,
       mount,
-      new Map([[id, idxIds[0]]])
+      new Map([[id, idxIds[0]]]),
+      selected
     );
 
     expect(report.written).toBe(0);
     expect(report.alreadyCorrect).toBe(1);
     // Marked, or every sync would reconsider it forever.
     expect(pushedRating(id)).toBe(8);
+  });
+
+  itDb("a rated track that is not on this device is not reported as waiting", () => {
+    // The cost of widening the join: `computeRatingPropagations` now offers every
+    // rated track, so without a split a 20,000-track library syncing a 500-track
+    // selection announced "19,500 rating(s) are waiting for the device's
+    // database" on every sync. Only a track the sync recorded as *on* this device
+    // is actionable.
+    const onDevice = seedSyncedTrack("Here", 7);
+
+    // Rated, but never synced to this device — no device_synced_tracks row.
+    seedTrack(db, {
+      path: "/music/Elsewhere.flac",
+      title: "Elsewhere",
+      libraryFolderId: folderId,
+      rating: 9,
+    });
+
+    const idxIds = writeTcdFixture(mount, [{ path: "/<HDD0>/Music/Here.mpc" }]);
+    const report = propagateRatingsToDevice(
+      db,
+      deviceId,
+      mount,
+      new Map([[onDevice, idxIds[0]]]),
+      selected
+    );
+
+    expect(report.written).toBe(1);
+    expect(report.notInDeviceDb).toBe(0);
+    expect(report.notOnDevice).toBe(1);
+  });
+
+  itDb("a selected track the device has not indexed is the actionable count", () => {
+    // The split's own guard: a track this sync sent here, that the device's
+    // database does not list, is exactly what the "run Database → Update now"
+    // message is for.
+    const id = seedSyncedTrack("Copied", 5);
+
+    const report = propagateRatingsToDevice(db, deviceId, mount, new Map(), selected);
+
+    expect(report.notInDeviceDb).toBe(1);
+    expect(report.notOnDevice).toBe(0);
+    expect(pushedRating(id)).toBeUndefined();
   });
 
   itDb("widening the join does not push unrated tracks or contested ones", () => {
@@ -344,5 +403,26 @@ describe("ratings reach a track the device has never reported (#138)", () => {
     expect(props.has(unrated)).toBe(false);
     expect(props.has(contested)).toBe(false);
     expect(props.has(settled)).toBe(false);
+  });
+});
+
+describe("the sync selection a shadow-backed device propagates against", () => {
+  it("keeps the library track id through the shadow remap", () => {
+    // `ipc/sync.ts` builds the selection set from these maps *after* the shadow
+    // remap, and reads `info.id` from each record. On a shadow-backed device the
+    // map is re-keyed by the transcode's path — if the remap dropped or rewrote
+    // `id`, every rating waiting on such a device's database would be filed as
+    // "not on this device" and the user would never be told to update it.
+    const remapped = remapTrackMapToShadow(
+      {
+        "/music/a.flac": { id: 7, path: "/music/a.flac", title: "A" },
+        "/music/b.flac": { id: 8, path: "/music/b.flac", title: "B" },
+      },
+      new Map([[7, "/shadow/a.mpc"]])
+    );
+
+    expect(Object.keys(remapped)).toEqual(["/shadow/a.mpc"]);
+    expect(remapped["/shadow/a.mpc"].id).toBe(7);
+    expect(remapped["/shadow/a.mpc"].path).toBe("/shadow/a.mpc");
   });
 });

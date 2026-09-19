@@ -33,12 +33,24 @@ export interface PropagationReport {
   /** Tracks the device already held the canonical rating for. */
   alreadyCorrect: number;
   /**
-   * Tracks with a rating to push that the device's database does not list yet —
-   * everything copied during this very sync, since Rockbox only learns about a
-   * file when its database is updated. Deliberately *not* marked as pushed, so
-   * the next sync after the user updates the database on the player sends them.
+   * Tracks this device holds, with a rating to push, that its database does not
+   * list yet — everything copied during this very sync, since Rockbox only
+   * learns a file exists when its database is updated. Deliberately *not* marked
+   * as pushed, so the next sync after the user updates the database sends them.
+   *
+   * This is the only count the sync log turns into an instruction, so it must
+   * mean what it says — hence `selectedTrackIds`.
    */
   notInDeviceDb: number;
+  /**
+   * Rated tracks this sync did not send here at all — everything outside a
+   * partial selection, and the whole library minus the contents of a second,
+   * smaller player. Not a problem and never logged; counted only to keep them
+   * out of {@link notInDeviceDb}, which without the split announced "19,500
+   * rating(s) are waiting for the device's database" on every sync of a
+   * 500-track player.
+   */
+  notOnDevice: number;
   /** Nothing could be written at all: no index, or Rockbox is mid-update. */
   unavailable: number;
   /** Tracks whose write threw. Counted, not fatal to the rest. */
@@ -52,17 +64,30 @@ export interface PropagationReport {
  * `idxIds` must come from *this* sync's runtime read: a "Database → Initialize
  * now" on the player renumbers every record, so a cached index id would address
  * the wrong track.
+ *
+ * `selectedTrackIds` is the set of library track ids this sync sent to this
+ * device — the caller's own selection, after any shadow remap. It is used only
+ * to tell {@link PropagationReport.notInDeviceDb} from
+ * {@link PropagationReport.notOnDevice}, never to decide what to write.
+ *
+ * It has to be the selection rather than anything read back from the database:
+ * `device_synced_tracks` looks like the obvious source and is not, because only
+ * the `device:check` handler ever writes it. On a device the user syncs without
+ * ever running a check that table is empty, and every rating waiting on the
+ * device's database would be silently filed as "not on this device".
  */
 export function propagateRatingsToDevice(
   db: Database.Database,
   deviceId: number,
   mountPath: string,
-  idxIds: Map<number, number>
+  idxIds: Map<number, number>,
+  selectedTrackIds: ReadonlySet<number>
 ): PropagationReport {
   const report: PropagationReport = {
     written: 0,
     alreadyCorrect: 0,
     notInDeviceDb: 0,
+    notOnDevice: 0,
     unavailable: 0,
     failed: 0,
   };
@@ -78,7 +103,8 @@ export function propagateRatingsToDevice(
   for (const [trackId, rating] of propagations) {
     const idxId = idxIds.get(trackId);
     if (idxId === undefined) {
-      report.notInDeviceDb++;
+      if (selectedTrackIds.has(trackId)) report.notInDeviceDb++;
+      else report.notOnDevice++;
       continue;
     }
 

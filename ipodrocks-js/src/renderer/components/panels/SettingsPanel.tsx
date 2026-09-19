@@ -4,7 +4,6 @@ import { Button } from "../common/Button";
 import { Input } from "../common/Input";
 import { Card } from "../common/Card";
 import { Switch } from "../common/Switch";
-import { useUIStore } from "../../stores/ui-store";
 import {
   getOpenRouterConfig,
   setOpenRouterConfig,

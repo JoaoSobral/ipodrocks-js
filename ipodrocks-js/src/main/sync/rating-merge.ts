@@ -425,8 +425,21 @@ export function ingestDeviceRatings(
 
       switch (outcome.action) {
         case "adopt_device":
-          stmtInsertEvent.run(change.trackId, deviceId, track.rating, outcome.value, "device_ingest");
-          stmtUpsertRating.run(outcome.value, deviceId, change.trackId);
+          // Guarded exactly like `converged` below, and for a sharper reason
+          // than tidiness. The commonest adoption of all is the device reading
+          // back a rating Phase 3 pushed to it last sync: `last_seen_rating` was
+          // 0, the device now says 8, the library already says 8. Writing that
+          // bumps `rating_version` for a value that did not change — and Phase 3
+          // then has nothing to propagate, so nothing refreshes
+          // `last_pushed_rating_version`, which is left one behind for good.
+          // `libraryChanged` is then permanently true again and the next
+          // device-side edit is a spurious conflict (or a silent revert to the
+          // higher value one step apart) — the whole of issue #138's ingest half,
+          // back on the sync after the fix appeared to work.
+          if (outcome.value !== track.rating) {
+            stmtInsertEvent.run(change.trackId, deviceId, track.rating, outcome.value, "device_ingest");
+            stmtUpsertRating.run(outcome.value, deviceId, change.trackId);
+          }
           result.adopted++;
           break;
         case "propagate_lib":

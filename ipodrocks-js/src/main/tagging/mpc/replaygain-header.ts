@@ -205,9 +205,10 @@ export function readSv8ReplayGainRaw(head: Buffer, loc: RgPacketLocation): Sv8Re
  * makes a player's clipping prevention conservative, and clipping prevention is
  * off by default in Rockbox).
  *
- * Shared with {@link headBufferNeedsReplayGain} on purpose: if the cheap "does
- * this file need work" check computed its target any other way, the repair scan
- * would report files it then leaves untouched.
+ * {@link writeMpcReplayGainHeader} is the only caller, and compares the result
+ * against what the file already holds to decide whether to write at all — so
+ * this function alone defines both "what to write" and "is a write needed",
+ * and the two can never disagree.
  */
 export function computeTargetRaws(
   existing: Sv8ReplayGainRaw,

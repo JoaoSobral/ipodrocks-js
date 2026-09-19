@@ -642,15 +642,41 @@ export function registerSyncHandlers(): void {
       // inline here it never was, and three silent-loss bugs lived in it until
       // issue #138. This side only reports what it did.
       try {
-        if (runtimeImport) {
+        // `state.kind === "ok"` and not merely a non-null `runtimeImport`:
+        // `readAndIngestRuntimeData` returns a fully empty result — `idxIds`
+        // included — for a device with runtime data turned off, no `.rockbox`
+        // database, an unreadable one, one Rockbox is mid-update, and one that
+        // has never recorded a play. Running the loop against an empty `idxIds`
+        // cannot write anything, and would count every rated track as "waiting
+        // for the device's database" and hand the user an instruction that
+        // cannot help. Those states already printed their own message above.
+        if (runtimeImport && runtimeImport.state.kind === "ok") {
           // The index positions come from this sync's own read, because a
           // "Database → Initialize Now" on the device renumbers every entry —
           // they are never cached across runs.
+          // What this sync actually sent here, so a rating "waiting for the
+          // device's database" can be told from one belonging to a track that was
+          // never sent at all — a partial selection, or a second, smaller player.
+          // Read off the same maps `runSync` copied from, after the shadow remap,
+          // which keeps the library track id either way.
+          const selectedTrackIds = new Set<number>();
+          for (const map of [
+            musicLibraryTracks,
+            podcastLibraryTracks,
+            audiobookLibraryTracks,
+          ]) {
+            for (const info of Object.values(map)) {
+              const id = info.id;
+              if (typeof id === "number") selectedTrackIds.add(id);
+            }
+          }
+
           const report = propagateRatingsToDevice(
             lib.getConnection(),
             opts.deviceId,
             device.mountPath,
-            runtimeImport.idxIds
+            runtimeImport.idxIds,
+            selectedTrackIds
           );
 
           if (report.written > 0) {

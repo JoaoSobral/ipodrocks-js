@@ -40,6 +40,7 @@ import {
 
 import { AppDatabase } from "../../main/database/database";
 import {
+  computeRatingPropagations,
   ingestDeviceRatings,
   invalidatePushedRatings,
   markRatingsPropagated,
@@ -176,6 +177,97 @@ describe("a rating set in the app does not make every device edit a conflict (#1
     invalidatePushedRatings(db, deviceId);
     expect(row().last_pushed_rating).toBeNull();
     expect(row().last_pushed_rating_version).toBeNull();
+  });
+
+  /**
+   * The sequence a real device actually produces, which the single-ingest
+   * helper above skips: the library's rating is pushed on one sync, and the
+   * device *reports it back* on the next. That report is an `adopt_device` of a
+   * value the library already holds — and it must not count as a library
+   * change, or `last_pushed_rating_version` is left one behind for good and the
+   * whole defect returns on the sync after.
+   */
+  function pushedThenReportedBack(name: string, rating: number): number {
+    const id = seedTrack(db, {
+      path: `/music/${name}.flac`,
+      title: name,
+      libraryFolderId: folderId,
+    });
+    db.prepare(
+      `UPDATE tracks
+          SET rating = ?, rating_updated_at = CURRENT_TIMESTAMP,
+              rating_version = rating_version + 1
+        WHERE id = ?`
+    ).run(rating, id);
+
+    // Sync 1: the device has no opinion (0 = unrated), so the library wins and
+    // Phase 3 pushes it.
+    ingestDeviceRatings(db, deviceId, new Map([[id, 0]]));
+    markRatingsPropagated(db, deviceId, [id]);
+
+    // Sync 2: the device now reads back what was written to it.
+    ingestDeviceRatings(db, deviceId, new Map([[id, rating]]));
+    // Phase 3 has nothing to do — last_pushed_rating already equals the rating.
+    expect(computeRatingPropagations(db, deviceId).has(id)).toBe(false);
+
+    return id;
+  }
+
+  itDb("the device reporting back its own pushed rating is not a library change", () => {
+    const id = pushedThenReportedBack("RoundTrip", 6);
+
+    // Nothing about the library moved across those two syncs, so the recorded
+    // version must still match. It used to fall one behind, because
+    // `adopt_device` bumped rating_version even for an identical value while
+    // Phase 3 had nothing left to re-record it with.
+    const row = db
+      .prepare(
+        `SELECT t.rating_version, dtr.last_pushed_rating_version
+           FROM tracks t
+           JOIN device_track_ratings dtr ON dtr.track_id = t.id AND dtr.device_id = ?
+          WHERE t.id = ?`
+      )
+      .get(deviceId, id) as {
+      rating_version: number;
+      last_pushed_rating_version: number | null;
+    };
+    expect(row.last_pushed_rating_version).toBe(row.rating_version);
+  });
+
+  itDb("a device edit after a full push/report-back round trip is adopted", () => {
+    // Issue #138's ingest half, on the sequence a real player produces. This
+    // was still a spurious conflict after the first fix.
+    const id = pushedThenReportedBack("Edited", 6);
+
+    const result = ingestDeviceRatings(db, deviceId, new Map([[id, 2]]));
+
+    expect(result.conflicts).toBe(0);
+    expect(result.adopted).toBe(1);
+    expect(libraryRating(id)).toBe(2);
+    expect(openConflicts(id)).toBe(0);
+  });
+
+  itDb("a one-step device edit after a round trip is not reverted", () => {
+    const id = pushedThenReportedBack("Nudged", 6);
+
+    const result = ingestDeviceRatings(db, deviceId, new Map([[id, 5]]));
+
+    expect(result.adopted).toBe(1);
+    expect(result.converged).toBe(0);
+    expect(libraryRating(id)).toBe(5);
+  });
+
+  itDb("adopting a value the library already holds writes no rating event", () => {
+    // The `converged` arm has always guarded on this; `adopt_device` did not,
+    // which is what bumped the version. Nothing changed, so nothing is logged.
+    const id = pushedThenReportedBack("Quiet", 8);
+
+    const events = (
+      db
+        .prepare("SELECT COUNT(*) AS n FROM rating_events WHERE track_id = ?")
+        .get(id) as { n: number }
+    ).n;
+    expect(events).toBe(0);
   });
 
   itDb("a track never pushed to is unaffected by the new baseline", () => {
