@@ -15,7 +15,6 @@ import {
   decodePeak,
   encodeGain,
   encodePeak,
-  headBufferNeedsReplayGain,
   locateSv8ReplayGainPacket,
   PEAK_FULL_SCALE_RAW,
   readMpcReplayGainHeader,
@@ -169,7 +168,6 @@ describe("writing the header", () => {
     await expect(writeMpcReplayGainHeader(file, SOURCE)).resolves.toBe("unchanged");
     expect(fs.readFileSync(file)).toEqual(after);
     expect(fs.statSync(file).mtimeMs).toBe(mtime);
-    expect(headBufferNeedsReplayGain(after, SOURCE)).toBe(false);
   });
 
   it("refuses, byte-for-byte, anything it may not patch", async () => {
@@ -186,7 +184,6 @@ describe("writing the header", () => {
       const before = fs.readFileSync(file);
       await expect(writeMpcReplayGainHeader(file, SOURCE), label).resolves.toBe("unsupported");
       expect(fs.readFileSync(file), label).toEqual(before);
-      expect(headBufferNeedsReplayGain(before, SOURCE), label).toBe(false);
     }
   });
 

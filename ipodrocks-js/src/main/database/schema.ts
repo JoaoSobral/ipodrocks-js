@@ -93,6 +93,11 @@ CREATE TABLE IF NOT EXISTS device_track_ratings (
     track_id            INTEGER NOT NULL REFERENCES tracks(id)  ON DELETE CASCADE,
     last_seen_rating    INTEGER CHECK(last_seen_rating IS NULL OR (last_seen_rating >= 0 AND last_seen_rating <= 10)),
     last_pushed_rating  INTEGER CHECK(last_pushed_rating IS NULL OR (last_pushed_rating >= 0 AND last_pushed_rating <= 10)),
+    -- tracks.rating_version as of that push, so the 3-way merge can tell
+    -- "the library has not changed since we pushed" from "it has". Added by
+    -- migration; deliberately un-indexed (an index in SCHEMA_SQL over a
+    -- migrated column throws on every upgrading install — see CLAUDE.md).
+    last_pushed_rating_version INTEGER,
     last_seen_at        TIMESTAMP,
     last_pushed_at      TIMESTAMP,
     PRIMARY KEY (device_id, track_id)

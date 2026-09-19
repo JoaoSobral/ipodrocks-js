@@ -30,11 +30,12 @@ Ratings are synced in two phases that run automatically as part of the normal sy
 
 ### Phase 1 — Ingest (device → library)
 
-When a sync starts, iPodRocks reads `database_changelog.txt` from the device mount and compares every device rating against the last known baseline using a **3-way merge**:
+When a sync starts, iPodRocks reads the ratings out of Rockbox's own database on the device (`.rockbox/database_idx.tcd`, joined to `database_4.tcd` for the filenames) and compares every device rating against the last known baseline using a **3-way merge**:
 
 | Situation | Outcome |
 |---|---|
 | Device has a new rating, library has none | Device rating is adopted into the library |
+| Device reads 0 (Rockbox's "unrated" — it has no null) | No opinion: never adopted, never a conflict |
 | Only the library changed since last sync | Library rating will be pushed to device (Phase 3) |
 | Both sides changed to the same value | Silently converged — no conflict |
 | Both sides changed but differ by ≤ 1 unit | Half-step tolerance — higher value wins, no conflict |
@@ -46,9 +47,14 @@ Normal file copy / transcode / remove step (unchanged).
 
 ### Phase 3 — Propagate (library → device)
 
-After file sync, iPodRocks writes canonical library ratings back to `database_changelog.txt` on the device for any track where the library value differs from what was last pushed. Tracks with unresolved conflicts are excluded.
+After file sync, iPodRocks writes each canonical library rating straight into the record Rockbox reads, exactly as Rockbox writes it itself — the single 32-bit value in `database_idx.tcd`, with the record flagged so the value survives a database rebuild. The index is backed up once per run before the first write. Tracks with unresolved conflicts are excluded, as are tracks whose value the device already holds.
 
-> **Device step required:** After sync completes, go to **Settings → General → Database → Initialize Now** on your iPod to apply the new ratings file.
+> **Restart Rockbox** for written ratings to show on screen. The values are already saved; the running database is just holding the old ones in memory.
+
+Two cases the sync log calls out, both of them normal:
+
+- **"N rating(s) are waiting for the device's database."** Rockbox only knows about a file once its database has been updated, so an album copied during *this* sync has no record to write a rating into. On the player, run **Database → Update now** (or restart it with Auto Update on) and sync again — the ratings are sent then.
+- **"Could not write N rating(s)."** The device's database is missing, or Rockbox was updating it while the sync ran. Nothing is recorded as sent, so the next sync retries.
 
 ## Resolving conflicts
 

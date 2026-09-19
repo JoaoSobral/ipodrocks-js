@@ -55,6 +55,9 @@ These are confirmed reuse/efficiency issues found during `src/main/` review. Add
 | Efficiency | `metadata-extractor.ts:141` | `parseFile()` called twice per track |
 | GitHub Actions | `.github/dependabot.yml` | `package-ecosystem: ""` — Dependabot is disabled |
 | GitHub Actions | All workflows | Actions pinned to floating `@vN` tags instead of commit SHAs |
+| Audit trail | `sync/rating-merge.ts` | `markRatingsPropagated()` writes no `rating_events` row, so `source='propagate'` (and `'migration'`) are never emitted — nothing can explain where a device-side value came from |
+| Reuse | `ipc/ratings.ts:135` + `assistant/tools.ts:440` | Conflict resolution implemented twice; the assistant copy has no `manual` branch and no test coverage |
+| Trap | `database.ts` — `migrateContentTypeAudiobook()` | Rebuilds `tracks` from an **explicit column list** that predates the rating columns. Harmless in production (sentinel-gated, and a database old enough to run it has no ratings) but it silently drops any later column, so a test fixture built from bare `SCHEMA_SQL` — no sentinel — loses every rating before the migration under test is reached. Build such fixtures by running `initialize()` once and then stripping the one column back out (see `regressions/rating-version-baseline.test.ts`) |
 
 ### From the PR #116 review (2026-08-22)
 
@@ -183,6 +186,64 @@ one conflict per track the user had rated only in iPodRocks, and write `rating =
 Pinned in `src/__tests__/regressions/rating-zero-and-rebuild.test.ts` and
 `tests/e2e/rating-conflicts.test.ts`.
 
+## Hazard: a rating can only reach the device through a `device_track_ratings` row
+
+Issue #138: "a new album was synced without the ratings."
+
+`computeRatingPropagations()` (`sync/rating-merge.ts`) joined `device_track_ratings`,
+and for a long time that join was an **INNER** one. The only two things that create a
+row in that table are `ingestDeviceRatings()` — which needs the *device* to have
+reported the track in its runtime data — and `markRatingsPropagated()`, which needs
+the track to already be in the propagation set. A rating on a track the device had
+never reported was therefore unreachable: a closed loop with no way in, worst on a
+rebuilt device, where the ingest is skipped whole and the rows are not created that
+sync either.
+
+- **The join must stay a LEFT join.** Nothing is lost by widening it: "is this track
+  on the device" is not that query's job. `propagateRatingsToDevice()` resolves every
+  candidate against `runtimeImport.idxIds` — the index positions read off the device
+  *this* sync — and a track with no record there is skipped and left unmarked for the
+  next sync. Those ids are never cached across runs: a "Database → Initialize now"
+  renumbers every entry.
+- **Phase 3 lives in `sync/rating-propagate.ts`, not in `ipc/sync.ts`.** It was
+  inline, so nothing tested it — `behaviors/rating-writeback.test.ts` re-implemented
+  the loop in a local helper and tested *that*. All three of this issue's defects
+  lived in the untested copy. Do not move it back.
+- **`writeRating()` returns a `RatingWriteResult`, not a boolean.** The boolean
+  conflated "the device already holds this value" (success) with "no index" and
+  "Rockbox is mid-update" (failure), and the caller marked both as pushed —
+  `last_pushed_rating` then matched `tracks.rating`, the query excluded the track,
+  and the rating never arrived on any later sync. Only `"written"`/`"unchanged"` may
+  be marked.
+- **Each track's write is wrapped alone.** A `TcdFormatError` used to escape the loop
+  before `markRatingsPropagated()` ran, so a single bad record discarded the
+  bookkeeping for every rating written before it.
+- **A track copied during this sync cannot get a rating, and the log must say so.**
+  Rockbox only learns a file exists when its database is updated, so there is no
+  record to write into. `notInDeviceDb` counts them and the sync tells the user to
+  run Database → Update now and sync again. This is the reporter's actual symptom;
+  silence is what made it look like data loss.
+
+Separately, `ingestDeviceRatings()` hardcoded `ratingVersionAtSync = 0` because
+nothing stored `tracks.rating_version` as of the last push. Every rating writer does
+`rating_version + 1`, so any track ever rated in-app read as "library changed"
+forever, and a later device-only edit took the both-sides-changed branch: a conflict
+the user had to answer for a change only they had made, or — one step apart — a
+silent `converged` to `Math.max`, i.e. their device edit thrown away.
+`device_track_ratings.last_pushed_rating_version` records it now.
+
+- **It is written by `markRatingsPropagated()` and cleared by
+  `invalidatePushedRatings()`**, always alongside `last_pushed_rating`: the version
+  means nothing without the value it belongs to.
+- **The migration backfills it** where `last_pushed_rating = tracks.rating`, which is
+  exactly "the library has not moved since we pushed". Where they differ it stays
+  NULL, and `libBaseAtLastSync !== libraryVal` already carries that answer.
+
+Pinned in `src/__tests__/regressions/rating-propagation-gap.test.ts`,
+`src/__tests__/regressions/rating-version-baseline.test.ts` (including the migration
+on a database built by the previous release) and
+`tests/e2e/rating-propagation-new-album.test.ts`.
+
 ## Hazard: a third rating source — the file's own tag — must only ever seed, never fight
 
 Issue #118: a library manager (Swinsian, in the report) can write a star rating
@@ -258,36 +319,24 @@ Three rules:
   are read.** Never mask with `& 3` — that folds the read-only bit into the type.
 - **`reader.ts` must keep treating a `cover art (front)` item as binary however
   its flags read.** Every file iPodRocks wrote before the fix says "text" there.
-  Without the compat the fixed reader drops that artwork into `tags.extra` as a
-  garbage string, and `repairMpcTags()` — which round-trips reader → writer —
-  rewrites the JPEG as a text item and destroys it. Cover art is the only binary
-  key this writer has ever produced, so keying the compat on the name is exact.
+  Without the compat the fixed reader decodes that JPEG into a garbage string in
+  `tags.extra`, and anything that then writes the tags back out destroys it.
+  Cover art is the only binary key this writer has ever produced, so keying the
+  compat on the name is exact.
 - **`tagsToItems()` emits `extra` (ReplayGain) before the artwork.** Insurance
   against any reader with a bounded tag buffer; costs nothing to keep.
 
-`tagging/mpc/repair.ts` fixes files already on disk, driven by
-`repair-scan.ts` over shadow-library folders and device content folders
-(`maintenance:repairMpcTags`, Settings → Maintenance, Rocksy's
-`mpc_repair_tags`). Three properties are load-bearing and pinned:
+**There is no in-place repair for files already on disk.** `tagging/mpc/repair.ts`,
+`repair-scan.ts`, `ipc/maintenance.ts` (Settings → Maintenance → "Repair Musepack
+tags") and Rocksy's `mpc_repair_tags` were all deleted in 2.3.4: re-encoding is the
+better answer, and maintaining a second writer that had to reproduce the transcode's
+every decision was the expensive half. The remedy for a badly tagged `.mpc` is to
+**delete the shadow library including its files and create it again** — see the
+shadow-rebuild hazard below for why a plain `shadow:rebuild` cannot do it. Do not
+reintroduce a repair pass; fix the transcode and re-encode.
 
-- **It rewrites only the trailing tag block and nine bytes of the stream header,
-  never the audio.** `readAudioOnly()` does a synchronous read of the whole file
-  (see the note in `shadow-reconcile.ts`); doing that per file from an ipcMain
-  handler blocks the main process for a full read of the library.
-- **It preserves size and mtime, so the pass is invisible downstream.** Size is
-  unchanged for free (same items, same value lengths — only a flags word and the
-  order). The mtime must be restored from a `{ bigint: true }` stat as fractional
-  *seconds*: passing the `Date` form loses ~0.9 ms, which is enough to shift
-  `Math.floor(mtimeMs)` by one — and that floored value is exactly what
-  `shadow_tracks.mtime` stores and compares for equality.
-- **Both writes happen under one mtime restore**, the stat taken before either of
-  them. A header-only repair still returns `"repaired"` — nothing downstream would
-  notice it otherwise — and a "must not grow" refusal must not throw away a header
-  write that already succeeded: it restores the mtime and reports the repair.
-
-Pinned in `src/__tests__/regressions/mpc-cover-art-item-flags.test.ts`,
-`src/__tests__/behaviors/mpc-transcode-tags.test.ts` and
-`tests/e2e/mpc-tag-repair.test.ts`.
+Pinned in `src/__tests__/regressions/mpc-cover-art-item-flags.test.ts` and
+`src/__tests__/behaviors/mpc-transcode-tags.test.ts`.
 
 ## Hazard: `readSourceApeTags()` is the only producer of ReplayGain
 
@@ -358,7 +407,7 @@ Three rules, all of them from `lib/rbcodec/metadata/mpc.c`:
   **patches in place and never inserts or moves a packet** — a file whose packet is
   anywhere else is refused (`"unsupported"`) and keeps its tag ReplayGain instead.
   Inserting would also break the `SO` packet's absolute seek-table offset, and would
-  move the APEv2 block whose position `repairMpcTags()` computed before the patch.
+  move the trailing APEv2 block.
 - **A gain whose peak decodes to 0 is ignored entirely** (`if (peak != 0)` in
   `set_replaygain_sv8()`). Gain and peak are therefore written as a pair:
   `computeTargetRaws()` gives a gain that arrives without a peak a full-scale one
@@ -369,21 +418,18 @@ Three rules, all of them from `lib/rbcodec/metadata/mpc.c`:
 Consequences worth keeping:
 
 - **The strip is authorized by a successful header write, never by the attempt.**
-  `writeMpcMetadata()` and `repairMpcTags()` drop the four `REPLAYGAIN_*` items only
-  on `"written"`/`"unchanged"`. **SV7 (`MP+`) is deliberately never written** —
+  `writeMpcMetadata()` drops the four `REPLAYGAIN_*` items only on
+  `"written"`/`"unchanged"`. **SV7 (`MP+`) is deliberately never written** —
   different layout and scale, nothing the app produces — so those files keep their
-  tag copy and the pre-#137 restore path whole. `tests/e2e/mpc-tag-repair.test.ts`
-  pins exactly that with its SV7 fixture.
+  tag copy.
 - **The patch is nine bytes inside a fixed-size packet**, so the file's length and
-  every absolute offset in it are unchanged. That is what lets the repair read the
-  tag block's position first, patch the header, and then rewrite the block.
-- **The cheap check and the writer share `computeTargetRaws()`.** If they computed
-  the target differently, the scan would report files it then leaves untouched.
-- **A header-only repair changes neither size nor mtime**, so no sync will ever
-  re-copy the fixed file. That is why `maintenance:repairMpcTags` walks connected
-  devices and repairs their copies from those files' own tags — the old "repair the
-  shadow copy, the next sync carries it across" story does not hold here — and why
-  the UI tells the user to plug the player in.
+  every absolute offset in it are unchanged. Keep it that way: a caller may compute
+  the trailing tag block's position before the patch and write it afterwards.
+- **A header write changes neither size nor mtime.** So no sync re-copies a file
+  because of it — which also means nothing can carry a header fix out to a copy
+  already on a device. The only route to that is re-encoding the shadow library
+  (delete with files, create again) so the new files differ and the sync copies
+  them.
 
 > **Test-coverage note:** music-metadata parses SV8 but skips the `RG` packet
 > outright (`MpcSv8Parser.js`: `case 'RG': … ignore`), so there is no library to
@@ -393,12 +439,8 @@ Consequences worth keeping:
 
 Pinned in `src/__tests__/regressions/mpc-replaygain-header.test.ts` (the codec
 against the spec's own examples and Rockbox's integer arithmetic, the refusals, the
-in-place patch), `src/__tests__/regressions/mpc-header-repair-migration.test.ts`
-(tag → header, the per-field merge, one mtime restore),
-`src/__tests__/behaviors/mpc-transcode-tags.test.ts` (real mpcenc, including the
-control that its own `RG` packet is all zeros),
-`tests/e2e/mpc-tag-repair.test.ts` and
-`tests/e2e/shadow-rebuild-tag-repair.test.ts`.
+in-place patch) and `src/__tests__/behaviors/mpc-transcode-tags.test.ts` (real
+mpcenc, including the control that its own `RG` packet is all zeros).
 
 ## Decision: nothing embeds album artwork into a Musepack file
 
@@ -414,30 +456,12 @@ writes beside the audio, already resized to `DEFAULT_COVER_MAX_DIMENSION`
 name — both are needed to read and repair the files already out there. Only the
 population is gone.
 
-**`repairMpcTags()` strips the artwork, so the tag block now shrinks.** That
-retires the old "same size, always" invariant:
-
-- The guard is now *must not grow*, not *must match*. The tag is the last thing
-  in the file, so a shorter block truncates cleanly while a longer one would
-  mean moving bytes this module refuses to move.
-- Anything after the block — an ID3v1 tag — is read off the tail and written
-  back down with it, then the file is truncated. Losing that was the easy bug
-  to write here.
-- **The mtime is still restored**, for the reason in the file's docblock. The
-  *size* deliberately is not preserved, so `maintenance:repairMpcTags` refreshes
-  `shadow_tracks.file_size` for every file it rewrites, or the next reconcile
-  treats them all as candidates.
-- Device copies cannot be matched back to a library track:
-  `device_synced_tracks.device_path` is mount-relative and casefolded and cannot
-  be matched against the absolute paths the walk yields. They are still repaired
-  in full from what they carry themselves — artwork out, and their own
-  `REPLAYGAIN_*` items into the stream header (#137). Only the source-resolved
-  top-up, for a file whose tag lost its ReplayGain entirely, stays shadow-only.
+`tagging/writer.ts` writes the trailing APEv2 block whole, so nothing depends on
+it keeping a particular size any more. Anything that appends past it — an ID3v1
+tag — is the writer's problem to preserve, and the one real trap here.
 
 Pinned in `src/__tests__/regressions/replaygain-source-read.test.ts` (real
-ffmpeg-made FLACs, with `parseFile` mocked to throw),
-`src/__tests__/regressions/mpc-repair-artwork-replaygain.test.ts` (the shrink,
-the ID3v1 move, the ReplayGain restore) and
+ffmpeg-made FLACs, with `parseFile` mocked to throw) and
 `src/__tests__/behaviors/mpc-transcode-tags.test.ts`.
 
 > **Test-coverage note:** that behaviour suite is the only real FLAC to Musepack
@@ -463,37 +487,27 @@ stack up:
   through the same function, which is why clearing the scan cache does not help
   either.
 
-So **anything that has to reach existing output must be its own tree walk.**
-`buildShadowLibrary()` runs `_verifyShadowTags()` between the reconcile and the
-transcode loop; it delegates to `repairMpcTagsInTree()`, the same pass
-`maintenance:repairMpcTags` drives, so the two can never disagree about what a
-broken tag is. It is deliberately **not** gated on the library's codec — the
-walk already filters to `.mpc`, and a folder can hold Musepack files a later
-codec change left behind. It passes the same `replayGainFor` resolver Settings →
-Maintenance uses (`library/shadow-replaygain-source.ts`), which probes lazily and
-caches per source track, so a folder of already-correct files still spawns
-nothing. It *is* gated on the root being reachable, using the
-same guard as the reconcile: `rec.skipped` is the wrong signal, since that is
-also set for `UNRECONCILABLE_CODECS`.
+**So a rebuild cannot fix an existing file, and nothing in the app tries to.**
+2.3.4 removed the `_verifyShadowTags()` pass that used to run between the
+reconcile and the transcode loop, along with the whole of `tagging/mpc/repair.ts`
+(see the APEv2 item-flags hazard above). The remedy for a file an older version
+wrote badly is to **delete the shadow library with its files**
+(`shadow:delete(id, keepFilesOnDisk = false)`, the "delete the files too" option
+in the UI, or Rocksy's `shadow_delete({ keepFiles: false })`) and create it
+again — the files are gone, so `_transcodeTrack()` re-encodes every one from the
+source and the sync copies them out because their size and mtime changed.
 
-Two consequences worth keeping in mind:
+Two things to keep in mind:
 
-- **The repair preserves size and mtime, which cuts both ways.** That is what
-  stops it cascading into a re-transcode here and a re-copy at the next sync —
-  and equally what stops the sync ever noticing a device copy that still carries
-  the old tag. A rebuild therefore tells the user, in the build log, to run
-  Settings → Maintenance for anything already on a device. Do not "fix" this by
-  touching the mtime.
-- **Tag *content* drift is still not handled.** Editing an album or title tag in
+- **A plain `shadow:rebuild` is not that.** It adopts what is on disk. When
+  someone reports that a rescan and a rebuild did not fix their tags, this is
+  why, and the answer is delete-with-files, not another rebuild.
+- **Tag *content* drift is not handled either.** Editing an album or title tag in
   the library after the transcode never reaches the shadow, for exactly the
-  reason above — `docs/app-reference/library.md` used to claim otherwise. Out of
-  scope for #130 and left deliberately unfixed; fixing it means either a
-  comparison pass or a forced re-encode for non-MPC codecs.
-
-Pinned in `src/__tests__/regressions/shadow-rebuild-retag.test.ts` (the case
-where reconcile verifies everything and nothing is converted) and
-`tests/e2e/shadow-rebuild-tag-repair.test.ts`. The legacy-tag fixture is shared
-by every spec that needs one: `src/__tests__/harness/legacy-mpc.ts`.
+  reason above — `docs/app-reference/library.md` used to claim otherwise. Left
+  deliberately unfixed; fixing it means either a comparison pass or a forced
+  re-encode. The legacy-tag fixture for anything in this area lives in
+  `src/__tests__/harness/legacy-mpc.ts`.
 
 ## Hazard: "Delete all" resolves folders that can collapse to the device root
 

@@ -43,8 +43,8 @@
  * **Safety: this is a fixed-size patch.** Nine bytes inside an existing packet
  * are overwritten; the size field is never rewritten and no byte is inserted or
  * moved. The file's length and every absolute offset in it — the APEv2 block's
- * included — come out identical, which is what lets `mpc/repair.ts` compute the
- * tag block's position before this runs and still write it afterwards.
+ * included — come out identical, so a caller may compute the tag block's
+ * position before this runs and still write it afterwards.
  *
  * Timestamps are deliberately **not** restored here. This is a primitive; its
  * caller owns the mtime, so a repair that patches the header and rewrites the
@@ -56,7 +56,7 @@ import * as fsp from "fs/promises";
 import type { ReplayGainValues } from "../replaygain-keys";
 
 /** Enough of the start of the file to hold `MPCK`, `SH` and `RG`. */
-export const MPC_HEAD_PROBE_SIZE = 64;
+const MPC_HEAD_PROBE_SIZE = 64;
 
 /** Rockbox `SV8_TO_SV7_CONVERT_GAIN = 6482`, i.e. 64.82 dB × 100. */
 const GAIN_REFERENCE_DB = 64.82;
@@ -257,23 +257,6 @@ function rawsEqual(a: Sv8ReplayGainRaw, b: Sv8ReplayGainRaw): boolean {
     a.albumGain === b.albumGain &&
     a.albumPeak === b.albumPeak
   );
-}
-
-/**
- * Whether patching this header would change anything. False for a file with no
- * writable packet, so a caller can use it as the whole decision.
- */
-export function headBufferNeedsReplayGain(head: Buffer, values: ReplayGainValues): boolean {
-  const loc = locateSv8ReplayGainPacket(head);
-  if (!loc || loc.version !== 1) return false;
-  const existing = readSv8ReplayGainRaw(head, loc);
-  return !rawsEqual(existing, computeTargetRaws(existing, values));
-}
-
-/** Whether this head holds a packet {@link writeMpcReplayGainHeader} may patch. */
-export function canWriteSv8ReplayGainHeader(head: Buffer): boolean {
-  const loc = locateSv8ReplayGainPacket(head);
-  return loc != null && loc.version === 1;
 }
 
 async function readHead(filePath: string): Promise<Buffer | null> {

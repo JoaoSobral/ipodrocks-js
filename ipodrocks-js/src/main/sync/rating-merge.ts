@@ -102,6 +102,7 @@ interface DeviceTrackRatingRow {
   track_id: number;
   last_seen_rating: number | null;
   last_pushed_rating: number | null;
+  last_pushed_rating_version: number | null;
   last_seen_at: string | null;
   last_pushed_at: string | null;
   lib_rating: number | null;
@@ -308,7 +309,7 @@ export function invalidatePushedRatings(
 ): RebuildRepairResult {
   const stmtClearPushed = db.prepare(`
     UPDATE device_track_ratings
-    SET last_pushed_rating = NULL
+    SET last_pushed_rating = NULL, last_pushed_rating_version = NULL
     WHERE device_id = ? AND last_pushed_rating IS NOT NULL
   `);
   const stmtResolveConflicts = db.prepare(`
@@ -363,7 +364,8 @@ export function ingestDeviceRatings(
   // Load lib-base-at-last-sync from device_track_ratings
   const dtrRows = db
     .prepare(
-      `SELECT track_id, last_seen_rating, last_pushed_rating FROM device_track_ratings WHERE device_id = ? AND track_id IN (${placeholders})`
+      `SELECT track_id, last_seen_rating, last_pushed_rating, last_pushed_rating_version
+         FROM device_track_ratings WHERE device_id = ? AND track_id IN (${placeholders})`
     )
     .all(deviceId, ...trackIds) as DeviceTrackRatingRow[];
   const dtrMap = new Map(dtrRows.map((r) => [r.track_id, r]));
@@ -399,7 +401,15 @@ export function ingestDeviceRatings(
 
       const dtr = dtrMap.get(change.trackId);
       const libBaseAtLastSync = dtr?.last_pushed_rating ?? null;
-      const ratingVersionAtSync = 0; // conservative: assume version 0 if no baseline
+      // What tracks.rating_version was when this device was last pushed to.
+      // This used to be hardcoded 0 because nothing recorded it, which made
+      // `libraryChanged` true forever for any track whose rating had ever been
+      // set in-app — turning a later device-only edit into a spurious conflict,
+      // or into a silent revert to the higher value when the two were one step
+      // apart (issue #138). Rows that predate the column, and rows never pushed
+      // to, still read 0: there is no push to compare against, and for those
+      // `libBaseAtLastSync !== libraryVal` already carries the answer.
+      const ratingVersionAtSync = dtr?.last_pushed_rating_version ?? 0;
 
       const outcome = mergeRating(
         change.baseline,
@@ -451,10 +461,30 @@ export function ingestDeviceRatings(
 }
 
 /**
- * Phase 3 PROPAGATE: write canonical ratings to the device changelog format.
- * Returns a map of device-relative file paths to ratings that need to be written.
+ * Phase 3 PROPAGATE: which tracks' canonical ratings this device does not have.
  *
- * The caller writes these to database_changelog.txt. We update last_pushed_* here.
+ * Returns track id → rating. The caller — {@link propagateRatingsToDevice} —
+ * writes each one into the device's `database_idx.tcd` record and calls
+ * {@link markRatingsPropagated} for the ones that landed.
+ *
+ * **The join to `device_track_ratings` must stay a LEFT join.** As an inner join
+ * this only ever offered tracks that already had a baseline row, and the only two
+ * things that create one are {@link ingestDeviceRatings} — which needs the device
+ * to have *reported* the track — and {@link markRatingsPropagated}, which needs
+ * the track to already be in this set. So a rating on a track the device had
+ * never reported could not get out: everything the sync had just copied, and
+ * worst of all on a rebuilt device, where the ingest is skipped and the rows are
+ * not created that sync either (issue #138).
+ *
+ * Nothing is lost by widening it, because "is this track on the device" is not
+ * this query's job: the caller resolves each id against the index positions read
+ * off the device this sync, and a track with no record there is left for the next
+ * sync rather than written anywhere.
+ *
+ * `rating IS NOT NULL` rather than `rating > 0`: a canonical 0 is a value the
+ * user set, and writing it clears the device's — unlike
+ * {@link loadRepairableBaselines}, which is asking which ratings a rebuild could
+ * have destroyed and where a 0 has nothing to lose.
  */
 export function computeRatingPropagations(
   db: Database.Database,
@@ -465,7 +495,7 @@ export function computeRatingPropagations(
     .prepare(`
       SELECT t.id, t.rating
       FROM tracks t
-      JOIN device_track_ratings dtr ON dtr.track_id = t.id AND dtr.device_id = ?
+      LEFT JOIN device_track_ratings dtr ON dtr.track_id = t.id AND dtr.device_id = ?
       WHERE t.rating IS NOT NULL
         AND (dtr.last_pushed_rating IS NULL OR dtr.last_pushed_rating != t.rating)
         AND NOT EXISTS (
@@ -478,7 +508,20 @@ export function computeRatingPropagations(
   return new Map(rows.map((r) => [r.id, r.rating]));
 }
 
-/** Mark ratings as propagated after a successful changelog write. */
+/**
+ * Record what reached the device, for the tracks whose write actually landed.
+ *
+ * `last_pushed_rating_version` is captured alongside the value: together they
+ * are "the library said this, at this version, and the device took it", which is
+ * the baseline the next ingest's 3-way merge needs to decide whether the library
+ * has moved since. Only {@link propagateRatingsToDevice} should call this, and
+ * only for tracks it saw the device accept — marking a failed write is what made
+ * a rating unreachable forever (issue #138).
+ *
+ * `last_seen_*` is left alone rather than re-stated: on an insert it is NULL
+ * anyway, and on conflict it is a fact about the device that a push must not
+ * touch.
+ */
 export function markRatingsPropagated(
   db: Database.Database,
   deviceId: number,
@@ -486,17 +529,21 @@ export function markRatingsPropagated(
 ): void {
   if (trackIds.length === 0) return;
   const stmt = db.prepare(`
-    INSERT INTO device_track_ratings (device_id, track_id, last_pushed_rating, last_pushed_at, last_seen_rating, last_seen_at)
-    VALUES (?, ?, (SELECT rating FROM tracks WHERE id = ?), CURRENT_TIMESTAMP,
-            COALESCE((SELECT last_seen_rating FROM device_track_ratings WHERE device_id = ? AND track_id = ?), NULL),
-            COALESCE((SELECT last_seen_at FROM device_track_ratings WHERE device_id = ? AND track_id = ?), NULL))
+    INSERT INTO device_track_ratings
+      (device_id, track_id, last_pushed_rating, last_pushed_rating_version, last_pushed_at)
+    VALUES (?, ?,
+            (SELECT rating FROM tracks WHERE id = ?),
+            (SELECT rating_version FROM tracks WHERE id = ?),
+            CURRENT_TIMESTAMP)
     ON CONFLICT(device_id, track_id) DO UPDATE SET
       last_pushed_rating = (SELECT rating FROM tracks WHERE id = excluded.track_id),
+      last_pushed_rating_version =
+        (SELECT rating_version FROM tracks WHERE id = excluded.track_id),
       last_pushed_at = CURRENT_TIMESTAMP
   `);
   db.transaction(() => {
     for (const trackId of trackIds) {
-      stmt.run(deviceId, trackId, trackId, deviceId, trackId, deviceId, trackId);
+      stmt.run(deviceId, trackId, trackId, trackId);
     }
   })();
 }

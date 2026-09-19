@@ -28,7 +28,6 @@ import {
   ITEM_TYPE_BINARY,
   itemTypeFromFlags,
 } from "../../main/tagging/apev2/constants";
-import { needsApeRepair, repairMpcTags } from "../../main/tagging/mpc/repair";
 import type { ApeTags, RawApeItem } from "../../main/tagging/apev2/types";
 
 /** "MP+" SV7 magic plus filler, so `detectMpcVersion` accepts the fixture. */
@@ -169,104 +168,8 @@ describe("issue #125 — APEv2 cover-art item type flags", () => {
     const tags = readApeTags(file);
     expect(tags.coverArt?.data.equals(COVER)).toBe(true);
     expect(tags.coverArt?.mimeType).toBe("image/jpeg");
-    // The blob must never leak into `extra` as a text value — that is what
-    // would let the repair rewrite a JPEG back out as a text item.
+    // The blob must never leak into `extra` as a text value: a reader that did
+    // that would hand a JPEG to the writer as text and destroy it.
     expect(Object.keys(tags.extra ?? {})).not.toContain("Cover Art (Front)");
-  });
-
-  describe("repairMpcTags", () => {
-    it("fixes a legacy file without touching the audio or its mtime", async () => {
-      const file = path.join(workDir, "repair.mpc");
-      writeLegacyFile(file);
-
-      const before = fs.readFileSync(file);
-      // The mtime a real write leaves behind carries a fractional millisecond.
-      // That matters: restoring it through the `Date` form of `utimes` loses
-      // ~0.9 ms, which is enough to shift `Math.floor(mtimeMs)` by one — and
-      // that floored value is exactly what `shadow_tracks.mtime` stores and
-      // compares for equality. So this must be read at full resolution.
-      const beforeStat = fs.statSync(file, { bigint: true });
-      expect(Number(beforeStat.mtimeNs) % 1_000_000).not.toBe(0);
-
-      expect(await needsApeRepair(file)).toBe(true);
-      expect(await repairMpcTags(file)).toBe("repaired");
-
-      const after = fs.readFileSync(file);
-      const afterStat = fs.statSync(file, { bigint: true });
-
-      // The size is NOT preserved any more: the artwork this legacy file
-      // carries comes out, which is the point (#130). The mtime still is, so
-      // the device sync's name+size+mtime compare re-copies the repaired file
-      // rather than the pass going unnoticed on both sides.
-      expect(after.byteLength).toBeLessThan(before.byteLength);
-      expect(Math.floor(Number(afterStat.mtimeNs) / 1e6)).toBe(
-        Math.floor(Number(beforeStat.mtimeNs) / 1e6)
-      );
-      expect(after.subarray(0, AUDIO.byteLength).equals(AUDIO)).toBe(true);
-    });
-
-    it("removes the artwork and keeps every text item (#130)", async () => {
-      const file = path.join(workDir, "roundtrip.mpc");
-      writeLegacyFile(file);
-      await repairMpcTags(file);
-
-      const tags = readApeTags(file);
-      expect(tags.coverArt).toBeUndefined();
-      expect(fs.readFileSync(file).includes(COVER)).toBe(false);
-
-      // Everything that is not the image survives, including the ReplayGain
-      // the legacy layout had buried behind it.
-      expect(tags.title).toBe("Test Title");
-      expect(tags.extra?.REPLAYGAIN_TRACK_GAIN).toBe("-3.38 dB");
-
-      const items = readItems(file);
-      expect(indexOfKey(items, "Cover Art (Front)")).toBe(-1);
-      expect(items.every((i) => itemTypeFromFlags(i.flags) !== ITEM_TYPE_BINARY)).toBe(true);
-    });
-
-    it("is idempotent — a second pass reports nothing to do", async () => {
-      const file = path.join(workDir, "idempotent.mpc");
-      writeLegacyFile(file);
-      await repairMpcTags(file);
-
-      expect(await needsApeRepair(file)).toBe(false);
-      expect(await repairMpcTags(file)).toBe("ok");
-    });
-
-    it("leaves a file this pipeline produced alone", async () => {
-      // `writeTags` can still serialize a binary item — that contract is
-      // pinned above — but nothing hands it one any more, so a file written by
-      // the current transcode has no artwork and nothing left to repair.
-      const file = path.join(workDir, "already-good.mpc");
-      fs.writeFileSync(file, AUDIO);
-      await writeTags(file, { ...TAGS, coverArt: undefined });
-
-      expect(await needsApeRepair(file)).toBe(false);
-      expect(await repairMpcTags(file)).toBe("ok");
-    });
-
-    it("still strips artwork from a file that was written with some", async () => {
-      const file = path.join(workDir, "correct-but-arty.mpc");
-      fs.writeFileSync(file, AUDIO);
-      await writeTags(file, TAGS); // correct flags, but artwork present
-
-      expect(await needsApeRepair(file)).toBe(true);
-      expect(await repairMpcTags(file)).toBe("repaired");
-      expect(readApeTags(file).coverArt).toBeUndefined();
-      expect(readApeTags(file).extra?.REPLAYGAIN_TRACK_GAIN).toBe("-3.38 dB");
-    });
-
-    it("ignores a tagged file with no artwork, and an untagged one", async () => {
-      const tagged = path.join(workDir, "no-art.mpc");
-      fs.writeFileSync(tagged, AUDIO);
-      await writeTags(tagged, { title: "No Art", extra: TAGS.extra });
-
-      const untagged = path.join(workDir, "bare.mpc");
-      fs.writeFileSync(untagged, AUDIO);
-
-      expect(await needsApeRepair(tagged)).toBe(false);
-      expect(await needsApeRepair(untagged)).toBe(false);
-      expect(await repairMpcTags(untagged)).toBe("ok");
-    });
   });
 });

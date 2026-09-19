@@ -10,7 +10,6 @@ import { AutoPodcastsPanel } from "./components/panels/AutoPodcastsPanel";
 import { AutoAudiobooksPanel } from "./components/panels/AutoAudiobooksPanel";
 import { SettingsPanel } from "./components/panels/SettingsPanel";
 import { FloatChat } from "./components/assistant/FloatChat";
-import { MpcTagRepairModal } from "./components/modals/MpcTagRepairModal";
 import { ThemeToggle } from "./components/common/ThemeToggle";
 import { BuyMeACoffeeButton } from "./components/common/BuyMeACoffeeButton";
 import { PlayerBar } from "./components/player/PlayerBar";
@@ -185,10 +184,6 @@ export function App() {
   const [appVersion, setAppVersion] = useState("");
   const { theme } = useThemeStore();
   const setOpenSettings = useUIStore((s) => s.setOpenSettings);
-  // Mounted here rather than inside SettingsPanel so Rocksy can open the repair
-  // without the Settings modal being open, and so the two never stack.
-  const pendingMpcTagRepair = useUIStore((s) => s.pendingMpcTagRepair);
-  const setPendingMpcTagRepair = useUIStore((s) => s.setPendingMpcTagRepair);
   const setNavigateTo = useUIStore((s) => s.setNavigateTo);
   const pendingSyncDeviceId = useUIStore((s) => s.pendingSyncDeviceId);
   const pendingLibraryScan = useUIStore((s) => s.pendingLibraryScan);
@@ -323,11 +318,6 @@ export function App() {
       <SettingsPanel
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
-      />
-
-      <MpcTagRepairModal
-        open={pendingMpcTagRepair}
-        onClose={() => setPendingMpcTagRepair(false)}
       />
 
       <Toaster theme={theme === "dark" ? "dark" : "light"} richColors />

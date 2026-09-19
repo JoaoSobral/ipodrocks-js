@@ -231,24 +231,43 @@ export function resetBackupState(): void {
 }
 
 /**
+ * What a rating write actually did, which the caller has to know apart.
+ *
+ * This used to be a `boolean`, and that conflated two opposite things: "the
+ * device already holds this value" (nothing to do, the rating *is* on the
+ * device) and "the index could not be written at all" (the rating is **not** on
+ * the device). The sync's Phase 3 recorded both as pushed, so a device whose
+ * database Rockbox happened to be updating had every rating marked
+ * `last_pushed_rating` without a byte reaching it — and
+ * `computeRatingPropagations` then excluded those tracks forever (issue #138).
+ */
+export type RatingWriteResult =
+  /** Bytes changed on the device. */
+  | "written"
+  /** The device already held this rating; nothing needed writing. */
+  | "unchanged"
+  /** Nothing could be written: no index, or Rockbox is mid-update. */
+  | "unavailable";
+
+/**
  * Write one track's rating into the index, exactly as Rockbox does internally:
  * seek to the single int32, write it, and flag the record's numeric data dirty
  * so the value survives a database rebuild.
  *
- * Returns true when bytes were written, false when the on-disk value already
- * matched — which is what makes a second sync with no changes a no-op.
+ * `"unchanged"` is what makes a second sync with no changes write no bytes.
+ * `"unavailable"` must never be read as success — see {@link RatingWriteResult}.
  */
 export function writeRating(
   mountPath: string,
   idxId: number,
   rating: number
-): boolean {
+): RatingWriteResult {
   if (!Number.isInteger(rating) || rating < 0 || rating > 10) {
     throw new RangeError(`invalid Rockbox rating: ${rating}`);
   }
 
   const idxFile = indexPath(mountPath);
-  if (!fs.existsSync(idxFile)) return false;
+  if (!fs.existsSync(idxFile)) return "unavailable";
 
   const headerBuf = Buffer.alloc(MASTER_HEADER_SIZE);
   const fd = fs.openSync(idxFile, "r+");
@@ -259,7 +278,7 @@ export function writeRating(
 
     // Never write into a database Rockbox is still updating, and never address
     // past the records the header accounts for.
-    if (header.dirty !== 0) return false;
+    if (header.dirty !== 0) return "unavailable";
     if (idxId < 0 || idxId >= header.entryCount) {
       throw new TcdFormatError(
         `index id ${idxId} out of range (${header.entryCount} entries)`
@@ -272,7 +291,7 @@ export function writeRating(
 
     fs.readSync(fd, word, 0, 4, ratingAt);
     const current = header.swapped ? word.readInt32BE(0) : word.readInt32LE(0);
-    if (current === rating) return false;
+    if (current === rating) return "unchanged";
 
     // Back up only once we know a write is actually going to happen.
     backupIndexOnce(mountPath);
@@ -291,7 +310,7 @@ export function writeRating(
     }
 
     fs.fsyncSync(fd);
-    return true;
+    return "written";
   } finally {
     fs.closeSync(fd);
   }

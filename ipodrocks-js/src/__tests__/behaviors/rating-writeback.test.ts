@@ -36,12 +36,9 @@ import {
 } from "../harness";
 
 import { readAndIngestRuntimeData } from "../../main/rockbox/runtime-ingest";
-import { writeRating, resetBackupState } from "../../main/rockbox/tagcache-index";
-import {
-  ingestDeviceRatings,
-  computeRatingPropagations,
-  markRatingsPropagated,
-} from "../../main/sync/rating-merge";
+import { resetBackupState } from "../../main/rockbox/tagcache-index";
+import { ingestDeviceRatings } from "../../main/sync/rating-merge";
+import { propagateRatingsToDevice } from "../../main/sync/rating-propagate";
 
 const itDb = it.skipIf(!canRunDbTests);
 
@@ -91,19 +88,15 @@ describe("rating sync over Rockbox's own database", () => {
     return { imported, result };
   }
 
-  /** Phase 3: push the library's canonical ratings back to the device. */
+  /**
+   * Phase 3: push the library's canonical ratings back to the device.
+   *
+   * This used to re-implement the loop that lived inline in `ipc/sync.ts`, so
+   * the real one was covered by nothing and three silent-loss bugs survived in
+   * it (issue #138). It now calls the same function the sync does.
+   */
   function propagate(idxIds: Map<number, number>): number {
-    const propagations = computeRatingPropagations(db, deviceId);
-    const pushed: number[] = [];
-    let written = 0;
-    for (const [id, rating] of propagations) {
-      const idxId = idxIds.get(id);
-      if (idxId === undefined) continue;
-      if (writeRating(mount, idxId, rating)) written++;
-      pushed.push(id);
-    }
-    markRatingsPropagated(db, deviceId, pushed);
-    return written;
+    return propagateRatingsToDevice(db, deviceId, mount, idxIds).written;
   }
 
   function libraryRating(): number | null {

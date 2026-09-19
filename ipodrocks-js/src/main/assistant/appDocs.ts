@@ -35,7 +35,7 @@ Add Folder — adds a root folder for music, podcasts, or audiobooks. Scans recu
 Scan Library — re-scans all folders. Uses content hashes to skip unchanged files.
 Clear scan cache — forces a full re-scan next time (use when tags changed outside iPodRocks).
 Shadow Libraries — pre-transcoded mirrors (e.g. FLAC → MPC). Create once, sync fast to multiple devices that need a specific codec. Shadow libraries hold audio files and artwork only — no play counts, ratings, or listening history.
-Rebuild (the ⟳ button on a shadow library row) — adopts files that are already correctly encoded rather than re-encoding them, and checks the Musepack tags in the folder, repairing any still carrying the pre-2.3.2 cover-art defect. It does not reach copies already on a device: those need Settings → Maintenance → Repair Musepack tags.
+Rebuild (the ⟳ button on a shadow library row) — adopts files that are already correctly encoded rather than re-encoding them. It never re-opens a file that already exists, so it cannot fix a file an older version wrote badly; for that, delete the shadow library *with* its files and create it again, which re-encodes everything.
 Tracks / Playlists — switch between track list and library playlists. Search, sort, filter by device, type, sync status.
 
 Tip: enable "Extract harmonic data" and "Analyze with Essentia" in Settings before scanning if you want key/BPM data for Savant and harmonic mixing.
@@ -77,7 +77,7 @@ Orphan & Reset Policy — what to do about content on the device this sync does 
 Album artwork — copied by default (cover.jpg, folder.png, etc.). Uncheck "Skip album artwork" to disable.
 Device Status — the card at the bottom of the Sync panel shows what is on the target device right now: songs, podcasts and audiobooks synced (and how many are still to sync), playlist files, orphans, and space used (e.g. 30.0 / 300.0 GB). It runs the same check as Devices → Check Device, once per device, and refreshes itself after a sync. Press Refresh to re-run it.
 
-Sync does NOT write play counts, ratings, or metadata to the device. Ratings sync separately via Rockbox's database_changelog.txt (see Ratings section).
+Sync does NOT write play counts or metadata to the device. Ratings sync separately, straight into Rockbox's own database (see Ratings section).
 
 Shadow library vs sync-time transcoding:
   Shadow — transcode once up front into a separate folder, sync just copies pre-built files. Uses extra disk space but subsequent syncs are fast and reusable across devices.
@@ -176,14 +176,17 @@ Setting a rating in the library: Library panel → Rating column. Click for whol
 Changes save immediately and are written to the device on the next sync.
 
 Sync phases (run automatically during sync):
-  Phase 1 — Ingest (device → library): reads database_changelog.txt from device, runs 3-way merge.
+  Phase 1 — Ingest (device → library): reads the ratings out of Rockbox's own database on the device (.rockbox/database_idx.tcd), runs 3-way merge.
     - Device has new rating, library has none → adopt device rating.
+    - Device reads 0 — Rockbox's "unrated", it has no null → no opinion, never adopted and never a conflict.
     - Only library changed → push library rating to device in Phase 3.
     - Both changed to same value → silently converged.
     - Both changed but differ by 1 unit → half-step tolerance, higher value wins.
     - Both changed significantly → conflict recorded.
   Phase 2 — File sync (normal copy/transcode/remove).
-  Phase 3 — Propagate (library → device): writes canonical library ratings straight into Rockbox's database, one field at a time, the same way Rockbox does. A rating the device already holds is skipped, so a sync with nothing to say writes nothing.
+  Phase 3 — Propagate (library → device): writes canonical library ratings straight into Rockbox's database, one field at a time, the same way Rockbox does. A rating the device already holds is skipped, so a sync with nothing to say writes nothing. Tell the user to restart Rockbox for written ratings to show on screen — the values are already saved.
+    - "N rating(s) are waiting for the device's database" → Rockbox only knows a file exists once its database has been updated, so an album copied during that same sync has no record to write a rating into. Normal, not an error: tell the user to run Database → Update now on the player (or restart it with Auto Update on) and sync again. Do NOT tell them ratings were lost.
+    - "Could not write N rating(s)" → the device's database is missing or Rockbox was updating it during the sync. Nothing is marked as sent, so the next sync retries on its own.
 
 After sync with rating changes: the values are saved immediately. Restart Rockbox for them to show on the device's own screen — with tagcache_ram on it keeps the database in memory and does not reload it when USB disconnects. Do NOT run Database → Initialize Now to "apply" them; that rebuilds the database and is not needed.
 
@@ -196,17 +199,11 @@ Star badges in track table:
 ---
 
 ### Settings — Overview
-Opened from the gear icon (top right). Sections: OpenRouter API, Harmonic Analysis, Ratings, Maintenance and Auto Podcasts.
+Opened from the gear icon (top right). Sections: OpenRouter API, Harmonic Analysis, Ratings and Auto Podcasts.
 Click Save to apply. Cancel discards changes.
 
 ---
 
-### Settings — Maintenance
-One-time repairs for files iPodRocks has already written.
-
-Repair Musepack tags — the same repair a shadow library rebuild now runs, but over connected devices as well, which a rebuild does not reach. Since 2.3.4 it moves ReplayGain into the file's stream header, which is the only place a Musepack player reads it: mpcenc leaves that part of the header zeroed and has no option to fill it, so files written before 2.3.4 carried their values in the tag alone and no volume levelling was ever applied. The tag copy is removed once the header has them, so there is one source of truth; SV7 (older "MP+") files have no such header and keep using their tag. A file that only needed its header filled keeps its size and timestamp, so no sync re-copies it — tell the user to run this with their player connected. It also strips embedded album artwork (nothing embeds any since 2.3.3 — Rockbox reads the cover.jpg beside the audio, so an embedded copy was only bloat) and restores ReplayGain tags a transcode lost, which makes repaired files smaller so the next sync re-copies them. Versions before 2.3.2 wrote the cover art into .mpc files with the wrong APEv2 item type. Tag editors (MP3tag, foobar2000) show it as hundreds of empty "Cover Art" fields, and Rockbox stops reading the ReplayGain tags that come after it. This checks every .mpc file in every shadow library and on every connected device and rewrites the tag in place. The audio is never re-encoded and files keep their size and timestamp, so nothing is re-transcoded and the next sync copies nothing extra. Safe to run more than once. Rocksy can run it with mpc_repair_tags.
-
----
 
 ### Settings — OpenRouter API
 Connects iPodRocks to AI models (Claude, etc.) for Savant playlists and Rocksy.
