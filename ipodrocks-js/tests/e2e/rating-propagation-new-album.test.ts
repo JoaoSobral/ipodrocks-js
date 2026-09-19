@@ -90,10 +90,21 @@ function libraryTracks(window: Page): Promise<TrackRow[]> {
   return call<TrackRow[]>(window, "library:getTracks", { contentType: "music" });
 }
 
-async function scan(window: Page): Promise<void> {
+/**
+ * Scan, then wait until every track it should have inserted is actually
+ * readable, and return them.
+ *
+ * `library:scan` resolves before its inserts are visible to `library:getTracks`.
+ * Reading straight after it is a race that a fast machine wins and CI does not:
+ * only part of the library came back, so only part of it got rated, and the
+ * "waiting for the device's database" assertion then failed against a log that
+ * looked entirely reasonable. Never call `library:scan` here without this.
+ */
+async function scan(window: Page, expected: number): Promise<TrackRow[]> {
   await call(window, "library:scan", {
     folders: [{ name: "E2E Prop", path: libraryDir, contentType: "music" }],
   });
+  return waitForTracks(window, expected);
 }
 
 /** Run a full music sync and return every log line it emitted. */
@@ -152,8 +163,8 @@ function fixture(
 }
 
 /**
- * `library:scan` can return before its inserts are visible, so a test that
- * rescans and immediately reads the new tracks races it.
+ * Poll until the library holds at least `count` tracks. Used only by
+ * {@link scan}, which is the one place that needs it.
  */
 async function waitForTracks(window: Page, count: number): Promise<TrackRow[]> {
   for (let i = 0; i < 50; i++) {
@@ -188,7 +199,7 @@ test.afterEach(async () => {
 
 test("an album the device has never rated gets its library ratings written", async () => {
   const window = await readyWindow();
-  await scan(window);
+  const tracks = await scan(window, OLD_TITLES.length);
   const device = await call<{ id: number }>(window, "device:add", {
     name: DEVICE_NAME,
     mountPath: deviceDir,
@@ -197,7 +208,8 @@ test("an album the device has never rated gets its library ratings written", asy
 
   // Rated only in iPodRocks. The device has never had an opinion about any of
   // them, so nothing has ever created a device_track_ratings row.
-  for (const t of await libraryTracks(window)) {
+  expect(tracks).toHaveLength(OLD_TITLES.length);
+  for (const t of tracks) {
     await call(window, "ratings:setTrackRating", t.id, 8);
   }
 
@@ -224,14 +236,15 @@ test("a rebuilt device also repairs an album it has never reported", async () =>
   // skips the ingest, so nothing creates a baseline for the new album — and it
   // used to be unreachable for the rest of the device's life.
   const window = await readyWindow();
-  await scan(window);
+  const tracks = await scan(window, OLD_TITLES.length);
   const device = await call<{ id: number }>(window, "device:add", {
     name: DEVICE_NAME,
     mountPath: deviceDir,
     devMode: true,
   });
 
-  for (const t of await libraryTracks(window)) {
+  expect(tracks).toHaveLength(OLD_TITLES.length);
+  for (const t of tracks) {
     await call(window, "ratings:setTrackRating", t.id, 7);
   }
   await runSync(window, device.id);
@@ -255,10 +268,9 @@ test("a rebuilt device also repairs an album it has never reported", async () =>
   // Now: a new album in the library, and Database → Initialize Now on the
   // player, which lists both albums and has lost every rating.
   writeAlbum(NEW_ALBUM, NEW_TITLES);
-  await scan(window);
+  const all = await scan(window, OLD_TITLES.length + NEW_TITLES.length);
   // By title, not album: these stub files carry no tags, so every track scans
   // into "Unknown Album".
-  const all = await waitForTracks(window, OLD_TITLES.length + NEW_TITLES.length);
   const fresh = all.filter((t) => NEW_TITLES.includes(t.title));
   expect(fresh).toHaveLength(NEW_TITLES.length);
   for (const t of fresh) {
@@ -293,16 +305,24 @@ test("a rating the device's database cannot take yet is reported, and lands next
   // a rating into. That is unavoidable — but it must be said out loud, and the
   // rating must survive to the sync after.
   const window = await readyWindow();
-  await scan(window);
+  const tracks = await scan(window, OLD_TITLES.length);
   const device = await call<{ id: number }>(window, "device:add", {
     name: DEVICE_NAME,
     mountPath: deviceDir,
     devMode: true,
   });
 
-  for (const t of await libraryTracks(window)) {
+  // All six, or the counts below mean something else entirely: with only four
+  // rated, four get written and none are left waiting, which is a *plausible*
+  // log for a completely different reason.
+  expect(tracks).toHaveLength(OLD_TITLES.length);
+  for (const t of tracks) {
     await call(window, "ratings:setTrackRating", t.id, 6);
   }
+  expect(
+    (await libraryTracks(window)).filter((t) => t.rating === 6)
+  ).toHaveLength(OLD_TITLES.length);
+
   await runSync(window, device.id);
 
   // The device's database knows about four of the six files only.
