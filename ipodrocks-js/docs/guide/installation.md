@@ -20,6 +20,14 @@ For development with hot-reload:
 npm run dev
 ```
 
+## Headless server
+
+To run the library on a machine with no screen — a NAS, a home server, a
+container — and drive it from a browser instead, see
+[Deploying the Server](/guide/server-deployment) — a container image, a systemd
+unit and a Cloudflare Tunnel walkthrough. The build is the same one as above;
+the daemon simply never loads Electron.
+
 ## FFmpeg
 
 FFmpeg is bundled automatically. No separate installation is required.

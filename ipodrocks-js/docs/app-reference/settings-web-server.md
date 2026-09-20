@@ -70,6 +70,10 @@ npm run server
 It uses the same data folder, so a daemon and the desktop app on one machine
 share a library rather than quietly starting two.
 
+There is a container image, a `docker-compose.yml`, a systemd unit and a
+Cloudflare Tunnel walkthrough for this — see
+[Deploying the Server](/guide/server-deployment).
+
 ## Putting it on the internet
 
 The recommended shape opens **no inbound port at all**: leave the server bound

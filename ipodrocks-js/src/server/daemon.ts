@@ -9,10 +9,39 @@
 import { setHost, createNodeHost } from "../main/host";
 import { registerIpcHandlers } from "../main/ipc";
 import { ensureServerStarted, stopServerIfRunning } from "./index";
+import { getFfmpegPath } from "../main/utils/ffmpeg-path";
+import { isMpcencAvailable } from "../main/utils/mpcenc";
+
+/**
+ * Says which encoders this process actually found.
+ *
+ * ffmpeg is a dependency and is essentially always there; `mpcenc` is bundled
+ * by nothing and has to come from the image or the host. Without it every
+ * Musepack shadow profile fails at the first track, and in a container that
+ * reads as a broken app rather than a missing package. The UI already answers
+ * this per request through `app:isMpcencAvailable`; this line is for whoever is
+ * reading `docker logs`.
+ */
+function reportEncoders(): void {
+  let ffmpeg = "not found";
+  try {
+    ffmpeg = getFfmpegPath();
+  } catch (err) {
+    ffmpeg = `not found (${err instanceof Error ? err.message : String(err)})`;
+  }
+  console.log(`[server] ffmpeg: ${ffmpeg}`);
+  console.log(
+    isMpcencAvailable()
+      ? "[server] mpcenc: found"
+      : "[server] mpcenc: not found — Musepack shadow-library profiles are " +
+          "unavailable. Install it (Debian/Ubuntu: musepack-tools) and restart."
+  );
+}
 
 async function main(): Promise<void> {
   setHost(createNodeHost());
   registerIpcHandlers();
+  reportEncoders();
 
   const status = await ensureServerStarted();
   if (!status.running) {

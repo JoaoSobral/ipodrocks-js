@@ -855,6 +855,40 @@ Playwright project (the `electron` project is unchanged and still launches the
 app per test). The web project needs a Chromium download — `npx playwright
 install chromium` — which the Electron-only suite never did.
 
+## Decision: the daemon's container does **not** rebuild `better-sqlite3`
+
+The web-server plan budgeted a whole Phase 5 bullet for an ABI split — the repo
+builds native modules for Electron (`postinstall` runs
+`electron-builder install-app-deps`, and `npm test` runs vitest under
+`ELECTRON_RUN_AS_NODE=1 electron`), so a daemon under plain Node was expected to
+need its own build, and a dev machine was expected to be breakable by rebuilding
+the other way.
+
+**That is no longer true and the Dockerfile must not be "fixed" to do it.**
+`better-sqlite3` 13 is a **Node-API** addon (`node-addon-api` ^8,
+`gypfile: false`) shipping per-platform prebuilds inside the npm tarball. The
+same `prebuilds/<platform>-<arch>.node` loads under Node 22, Node 24 and
+Electron 43; `node_modules/better-sqlite3/build/Release/` holds no binary at all
+in this checkout, which is the quickest way to confirm it. It is also the only
+native dependency in `dependencies`.
+
+- `--ignore-scripts` in the Dockerfile is about **Electron's ~100 MB binary
+  download**, not the ABI. The prebuild ships in the tarball and needs no
+  install script.
+- The `deps` stage asserts the module loads (`new Database(':memory:')`) rather
+  than assuming it. If a future dependency does need a real build step, that
+  line fails the image build instead of the first request in production.
+- Reintroducing `npm rebuild better-sqlite3 --build-from-source` costs a
+  compiler toolchain in the image and buys a byte-identical outcome.
+- **Re-verify before trusting this** if `better-sqlite3` is ever pinned back
+  below 13, or a second native dependency appears.
+
+`mpcenc` is the thing a container genuinely does not get for free — nothing
+bundles it, unlike ffmpeg, which `getFfmpegPath()` falls back to
+`@ffmpeg-installer/ffmpeg` for whenever `isPackaged()` is false. The image
+installs Debian's `musepack-tools`; `daemon.ts` reports both encoders at startup
+so a missing one reads as a missing package rather than a broken app.
+
 ## Hazard: the host adapter must never auto-detect its way to the real user data
 
 `src/main/host/` is the electron-free boundary: `app.getPath`, `safeStorage`,

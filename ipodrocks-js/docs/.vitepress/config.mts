@@ -40,6 +40,7 @@ export default defineConfig({
             { text: "Getting Started", link: "/guide/getting-started" },
             { text: "Installation", link: "/guide/installation" },
             { text: "Architecture", link: "/guide/architecture" },
+            { text: "Deploying the Server", link: "/guide/server-deployment" },
             { text: "Troubleshooting", link: "/guide/troubleshooting" },
           ],
         },
