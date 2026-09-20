@@ -14,7 +14,7 @@
 
 - **There is a container image, a compose file and a systemd unit for it.** Along with a deployment guide covering Docker, Cloudflare Tunnel and running it as a service, so putting iPodRocks on a NAS or a home server is a page to follow rather than a puzzle to solve. The image installs `mpcenc` too, which nothing bundles — without it Musepack shadow libraries are unavailable, and the server now says so at startup instead of failing at the first track.
 
-- **Remote players are their own kind of device.** In a browser, **+ Add Device** adds a player plugged into *your* machine — no mount path to type, because you pick the folder with your own browser's picker. A player belongs to exactly one machine and iPodRocks no longer pretends otherwise: a server-attached player is listed but greyed out in the browser, a remote player is listed but greyed out in the desktop app, and either can still be renamed, reconfigured or removed from either side. Auto Podcasts is unavailable for a remote player, and says why — the schedule runs on the server, and a remote player is only connected while its browser tab is open.
+- **Remote devices are their own kind of device.** In a browser, **+ Add Device** adds a player plugged into *your* machine — no mount path to type, because you pick the folder with your own browser's picker. A player belongs to exactly one machine and iPodRocks no longer pretends otherwise: a server-attached player is listed but greyed out in the browser, a remote device is listed but greyed out in the desktop app, and either can still be renamed, reconfigured or removed from either side. Auto Podcasts is unavailable for a remote device, and says why — the schedule runs on the server, and a remote device is only connected while its browser tab is open.
 
 - **Ask Rocksy who can reach your server.** "Who can sign in to my server?", "is anyone connected right now?", "give my partner an account", "cut off access for that old account", "sign every browser out" — Rocksy reads and edits the allowlist and the live sessions, asking you to confirm before anything that grants or removes access. These are **owner-only**: asked by anyone else signed in to your server, Rocksy says so and does nothing. It will not read a claim token or a password out into the chat either.
 
@@ -26,7 +26,7 @@
 
 ### Notes
 
-- **Everything you sync travels to your browser and then to the player.** That is what makes a remote player possible, and it is also the cost: a large lossless library is not a practical thing to push down a home connection. Sync a selection, or sync from a shadow library, and it is comfortable.
+- **Everything you sync travels to your browser and then to the player.** That is what makes a remote device possible, and it is also the cost: a large lossless library is not a practical thing to push down a home connection. Sync a selection, or sync from a shadow library, and it is comfortable.
 
 
 ## [2.3.3] — 2026-09

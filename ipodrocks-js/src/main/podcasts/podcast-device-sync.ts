@@ -181,7 +181,7 @@ export async function syncPodcastsToDevice(
  *
  * **Remote players are excluded at the source**, not at each call site. The
  * scheduler is a timer in the server process: it wakes, decides a device is
- * due, and syncs. A remote player is connected only while somebody has a tab
+ * due, and syncs. A remote device is connected only while somebody has a tab
  * open holding it, so a schedule aimed at one either does nothing or starts
  * pushing gigabytes through a browser nobody is watching, over a link nobody
  * chose for it. `podcast:setDeviceAutoPodcasts` refuses to turn the flag on for

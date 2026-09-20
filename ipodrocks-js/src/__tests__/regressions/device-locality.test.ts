@@ -6,7 +6,7 @@
  * HTTP and therefore carries a session id, so "the desktop window must not sync
  * a browser-held player" has no way to be expressed there at all.
  *
- * That direction matters at least as much. A remote player is reachable only
+ * That direction matters at least as much. A remote device is reachable only
  * through the tab holding its directory handle; the desktop app pointed at one
  * would previously run until `DetachedDeviceFs` threw, with an error that named
  * the filesystem rather than the reason, part-way through a sync.
@@ -32,9 +32,9 @@ const webCtx = {
 } as HandlerContext;
 
 describe("deviceLocalityBlock", () => {
-  it("refuses a remote player to the desktop app", () => {
+  it("refuses a remote device to the desktop app", () => {
     const reason = deviceLocalityBlock("web", false);
-    expect(reason).toMatch(/remote player/i);
+    expect(reason).toMatch(/remote device/i);
     // It has to say what to do about it, or the user's next move is to delete
     // a device that is working perfectly well somewhere else.
     expect(reason).toMatch(/browser/i);
@@ -63,7 +63,7 @@ describe("blockWrongLocality", () => {
   it("derives the client from the transport that carried the call", () => {
     // Not from anything the caller says. A client-supplied "I am the desktop"
     // would be worth exactly as much as the claim itself.
-    expect(blockWrongLocality(electronCtx, "web")?.error).toMatch(/remote player/i);
+    expect(blockWrongLocality(electronCtx, "web")?.error).toMatch(/remote device/i);
     expect(blockWrongLocality(electronCtx, "local")).toBeNull();
     expect(blockWrongLocality(webCtx, "local")?.error).toMatch(/plugged into the server/i);
     expect(blockWrongLocality(webCtx, "web")).toBeNull();
@@ -79,7 +79,7 @@ describe("blockWrongLocality", () => {
 });
 
 describe("autoPodcastBlock", () => {
-  it("refuses a remote player and explains the schedule, not the transport", () => {
+  it("refuses a remote device and explains the schedule, not the transport", () => {
     const reason = autoPodcastBlock("web");
     expect(reason).toMatch(/browser tab/i);
   });

@@ -39,13 +39,13 @@ export function deviceLocalityBlock(
   const isRemote = transport === "web";
   if (clientIsWeb && !isRemote) {
     return (
-      "This player is plugged into the server, so only the app running there " +
-      "can sync it. Add it as a remote player to use it from this browser."
+      "This device is plugged into the server, so only the app running there " +
+      "can sync it. Add it as a remote device to use it from this browser."
     );
   }
   if (!clientIsWeb && isRemote) {
     return (
-      "This is a remote player, held by a browser through the web server. " +
+      "This is a remote device, held by a browser through the web server. " +
       "Open iPodRocks in that browser to sync it."
     );
   }
@@ -58,10 +58,10 @@ export function isRemoteDevice(transport: DeviceTransport | undefined): boolean 
 }
 
 /**
- * Auto-podcasts are never available on a remote player.
+ * Auto-podcasts are never available on a remote device.
  *
  * The scheduler is a timer in the *server* process: it wakes up, decides a
- * device is due and syncs to it. A remote player exists only while somebody has
+ * device is due and syncs to it. A remote device exists only while somebody has
  * a tab open holding it, so the schedule would either do nothing at all or —
  * worse — start copying gigabytes through a browser nobody is watching, on a
  * link nobody chose for it. Downloading episodes stays on; only the automatic
@@ -71,8 +71,8 @@ export function autoPodcastBlock(
   transport: DeviceTransport | undefined
 ): string | null {
   return isRemoteDevice(transport)
-    ? "Auto Podcasts needs a player the server can reach on its own. A remote " +
-        "player is only connected while its browser tab is open, so there is " +
+    ? "Auto Podcasts needs a device the server can reach on its own. A remote " +
+        "device is only connected while its browser tab is open, so there is " +
         "nothing for the schedule to sync to."
     : null;
 }

@@ -765,16 +765,28 @@ with an error naming the filesystem rather than the reason.
 - **Listed, not hidden.** A device from the wrong side stays in both lists,
   renameable and removable, with a line saying why the rest is off. A device
   that vanishes from the picker reads as "iPodRocks lost my iPod".
-- **Auto Podcasts is refused on a remote player** (`autoPodcastBlock()`), and
+- **Auto Podcasts is refused on a remote device** (`autoPodcastBlock()`), and
   `getAutoPodcastDeviceIds()` excludes them in SQL. The scheduler is a timer in
-  the server process: aimed at a remote player it either does nothing or pushes
+  the server process: aimed at a remote device it either does nothing or pushes
   gigabytes through a browser nobody is watching. Turning the flag *off* is
   never refused — a device that should not have had it must be able to give it
   up.
-- **In a browser, `+ Add Device` always adds a remote player.** There is no
+- **In a browser, `+ Add Device` always adds a remote device.** There is no
   mount path and no Browse button, because `pickFolder()` browses the *server's*
   filesystem: offering it here is what sent a user hunting for their iPod on the
   server's disk.
+- **`isWebMode()` must survive bootstrap, and every locality decision rides on
+  it.** It was written as `window.api === undefined` — a correct *bootstrap*
+  question, which is where `main.tsx` asks it, and false everywhere afterwards
+  because `installWebTransport()` **installs** `window.api`. Every other caller
+  runs after React mounts, so the entire browser UI believed it was Electron:
+  the Devices panel offered a server mount path, labelled itself "Add Device",
+  and skipped re-opening folders the browser had already been granted (a Phase 4
+  bug nobody had noticed). It now answers from `activeTransport`, which is the
+  same fact with no second copy. **A handler test cannot see any of this** —
+  every guard was correct and every one of them was being consulted with the
+  wrong client. Pinned in `regressions/web-mode-detection.test.ts` and, at the
+  level that actually failed, `tests/e2e/web-add-device-form.test.ts`.
 - **Browser support is feature-detected, never sniffed.**
   `supportsDirectoryPicker()` tests for `showDirectoryPicker`. A UA allowlist
   would have to name Chrome, Edge, Brave, Vivaldi, Arc, Opera and whatever ships
@@ -786,7 +798,10 @@ with an error naming the filesystem rather than the reason.
 Pinned in `src/__tests__/regressions/device-locality.test.ts` (both directions,
 including the Electron one the web project structurally cannot reach) and
 `tests/e2e/web-device-locality.test.ts` (over a real daemon, with a control
-showing the refusal is not blanket).
+showing the refusal is not blanket). The *rendered* half —  labels, the absent
+mount path, the disabled controls — is `tests/e2e/web-add-device-form.test.ts`,
+which exists because three rounds of correct handler fixes never touched the
+thing the user was actually looking at.
 
 ## Hazard: one global is one client
 

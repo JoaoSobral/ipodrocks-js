@@ -276,10 +276,23 @@ export function getWebTransport(): WebTransport | null {
 }
 
 /**
- * True when there is no preload — i.e. this bundle is being served over HTTP
- * rather than loaded into an Electron window.
+ * True when this bundle is being served over HTTP rather than loaded into an
+ * Electron window.
+ *
+ * **The `window.api` check alone only works before bootstrap**, and that was a
+ * real bug rather than a nicety. `installWebTransport()` *installs*
+ * `window.api`, so from the moment the transport is up the absence test is
+ * false in both worlds — and every caller outside `main.tsx` runs after that.
+ * The whole browser UI quietly believed it was Electron: the Devices panel
+ * offered a server mount path and a Browse button, labelled itself "Add
+ * Device", skipped restoring the folders this browser had already picked, and
+ * `pickFolder()` went looking for a native dialog on the server.
+ *
+ * `activeTransport` is the same fact with no second copy of it — it is set
+ * exactly when a web transport is installed, and never in Electron.
  */
 export function isWebMode(): boolean {
+  if (activeTransport !== null) return true;
   if (typeof window === "undefined") return false;
   return (window as Partial<Window>).api === undefined;
 }
@@ -295,8 +308,10 @@ export function isWebMode(): boolean {
  */
 export async function installWebTransport(): Promise<WebBootstrap> {
   const transport = new WebTransport();
-  window.api = transport as unknown as IpcApi;
+  // Before `window.api`, so `isWebMode()` can never observe the half-installed
+  // state where the api object exists but the transport is not yet recorded.
   activeTransport = transport;
+  window.api = transport as unknown as IpcApi;
 
   const auth = await fetchAuthStatus();
   if (auth.authenticated) {

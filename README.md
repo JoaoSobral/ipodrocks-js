@@ -132,7 +132,7 @@ If you really like iPodRocks and want to keep it caffeinated, you can buy me a c
 - **Rockbox-compatible album art** — Generates a single baseline-JPEG `cover.jpg` per album folder, resized to a per-device maximum (default 300 px so iPods stay responsive), so artwork loads reliably on Rockbox. Uses folder art or embedded artwork as the source; no extra software required
 - Live progress feedback
 
-### Web server & remote players
+### Web server & remote devices
 - **The whole app in a browser** — Turn on **Settings → Web Server** and iPodRocks serves its interface over HTTP: same library, same database, same devices, sync, playlists, ratings and Rocksy. Not a companion view — it is the app.
 - **Your iPod does not have to be on the same machine as your library** — The server keeps the library, the database and the encoders; the *player* is plugged into whatever laptop you are sitting at. Your browser hands iPodRocks the player's folder and every file travels server → browser → device. Needs Chrome, Edge or another Chromium browser over HTTPS.
 - **Runs headless** — A standalone daemon with no Electron at all, so the machine holding your library needs no screen and no login session. Ships with a `Dockerfile`, a `docker-compose.yml` (with a `cloudflared` sidecar) and a systemd unit.
@@ -255,9 +255,9 @@ Full walkthrough, including setting up each sign-in provider end to end:
 Deployment reference (Docker, compose, systemd, Cloudflare):
 **[Deploying the Server](https://joaosobral.github.io/ipodrocks-js/guide/server-deployment)**.
 
-### Remote players
+### Remote devices
 
-In a browser, **+ Add Device** adds a *remote player*: one plugged into the
+In a browser, **+ Add Device** adds a *remote device*: one plugged into the
 machine you are sitting at rather than the server. There is no mount path to
 type — you pick the folder with your own browser's picker, and that tab holds
 the device for as long as it is open.
@@ -266,10 +266,10 @@ A player belongs to exactly one machine, and iPodRocks refuses to pretend
 otherwise: a server-attached player is greyed out in the browser, a remote
 player is greyed out in the desktop app. Both are still listed and removable
 from either side; only Check, Sync and Eject are refused. Auto Podcasts is
-unavailable for a remote player, because the schedule runs on the server and a
-remote player is only connected while its tab is open.
+unavailable for a remote device, because the schedule runs on the server and a
+remote device is only connected while its tab is open.
 
-Remote players need **Chrome, Edge or another Chromium browser on a desktop,
+Remote devices need **Chrome, Edge or another Chromium browser on a desktop,
 over HTTPS** — Firefox and Safari do not implement the File System Access API,
 and no browser grants folder access on an insecure origin.
 

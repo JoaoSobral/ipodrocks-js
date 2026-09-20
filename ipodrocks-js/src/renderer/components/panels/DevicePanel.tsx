@@ -585,7 +585,7 @@ export function DevicePanel() {
       {/* Top bar */}
       <div className="flex items-center gap-3">
         <Button variant="primary" size="sm" onClick={openForAdd}>
-          {isWebMode() ? "+ Add Remote Player" : "+ Add Device"}
+          {isWebMode() ? "+ Add Remote Device" : "+ Add Device"}
         </Button>
         <span className="text-xs text-muted-foreground ml-auto">
           {deviceList.length} device{deviceList.length !== 1 ? "s" : ""}
@@ -600,7 +600,7 @@ export function DevicePanel() {
       ) : deviceList.length === 0 ? (
         <EmptyState
           icon="⊞"
-          title={isWebMode() ? "No remote players yet" : "No devices configured"}
+          title={isWebMode() ? "No remote devices yet" : "No devices configured"}
           description={
             isWebMode()
               ? "Add the player plugged into this computer. You pick its folder in this browser."
@@ -608,7 +608,7 @@ export function DevicePanel() {
           }
           action={
             <Button variant="primary" size="sm" onClick={openForAdd}>
-              {isWebMode() ? "+ Add Remote Player" : "+ Add Device"}
+              {isWebMode() ? "+ Add Remote Device" : "+ Add Device"}
             </Button>
           }
         />
@@ -905,7 +905,7 @@ export function DevicePanel() {
           editingDeviceId !== null
             ? "Edit Device"
             : isWebMode()
-              ? "Add Remote Player"
+              ? "Add Remote Device"
               : "Add Device"
         }
       >
@@ -944,7 +944,7 @@ export function DevicePanel() {
               looking for their iPod. */}
           {isWebMode() && editingDeviceId == null && (
             <div className="rounded-lg border border-border bg-muted/30 p-3 text-sm">
-              <p className="font-medium text-foreground">Remote player</p>
+              <p className="font-medium text-foreground">Remote device</p>
               <p className="mt-1 text-xs text-muted-foreground">
                 You pick its folder in this browser, and every file travels from
                 the server through this tab onto the player. A player plugged
@@ -952,11 +952,11 @@ export function DevicePanel() {
               </p>
               {!supportsDirectoryPicker() && (
                 <p className="mt-2 text-xs text-amber-600 dark:text-amber-500">
-                  <strong>This browser cannot hold a player.</strong> Granting a
+                  <strong>This browser cannot hold a device.</strong> Granting a
                   page access to a folder needs the File System Access API,
                   which exists only in Chrome, Edge and other Chromium browsers
                   on a desktop — not Firefox or Safari, and not on iOS. Open
-                  iPodRocks in one of those to add a player.
+                  iPodRocks in one of those to add a device.
                 </p>
               )}
             </div>
@@ -1200,7 +1200,7 @@ export function DevicePanel() {
               />
               <span className="text-sm text-foreground flex items-center gap-1">
                 Auto Podcasts
-                <InfoTooltip text="When enabled, new podcast episodes are automatically copied to this device in the background as they are downloaded, independently of any manual sync. Unavailable for a remote player: the schedule runs on the server, and a remote player is only connected while its browser tab is open." />
+                <InfoTooltip text="When enabled, new podcast episodes are automatically copied to this device in the background as they are downloaded, independently of any manual sync. Unavailable for a remote device: the schedule runs on the server, and a remote device is only connected while its browser tab is open." />
               </span>
             </label>
             {webTransport && (

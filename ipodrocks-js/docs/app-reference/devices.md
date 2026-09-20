@@ -45,17 +45,17 @@ aimed at the empty folder macOS sometimes leaves behind after a previous eject.
 
 Rocksy can eject for you too, via `device_eject` — it confirms first.
 
-## Remote players (devices in a browser)
+## Remote devices
 
 When you reach iPodRocks through the [web server](./settings-web-server.md), the
 player does **not** have to be plugged into the machine holding your library. It
 is plugged into the machine you are sitting at, and your browser hands iPodRocks
-access to it. That is a **remote player**.
+access to it. That is a **remote device**.
 
 So there are two kinds of device, and which one a device is is a fact about
 where the thing is physically plugged in, not a preference:
 
-| | Local player | Remote player |
+| | Local player | Remote device |
 |---|---|---|
 | Plugged into | the machine running iPodRocks | the machine running your browser |
 | Added from | the desktop app | the browser |
@@ -66,7 +66,7 @@ where the thing is physically plugged in, not a preference:
 
 **Each one is only usable from its own side.** In the browser, a player attached
 to the server is listed but greyed out, with a line saying why; in the desktop
-app, a remote player is listed but greyed out the same way. Both are still
+app, a remote device is listed but greyed out the same way. Both are still
 yours: you can rename them, change their settings and remove them from either
 side. Only the things that touch the player's filesystem — Check Device, Sync,
 Eject — are refused, and they are refused by the app itself, not just hidden
@@ -74,7 +74,7 @@ from the buttons.
 
 ### Adding one
 
-In the browser, **+ Add Device** always adds a remote player. There is no mount
+In the browser, **+ Add Device** always adds a remote device. There is no mount
 path to type and no Browse button, because there is no folder on the server to
 point at — the picker you want is your own browser's, and it comes later.
 
@@ -110,7 +110,7 @@ on that tab *is* the device.
   and sync a selection rather than everything; a player pointed at a shadow
   copies files as they already are.
 - **Auto Podcasts is unavailable**, and the checkbox says why. The schedule is a
-  timer in the server, and a remote player is connected only while its tab is
+  timer in the server, and a remote device is connected only while its tab is
   open — so it would either do nothing or start pushing gigabytes through a
   browser nobody is watching. Episodes still download on schedule; they reach
   the player on your next sync.

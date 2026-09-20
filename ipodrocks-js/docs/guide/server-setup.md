@@ -111,7 +111,7 @@ public hostname. If that is all you need, skip to [step 6](#step-6-add-your-libr
 You need one for two independent reasons:
 
 1. **No browser will let a page touch a folder on an insecure origin**, so
-   remote players do not work over plain HTTP.
+   remote devices do not work over plain HTTP.
 2. **Google, GitHub and Facebook all refuse a sign-in callback** that is not a
    stable public HTTPS URL. None of them will accept `http://192.168.1.10:8780`.
 
@@ -276,7 +276,7 @@ That is a different question from picking a player, which is a folder on the
 machine you are sitting at — see below.
 
 Scan, and optionally build a [shadow library](/app-reference/library). For a
-remote player over anything slower than a LAN, a shadow library is the
+remote device over anything slower than a LAN, a shadow library is the
 difference between a comfortable sync and an impossible one.
 
 ## Step 7 — let other people in
@@ -300,7 +300,7 @@ log.
 
 On the machine with the iPod plugged in, open the server in **Chrome, Edge or
 another Chromium browser**, go to Devices, and press **+ Add Device**. In a
-browser this always adds a *remote player*: there is no mount path to type,
+browser this always adds a *remote device*: there is no mount path to type,
 because the folder is on your machine and you pick it with your own browser's
 picker.
 
@@ -311,7 +311,7 @@ Firefox and Safari cannot do this; neither can iOS. That is not a policy choice,
 it is the File System Access API not existing there, and the Add Device form
 says so up front.
 
-See [Devices → Remote players](/app-reference/devices#remote-players-devices-in-a-browser)
+See [Devices → Remote devices](/app-reference/devices#remote-devices)
 for what differs from a local player.
 
 ## Troubleshooting
@@ -340,6 +340,6 @@ does not match the address you are actually typing; the session cookie is
 Not a Chromium browser, or not on HTTPS.
 
 **A device is listed but everything is greyed out.** It belongs to the other
-side: a server-attached player seen from a browser, or a remote player seen from
+side: a server-attached player seen from a browser, or a remote device seen from
 the desktop app. See
-[Devices → Remote players](/app-reference/devices#remote-players-devices-in-a-browser).
+[Devices → Remote devices](/app-reference/devices#remote-devices).

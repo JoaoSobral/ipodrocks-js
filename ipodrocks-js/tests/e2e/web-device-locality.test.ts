@@ -98,7 +98,7 @@ test("a browser cannot sync a player attached to the server", async ({ request }
   }
 });
 
-test("a browser can operate a remote player, and the refusal is not blanket", async ({
+test("a browser can operate a remote device, and the refusal is not blanket", async ({
   request,
 }) => {
   await signIn(request);
@@ -119,13 +119,13 @@ test("a browser can operate a remote player, and the refusal is not blanket", as
       includeMusic: true,
     });
     expect(sync.error ?? "").not.toMatch(/plugged into the server/i);
-    expect(sync.error ?? "").not.toMatch(/remote player/i);
+    expect(sync.error ?? "").not.toMatch(/remote device/i);
   } finally {
     await removeDevice(request, device.id);
   }
 });
 
-test("Auto Podcasts is refused on a remote player", async ({ request }) => {
+test("Auto Podcasts is refused on a remote device", async ({ request }) => {
   await signIn(request);
 
   const device = await addDevice(request, {
@@ -134,7 +134,7 @@ test("Auto Podcasts is refused on a remote player", async ({ request }) => {
   });
 
   try {
-    // The scheduler is a timer in the server process. A remote player is
+    // The scheduler is a timer in the server process. A remote device is
     // connected only while its tab is open, so a schedule aimed at one either
     // does nothing or pushes gigabytes through a browser nobody is watching.
     const on = await invoke<{ error?: string }>(
@@ -143,7 +143,7 @@ test("Auto Podcasts is refused on a remote player", async ({ request }) => {
       device.id,
       true
     );
-    expect(on.error).toMatch(/remote player/i);
+    expect(on.error).toMatch(/remote device/i);
 
     expect((await readDevice(request, device.id))?.autoPodcastsEnabled ?? false).toBe(
       false
