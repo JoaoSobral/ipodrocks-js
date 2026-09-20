@@ -132,6 +132,55 @@ describe("SyncProgressModal completion messaging", () => {
     await waitFor(() => expect(screen.getByText("2 / 6 copied")).toBeInTheDocument());
   });
 
+  it("does not claim 'nothing to sync' when the reply beat its own progress frames", async () => {
+    // The regression. Progress frames travel `webContents.send`; the result
+    // comes back on the `invoke` reply, and Electron orders neither against the
+    // other. A sync of a handful of files routinely resolves before a single
+    // `copy` frame has been dispatched — and the modal used to unsubscribe in
+    // `.finally()`, so the frames that followed were dropped on the floor and it
+    // rendered "Nothing to sync — device up to date." over a sync that had just
+    // copied the user's whole selection.
+    render(<SyncProgressModal open onClose={() => {}} syncOptions={SYNC_OPTIONS} />);
+
+    await finishSync({ synced: 3, errors: 0 });
+
+    await waitFor(() => expect(screen.getByText("Synced 3 items.")).toBeInTheDocument());
+    expect(
+      screen.queryByText("Nothing to sync — device up to date."),
+    ).not.toBeInTheDocument();
+    // The result's own count carries the summary when no frames arrived.
+    expect(screen.getByText("Processed")).toBeInTheDocument();
+    expect(screen.getByText("Copied")).toBeInTheDocument();
+  });
+
+  it("keeps listening after the reply, so late frames still fill the list", async () => {
+    render(<SyncProgressModal open onClose={() => {}} syncOptions={SYNC_OPTIONS} />);
+
+    await finishSync({ synced: 2, errors: 0 });
+    // ...and only now do this sync's own frames turn up.
+    emit({ event: "total", path: "2" });
+    emit({ event: "copy", path: "late1.mp3", status: "copied", contentType: "music" });
+    emit({ event: "copy", path: "late2.mp3", status: "copied", contentType: "music" });
+
+    await waitFor(() => expect(screen.getByText("late1.mp3")).toBeInTheDocument());
+    expect(screen.getByText("late2.mp3")).toBeInTheDocument();
+  });
+
+  it("still says 'nothing to sync' when the device really was up to date", async () => {
+    // The guard above must not swallow the genuine no-op, which is the whole
+    // reason that message exists.
+    render(<SyncProgressModal open onClose={() => {}} syncOptions={SYNC_OPTIONS} />);
+
+    emit({ event: "total", path: "5" });
+    emit({ status: "complete" });
+    await finishSync({ synced: 0, errors: 0 });
+
+    await waitFor(() =>
+      expect(screen.getByText("Nothing to sync — device up to date.")).toBeInTheDocument(),
+    );
+    expect(screen.queryByText("Processed")).not.toBeInTheDocument();
+  });
+
   it("shows 'Sync was cancelled.' when cancelled with nothing processed", async () => {
     render(<SyncProgressModal open onClose={() => {}} syncOptions={SYNC_OPTIONS} />);
 

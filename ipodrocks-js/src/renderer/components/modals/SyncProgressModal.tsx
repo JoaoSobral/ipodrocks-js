@@ -102,6 +102,16 @@ export function SyncProgressModal({
   const [cancelled, setCancelled] = useState(false);
   /** Album-artwork failures, reported apart from song-data failures. */
   const [artworkErrors, setArtworkErrors] = useState(0);
+  /**
+   * What `sync:start` itself said it copied, which is the authoritative number.
+   *
+   * The progress frames are advisory: they travel `webContents.send`, while the
+   * result comes back on the `invoke` reply, and Electron does not order the two
+   * against each other. A sync short enough to finish in a few hundred
+   * milliseconds routinely has its reply overtake its own frames — see the
+   * comment on the subscription effect below.
+   */
+  const [reportedSynced, setReportedSynced] = useState<number | null>(null);
   const [elapsedSec, setElapsedSec] = useState(0);
 
   const listRef = useRef<HTMLDivElement>(null);
@@ -121,6 +131,18 @@ export function SyncProgressModal({
   onCompleteRef.current = onComplete;
 
   const isRunning = !finished && !error;
+  /**
+   * The summary numbers, reconciled.
+   *
+   * `processedItems`/`copiedItems` come from progress frames and are richer —
+   * they distinguish skipped from copied and break skips down by content type.
+   * But they can be *absent*, because a short sync's `invoke` reply can arrive
+   * before its own frames. So a finished sync whose result says it copied
+   * something is never rendered as though nothing happened.
+   */
+  const summaryCopied = Math.max(copiedItems, reportedSynced ?? 0);
+  const summaryProcessed = Math.max(processedItems, summaryCopied);
+  const didSomething = summaryProcessed > 0;
   const rawPct = totalItems > 0 ? Math.round((processedItems / totalItems) * 100) : 0;
   // On a clean finish the bar should read 100% even when the backend's pre-count
   // (totalItems) ended up higher than the number of items actually copied.
@@ -189,10 +211,35 @@ export function SyncProgressModal({
     }
   }, [finished]);
 
+  /**
+   * Listen for as long as the modal is open — **not** until `sync:start`
+   * resolves.
+   *
+   * This used to be part of the effect below, subscribing just before
+   * `startSync()` and unsubscribing in its `.finally()`. That looks airtight
+   * and is not: progress frames arrive by `webContents.send` while the result
+   * arrives on the `invoke` reply, and Electron gives no ordering guarantee
+   * between the two. On a sync of a handful of files the reply reliably
+   * overtakes the frames, so the modal tore its listener down after the first
+   * one and rendered "Nothing to sync — device up to date." over a sync that
+   * had just copied the user's whole selection.
+   *
+   * Keeping it in its own effect also fixes the leak the old shape had: the
+   * `!open` branch never ran, because `SyncPanel` unmounts the modal in the
+   * same commit that sets `open` false.
+   */
+  useEffect(() => {
+    if (!open) return;
+    const unsub = onSyncProgress(handleProgress);
+    progressUnsubRef.current = unsub;
+    return () => {
+      unsub();
+      progressUnsubRef.current = null;
+    };
+  }, [open, handleProgress]);
+
   useEffect(() => {
     if (!open) {
-      progressUnsubRef.current?.();
-      progressUnsubRef.current = null;
       syncStartedRef.current = false;
       hasReceivedTotalRef.current = false;
       return;
@@ -216,6 +263,7 @@ export function SyncProgressModal({
     setError(null);
     setCancelled(false);
     setArtworkErrors(0);
+    setReportedSynced(null);
     setElapsedSec(0);
     hasReceivedTotalRef.current = false;
 
@@ -224,8 +272,6 @@ export function SyncProgressModal({
     }, 1000);
 
     const opts = syncOptions;
-    const unsub = onSyncProgress(handleProgress);
-    progressUnsubRef.current = unsub;
 
     startSync(opts)
       .then((result: { synced?: number; removed?: number; errors?: number; artworkErrors?: number; error?: string }) => {
@@ -238,6 +284,7 @@ export function SyncProgressModal({
           setError(errMsg);
         }
         const synced = result?.synced ?? 0;
+        setReportedSynced(synced);
         const errors = result?.errors ?? 0;
         const artworkErrors = isCancelled ? 0 : result?.artworkErrors ?? 0;
         const totalSkipped = processedItemsRef.current - copiedItemsRef.current;
@@ -283,8 +330,8 @@ export function SyncProgressModal({
         });
       })
       .finally(() => {
-        progressUnsubRef.current?.();
-        progressUnsubRef.current = null;
+        // Deliberately does not unsubscribe: frames for this very sync may
+        // still be in flight behind the reply.
         syncStartedRef.current = false;
       });
 
@@ -384,7 +431,13 @@ export function SyncProgressModal({
               {finished
                 ? cancelled
                   ? "Sync was cancelled."
-                  : "Nothing to sync — device up to date."
+                  : didSomething
+                    ? // The per-file lines never arrived, but the sync itself
+                      // reported what it did. Saying "nothing to sync" here is
+                      // the one wrong answer: it reads as data loss to anyone
+                      // who just watched an album go across.
+                      `Synced ${summaryCopied} item${summaryCopied === 1 ? "" : "s"}.`
+                    : "Nothing to sync — device up to date."
                 : hasReceivedTotalRef.current && totalItems > 0
                   ? "Preparing files for sync…"
                   : "Waiting for sync…"}
@@ -417,19 +470,19 @@ export function SyncProgressModal({
           <ErrorBox>{error}</ErrorBox>
         )}
 
-        {finished && !error && processedItems > 0 && (
+        {finished && !error && didSomething && (
           <div className="rounded-lg border border-border bg-muted/30 p-3 text-sm">
             <div className="grid grid-cols-3 gap-3 text-center">
               <div>
-                <p className="text-lg font-semibold text-foreground">{processedItems}</p>
+                <p className="text-lg font-semibold text-foreground">{summaryProcessed}</p>
                 <p className="text-xs text-muted-foreground">Processed</p>
               </div>
               <div>
-                <p className="text-lg font-semibold text-success">{copiedItems}</p>
+                <p className="text-lg font-semibold text-success">{summaryCopied}</p>
                 <p className="text-xs text-muted-foreground">Copied</p>
               </div>
               <div>
-                <p className="text-lg font-semibold text-muted-foreground">{processedItems - copiedItems}</p>
+                <p className="text-lg font-semibold text-muted-foreground">{summaryProcessed - summaryCopied}</p>
                 <p className="text-xs text-muted-foreground">Skipped</p>
               </div>
             </div>
