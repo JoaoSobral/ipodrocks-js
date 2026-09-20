@@ -39,9 +39,16 @@ shows a window is useless to a user, so it must stay opt-in.
 Every new user-facing action or feature **must** have a corresponding tool in `src/main/assistant/tools.ts` so Rocksy can perform it on the user's behalf. Tool tiers:
 - `read` — safe reads, run inline
 - `write-safe` — non-destructive mutations, run inline
-- `write-destructive` — deletions, syncs, scans, folder changes, **and anything that changes what the outside world can reach** (`web_server_set_enabled`); always require a confirm gate
+- `write-destructive` — deletions, syncs, scans, folder changes, **and anything that changes what the outside world can reach** (`web_server_set_enabled`, `web_server_allow_identity`); always require a confirm gate
 
 Also update the system prompt rules in `assistantChat.ts` (`ASSISTANT_SYSTEM_PROMPT`) with an explicit directive so Rocksy calls the new tool instead of saying it can't do something.
+
+**A tool that manages the allowlist is owner-gated, and the tier does not cover
+that.** `AiToolContext.sessionId` carries who is asking (undefined over Electron
+IPC — the desktop window on the machine holding the database); the five
+`web_server_*` allowlist tools call `denyIfNotOwner()` before anything else. See
+the hazard below. Every *other* tool is deliberately open to any allowlisted
+user: they are a full user of the app by design.
 
 ## Known Technical Debt (from simplify/security review, 2026-04-21)
 
@@ -850,10 +857,54 @@ for free — provided its prefix is in `src/shared/ipc-channels.ts`.
   rewrites, and an `_enc*` blob written by Electron's `safeStorage` is
   unreadable to the daemon anyway.
 
-E2E lives in `tests/e2e/web-{auth,parity,media}.test.ts`, run by the `web`
-Playwright project (the `electron` project is unchanged and still launches the
-app per test). The web project needs a Chromium download — `npx playwright
-install chromium` — which the Electron-only suite never did.
+E2E lives in `tests/e2e/web-{auth,parity,media,identities}.test.ts`, run by the
+`web` Playwright project (the `electron` project is unchanged and still launches
+the app per test). The web project needs a Chromium download — `npx playwright
+install chromium` — which the Electron-only suite never did. **Every spec runs
+against one long-lived daemon**, so a spec that changes server state (an added
+account, a revoked session) has to put it back.
+
+## Hazard: `/api/invoke` checks authentication, not authorization
+
+Every `server:*`, `library:*`, `device:*` … channel reaching a web client goes
+through one gate: `handleInvoke()` refuses a request with no authenticated
+subject and forwards everything else. That is correct for the whole IPC surface
+*except the allowlist itself* — anyone the owner has admitted is a full user of
+the app by design, but a non-owner who could call `server:revokeIdentity` could
+remove the owner's ability to remove **them**. The HTTP routes for the same
+operations (`/api/auth/identities`) have always been `requireOwner`; the IPC
+channels had to match or adding them would have been a privilege escalation
+dressed as a convenience.
+
+- **`denyIfNotOwner(sessionId)` in `server/auth/sessions.ts` is the only copy.**
+  `ipc/server.ts`'s `requireOwner()` is a one-line wrapper and
+  `assistant/tools.ts`'s `ownerGate()` is another. Two implementations of a gate
+  means one of them is weaker — which is exactly what the debt table below says
+  about the duplicated rating-conflict resolution.
+- **`sessionId === undefined` means Electron IPC** and is admitted. There is no
+  identity to check and nothing a gate could protect: that caller can edit the
+  database file directly.
+- **Rocksy is a second front door and needs the same gate.** A tool runs in the
+  main process with no HTTP request near it, so `AiToolContext.sessionId` —
+  threaded from `ipc/assistant.ts`'s handler context — is the only thing that
+  carries "who is asking" that far. Wire it and forget to read it and a
+  non-owner simply asks Rocksy to do what the channel refused.
+- **Ownership is granted exactly once**, by the one-time claim token in
+  `authorizeIdentity()`. Neither `server:allowIdentity` nor
+  `web_server_allow_identity` has an `isOwner` parameter, and passing one anyway
+  does nothing. A second route to ownership makes the claim token pointless.
+- **The owner cannot be removed** (`removeIdentity()`), because a server with no
+  owner has an allowlist nobody can edit — including to put an owner back.
+- **A session id never leaves the server.** `listServerSessions()` returns a
+  truncated SHA-256 instead, and revocation is by *identity*, which is also the
+  unit an owner thinks in. An unparseable session row is listed as anonymous
+  rather than dropped: "there is a login here I cannot explain" is precisely
+  what an owner needs to see.
+
+Pinned in `src/__tests__/regressions/web-owner-gate.test.ts` (the gate and all
+five tools, including the mutation where the gate is removed) and
+`tests/e2e/web-identities.test.ts` (the channels over a real daemon, with a
+signed-in non-owner as the attacker and an ordinary channel as the control).
 
 ## Decision: the daemon's container does **not** rebuild `better-sqlite3`
 

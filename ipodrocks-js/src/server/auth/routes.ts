@@ -21,6 +21,7 @@ import {
   recordFailure,
 } from "./rate-limit";
 import { verifyCfAccessJwt } from "./cf-access";
+import { revokeSessionsForIdentity } from "./sessions";
 
 /**
  * Every route that creates, inspects or destroys a login.
@@ -354,7 +355,13 @@ export function createAuthRouter(deps: AuthDeps): Router {
       res.status(400).json(outcome);
       return;
     }
-    res.json({ ok: true });
+    // Hygiene rather than security — `currentIdentity()` already resolves a
+    // deleted identity to null — but an orphaned row would otherwise linger
+    // until the store's lazy TTL sweep and list as a login nobody can account
+    // for. Kept at both call sites rather than inside `removeIdentity()`, which
+    // would make identities.ts and sessions.ts import each other.
+    const sessionsRevoked = revokeSessionsForIdentity(id);
+    res.json({ ok: true, sessionsRevoked });
   });
 
   return router;

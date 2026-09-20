@@ -12,6 +12,10 @@
 
 - **Sign in with Google, GitHub or Facebook, or with a password.** The web server is not open to whoever finds it. Social sign-in is there because it is the least painful option when the server is reachable from the internet, and a plain password account is there because it is the only option that works on a home network with no public hostname. Either way, **signing in is not the same as being let in**: only the accounts you have explicitly allowed can reach your library, and the first person to claim the server — using a one-time code it prints on startup — becomes its owner. Everyone else is refused, however valid their Google account is.
 
+- **There is a container image, a compose file and a systemd unit for it.** Along with a deployment guide covering Docker, Cloudflare Tunnel and running it as a service, so putting iPodRocks on a NAS or a home server is a page to follow rather than a puzzle to solve. The image installs `mpcenc` too, which nothing bundles — without it Musepack shadow libraries are unavailable, and the server now says so at startup instead of failing at the first track.
+
+- **Ask Rocksy who can reach your server.** "Who can sign in to my server?", "is anyone connected right now?", "give my partner an account", "cut off access for that old account", "sign every browser out" — Rocksy reads and edits the allowlist and the live sessions, asking you to confirm before anything that grants or removes access. These are **owner-only**: asked by anyone else signed in to your server, Rocksy says so and does nothing. It will not read a claim token or a password out into the chat either.
+
 - **Built to sit behind Cloudflare Tunnel.** The recommended setup opens no inbound port at all: the server listens only on the local machine and `cloudflared` reaches out to Cloudflare, which gives you an HTTPS address and, if you want it, a second front door in Cloudflare Access that has to be passed before a request ever arrives. Any other reverse proxy works too, and you can hand the server your own certificate instead.
 
 ### Notes

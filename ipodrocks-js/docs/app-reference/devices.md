@@ -45,6 +45,61 @@ aimed at the empty folder macOS sometimes leaves behind after a previous eject.
 
 Rocksy can eject for you too, via `device_eject` — it confirms first.
 
+## Devices in a browser
+
+When you reach iPodRocks through the [web server](./settings-web-server.md), the
+player does **not** have to be plugged into the machine holding your library. It
+is plugged into the machine you are sitting at, and the browser hands iPodRocks
+access to it.
+
+Add the device as usual, and tick **This player is plugged into my computer** in
+the Add form. The Mount Path field disappears — there is no path to type, because
+the folder is not on the server. The device card then shows a **Connect this
+player** button; pressing it opens your browser's own folder picker. Choose the
+root of the player, the folder holding `Music` and `.rockbox`, and grant access.
+
+From then on that tab *is* the device: every file the sync writes and every
+listing it reads travels server → browser → player.
+
+What to expect, and why:
+
+- **The checkbox only appears in the browser, and only when adding.** In the
+  desktop app the answer is always "the server's own machine", and an existing
+  device cannot be switched between the two — doing so mid-sync would point the
+  copy at the wrong filesystem.
+- **It needs Chrome, Edge or another Chromium browser, over HTTPS.** The File
+  System Access API exists nowhere else — Firefox and Safari, and iOS entirely,
+  are out — and no browser lets a page touch a folder on an insecure origin. A
+  Cloudflare Tunnel is the easiest way to get a real HTTPS address; see
+  [Deploying the Server](/guide/server-deployment).
+- **The tab has to stay open.** Close it and the device goes offline. Next time
+  you press Connect again, because a browser deliberately does not let a page
+  keep silent access to your disk across visits.
+- **Only one tab at a time.** Opening the same player in a second tab detaches
+  the first. Two tabs writing into Rockbox's index — which has no checksum —
+  would corrupt it.
+- **If the folder opens read-only**, the card says so and nothing is written.
+  Disconnect and connect again, granting write access this time.
+- **Every byte crosses the network twice.** A first full sync of a large library
+  over a slow link takes as long as that implies, and the card says so before you
+  start. Transcode once into a [shadow library](./library.md) on the server and
+  sync a selection rather than everything; a device pointed at a shadow copies
+  files as they already are.
+- **Eject is greyed out**, and hovering it says why: the volume belongs to your
+  computer, not the server, so nothing iPodRocks runs can unmount it. Use your
+  own file manager's eject when the sync has finished.
+- **The USB Device dropdown is empty**, and is meant to be. That list is the
+  *server's* USB bus, which says nothing about the player in your hand.
+- **Modification times are not set on the device.** The File System Access API
+  cannot set them, so the sync compares file sizes instead — which it already
+  tried first. iPodRocks also measures the difference between your browser's
+  clock and the server's and corrects for it, because a clock a few seconds out
+  would otherwise make every sync recopy the whole library.
+
+Everything else — codec profiles, folder layout, orphan policy, playlists,
+ratings, runtime data — behaves exactly as it does on the desktop. A device is a
+device; only the filesystem underneath it changed.
+
 ## Identifying a device
 
 A device can be identified in one of two ways.
@@ -87,3 +142,7 @@ Notes:
 - "Remove the old Nano" → `device_remove` *(asks you to confirm first)*
 
 Listing devices and USB devices runs immediately; checking, syncing, removing a device, and changing a USB identity each pause for a **Confirm / Cancel** prompt before running.
+
+Rocksy cannot pick the folder for a browser-held device. That picker has to be
+opened by your own click — a page is not allowed to ask for a folder on its own,
+which is exactly the protection you want.

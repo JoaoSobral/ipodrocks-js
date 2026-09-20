@@ -24,20 +24,30 @@ import {
 } from "../assistant/assistantChat";
 import type { AiToolContext } from "../assistant/tools";
 
-function buildToolContext(db: import("better-sqlite3").Database): AiToolContext {
+/**
+ * `sessionId` is carried through so the `web_server_*` allowlist tools can ask
+ * who is chatting. It is undefined over Electron IPC, which those tools read as
+ * "the desktop window on the machine holding the database" — see `ownerGate()`
+ * in `assistant/tools.ts`. No other tool looks at it.
+ */
+function buildToolContext(
+  db: import("better-sqlite3").Database,
+  sessionId?: string
+): AiToolContext {
   return {
     db,
     getLibrary,
     getPlaylistCore,
     getDevicesCore,
     getPodcastIndexConfig,
+    sessionId,
   };
 }
 
 export function registerAssistantHandlers(): void {
   bridgeHandle(
     "assistant:chat",
-    safe("assistant:chat", async (_event, userMessage: string) => {
+    safe("assistant:chat", async (event, userMessage: string) => {
       // F4: Rate limit LLM calls
       if (!checkRateLimit("assistant:chat"))
         return { error: "Rate limit exceeded. Please wait before sending another message." };
@@ -58,7 +68,7 @@ export function registerAssistantHandlers(): void {
         autoPodcastEnabled: autoPodcastSettings.enabled,
         autoPodcastIntervalMin: autoPodcastSettings.refreshIntervalMinutes,
       };
-      const toolCtx = buildToolContext(db);
+      const toolCtx = buildToolContext(db, event.sessionId);
       const result = await sendAssistantMessage(fullHistory, db, config, appPaths, toolCtx);
 
       const { reply, playlistCreated, pendingAction, pin, unpinIds, replaceId } = result;
@@ -84,11 +94,11 @@ export function registerAssistantHandlers(): void {
 
   bridgeHandle(
     "assistant:confirmAction",
-    safe("assistant:confirmAction", async (_event, action: PendingAction) => {
+    safe("assistant:confirmAction", async (event, action: PendingAction) => {
       if (!checkRateLimit("assistant:chat"))
         return { error: "Rate limit exceeded. Please wait before sending another message." };
       const db = getLibrary().getConnection();
-      const toolCtx = buildToolContext(db);
+      const toolCtx = buildToolContext(db, event.sessionId);
       const rawResult = await executeConfirmedAction(action, toolCtx);
       let resultText: string;
       try {

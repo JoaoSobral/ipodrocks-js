@@ -61,6 +61,17 @@ export interface AiToolContext {
   getPlaylistCore: () => PlaylistCore;
   getDevicesCore: () => DevicesCore;
   getPodcastIndexConfig: () => { apiKey: string; apiSecret: string } | null;
+  /**
+   * The web session Rocksy is answering, when the chat arrived over the web
+   * server. Absent over Electron IPC.
+   *
+   * Only the `web_server_*` allowlist tools read it, and they must: every other
+   * tool is something any allowlisted user is entitled to do, but managing the
+   * allowlist is managing the gate itself. Without this, a non-owner who could
+   * not call `server:revokeIdentity` directly could ask Rocksy to do it for
+   * them, which is the same escalation with an extra step.
+   */
+  sessionId?: string;
 }
 
 export type AiToolKind = "read" | "write-safe" | "write-destructive";
@@ -652,6 +663,227 @@ const web_server_set_enabled: AiTool = {
           }`
         : "The web server is stopped.",
     };
+  },
+};
+
+/**
+ * The allowlist, and who is signed in.
+ *
+ * These five share one gate. Every other tool in this file is something any
+ * allowlisted user of the server is entitled to do; these manage *who is
+ * allowlisted*, which is the gate itself. Without it, a non-owner who cannot
+ * call `server:revokeIdentity` directly could simply ask Rocksy to — the same
+ * escalation with an extra step.
+ *
+ * It is the *same function* `ipc/server.ts` calls, deliberately. A gate with
+ * two implementations has one that is weaker, which is the lesson of the
+ * duplicated conflict resolution in CLAUDE.md's debt table.
+ */
+async function ownerGate(
+  ctx: AiToolContext
+): Promise<{ error: string } | null> {
+  const { denyIfNotOwner } = await import("../../server/auth/sessions");
+  return denyIfNotOwner(ctx.sessionId);
+}
+
+const web_server_list_identities: AiTool = {
+  name: "web_server_list_identities",
+  description:
+    "List the accounts allowed to sign in to the web server — provider, username or subject, display name, and which one is the owner. Use when the user asks who can reach their server, why someone cannot sign in, or before adding or revoking access. Owner only.",
+  parameters: { type: "object", properties: {}, required: [] },
+  kind: "read",
+  summarize: () => "List who can sign in to the web server",
+  async run(_args, ctx) {
+    const denied = await ownerGate(ctx);
+    if (denied) return denied;
+    const { listIdentities } = await import("../../server/auth/identities");
+    const identities = listIdentities();
+    return {
+      identities,
+      count: identities.length,
+      note:
+        identities.length === 0
+          ? "Nobody has claimed this server yet. The first sign-in needs the one-time claim token from the server log."
+          : undefined,
+    };
+  },
+};
+
+const web_server_list_sessions: AiTool = {
+  name: "web_server_list_sessions",
+  description:
+    "List the browsers currently signed in to the web server: which account each belongs to and when it expires. Sessions with no account are visitors sitting on the login page. Use when the user asks who is connected right now, or suspects someone else is signed in. Owner only.",
+  parameters: { type: "object", properties: {}, required: [] },
+  kind: "read",
+  summarize: () => "List the web server's active sessions",
+  async run(_args, ctx) {
+    const denied = await ownerGate(ctx);
+    if (denied) return denied;
+    const { listServerSessions } = await import("../../server/auth/sessions");
+    const sessions = listServerSessions();
+    return {
+      sessions,
+      count: sessions.length,
+      signedIn: sessions.filter((s) => s.identityId !== null).length,
+      anonymous: sessions.filter((s) => s.identityId === null).length,
+    };
+  },
+};
+
+const web_server_allow_identity: AiTool = {
+  name: "web_server_allow_identity",
+  description:
+    "Add an account to the web server's allowlist so it can sign in. For provider sign-in (google/github/facebook) the subject is that provider's stable user id, not the email address — the person has to try signing in once and read it out of the refusal, or the owner has to look it up. For a local account, the subject is the username and a password of at least 12 characters is required. Use when the user wants to give someone access to their server. Owner only.",
+  parameters: {
+    type: "object",
+    properties: {
+      provider: {
+        type: "string",
+        enum: ["local", "google", "github", "facebook"],
+        description: "Which sign-in method this account uses.",
+      },
+      subject: {
+        type: "string",
+        description:
+          "The username for a local account, or the provider's stable user id for the others.",
+      },
+      display_name: { type: "string", description: "Optional label." },
+      email: { type: "string", description: "Optional, for display only." },
+      password: {
+        type: "string",
+        description:
+          "Required for provider=local, at least 12 characters. Never invent one — ask the user.",
+      },
+    },
+    required: ["provider", "subject"],
+  },
+  // Destructive in the tier's sense: it changes what the outside world can
+  // reach, exactly like `web_server_set_enabled`. Handing a stranger a library
+  // is not something to do without being asked twice.
+  kind: "write-destructive",
+  summarize: (a) =>
+    `Allow ${String(a.provider)} account "${String(a.subject)}" to sign in to the web server`,
+  async run(args, ctx) {
+    const denied = await ownerGate(ctx);
+    if (denied) return denied;
+
+    const provider = String(args.provider ?? "");
+    if (!["local", "google", "github", "facebook"].includes(provider)) {
+      return { error: `Unknown provider "${provider}".` };
+    }
+    const subject = String(args.subject ?? "").trim();
+    if (!subject) return { error: "A subject (username or provider user id) is required." };
+
+    const identities = await import("../../server/auth/identities");
+    if (provider === "local") {
+      const { validatePassword } = await import("../../server/auth/passwords");
+      const bad = validatePassword(args.password);
+      if (bad) return bad;
+      const identity = await identities.createLocalAccount(
+        subject,
+        String(args.password)
+      );
+      return { ok: true, identity, message: `${subject} can now sign in with that password.` };
+    }
+    // Never `isOwner`. Ownership is claimed once with the one-time token and
+    // there is deliberately no second way to grant it.
+    const identity = identities.addIdentity({
+      provider: provider as "google" | "github" | "facebook",
+      subject,
+      email: typeof args.email === "string" ? args.email : null,
+      displayName: typeof args.display_name === "string" ? args.display_name : null,
+    });
+    return {
+      ok: true,
+      identity,
+      message:
+        `${subject} is now allowed to sign in with ${provider}. If they still ` +
+        "get refused, the subject does not match what the provider sends — it " +
+        "is the provider's own user id, not the email address.",
+    };
+  },
+};
+
+const web_server_revoke_identity: AiTool = {
+  name: "web_server_revoke_identity",
+  description:
+    "Remove an account from the web server's allowlist and sign it out everywhere. Call web_server_list_identities first to get the id. The owner account cannot be removed — a server whose owner is gone has an allowlist nobody can edit. Use when the user wants to cut off someone's access. Owner only.",
+  parameters: {
+    type: "object",
+    properties: {
+      identity_id: {
+        type: "number",
+        description: "The id from web_server_list_identities.",
+      },
+    },
+    required: ["identity_id"],
+  },
+  kind: "write-destructive",
+  summarize: (a) => `Revoke web server access for identity #${String(a.identity_id)}`,
+  async run(args, ctx) {
+    const denied = await ownerGate(ctx);
+    if (denied) return denied;
+
+    const id = Number(args.identity_id);
+    if (!Number.isInteger(id)) return { error: "identity_id must be a whole number." };
+
+    const { removeIdentity } = await import("../../server/auth/identities");
+    const outcome = removeIdentity(id);
+    if ("error" in outcome) return outcome;
+
+    const { revokeSessionsForIdentity } = await import("../../server/auth/sessions");
+    const sessionsRevoked = revokeSessionsForIdentity(id);
+    return {
+      ok: true,
+      sessionsRevoked,
+      message: `Removed. ${sessionsRevoked} signed-in browser(s) were logged out.`,
+    };
+  },
+};
+
+const web_server_revoke_sessions: AiTool = {
+  name: "web_server_revoke_sessions",
+  description:
+    "Sign browsers out of the web server without touching the allowlist — the account can sign in again. Pass identity_id for one account, or all=true for everyone including the person asking. Use when the user wants to end a session on a lost laptop, or sign everything out after a scare. Owner only.",
+  parameters: {
+    type: "object",
+    properties: {
+      identity_id: {
+        type: "number",
+        description: "Sign out just this account. Get the id from web_server_list_identities.",
+      },
+      all: {
+        type: "boolean",
+        description:
+          "Sign out every session, including the user's own — they will have to sign in again.",
+      },
+    },
+    required: [],
+  },
+  kind: "write-destructive",
+  summarize: (a) =>
+    a.all === true
+      ? "Sign every browser out of the web server, including this one"
+      : `Sign identity #${String(a.identity_id)} out of the web server`,
+  async run(args, ctx) {
+    const denied = await ownerGate(ctx);
+    if (denied) return denied;
+
+    const sessions = await import("../../server/auth/sessions");
+    if (args.all === true) {
+      const revoked = sessions.revokeAllSessions();
+      return {
+        ok: true,
+        revoked,
+        message: `${revoked} session(s) ended. Everyone, including you, has to sign in again.`,
+      };
+    }
+    const id = Number(args.identity_id);
+    if (!Number.isInteger(id)) {
+      return { error: "Pass identity_id, or all: true to sign everyone out." };
+    }
+    const revoked = sessions.revokeSessionsForIdentity(id);
+    return { ok: true, revoked, message: `${revoked} session(s) ended for that account.` };
   },
 };
 
@@ -1784,6 +2016,11 @@ export const AI_TOOLS: AiTool[] = [
   web_server_status,
   web_server_configure,
   web_server_set_enabled,
+  web_server_list_identities,
+  web_server_list_sessions,
+  web_server_allow_identity,
+  web_server_revoke_identity,
+  web_server_revoke_sessions,
 ];
 
 export function getToolByName(name: string): AiTool | undefined {

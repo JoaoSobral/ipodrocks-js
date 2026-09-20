@@ -104,9 +104,41 @@ certificate with `IPODROCKS_TLS_CERT` and `IPODROCKS_TLS_KEY`.
    as picking a player, which is a folder on the machine you are sitting at.
 4. **Set a public URL and a tunnel** if you want to reach it from outside.
 
+## Managing who may sign in
+
+The Web Server card itself shows the claim token and the status; the allowlist is
+managed by **asking Rocksy** (see below), or over the HTTP API at
+`/api/auth/identities` if you prefer `curl`. A panel for it in Settings is not
+built yet.
+
+Either way the rules are the same. The allowlist is the gate, so editing it is
+**owner-only** — the account that claimed the server. Everyone else is a full
+user of the app and can do everything else; they simply cannot change who else
+gets in.
+
+- **See the list** — provider, username or subject, and which one is the owner.
+- **Add an account.** A local account needs a username and a password of at
+  least 12 characters. A Google, GitHub or Facebook account needs that
+  provider's own **stable user id**, not the email address — emails change, and
+  matching on one would hand an account to whoever claimed the address next. If
+  you do not have it, have the person try signing in once; the refusal is logged
+  with the subject the provider sent.
+- **Revoke an account** — removes it and signs its browsers out. The owner
+  account cannot be removed: a server whose owner is gone has an allowlist
+  nobody can edit, including to put an owner back.
+- **Sign browsers out without removing the account** — for a lost laptop, or
+  after a scare. "Sign everyone out" includes you.
+
 ## Ask Rocksy
 
 - "Is the web server running?"
 - "Serve iPodRocks on port 9000 and let me reach it from the LAN."
 - "Turn on web access."
 - "Why can't my partner sign in to the server?"
+- "Who can sign in to my server?" / "Is anyone connected right now?"
+- "Give my partner an account" *(asks you to confirm first)*
+- "Cut off access for that old account" *(asks you to confirm first)*
+- "Sign every browser out" *(asks you to confirm first — including yours)*
+
+The last four are owner-only. Asked by anyone else, Rocksy says so and does
+nothing; it also never reads a claim token or a password back into the chat.
