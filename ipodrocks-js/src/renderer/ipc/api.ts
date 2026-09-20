@@ -35,6 +35,7 @@ import type {
   FeedCandidate,
   PodcastFeedPreview,
 } from "@shared/types";
+import { isWebMode } from "./web-transport";
 
 export type {
   Track,
@@ -533,6 +534,14 @@ export function setFolderPickerFallback(fn: FolderPickerFallback | null): void {
 }
 
 export async function pickFolder(): Promise<string | null> {
+  // A browser never gets a native sheet, whatever the host can do. With the
+  // desktop app hosting the server the host *does* have dialogs, and asking it
+  // opened a Finder window on the server's machine while this page waited for
+  // somebody standing there to click it. The main process refuses that too —
+  // this is the short-circuit that keeps the round trip from happening at all.
+  if (isWebMode()) {
+    return folderPickerFallback ? folderPickerFallback() : null;
+  }
   if (hostHasNativeDialogs === null) {
     try {
       hostHasNativeDialogs = await hasNativeDialogs();

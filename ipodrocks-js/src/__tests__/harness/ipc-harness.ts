@@ -100,6 +100,18 @@ vi.mock("electron", () => {
 
 export interface IpcSession {
   invoke: <T = unknown>(channel: string, ...args: unknown[]) => Promise<T>;
+  /**
+   * Invoke as a *web* client.
+   *
+   * The only difference a handler can see between the desktop window and a
+   * remote browser is `ctx.sessionId` — the web transport sets it, Electron IPC
+   * does not — and several handlers turn on exactly that. The `web` Playwright
+   * project cannot drive the interesting half of those, because it boots the
+   * daemon: a headless host has no native dialogs and no local devices, so the
+   * cases that only bite when the *desktop app* is hosting the server never
+   * arise there.
+   */
+  invokeAsWebClient: <T = unknown>(channel: string, ...args: unknown[]) => Promise<T>;
   sentEvents: Array<{ channel: string; payload: unknown }>;
   cleanup: () => void;
 }
@@ -182,6 +194,16 @@ export async function setupIpcSession(opts: IpcSessionOptions): Promise<IpcSessi
         throw new Error(`IPC channel "${channel}" not registered`);
       }
       return (await handler(fakeEvent, ...args)) as T;
+    },
+    invokeAsWebClient: async <T = unknown>(channel: string, ...args: unknown[]) => {
+      const handler = capturedHandlers.get(channel);
+      if (!handler) {
+        throw new Error(`IPC channel "${channel}" not registered`);
+      }
+      return (await handler(
+        { ...fakeEvent, sessionId: "harness-web-session" },
+        ...args
+      )) as T;
     },
     sentEvents: sentRendererEvents,
     cleanup: () => {

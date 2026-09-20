@@ -327,7 +327,10 @@ export function DevicePanel() {
 
   const openForAdd = useCallback(() => {
     resetForm();
-    setWebTransport(false);
+    // `resetForm` already picks the only kind this client can add. It used to
+    // be forced to `false` here, which put a server Mount Path and its Browse
+    // button back into the browser's Add form — the thing that sends people
+    // hunting for their iPod on the server's disk.
     setShowDeviceModal(true);
   }, [resetForm]);
 
@@ -582,7 +585,7 @@ export function DevicePanel() {
       {/* Top bar */}
       <div className="flex items-center gap-3">
         <Button variant="primary" size="sm" onClick={openForAdd}>
-          + Add Device
+          {isWebMode() ? "+ Add Remote Player" : "+ Add Device"}
         </Button>
         <span className="text-xs text-muted-foreground ml-auto">
           {deviceList.length} device{deviceList.length !== 1 ? "s" : ""}
@@ -597,11 +600,15 @@ export function DevicePanel() {
       ) : deviceList.length === 0 ? (
         <EmptyState
           icon="⊞"
-          title="No devices configured"
-          description="Add a device to manage your iPod or music player"
+          title={isWebMode() ? "No remote players yet" : "No devices configured"}
+          description={
+            isWebMode()
+              ? "Add the player plugged into this computer. You pick its folder in this browser."
+              : "Add a device to manage your iPod or music player"
+          }
           action={
             <Button variant="primary" size="sm" onClick={openForAdd}>
-              + Add Device
+              {isWebMode() ? "+ Add Remote Player" : "+ Add Device"}
             </Button>
           }
         />
@@ -894,7 +901,13 @@ export function DevicePanel() {
           setShowDeviceModal(false);
           resetForm();
         }}
-        title={editingDeviceId !== null ? "Edit Device" : "Add Device"}
+        title={
+          editingDeviceId !== null
+            ? "Edit Device"
+            : isWebMode()
+              ? "Add Remote Player"
+              : "Add Device"
+        }
       >
         <div className="space-y-4">
           {/* Device Name */}

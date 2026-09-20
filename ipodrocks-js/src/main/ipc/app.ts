@@ -113,18 +113,34 @@ export function registerAppHandlers(): void {
 
   bridgeHandle(
     "dialog:pickFolder",
-    safe("dialog:pickFolder", async () => {
-      // Hosts without a screen (the headless server) throw NO_NATIVE_DIALOG
-      // here; the web UI answers this channel with its own directory browser
-      // rather than expecting a native sheet on the server's desktop.
+    safe("dialog:pickFolder", async (event) => {
+      // **A native sheet belongs to whoever is sitting at the host**, and a web
+      // client is by definition not. With the desktop app hosting the server,
+      // the host *does* have dialogs, so a remote browser's "Browse" used to
+      // open a Finder window on the server's screen — and the browser then hung
+      // waiting for somebody standing at that machine to click it. Worse, a
+      // modal sheet blocks the Electron window, so any remote client could
+      // freeze the host's UI at will.
+      //
+      // The headless server has no dialogs and throws NO_NATIVE_DIALOG here
+      // instead; either way the web UI answers this with its own directory
+      // browser (`app:listDirectory`, same `validateFolderPath()` gate).
+      if (event.sessionId !== undefined) {
+        return {
+          error:
+            "A folder on the server is chosen with the built-in browser, not a " +
+            "dialog on the server's screen.",
+        };
+      }
       return getHostDialogs().pickFolder();
     })
   );
 
   bridgeHandle(
     "app:hasNativeDialogs",
-    safe("app:hasNativeDialogs", async () => ({
-      available: getHostDialogs().available,
+    safe("app:hasNativeDialogs", async (event) => ({
+      // A property of the *client*, not the host: see `dialog:pickFolder`.
+      available: event.sessionId === undefined && getHostDialogs().available,
     }))
   );
 
