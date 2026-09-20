@@ -1,8 +1,8 @@
-import { ipcMain } from "electron";
+import { handle as bridgeHandle } from "../host/bridge";
 import { safe, getLibrary } from "./common";
 
 export function registerRatingsHandlers(): void {
-  ipcMain.handle(
+  bridgeHandle(
     "ratings:setTrackRating",
     safe("ratings:setTrackRating", async (_event, trackId: number, rating: number | null) => {
       const db = getLibrary().getConnection();
@@ -32,7 +32,7 @@ export function registerRatingsHandlers(): void {
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "ratings:getConflicts",
     safe("ratings:getConflicts", async () => {
       const db = getLibrary().getConnection();
@@ -56,7 +56,7 @@ export function registerRatingsHandlers(): void {
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "ratings:resolveConflict",
     safe(
       "ratings:resolveConflict",
@@ -82,7 +82,7 @@ export function registerRatingsHandlers(): void {
     )
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "ratings:resolveAllConflicts",
     safe(
       "ratings:resolveAllConflicts",

@@ -1,4 +1,5 @@
-import { dialog, ipcMain } from "electron";
+import { handle as bridgeHandle } from "../host/bridge";
+import { getHostDialogs } from "../host";
 import { safe, getLibrary, getPlaylistCore, getDevicesCore } from "./common";
 import { getDeviceSyncPreferences } from "../sync/device-sync-preferences";
 import { logActivity } from "../activity/activity-logger";
@@ -6,28 +7,28 @@ import { invalidateAssistantCache } from "../assistant/assistantChat";
 import type { SmartPlaylistRule } from "../../shared/types";
 
 export function registerPlaylistHandlers(): void {
-  ipcMain.handle(
+  bridgeHandle(
     "playlist:list",
     safe("playlist:list", async (_event, playlistType?: string) => {
       return getPlaylistCore().getPlaylists(playlistType);
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "playlist:getTracks",
     safe("playlist:getTracks", async (_event, playlistId: number) => {
       return getPlaylistCore().getPlaylistTracks(playlistId);
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "playlist:previewSmartTracks",
     safe("playlist:previewSmartTracks", async (_event, payload: { rules: SmartPlaylistRule[]; trackLimit?: number }) => {
       return getPlaylistCore().previewSmartTracks(payload.rules, payload.trackLimit);
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "playlist:create",
     safe("playlist:create", async (_event, config: {
       name: string;
@@ -53,7 +54,7 @@ export function registerPlaylistHandlers(): void {
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "playlist:createClassic",
     safe("playlist:createClassic", async (_event, config: {
       name: string;
@@ -75,7 +76,7 @@ export function registerPlaylistHandlers(): void {
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "playlist:updateClassic",
     safe("playlist:updateClassic", async (_event, config: {
       playlistId: number;
@@ -98,7 +99,7 @@ export function registerPlaylistHandlers(): void {
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "playlist:delete",
     safe("playlist:delete", async (_event, playlistId: number) => {
       getPlaylistCore().deletePlaylist(playlistId);
@@ -106,12 +107,12 @@ export function registerPlaylistHandlers(): void {
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "playlist:export",
     safe("playlist:export", async (_event, playlistId: number, deviceId?: number) => {
       const core = getPlaylistCore();
       const defaultName = core.getPlaylistById(playlistId)?.name ?? "playlist";
-      const { filePath } = await dialog.showSaveDialog({
+      const filePath = await getHostDialogs().saveFile({
         title: "Export playlist",
         defaultPath: `${defaultName}.m3u`,
         filters: [{ name: "M3U", extensions: ["m3u"] }],
@@ -152,12 +153,12 @@ export function registerPlaylistHandlers(): void {
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "playlist:getBroken",
     safe("playlist:getBroken", async () => getPlaylistCore().getBrokenPlaylists())
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "playlist:repair",
     safe("playlist:repair", async (_event, playlistId: number) => {
       const result = getPlaylistCore().repairPlaylist(playlistId);
@@ -167,7 +168,7 @@ export function registerPlaylistHandlers(): void {
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "playlist:rebuild",
     safe("playlist:rebuild", async (_event, playlistId: number) => {
       const ok = getPlaylistCore().rebuildSmartPlaylist(playlistId);
@@ -176,17 +177,17 @@ export function registerPlaylistHandlers(): void {
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "playlist:getGenres",
     safe("playlist:getGenres", async () => getPlaylistCore().getGenres())
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "playlist:getArtists",
     safe("playlist:getArtists", async () => getPlaylistCore().getArtists())
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "playlist:getAlbums",
     safe("playlist:getAlbums", async () => getPlaylistCore().getAlbums())
   );

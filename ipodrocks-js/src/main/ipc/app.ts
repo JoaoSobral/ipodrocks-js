@@ -1,5 +1,6 @@
-import { app, BrowserWindow, dialog, ipcMain } from "electron";
+import { handle as bridgeHandle } from "../host/bridge";
 import { safe } from "./common";
+import { getAppVersion, getHostDialogs } from "../host";
 import { openExternalUrl } from "../utils/external-url";
 import { isMpcencAvailable } from "../utils/mpcenc";
 import {
@@ -22,29 +23,29 @@ import {
 import { extractChangelogSection } from "../utils/changelog-parser";
 
 export function registerAppHandlers(): void {
-  ipcMain.handle(
+  bridgeHandle(
     "app:isMpcencAvailable",
     safe("app:isMpcencAvailable", async () => ({ available: isMpcencAvailable() }))
   );
-  ipcMain.handle(
+  bridgeHandle(
     "app:getMpcRemindDisabled",
     safe("app:getMpcRemindDisabled", async () => ({ disabled: getMpcRemindDisabled() }))
   );
-  ipcMain.handle(
+  bridgeHandle(
     "app:setMpcRemindDisabled",
     safe("app:setMpcRemindDisabled", async (_event, disabled: boolean) => {
       setMpcRemindDisabled(disabled);
       return undefined;
     })
   );
-  ipcMain.handle(
+  bridgeHandle(
     "app:getVersion",
-    safe("app:getVersion", async () => ({ version: app.getVersion() }))
+    safe("app:getVersion", async () => ({ version: getAppVersion() }))
   );
-  ipcMain.handle(
+  bridgeHandle(
     "app:checkForUpdates",
     safe("app:checkForUpdates", async (_event, opts?: { auto?: boolean }) => {
-      const current = app.getVersion();
+      const current = getAppVersion();
       const now = Date.now();
       if (opts?.auto) {
         // The automatic check runs on every mount of the Welcome panel, so it
@@ -76,14 +77,14 @@ export function registerAppHandlers(): void {
       }
     })
   );
-  ipcMain.handle(
+  bridgeHandle(
     "app:setUpdateSnooze",
     safe("app:setUpdateSnooze", async (_event, snoozeUntil: number | null) => {
       setUpdateSnoozeUntil(snoozeUntil);
       return undefined;
     })
   );
-  ipcMain.handle(
+  bridgeHandle(
     "app:fetchChangelogSection",
     safe("app:fetchChangelogSection", async (_event, opts: { version: string }) => {
       const version = (opts?.version ?? "").trim();
@@ -94,24 +95,20 @@ export function registerAppHandlers(): void {
       return { markdown: section };
     })
   );
-  ipcMain.handle(
+  bridgeHandle(
     "app:openExternal",
     safe("app:openExternal", async (_event, url: string) => {
       return openExternalUrl(url);
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "dialog:pickFolder",
-    safe("dialog:pickFolder", async (event) => {
-      const win = BrowserWindow.fromWebContents(event.sender);
-      if (!win) return null;
-      const result = await dialog.showOpenDialog(win, {
-        properties: ["openDirectory"],
-        defaultPath: app.getPath("music"),
-      });
-      if (result.canceled || result.filePaths.length === 0) return null;
-      return result.filePaths[0];
+    safe("dialog:pickFolder", async () => {
+      // Hosts without a screen (the headless server) throw NO_NATIVE_DIALOG
+      // here; the web UI answers this channel with its own directory browser
+      // rather than expecting a native sheet on the server's desktop.
+      return getHostDialogs().pickFolder();
     })
   );
 }

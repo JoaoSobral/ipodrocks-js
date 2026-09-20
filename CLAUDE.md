@@ -574,6 +574,43 @@ Pinned in `src/__tests__/regressions/delete-all-path-guard.test.ts`,
 `src/__tests__/behaviors/orphan-reset-policy.test.ts` and
 `tests/e2e/orphan-reset-policy.test.ts`.
 
+## Hazard: the host adapter must never auto-detect its way to the real user data
+
+`src/main/host/` is the electron-free boundary: `app.getPath`, `safeStorage`,
+`shell`, `dialog` and `ipcMain` are all reached through a registered
+`HostAdapter` so the same `src/main/` code can run under Electron or as the
+headless web server. Only `host/electron-host.ts` and `host/electron-bridge.ts`
+import `electron`, and only `src/main/index.ts` imports those.
+
+`getHost()` falls back to `detectHost()` when nothing registered one, and
+`detectHost()` probes with a **CommonJS `require("electron")`**. It has to —
+a static `import` would make the daemon's bundle unloadable under plain Node,
+where the `electron` package is a path string at best and absent at worst.
+
+**But vitest's `vi.mock("electron")` cannot intercept a `require`.** So under
+test the probe fails, the Node host is selected, and its `userData()` resolves
+the *real* application-support directory. This shipped for exactly one test run
+and wrote 9 devices, 46 library folders and 96 tracks into the developer's own
+`ipodrock.db` — silently, since every insert succeeded. It surfaced only when a
+later test reported that its fixture device already existed.
+
+Three guards, and all three must stay:
+
+- **`src/__tests__/setup.ts` sets `IPODROCKS_DATA_DIR` to a fresh temp dir** for
+  the whole run, before any test module loads.
+- **`detectHost()` throws under `VITEST` when `IPODROCKS_DATA_DIR` is unset**
+  rather than falling back. Loud beats silent: the fallback's failure mode is
+  data loss in a directory no test ever intended to touch.
+- **`harness/ipc-harness.ts` registers a host of its own** in `setupIpcSession`,
+  on the module graph `vi.resetModules()` just built and *before* importing
+  `src/main/ipc` — the database path is read the first time a handler touches
+  the library. Its paths mirror the `app.getPath` mock (`${appPathRoot}/${name}`).
+
+Anything that adds a new host facility inherits this: give the Node
+implementation a real directory only via `IPODROCKS_DATA_DIR`, never a
+hardcoded home-relative default reachable without it. Pinned in
+`src/__tests__/regressions/host-adapter.test.ts`.
+
 ## Hazard: `foreign_keys = OFF` during track deletion
 
 `LibraryScanner.deleteRemovedTracks()` (`src/main/library/library-scanner.ts`) wraps its deletes in `PRAGMA foreign_keys = OFF`, so **no `ON DELETE CASCADE` declared in the schema fires there**. Every dependent table must be deleted by hand inside that transaction (`playback_logs`, `playback_stats`, `shadow_tracks`, `content_hashes`, `playlist_items`). The same applies to `cleanupOrphanedEntities()` in the same file.

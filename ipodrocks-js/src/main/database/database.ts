@@ -1,5 +1,5 @@
 import Database from "better-sqlite3";
-import { app } from "electron";
+import { getUserDataPath } from "../host";
 import path from "path";
 import { SCHEMA_SQL } from "./schema";
 import { migrateNfcPaths } from "./nfc-path-migration";
@@ -10,7 +10,7 @@ export class AppDatabase {
 
   constructor(dbPath?: string) {
     this.dbPath =
-      dbPath ?? path.join(app.getPath("userData"), "ipodrock.db");
+      dbPath ?? path.join(getUserDataPath(), "ipodrock.db");
   }
 
   initialize(): void {

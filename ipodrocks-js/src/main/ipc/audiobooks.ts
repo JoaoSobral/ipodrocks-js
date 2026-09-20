@@ -1,4 +1,4 @@
-import { ipcMain } from "electron";
+import { handle as bridgeHandle } from "../host/bridge";
 import { safe, getLibrary } from "./common";
 import { searchAudiobooks } from "../audiobooks/librivox-client";
 import {
@@ -17,14 +17,14 @@ import { invalidateAssistantCache } from "../assistant/assistantChat";
 import type { LibrivoxSearchResult } from "../../shared/types";
 
 export function registerAudiobookHandlers(): void {
-  ipcMain.handle(
+  bridgeHandle(
     "audiobook:search",
     safe("audiobook:search", async (_event, term: string) => {
       return searchAudiobooks(term);
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "audiobook:listSubs",
     safe("audiobook:listSubs", async () => {
       const db = getLibrary().getConnection();
@@ -32,7 +32,7 @@ export function registerAudiobookHandlers(): void {
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "audiobook:subscribe",
     safe("audiobook:subscribe", async (event, result: LibrivoxSearchResult) => {
       const db = getLibrary().getConnection();
@@ -46,7 +46,7 @@ export function registerAudiobookHandlers(): void {
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "audiobook:unsubscribe",
     safe("audiobook:unsubscribe", async (_event, subId: number) => {
       const db = getLibrary().getConnection();
@@ -56,7 +56,7 @@ export function registerAudiobookHandlers(): void {
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "audiobook:listChapters",
     safe("audiobook:listChapters", async (_event, subId: number) => {
       const db = getLibrary().getConnection();
@@ -64,7 +64,7 @@ export function registerAudiobookHandlers(): void {
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "audiobook:refreshCover",
     safe("audiobook:refreshCover", async (_event, subId: number) => {
       const db = getLibrary().getConnection();
@@ -73,7 +73,7 @@ export function registerAudiobookHandlers(): void {
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "audiobook:searchCoverCandidates",
     safe("audiobook:searchCoverCandidates", async (_event, subId: number) => {
       const db = getLibrary().getConnection();
@@ -83,7 +83,7 @@ export function registerAudiobookHandlers(): void {
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "audiobook:setCoverFromUrl",
     safe("audiobook:setCoverFromUrl", async (_event, subId: number, url: string) => {
       const db = getLibrary().getConnection();

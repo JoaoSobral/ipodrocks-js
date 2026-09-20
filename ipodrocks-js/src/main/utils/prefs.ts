@@ -1,6 +1,6 @@
 import * as fs from "fs";
 import * as path from "path";
-import { app, safeStorage } from "electron";
+import { getSecrets, getUserDataPath } from "../host";
 import type { OpenRouterConfig } from "../../shared/types";
 
 const PREFS_FILENAME = "ipodrocks-prefs.json";
@@ -32,7 +32,7 @@ export interface RatingPrefs {
 interface Prefs {
   mpcRemindDisabled?: boolean;
   openRouterConfig?: OpenRouterConfig;
-  /** Encrypted API key (base64). Present only when safeStorage was used. */
+  /** Encrypted API key (base64). Present only when secret storage was available. */
   _encApiKey?: string;
   harmonic?: HarmonicPrefs;
   ratings?: RatingPrefs;
@@ -61,7 +61,7 @@ interface Prefs {
 let prefsCache: Prefs | null = null;
 
 function getPrefsPath(): string {
-  return path.join(app.getPath("userData"), PREFS_FILENAME);
+  return path.join(getUserDataPath(), PREFS_FILENAME);
 }
 
 export function readPrefs(): Prefs {
@@ -73,10 +73,10 @@ export function readPrefs(): Prefs {
       const parsed = JSON.parse(raw) as Prefs;
 
       // Decrypt API key if it was stored encrypted (F1)
-      if (parsed._encApiKey && safeStorage.isEncryptionAvailable()) {
+      if (parsed._encApiKey && getSecrets().isEncryptionAvailable()) {
         try {
           const buf = Buffer.from(parsed._encApiKey, "base64");
-          const decrypted = safeStorage.decryptString(buf);
+          const decrypted = getSecrets().decryptString(buf);
           if (parsed.openRouterConfig) {
             parsed.openRouterConfig.apiKey = decrypted;
           } else {
@@ -89,10 +89,10 @@ export function readPrefs(): Prefs {
       }
 
       // Decrypt Podcast Index API key
-      if (parsed._encPodcastIndexApiKey && safeStorage.isEncryptionAvailable()) {
+      if (parsed._encPodcastIndexApiKey && getSecrets().isEncryptionAvailable()) {
         try {
           const buf = Buffer.from(parsed._encPodcastIndexApiKey, "base64");
-          const decrypted = safeStorage.decryptString(buf);
+          const decrypted = getSecrets().decryptString(buf);
           if (parsed.podcastIndexConfig) {
             parsed.podcastIndexConfig.apiKey = decrypted;
           } else {
@@ -105,10 +105,10 @@ export function readPrefs(): Prefs {
       }
 
       // Decrypt Podcast Index API secret
-      if (parsed._encPodcastIndexSecret && safeStorage.isEncryptionAvailable()) {
+      if (parsed._encPodcastIndexSecret && getSecrets().isEncryptionAvailable()) {
         try {
           const buf = Buffer.from(parsed._encPodcastIndexSecret, "base64");
-          const decrypted = safeStorage.decryptString(buf);
+          const decrypted = getSecrets().decryptString(buf);
           if (parsed.podcastIndexConfig) {
             parsed.podcastIndexConfig.apiSecret = decrypted;
           } else {
@@ -138,41 +138,41 @@ function writePrefs(prefs: Prefs): void {
     // Encrypt API key before writing to disk (F1)
     const toWrite: Prefs = { ...prefs };
     if (toWrite.openRouterConfig?.apiKey) {
-      if (safeStorage.isEncryptionAvailable()) {
+      if (getSecrets().isEncryptionAvailable()) {
         try {
-          const encrypted = safeStorage.encryptString(toWrite.openRouterConfig.apiKey);
+          const encrypted = getSecrets().encryptString(toWrite.openRouterConfig.apiKey);
           toWrite._encApiKey = encrypted.toString("base64");
           toWrite.openRouterConfig = { ...toWrite.openRouterConfig, apiKey: "" };
         } catch {
-          console.warn("[prefs] safeStorage encryption failed, storing key in plaintext");
+          console.warn("[prefs] secret storage encryption failed, storing key in plaintext");
         }
       } else {
-        console.warn("[prefs] safeStorage unavailable, API key stored in plaintext");
+        console.warn("[prefs] secret storage unavailable, API key stored in plaintext");
       }
     }
 
     // Encrypt Podcast Index API key
     if (toWrite.podcastIndexConfig?.apiKey) {
-      if (safeStorage.isEncryptionAvailable()) {
+      if (getSecrets().isEncryptionAvailable()) {
         try {
-          const encrypted = safeStorage.encryptString(toWrite.podcastIndexConfig.apiKey);
+          const encrypted = getSecrets().encryptString(toWrite.podcastIndexConfig.apiKey);
           toWrite._encPodcastIndexApiKey = encrypted.toString("base64");
           toWrite.podcastIndexConfig = { ...toWrite.podcastIndexConfig, apiKey: "" };
         } catch {
-          console.warn("[prefs] safeStorage encryption failed for podcast api key");
+          console.warn("[prefs] secret storage encryption failed for podcast api key");
         }
       }
     }
 
     // Encrypt Podcast Index API secret
     if (toWrite.podcastIndexConfig?.apiSecret) {
-      if (safeStorage.isEncryptionAvailable()) {
+      if (getSecrets().isEncryptionAvailable()) {
         try {
-          const encrypted = safeStorage.encryptString(toWrite.podcastIndexConfig.apiSecret);
+          const encrypted = getSecrets().encryptString(toWrite.podcastIndexConfig.apiSecret);
           toWrite._encPodcastIndexSecret = encrypted.toString("base64");
           toWrite.podcastIndexConfig = { ...toWrite.podcastIndexConfig, apiSecret: "" };
         } catch {
-          console.warn("[prefs] safeStorage encryption failed for podcast secret");
+          console.warn("[prefs] secret storage encryption failed for podcast secret");
         }
       }
     }

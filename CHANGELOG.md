@@ -1,5 +1,24 @@
 # Changelog
 
+## [3.0.0] — 2026-09
+
+### Features
+
+- **iPodRocks can now run as a web app.** Turn on the web server in Settings and iPodRocks serves its whole interface to a browser — the same library, devices, sync, playlists, ratings and Rocksy you get on the desktop, reached from any machine on your network or, through a tunnel, from anywhere. Nothing is cut down for the web: it is the same app, not a companion view of it.
+
+- **Your player does not have to be plugged into the same machine as your library.** This is the point of the web app. The library, the database and the encoders stay on whichever computer runs the server — a NAS, a home server, an old desktop in a cupboard — and the player is plugged into whatever laptop you happen to be sitting at. Your browser asks you to pick the player's folder once, and from then on iPodRocks reads and writes it through the browser as if it were local: syncs, ratings, playlists and listening history all work the way they always have. Picking the folder needs Chrome, Edge, or another Chromium browser — Firefox and Safari have no way to grant a website access to a folder, and iPodRocks says so rather than failing halfway through.
+
+- **The server can run on its own, with no app open.** As well as the Settings toggle, iPodRocks ships a headless server you can run as a background service or in a container, so the machine holding your library does not need a screen, a login session, or Electron installed at all. Point it at a data folder and a port and it is up.
+
+- **Sign in with Google, GitHub or Facebook, or with a password.** The web server is not open to whoever finds it. Social sign-in is there because it is the least painful option when the server is reachable from the internet, and a plain password account is there because it is the only option that works on a home network with no public hostname. Either way, **signing in is not the same as being let in**: only the accounts you have explicitly allowed can reach your library, and the first person to claim the server — using a one-time code it prints on startup — becomes its owner. Everyone else is refused, however valid their Google account is.
+
+- **Built to sit behind Cloudflare Tunnel.** The recommended setup opens no inbound port at all: the server listens only on the local machine and `cloudflared` reaches out to Cloudflare, which gives you an HTTPS address and, if you want it, a second front door in Cloudflare Access that has to be passed before a request ever arrives. Any other reverse proxy works too, and you can hand the server your own certificate instead.
+
+### Notes
+
+- **Everything you sync travels to your browser and then to the player.** That is what makes a remote player possible, and it is also the cost: a large lossless library is not a practical thing to push down a home connection. Sync a selection, or sync from a shadow library, and it is comfortable.
+
+
 ## [2.3.3] — 2026-09
 
 ### Fixes

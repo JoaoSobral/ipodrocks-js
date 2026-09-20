@@ -1,4 +1,4 @@
-import { shell } from "electron";
+import { getHostShell } from "../host";
 
 /**
  * Schemes we are willing to hand to the OS. Anything else (file:, smb:,
@@ -26,6 +26,6 @@ export function isAllowedExternalUrl(rawUrl: string): boolean {
  */
 export async function openExternalUrl(rawUrl: string): Promise<{ ok: boolean }> {
   if (!isAllowedExternalUrl(rawUrl)) return { ok: false };
-  await shell.openExternal(rawUrl);
+  await getHostShell().openExternal(rawUrl);
   return { ok: true };
 }

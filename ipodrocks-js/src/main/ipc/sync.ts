@@ -1,6 +1,6 @@
 import * as fs from "fs";
 import * as path from "path";
-import { ipcMain } from "electron";
+import { handle as bridgeHandle } from "../host/bridge";
 import {
   safe,
   getLibrary,
@@ -55,7 +55,7 @@ export function isSyncActive(): boolean {
 }
 
 export function registerSyncHandlers(): void {
-  ipcMain.handle(
+  bridgeHandle(
     "sync:start",
     safe("sync:start", async (event, opts: SyncOptions) => {
       const lib = getLibrary();
@@ -758,7 +758,7 @@ export function registerSyncHandlers(): void {
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "sync:cancel",
     safe("sync:cancel", async () => {
       if (activeSyncAbort) {
@@ -770,7 +770,7 @@ export function registerSyncHandlers(): void {
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "sync:getDevicePreferences",
     safe("sync:getDevicePreferences", async (_e, deviceId: number) =>
       getDeviceSyncPreferences(getLibrary().getConnection(), deviceId))

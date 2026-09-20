@@ -1,4 +1,5 @@
-import { dialog, ipcMain } from "electron";
+import { handle as bridgeHandle } from "../host/bridge";
+import { getHostDialogs } from "../host";
 import { safe, getLibrary, getDevicesCore } from "./common";
 import { searchPodcasts } from "../podcasts/podcast-index-client";
 import {
@@ -26,7 +27,7 @@ import { invalidateAssistantCache } from "../assistant/assistantChat";
 import type { PodcastSearchResult } from "../../shared/types";
 
 export function registerPodcastHandlers(): void {
-  ipcMain.handle(
+  bridgeHandle(
     "podcast:search",
     safe("podcast:search", async (_event, term: string) => {
       const config = getPodcastIndexConfig();
@@ -35,7 +36,7 @@ export function registerPodcastHandlers(): void {
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "podcast:listSubs",
     safe("podcast:listSubs", async () => {
       const db = getLibrary().getConnection();
@@ -43,7 +44,7 @@ export function registerPodcastHandlers(): void {
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "podcast:subscribe",
     safe("podcast:subscribe", async (_event, feed: PodcastSearchResult) => {
       const db = getLibrary().getConnection();
@@ -53,7 +54,7 @@ export function registerPodcastHandlers(): void {
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "podcast:unsubscribe",
     safe("podcast:unsubscribe", async (_event, subId: number) => {
       const db = getLibrary().getConnection();
@@ -63,7 +64,7 @@ export function registerPodcastHandlers(): void {
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "podcast:deleteEpisodes",
     safe("podcast:deleteEpisodes", async (_event, episodeIds: number[]) => {
       const db = getLibrary().getConnection();
@@ -72,7 +73,7 @@ export function registerPodcastHandlers(): void {
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "podcast:setAutoCount",
     safe("podcast:setAutoCount", async (_event, subId: number, count: number) => {
       const db = getLibrary().getConnection();
@@ -82,7 +83,7 @@ export function registerPodcastHandlers(): void {
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "podcast:listEpisodes",
     safe("podcast:listEpisodes", async (_event, subId: number) => {
       const db = getLibrary().getConnection();
@@ -90,7 +91,7 @@ export function registerPodcastHandlers(): void {
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "podcast:setManualSelection",
     safe("podcast:setManualSelection", async (_event, subId: number, episodeIds: number[]) => {
       const db = getLibrary().getConnection();
@@ -100,7 +101,7 @@ export function registerPodcastHandlers(): void {
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "podcast:downloadNow",
     safe("podcast:downloadNow", async (_event, subId: number) => {
       const db = getLibrary().getConnection();
@@ -110,7 +111,7 @@ export function registerPodcastHandlers(): void {
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "podcast:refreshAllForNewFolder",
     safe("podcast:refreshAllForNewFolder", async () => {
       const db = getLibrary().getConnection();
@@ -120,14 +121,14 @@ export function registerPodcastHandlers(): void {
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "podcast:discoverFeeds",
     safe("podcast:discoverFeeds", async (_event, input: string) => {
       return discoverFeeds(input);
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "podcast:previewFeed",
     safe("podcast:previewFeed", async (_event, feedUrl: string) => {
       const parsed = await fetchAndParseFeed(feedUrl);
@@ -135,7 +136,7 @@ export function registerPodcastHandlers(): void {
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "podcast:subscribeByUrl",
     safe("podcast:subscribeByUrl", async (_event, feedUrl: string) => {
       const db = getLibrary().getConnection();
@@ -145,7 +146,7 @@ export function registerPodcastHandlers(): void {
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "podcast:syncDeviceNow",
     safe("podcast:syncDeviceNow", async (_event, deviceId: number) => {
       const db = getLibrary().getConnection();
@@ -153,7 +154,7 @@ export function registerPodcastHandlers(): void {
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "podcast:getSettings",
     safe("podcast:getSettings", async () => {
       const prefs = readPrefs();
@@ -172,7 +173,7 @@ export function registerPodcastHandlers(): void {
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "podcast:setSettings",
     safe("podcast:setSettings", async (
       _event,
@@ -208,20 +209,17 @@ export function registerPodcastHandlers(): void {
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "podcast:browseDownloadDir",
     safe("podcast:browseDownloadDir", async () => {
-      const result = await dialog.showOpenDialog({
-        properties: ["openDirectory", "createDirectory"],
+      return getHostDialogs().pickFolder({
         title: "Select Podcast Download Folder",
         defaultPath: getDefaultPodcastsRoot(),
       });
-      if (result.canceled || result.filePaths.length === 0) return null;
-      return result.filePaths[0];
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "podcast:setDeviceAutoPodcasts",
     safe("podcast:setDeviceAutoPodcasts", async (_event, deviceId: number, enabled: boolean) => {
       getDevicesCore().updateDevice(deviceId, { autoPodcastsEnabled: enabled });

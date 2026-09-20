@@ -1,7 +1,7 @@
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
-import type { IpcMainInvokeEvent } from "electron";
+import type { HandlerContext } from "../host/bridge";
 import { pathMatchesAllowedPrefix } from "../path-allowlist";
 import { Library } from "../library/library";
 import { DevicesCore } from "../devices/devices-core";
@@ -46,7 +46,7 @@ export function getDevicesCore(): DevicesCore {
 // safe() wrapper + error sanitization
 // ---------------------------------------------------------------------------
 
-export type Handler = (event: IpcMainInvokeEvent, ...args: any[]) => Promise<unknown>;
+export type Handler = (event: HandlerContext, ...args: any[]) => Promise<unknown>;
 
 /**
  * Removes absolute file-system paths from an error message before it is sent

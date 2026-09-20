@@ -1,4 +1,4 @@
-import { ipcMain, type WebContents } from "electron";
+import { handle as bridgeHandle, type HandlerSender } from "../host/bridge";
 import { safe, getLibrary, getPlaylistCore, validateFolderPath } from "./common";
 import { LibraryScanner } from "../library/library-scanner";
 import { getHarmonicPrefs, getRatingPrefs } from "../utils/prefs";
@@ -35,7 +35,7 @@ function reconcilePlaylistsAfterLibraryChange(context: string) {
 }
 
 export function registerLibraryHandlers(): void {
-  ipcMain.handle(
+  bridgeHandle(
     "library:scan",
     safe("library:scan", async (event, payload: { folders: Array<{ name: string; path: string; contentType: string }> }) => {
       const lib = getLibrary();
@@ -140,7 +140,7 @@ export function registerLibraryHandlers(): void {
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "scan:cancel",
     safe("scan:cancel", async () => {
       if (activeScanAbort) {
@@ -152,29 +152,29 @@ export function registerLibraryHandlers(): void {
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "library:getTracks",
     safe("library:getTracks", async (_event, filter?: { contentType?: "music" | "podcast" | "audiobook"; limit?: number; offset?: number }) => {
       return getLibrary().getTracks(filter);
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "library:getStats",
     safe("library:getStats", async () => getLibrary().getStats())
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "activity:getRecent",
     safe("activity:getRecent", async () => getRecentActivity(getLibrary().getConnection()))
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "library:getFolders",
     safe("library:getFolders", async () => getLibrary().getLibraryFolders())
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "library:addFolder",
     safe("library:addFolder", async (_event, folder: { name: string; path: string; contentType: "music" | "podcast" | "audiobook" }) => {
       const validated = validateFolderPath(folder.path);
@@ -193,7 +193,7 @@ export function registerLibraryHandlers(): void {
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "library:removeFolder",
     safe("library:removeFolder", async (_event, folderId: number) => {
       const ok = getLibrary().removeLibraryFolder(folderId, true);
@@ -202,19 +202,19 @@ export function registerLibraryHandlers(): void {
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "library:clearContentHashes",
     safe("library:clearContentHashes", async () => getLibrary().clearContentHashes())
   );
 
   // ---- Shadow Libraries -------------------------------------------------
 
-  ipcMain.handle(
+  bridgeHandle(
     "shadow:getAll",
     safe("shadow:getAll", async () => getLibrary().getShadowLibraries())
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "shadow:create",
     safe("shadow:create", async (
       event,
@@ -270,14 +270,14 @@ export function registerLibraryHandlers(): void {
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "shadow:delete",
     safe("shadow:delete", async (_event, shadowLibId: number, keepFilesOnDisk?: boolean) => {
       return getLibrary().deleteShadowLibrary(shadowLibId, !keepFilesOnDisk);
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "shadow:pruneOrphans",
     safe("shadow:pruneOrphans", async (_event, shadowLibId: number) => {
       const lib = getLibrary();
@@ -294,7 +294,7 @@ export function registerLibraryHandlers(): void {
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "shadow:rebuild",
     safe("shadow:rebuild", async (event, shadowLibId: number) => {
       const lib = getLibrary();
@@ -331,7 +331,7 @@ export function registerLibraryHandlers(): void {
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "shadow:cancelBuild",
     safe("shadow:cancelBuild", async () => {
       if (activeShadowBuildAbort) {
@@ -343,7 +343,7 @@ export function registerLibraryHandlers(): void {
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "shadow:resumeBuild",
     safe("shadow:resumeBuild", async (event, shadowLibId: number) => {
       const lib = getLibrary();
@@ -386,7 +386,7 @@ export function registerLibraryHandlers(): void {
  * tracks are skipped. Progress is streamed to the given window's webContents.
  */
 export async function resumeInterruptedShadowBuilds(
-  webContents: WebContents
+  webContents: HandlerSender
 ): Promise<void> {
   const lib = getLibrary();
   lib.markInterruptedShadowBuildsPaused();

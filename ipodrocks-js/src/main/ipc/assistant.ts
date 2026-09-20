@@ -1,4 +1,5 @@
-import { app, ipcMain } from "electron";
+import { handle as bridgeHandle } from "../host/bridge";
+import { getUserDataPath } from "../host";
 import { safe, getLibrary, getPlaylistCore, getDevicesCore } from "./common";
 import { checkRateLimit } from "../llm/openRouterClient";
 import {
@@ -34,7 +35,7 @@ function buildToolContext(db: import("better-sqlite3").Database): AiToolContext 
 }
 
 export function registerAssistantHandlers(): void {
-  ipcMain.handle(
+  bridgeHandle(
     "assistant:chat",
     safe("assistant:chat", async (_event, userMessage: string) => {
       // F4: Rate limit LLM calls
@@ -49,7 +50,7 @@ export function registerAssistantHandlers(): void {
         ...recentHistory,
         { role: "user" as const, content: userMessage },
       ];
-      const userData = app.getPath("userData");
+      const userData = getUserDataPath();
       const autoPodcastSettings = getAutoPodcastSettings();
       const appPaths: AppPaths = {
         userData,
@@ -81,7 +82,7 @@ export function registerAssistantHandlers(): void {
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "assistant:confirmAction",
     safe("assistant:confirmAction", async (_event, action: PendingAction) => {
       if (!checkRateLimit("assistant:chat"))
@@ -106,7 +107,7 @@ export function registerAssistantHandlers(): void {
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "assistant:history:load",
     safe("assistant:history:load", async () => {
       const db = getLibrary().getConnection();
@@ -114,7 +115,7 @@ export function registerAssistantHandlers(): void {
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "assistant:history:clear",
     safe("assistant:history:clear", async () => {
       const db = getLibrary().getConnection();

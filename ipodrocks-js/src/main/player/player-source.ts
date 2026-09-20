@@ -2,7 +2,7 @@ import * as crypto from "crypto";
 import * as fs from "fs";
 import * as path from "path";
 import { spawn, ChildProcess } from "child_process";
-import { app } from "electron";
+import { getTempPath } from "../host";
 import { getFfmpegPath } from "../utils/ffmpeg-path";
 import { getEncoderEnv } from "../utils/encoder-env";
 import { AUDIO_EXTENSIONS } from "../utils/audio-extensions";
@@ -16,7 +16,7 @@ let activeFfmpegProcess: ChildProcess | null = null;
 let activeTempFile: string | null = null;
 
 function getTempDir(): string {
-  return path.join(app.getPath("temp"), "ipodrocks-player");
+  return path.join(getTempPath(), "ipodrocks-player");
 }
 
 export function getPlayerTempDir(): string {

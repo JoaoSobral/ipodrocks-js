@@ -1,6 +1,6 @@
 import * as fs from "fs";
 import * as path from "path";
-import { ipcMain } from "electron";
+import { handle as bridgeHandle } from "../host/bridge";
 import {
   safe,
   getLibrary,
@@ -31,14 +31,14 @@ import { invalidateAssistantCache } from "../assistant/assistantChat";
 import type { AddDeviceConfig } from "../../shared/types";
 
 export function registerDeviceHandlers(): void {
-  ipcMain.handle(
+  bridgeHandle(
     "device:list",
     safe("device:list", async () => {
       return getDevicesCore().getDevices().map((d) => d.profile);
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "device:add",
     safe("device:add", async (_event, config: AddDeviceConfig) => {
       const device = getDevicesCore().addDevice(config);
@@ -52,7 +52,7 @@ export function registerDeviceHandlers(): void {
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "device:listUsb",
     safe("device:listUsb", async () => {
       // Force a fresh enumeration: the user opens this dropdown precisely when
@@ -61,7 +61,7 @@ export function registerDeviceHandlers(): void {
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "device:getModels",
     safe("device:getModels", async () => {
       return getLibrary().getConnection()
@@ -70,7 +70,7 @@ export function registerDeviceHandlers(): void {
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "device:getCodecConfigs",
     safe("device:getCodecConfigs", async () => {
       return getLibrary().getConnection().prepare(`
@@ -83,21 +83,21 @@ export function registerDeviceHandlers(): void {
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "device:setDefault",
     safe("device:setDefault", async (_event, deviceId: number | null) => {
       return getDevicesCore().setDefaultDevice(deviceId);
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "device:getDefault",
     safe("device:getDefault", async () => {
       return getDevicesCore().getDefaultDeviceId();
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "device:getSyncedPaths",
     safe("device:getSyncedPaths", async (_event, deviceId: number) => {
       const rows = getLibrary().getConnection()
@@ -107,7 +107,7 @@ export function registerDeviceHandlers(): void {
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "device:update",
     safe("device:update", async (_event, deviceId: number, updates: Record<string, unknown>) => {
       const ok = getDevicesCore().updateDevice(deviceId, updates);
@@ -123,7 +123,7 @@ export function registerDeviceHandlers(): void {
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "device:remove",
     safe("device:remove", async (_event, deviceId: number) => {
       const result = getDevicesCore().deleteDevice(deviceId);
@@ -132,7 +132,7 @@ export function registerDeviceHandlers(): void {
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "device:ping",
     safe("device:ping", async (_event, deviceId: number) => {
       const device = getDevicesCore().getDeviceById(deviceId);
@@ -142,7 +142,7 @@ export function registerDeviceHandlers(): void {
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "device:eject",
     safe("device:eject", async (_event, deviceId: number) => {
       if (!isEjectSupported()) {
@@ -181,7 +181,7 @@ export function registerDeviceHandlers(): void {
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "device:check",
     safe("device:check", async (_event, deviceId: number) => {
       const device = getDevicesCore().getDeviceById(deviceId);
@@ -442,7 +442,7 @@ export function registerDeviceHandlers(): void {
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "device:readRuntimeData",
     safe("device:readRuntimeData", async (_event, deviceId: number) => {
       const device = getDevicesCore().getDeviceById(deviceId);

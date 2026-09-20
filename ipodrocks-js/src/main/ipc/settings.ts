@@ -1,4 +1,4 @@
-import { ipcMain } from "electron";
+import { handle as bridgeHandle } from "../host/bridge";
 import { safe } from "./common";
 import {
   getOpenRouterConfig,
@@ -13,7 +13,7 @@ import {
 import type { OpenRouterConfig } from "../../shared/types";
 
 export function registerSettingsHandlers(): void {
-  ipcMain.handle(
+  bridgeHandle(
     "settings:getOpenRouterConfig",
     safe("settings:getOpenRouterConfig", async () => {
       const cfg = getOpenRouterConfig();
@@ -29,7 +29,7 @@ export function registerSettingsHandlers(): void {
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "settings:setOpenRouterConfig",
     safe("settings:setOpenRouterConfig", async (_event, config: OpenRouterConfig | null) => {
       if (config && config.apiKey?.includes("•")) {
@@ -43,7 +43,7 @@ export function registerSettingsHandlers(): void {
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "settings:testOpenRouter",
     safe("settings:testOpenRouter", async (_event, configOverride?: { apiKey: string; model: string } | null) => {
       // If the renderer passed a masked key, ignore it and use the stored key.
@@ -61,24 +61,24 @@ export function registerSettingsHandlers(): void {
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "settings:getHarmonicPrefs",
     safe("settings:getHarmonicPrefs", async () => getHarmonicPrefs())
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "settings:setHarmonicPrefs",
     safe("settings:setHarmonicPrefs", async (_event, prefs: HarmonicPrefs) => {
       setHarmonicPrefs(prefs);
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "settings:getRatingPrefs",
     safe("settings:getRatingPrefs", async () => getRatingPrefs())
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "settings:setRatingPrefs",
     safe("settings:setRatingPrefs", async (_event, prefs: RatingPrefs) => {
       setRatingPrefs(prefs);

@@ -1,6 +1,9 @@
 import { app, BrowserWindow, Menu, MenuItem } from "electron";
 import * as fs from "fs";
 import * as path from "path";
+import { setHost } from "./host";
+import { createElectronHost } from "./host/electron-host";
+import { attachElectronTransport } from "./host/electron-bridge";
 import { registerIpcHandlers, getLibraryDb, resumeInterruptedShadowBuilds } from "./ipc";
 import { openExternalUrl } from "./utils/external-url";
 import { registerMediaScheme, registerMediaProtocol } from "./player/media-protocol";
@@ -14,6 +17,15 @@ import { backfillMissingCovers } from "./audiobooks/audiobook-cover";
 if (process.platform === "darwin") {
   app.commandLine.appendSwitch("disable-gpu-compositing");
 }
+
+// Register the desktop host before anything reads a path or a secret. This is
+// the only place `electron-host` is imported: everything under `src/main/`
+// reaches Electron through the adapter so the same code can run headless.
+setHost(createElectronHost());
+
+// Forward the shared handler registry to ipcMain. A web server started from
+// Settings attaches its own transport to the same registry, side by side.
+attachElectronTransport();
 
 registerMediaScheme();
 

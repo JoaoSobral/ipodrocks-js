@@ -1,16 +1,16 @@
-import { ipcMain } from "electron";
+import { handle as bridgeHandle } from "../host/bridge";
 import { safe } from "./common";
 import { prepareTrack, cancelPrepare } from "../player/player-source";
 import type { Track } from "../../shared/types";
 
 export function registerPlayerHandlers(): void {
-  ipcMain.handle(
+  bridgeHandle(
     "player:prepare",
     safe("player:prepare", async (_event, track: Track, forceTranscode?: boolean) => {
       return prepareTrack(track, forceTranscode ?? false);
     })
   );
-  ipcMain.handle(
+  bridgeHandle(
     "player:cancel",
     safe("player:cancel", async () => {
       await cancelPrepare();

@@ -1,9 +1,9 @@
 import * as fs from "fs";
 import * as path from "path";
-import { app } from "electron";
+import { getUserDataPath } from "../host";
 
 export function getAudiobooksRoot(): string {
-  return path.join(app.getPath("userData"), "auto-audiobooks");
+  return path.join(getUserDataPath(), "auto-audiobooks");
 }
 
 export function getChapterDir(librivoxId: number): string {
