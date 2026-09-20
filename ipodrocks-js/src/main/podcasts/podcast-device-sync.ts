@@ -176,9 +176,25 @@ export async function syncPodcastsToDevice(
  * Callers are responsible for checking `isDeviceOnline` before
  * attempting to sync — this function does not filter by online status.
  */
+/**
+ * The devices the scheduler may push to.
+ *
+ * **Remote players are excluded at the source**, not at each call site. The
+ * scheduler is a timer in the server process: it wakes, decides a device is
+ * due, and syncs. A remote player is connected only while somebody has a tab
+ * open holding it, so a schedule aimed at one either does nothing or starts
+ * pushing gigabytes through a browser nobody is watching, over a link nobody
+ * chose for it. `podcast:setDeviceAutoPodcasts` refuses to turn the flag on for
+ * one, but a device could have been flipped to remote... except it cannot —
+ * `transport` is absent from `ALLOWED_UPDATE_FIELDS` on purpose. This filter is
+ * therefore belt and braces, and cheap enough to keep either way.
+ */
 export function getAutoPodcastDeviceIds(db: Database.Database): number[] {
   const rows = db
-    .prepare("SELECT id FROM devices WHERE auto_podcasts_enabled = 1")
+    .prepare(
+      "SELECT id FROM devices WHERE auto_podcasts_enabled = 1 " +
+        "AND (transport IS NULL OR transport != 'web')"
+    )
     .all() as { id: number }[];
   return rows.map((r) => r.id);
 }

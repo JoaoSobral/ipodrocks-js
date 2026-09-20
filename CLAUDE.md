@@ -738,6 +738,56 @@ every line of the File System Access path runs with no picker. Only
 `showDirectoryPicker()` itself is manual-verification, the way the `mpcenc` skip
 already is.
 
+## Hazard: a player is on one machine, and the UI is not the guard
+
+Web mode puts the library on the server and the *player* in a browser tab. A
+device's `transport` is therefore not a preference but a fact about which
+machine the thing is plugged into, and each client can drive exactly one kind:
+a `web` ("remote") player exists only while a tab holds its directory handle, a
+`local` one is on the sync engine's own host.
+
+Both mismatches used to be expensive. A web client reaching a server-attached
+device ran a whole sync against the wrong filesystem; the desktop window
+reaching a browser-held one died inside `DetachedDeviceFs` part-way through,
+with an error naming the filesystem rather than the reason.
+
+- **`deviceLocalityBlock()` (`src/shared/device-locality.ts`) is the one copy**,
+  in `src/shared/` because both sides need the same answer. The renderer greys
+  the control out; `blockWrongLocality()` in `ipc/common.ts` refuses the call.
+  A disabled button is a courtesy — `sync:start` and `device:check` are the
+  guard.
+- **`ctx.sessionId` is the whole discriminator.** The web transport sets it,
+  Electron IPC does not, so "which client is this" comes from the transport that
+  carried the call and never from anything the client can claim.
+- **A missing `transport` reads as `local`.** Every row written before the
+  column existed. Reading it as remote would lock the desktop app out of its own
+  devices on upgrade. Pinned.
+- **Listed, not hidden.** A device from the wrong side stays in both lists,
+  renameable and removable, with a line saying why the rest is off. A device
+  that vanishes from the picker reads as "iPodRocks lost my iPod".
+- **Auto Podcasts is refused on a remote player** (`autoPodcastBlock()`), and
+  `getAutoPodcastDeviceIds()` excludes them in SQL. The scheduler is a timer in
+  the server process: aimed at a remote player it either does nothing or pushes
+  gigabytes through a browser nobody is watching. Turning the flag *off* is
+  never refused — a device that should not have had it must be able to give it
+  up.
+- **In a browser, `+ Add Device` always adds a remote player.** There is no
+  mount path and no Browse button, because `pickFolder()` browses the *server's*
+  filesystem: offering it here is what sent a user hunting for their iPod on the
+  server's disk.
+- **Browser support is feature-detected, never sniffed.**
+  `supportsDirectoryPicker()` tests for `showDirectoryPicker`. A UA allowlist
+  would have to name Chrome, Edge, Brave, Vivaldi, Arc, Opera and whatever ships
+  next, while still admitting a Firefox fork that spoofs Chrome — and Firefox
+  forks (Zen, LibreWolf, Floorp) are exactly the case that turned up in the
+  field. The Add Device form says so before the form is filled in, not at the
+  picker.
+
+Pinned in `src/__tests__/regressions/device-locality.test.ts` (both directions,
+including the Electron one the web project structurally cannot reach) and
+`tests/e2e/web-device-locality.test.ts` (over a real daemon, with a control
+showing the refusal is not blanket).
+
 ## Hazard: one global is one client
 
 `ipc/sync.ts` keys its abort controllers by device (`activeSyncAborts:

@@ -72,7 +72,9 @@ share a library rather than quietly starting two.
 
 There is a container image, a `docker-compose.yml`, a systemd unit and a
 Cloudflare Tunnel walkthrough for this — see
-[Deploying the Server](/guide/server-deployment).
+[Deploying the Server](/guide/server-deployment), or
+[Setting up the server, end to end](/guide/server-setup) for the whole path
+including provider sign-in.
 
 ## Putting it on the internet
 

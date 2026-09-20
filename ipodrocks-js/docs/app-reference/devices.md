@@ -45,34 +45,58 @@ aimed at the empty folder macOS sometimes leaves behind after a previous eject.
 
 Rocksy can eject for you too, via `device_eject` — it confirms first.
 
-## Devices in a browser
+## Remote players (devices in a browser)
 
 When you reach iPodRocks through the [web server](./settings-web-server.md), the
 player does **not** have to be plugged into the machine holding your library. It
-is plugged into the machine you are sitting at, and the browser hands iPodRocks
-access to it.
+is plugged into the machine you are sitting at, and your browser hands iPodRocks
+access to it. That is a **remote player**.
 
-Add the device as usual, and tick **This player is plugged into my computer** in
-the Add form. The Mount Path field disappears — there is no path to type, because
-the folder is not on the server. The device card then shows a **Connect this
-player** button; pressing it opens your browser's own folder picker. Choose the
-root of the player, the folder holding `Music` and `.rockbox`, and grant access.
+So there are two kinds of device, and which one a device is is a fact about
+where the thing is physically plugged in, not a preference:
 
-From then on that tab *is* the device: every file the sync writes and every
-listing it reads travels server → browser → player.
+| | Local player | Remote player |
+|---|---|---|
+| Plugged into | the machine running iPodRocks | the machine running your browser |
+| Added from | the desktop app | the browser |
+| Mount path | a folder on that machine | none — you pick the folder in your browser |
+| Synced by | the desktop app | that browser tab |
+| Auto Podcasts | yes | no |
+| Eject from iPodRocks | macOS/Linux | no — use your own file manager |
 
-What to expect, and why:
+**Each one is only usable from its own side.** In the browser, a player attached
+to the server is listed but greyed out, with a line saying why; in the desktop
+app, a remote player is listed but greyed out the same way. Both are still
+yours: you can rename them, change their settings and remove them from either
+side. Only the things that touch the player's filesystem — Check Device, Sync,
+Eject — are refused, and they are refused by the app itself, not just hidden
+from the buttons.
 
-- **The checkbox only appears in the browser, and only when adding.** In the
-  desktop app the answer is always "the server's own machine", and an existing
-  device cannot be switched between the two — doing so mid-sync would point the
-  copy at the wrong filesystem.
-- **It needs Chrome, Edge or another Chromium browser, over HTTPS.** The File
-  System Access API exists nowhere else — Firefox and Safari, and iOS entirely,
-  are out — and no browser lets a page touch a folder on an insecure origin. A
-  Cloudflare Tunnel is the easiest way to get a real HTTPS address; see
+### Adding one
+
+In the browser, **+ Add Device** always adds a remote player. There is no mount
+path to type and no Browse button, because there is no folder on the server to
+point at — the picker you want is your own browser's, and it comes later.
+
+Fill in the name and model, save, then press **Connect this player** on the
+device's card. Your browser opens its own folder picker; choose the root of the
+player — the folder holding `Music` and `.rockbox` — and grant access. From then
+on that tab *is* the device.
+
+### What to expect, and why
+
+- **It needs Chrome, Edge or another Chromium browser, on a desktop, over
+  HTTPS.** Granting a page access to a folder needs the File System Access API,
+  which Firefox and Safari do not implement and iOS does not have at all. (A
+  Firefox-derived browser such as Zen, LibreWolf or Floorp is Firefox for this
+  purpose and will not work.) iPodRocks checks for the API itself rather than
+  sniffing the browser's name, so a Chromium browser it has never heard of works
+  and a Firefox fork claiming to be Chrome does not. If yours cannot do it, the
+  Add Device form says so before you fill it in.
+- **No browser will do it over plain HTTP.** You need a real HTTPS address; a
+  Cloudflare Tunnel is the easiest way to get one — see
   [Deploying the Server](/guide/server-deployment).
-- **The tab has to stay open.** Close it and the device goes offline. Next time
+- **The tab has to stay open.** Close it and the player goes offline. Next time
   you press Connect again, because a browser deliberately does not let a page
   keep silent access to your disk across visits.
 - **Only one tab at a time.** Opening the same player in a second tab detaches
@@ -81,16 +105,20 @@ What to expect, and why:
 - **If the folder opens read-only**, the card says so and nothing is written.
   Disconnect and connect again, granting write access this time.
 - **Every byte crosses the network twice.** A first full sync of a large library
-  over a slow link takes as long as that implies, and the card says so before you
-  start. Transcode once into a [shadow library](./library.md) on the server and
-  sync a selection rather than everything; a device pointed at a shadow copies
-  files as they already are.
-- **Eject is greyed out**, and hovering it says why: the volume belongs to your
-  computer, not the server, so nothing iPodRocks runs can unmount it. Use your
-  own file manager's eject when the sync has finished.
+  over a slow link takes as long as that implies, and the card says so before
+  you start. Transcode once into a [shadow library](./library.md) on the server
+  and sync a selection rather than everything; a player pointed at a shadow
+  copies files as they already are.
+- **Auto Podcasts is unavailable**, and the checkbox says why. The schedule is a
+  timer in the server, and a remote player is connected only while its tab is
+  open — so it would either do nothing or start pushing gigabytes through a
+  browser nobody is watching. Episodes still download on schedule; they reach
+  the player on your next sync.
+- **Eject is greyed out.** The volume belongs to your computer, not the server,
+  so nothing iPodRocks runs can unmount it. Use your own file manager.
 - **The USB Device dropdown is empty**, and is meant to be. That list is the
   *server's* USB bus, which says nothing about the player in your hand.
-- **Modification times are not set on the device.** The File System Access API
+- **Modification times are not set on the player.** The File System Access API
   cannot set them, so the sync compares file sizes instead — which it already
   tried first. iPodRocks also measures the difference between your browser's
   clock and the server's and corrects for it, because a clock a few seconds out

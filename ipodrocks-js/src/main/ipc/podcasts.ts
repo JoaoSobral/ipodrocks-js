@@ -1,6 +1,7 @@
 import { handle as bridgeHandle } from "../host/bridge";
 import { getHostDialogs } from "../host";
 import { safe, getLibrary, getDevicesCore } from "./common";
+import { autoPodcastBlock } from "../../shared/device-locality";
 import { searchPodcasts } from "../podcasts/podcast-index-client";
 import {
   listSubscriptions,
@@ -222,6 +223,12 @@ export function registerPodcastHandlers(): void {
   bridgeHandle(
     "podcast:setDeviceAutoPodcasts",
     safe("podcast:setDeviceAutoPodcasts", async (_event, deviceId: number, enabled: boolean) => {
+      const device = getDevicesCore().getDeviceById(deviceId);
+      if (!device) return { error: `Device ${deviceId} not found` };
+      // Turning it *off* is always allowed — a device that should not have had
+      // it must be able to give it up, whatever it is.
+      const blocked = enabled ? autoPodcastBlock(device.profile.transport) : null;
+      if (blocked) return { error: blocked };
       getDevicesCore().updateDevice(deviceId, { autoPodcastsEnabled: enabled });
       return undefined;
     })

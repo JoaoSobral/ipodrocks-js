@@ -14,9 +14,15 @@
 
 - **There is a container image, a compose file and a systemd unit for it.** Along with a deployment guide covering Docker, Cloudflare Tunnel and running it as a service, so putting iPodRocks on a NAS or a home server is a page to follow rather than a puzzle to solve. The image installs `mpcenc` too, which nothing bundles — without it Musepack shadow libraries are unavailable, and the server now says so at startup instead of failing at the first track.
 
+- **Remote players are their own kind of device.** In a browser, **+ Add Device** adds a player plugged into *your* machine — no mount path to type, because you pick the folder with your own browser's picker. A player belongs to exactly one machine and iPodRocks no longer pretends otherwise: a server-attached player is listed but greyed out in the browser, a remote player is listed but greyed out in the desktop app, and either can still be renamed, reconfigured or removed from either side. Auto Podcasts is unavailable for a remote player, and says why — the schedule runs on the server, and a remote player is only connected while its browser tab is open.
+
 - **Ask Rocksy who can reach your server.** "Who can sign in to my server?", "is anyone connected right now?", "give my partner an account", "cut off access for that old account", "sign every browser out" — Rocksy reads and edits the allowlist and the live sessions, asking you to confirm before anything that grants or removes access. These are **owner-only**: asked by anyone else signed in to your server, Rocksy says so and does nothing. It will not read a claim token or a password out into the chat either.
 
 - **Built to sit behind Cloudflare Tunnel.** The recommended setup opens no inbound port at all: the server listens only on the local machine and `cloudflared` reaches out to Cloudflare, which gives you an HTTPS address and, if you want it, a second front door in Cloudflare Access that has to be passed before a request ever arrives. Any other reverse proxy works too, and you can hand the server your own certificate instead.
+
+### Fixes
+
+- **A short sync no longer reports "Nothing to sync — device up to date." over work it just did.** The progress modal stopped listening the moment `sync:start` returned, and on a sync of a few files the result reliably arrives before the per-file progress it is reporting on — so the modal dropped every copy event and then described the sync as a no-op. It now listens for as long as it is open and reconciles what it saw with what the sync itself reported.
 
 ### Notes
 

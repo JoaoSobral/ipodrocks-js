@@ -6,6 +6,8 @@ import { InfoTooltip } from "../common/InfoTooltip";
 import { Modal } from "../common/Modal";
 import { DeviceStatusCard } from "../common/DeviceStatusCard";
 import { useDeviceStore } from "../../stores/device-store";
+import { isWebMode } from "../../ipc/web-transport";
+import { deviceLocalityBlock } from "@shared/device-locality";
 import { useUIStore } from "../../stores/ui-store";
 import {
   getTracks,
@@ -530,6 +532,15 @@ export function SyncPanel() {
       if (!deviceId || !selectedDevice) return;
       setPrecheckError(null);
 
+      // A player is plugged into one machine. `sync:start` refuses this too —
+      // that is the guard; this is so the user reads the reason here rather
+      // than after a round trip.
+      const wrongMachine = deviceLocalityBlock(selectedDevice.transport, isWebMode());
+      if (wrongMachine) {
+        setPrecheckError(wrongMachine);
+        return;
+      }
+
       try {
         if (
           (selectedDevice.sourceLibraryType ?? "primary") === "shadow" &&
@@ -632,7 +643,14 @@ export function SyncPanel() {
           label="Target Device"
           value={String(deviceId)}
           onChange={(v) => setDeviceId(Number(v))}
-          options={deviceList.map((d) => ({ value: String(d?.id ?? ""), label: d?.name ?? "" }))}
+          options={deviceList.map((d) => ({
+            value: String(d?.id ?? ""),
+            // Listed, not hidden: a device that vanishes from the picker reads
+            // as "iPodRocks lost my iPod". Picking one explains itself.
+            label: deviceLocalityBlock(d?.transport, isWebMode())
+              ? `${d?.name ?? ""} — unavailable here`
+              : d?.name ?? "",
+          }))}
         />
         {transferModeLabel && (
           <div

@@ -2,6 +2,7 @@ import * as path from "path";
 import { handle as bridgeHandle } from "../host/bridge";
 import {
   safe,
+  blockWrongLocality,
   getLibrary,
   getDevicesCore,
   getPlaylistCore,
@@ -77,6 +78,14 @@ export function registerSyncHandlers(): void {
       const dc = getDevicesCore();
       const device = dc.getDeviceById(opts.deviceId);
       if (!device) return { error: `Device ${opts.deviceId} not found` };
+      // A player is plugged into exactly one machine. Refused here and not
+      // only in the UI, because a greyed-out button is a courtesy and this is
+      // the guard: a web client reaching a server-attached device would
+      // otherwise run a whole sync against the wrong filesystem, and the
+      // desktop window reaching a browser-held one dies inside
+      // `DetachedDeviceFs` with an error that names neither.
+      const wrongMachine = blockWrongLocality(event, device.profile.transport);
+      if (wrongMachine) return wrongMachine;
 
       saveDeviceSyncPreferences(lib.getConnection(), opts.deviceId, {
         syncType: opts.syncType,

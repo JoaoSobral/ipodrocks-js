@@ -2,6 +2,8 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import type { HandlerContext } from "../host/bridge";
+import type { DeviceTransport } from "../../shared/types";
+import { deviceLocalityBlock } from "../../shared/device-locality";
 import { pathMatchesAllowedPrefix } from "../path-allowlist";
 import { Library } from "../library/library";
 import { DevicesCore } from "../devices/devices-core";
@@ -176,4 +178,26 @@ export function remapTrackMapToShadow(
     }
   }
   return remapped;
+}
+
+// ---------------------------------------------------------------------------
+// Device locality
+// ---------------------------------------------------------------------------
+
+/**
+ * Refuses an operation on a device this caller's machine cannot reach.
+ *
+ * `ctx.sessionId` is the whole test: the web transport sets it, Electron IPC
+ * does not. So "am I the browser or the desktop window" needs no new plumbing
+ * and no client-supplied claim — the transport that carried the call answers
+ * it, which is the only source that cannot be lied to.
+ *
+ * Returns the `{ error }` a handler should return, or null to proceed.
+ */
+export function blockWrongLocality(
+  ctx: HandlerContext,
+  transport: DeviceTransport | undefined
+): { error: string } | null {
+  const reason = deviceLocalityBlock(transport, ctx.sessionId !== undefined);
+  return reason ? { error: reason } : null;
 }

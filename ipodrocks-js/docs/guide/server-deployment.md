@@ -25,6 +25,11 @@ If you only want the desktop app to serve a browser on the same LAN, you do not
 need any of this: turn on **Settings → Web Server**. This page is about the
 standalone daemon.
 
+**Looking for the whole path from nothing to a syncing iPod** — including
+setting up Google, GitHub or Facebook sign-in? That is
+[Setting up the server, end to end](/guide/server-setup). This page is the
+reference for the deployment itself.
+
 ## Requirements
 
 Node 22 or newer, and a checkout built with `npm run build`. That is all — the

@@ -132,6 +132,13 @@ If you really like iPodRocks and want to keep it caffeinated, you can buy me a c
 - **Rockbox-compatible album art** — Generates a single baseline-JPEG `cover.jpg` per album folder, resized to a per-device maximum (default 300 px so iPods stay responsive), so artwork loads reliably on Rockbox. Uses folder art or embedded artwork as the source; no extra software required
 - Live progress feedback
 
+### Web server & remote players
+- **The whole app in a browser** — Turn on **Settings → Web Server** and iPodRocks serves its interface over HTTP: same library, same database, same devices, sync, playlists, ratings and Rocksy. Not a companion view — it is the app.
+- **Your iPod does not have to be on the same machine as your library** — The server keeps the library, the database and the encoders; the *player* is plugged into whatever laptop you are sitting at. Your browser hands iPodRocks the player's folder and every file travels server → browser → device. Needs Chrome, Edge or another Chromium browser over HTTPS.
+- **Runs headless** — A standalone daemon with no Electron at all, so the machine holding your library needs no screen and no login session. Ships with a `Dockerfile`, a `docker-compose.yml` (with a `cloudflared` sidecar) and a systemd unit.
+- **Sign in with Google, GitHub, Facebook or a password** — and **signing in is not the same as being let in**: only accounts on an allowlist you control reach your library, however valid their Google account. The first person to arrive claims the server with a one-time token printed to its log.
+- **Built for Cloudflare Tunnel** — The recommended shape opens no inbound port at all. Cloudflare Access is verified at the origin, not merely trusted.
+
 ### More
 - **M3U8 export** — Playlists for any player
 - **Dark & light themes** — Gmail-like light mode
@@ -185,6 +192,86 @@ Required only if you use Musepack (MPC) as a codec for devices or shadow librari
 | **Windows** | Download from [musepack.net](https://www.musepack.net/), add `mpcenc.exe` to PATH |
 
 If `mpcenc` is not on your PATH, iPodRocks will prompt when you select Musepack. You can still use other codecs (MP3, AAC, Opus, etc.) without it.
+
+---
+
+## Running the server
+
+iPodRocks can serve its whole interface to a browser, so your library can live
+on a machine you never sit at. There are two ways to run it, and they are the
+same server — the same handlers, the same database, the same sync engine.
+
+### From the desktop app
+
+**Settings → Web Server → Run the web server.** Set the bind address (`127.0.0.1`
+behind a tunnel, `0.0.0.0` for your LAN), the port, and — once you have a real
+address — the public URL. The window and a browser can use the library at the
+same time.
+
+### As a headless daemon
+
+No Electron, no screen, no login session. Everything is configured by
+environment variable, which is container-native and needs no flag parsing.
+
+```bash
+cd ipodrocks-js
+npm ci --ignore-scripts     # skips Electron's binary download; nothing else needs it
+npm run build
+
+IPODROCKS_DATA_DIR=/srv/ipodrocks IPODROCKS_SERVER_HOST=127.0.0.1 IPODROCKS_SERVER_PORT=8780 IPODROCKS_SESSION_SECRET="$(openssl rand -base64 48)" npm run server
+```
+
+With Docker:
+
+```bash
+cd ipodrocks-js
+docker build -t ipodrocks-server .
+docker run -d --name ipodrocks   -p 127.0.0.1:8780:8780   -v ipodrocks-data:/data   -v /srv/music:/music:ro   -e IPODROCKS_SESSION_SECRET="$(openssl rand -base64 48)"   ipodrocks-server
+```
+
+Or `docker compose up -d`, adding `--profile tunnel` for a `cloudflared`
+sidecar. A systemd unit is in `ipodrocks-js/deploy/`.
+
+### First run
+
+The server prints a **one-time claim token** to its log (`docker logs
+ipodrocks`, `journalctl -u ipodrocks-server`, or the Settings card). Open the
+server in a browser and sign in with it to become the owner. Every later login
+is checked against an allowlist only the owner can edit — a valid Google login
+by anyone else is refused.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `IPODROCKS_DATA_DIR` | platform user-data dir | Database, prefs, sessions. **Set this in a container.** |
+| `IPODROCKS_SERVER_HOST` / `_PORT` | `127.0.0.1` / `8780` | Where it listens. |
+| `IPODROCKS_PUBLIC_URL` | — | Externally visible origin. Required for any social sign-in. |
+| `IPODROCKS_SESSION_SECRET` | random per boot | Set it, or every restart logs everyone out. |
+| `IPODROCKS_TLS_CERT` / `_KEY` | — | Terminate TLS in the daemon itself. |
+| `IPODROCKS_TRUSTED_PROXIES` | none | Whose `X-Forwarded-*` to believe. A security setting. |
+| `IPODROCKS_<PROVIDER>_CLIENT_ID` / `_SECRET` | — | Google / GitHub / Facebook sign-in. |
+
+Full walkthrough, including setting up each sign-in provider end to end:
+**[Setting up the server, end to end](https://joaosobral.github.io/ipodrocks-js/guide/server-setup)**.
+Deployment reference (Docker, compose, systemd, Cloudflare):
+**[Deploying the Server](https://joaosobral.github.io/ipodrocks-js/guide/server-deployment)**.
+
+### Remote players
+
+In a browser, **+ Add Device** adds a *remote player*: one plugged into the
+machine you are sitting at rather than the server. There is no mount path to
+type — you pick the folder with your own browser's picker, and that tab holds
+the device for as long as it is open.
+
+A player belongs to exactly one machine, and iPodRocks refuses to pretend
+otherwise: a server-attached player is greyed out in the browser, a remote
+player is greyed out in the desktop app. Both are still listed and removable
+from either side; only Check, Sync and Eject are refused. Auto Podcasts is
+unavailable for a remote player, because the schedule runs on the server and a
+remote player is only connected while its tab is open.
+
+Remote players need **Chrome, Edge or another Chromium browser on a desktop,
+over HTTPS** — Firefox and Safari do not implement the File System Access API,
+and no browser grants folder access on an insecure origin.
 
 ---
 

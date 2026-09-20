@@ -20,6 +20,9 @@ const FEATURES: { icon: string; label: string; description: string }[] = [
   { icon: "🔄", label: "Conversion & codecs", description: "MP3, AAC, Musepack, Opus via FFmpeg." },
   { icon: "⭐", label: "Star ratings", description: "5-star (half-star), synced from Rockbox with 3-way merge." },
   { icon: "📊", label: "Listening stats", description: "Top tracks, artists, and total listening time from device playback history — All Time, This Year, or This Month — right in the Dashboard." },
+  { icon: "🌐", label: "Web server", description: "Serve the whole app to a browser — same library, same database, same everything. Sign in with Google, GitHub, Facebook or a password, and only the accounts you allow get in." },
+  { icon: "🔌", label: "Remote players", description: "Your iPod does not have to be plugged into the machine holding your library. Pick its folder in your browser and sync it from wherever you are sitting." },
+  { icon: "🖥️", label: "Headless daemon", description: "Run the library on a NAS or home server with no screen and no Electron. Ships with a container image, a compose file and a systemd unit." },
 ];
 
 type UpdateState =

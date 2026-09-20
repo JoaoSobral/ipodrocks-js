@@ -36,6 +36,8 @@ import {
 import { MpcUnavailableModal } from "../modals/MpcUnavailableModal";
 import { WebDeviceLink } from "../web/WebDeviceLink";
 import { isWebMode } from "../../ipc/web-transport";
+import { supportsDirectoryPicker } from "../../device";
+import { autoPodcastBlock, deviceLocalityBlock } from "@shared/device-locality";
 import { restoreWebDevices } from "../../device";
 import { formatCodecLabel, formatGb } from "../../utils/format";
 import {
@@ -246,6 +248,11 @@ export function DevicePanel() {
     setName("");
     setModelId(null);
     setMountPath("");
+    // In a browser there is no other kind of device to add. The library is on
+    // the server and the player is on this machine, which is the whole point of
+    // web mode; offering a server mount path here is how you end up browsing
+    // the *server's* disk looking for your iPod.
+    setWebTransport(isWebMode());
     setDefaultCodecConfigId(null);
     setDescription("");
     setIsDefault(false);
@@ -611,6 +618,10 @@ export function DevicePanel() {
               deviceName: d?.name ?? "this device",
               transport: d?.transport,
             });
+            // A player lives on one machine. From the wrong one it is listed
+            // and removable — it is the user's device either way — but nothing
+            // that touches its filesystem is offered.
+            const localityBlock = deviceLocalityBlock(d?.transport, isWebMode());
             return (
               <Card key={d?.id ?? `device-${idx}`}>
                 <div className="flex items-start gap-3 mb-4">
@@ -823,14 +834,24 @@ export function DevicePanel() {
                   </div>
                 )}
 
+                {localityBlock && (
+                  <p className="mb-3 rounded-lg border border-border bg-muted/30 p-2 text-xs text-muted-foreground">
+                    {localityBlock}
+                  </p>
+                )}
+
                 <div className="flex flex-wrap gap-2">
-                  <Button
-                    size="sm"
-                    onClick={() => d?.id != null && handleCheck(d.id)}
-                    disabled={checking.has(d?.id ?? 0)}
-                  >
-                    {checking.has(d?.id ?? 0) ? "Checking…" : "Check Device"}
-                  </Button>
+                  {/* The title lives on the wrapper for the same reason it does
+                      on Eject below: a disabled Button never gets the hover. */}
+                  <span title={localityBlock ?? "Check Device"} className="inline-flex">
+                    <Button
+                      size="sm"
+                      onClick={() => d?.id != null && handleCheck(d.id)}
+                      disabled={checking.has(d?.id ?? 0) || localityBlock !== null}
+                    >
+                      {checking.has(d?.id ?? 0) ? "Checking…" : "Check Device"}
+                    </Button>
+                  </span>
                   {/* The title lives on the wrapper, not the button: `Button`
                       sets `disabled:pointer-events-none`, so a disabled button
                       never receives the hover that would show its own. */}
@@ -901,25 +922,31 @@ export function DevicePanel() {
             hint={formSubmitted && modelId == null ? "Please select a device model" : undefined}
           />
 
-          {/* Where the player is plugged in. Only a question in web mode: in the
-              desktop app the answer is always "this machine". */}
+          {/* Where the player is plugged in.
+              Not a question any more, in either direction. In the desktop app
+              the answer is always "this machine"; in a browser it is always
+              "the machine running the browser", because a player attached to
+              the *server* can only be driven by the app running there. Offering
+              the choice is what sent someone browsing the server's own disk
+              looking for their iPod. */}
           {isWebMode() && editingDeviceId == null && (
-            <label className="flex items-start gap-2 text-sm text-foreground cursor-pointer">
-              <input
-                type="checkbox"
-                className="mt-0.5"
-                checked={webTransport}
-                onChange={(e) => setWebTransport(e.target.checked)}
-              />
-              <span>
-                This player is plugged into <strong>my computer</strong>
-                <span className="block text-xs text-muted-foreground">
-                  You pick its folder in this browser, and every file travels
-                  from the server through this tab onto the player. Leave it
-                  unticked for a player plugged into the server itself.
-                </span>
-              </span>
-            </label>
+            <div className="rounded-lg border border-border bg-muted/30 p-3 text-sm">
+              <p className="font-medium text-foreground">Remote player</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                You pick its folder in this browser, and every file travels from
+                the server through this tab onto the player. A player plugged
+                into the server itself is added from the app running there.
+              </p>
+              {!supportsDirectoryPicker() && (
+                <p className="mt-2 text-xs text-amber-600 dark:text-amber-500">
+                  <strong>This browser cannot hold a player.</strong> Granting a
+                  page access to a folder needs the File System Access API,
+                  which exists only in Chrome, Edge and other Chromium browsers
+                  on a desktop — not Firefox or Safari, and not on iOS. Open
+                  iPodRocks in one of those to add a player.
+                </p>
+              )}
+            </div>
           )}
 
           {/* Mount Path */}
@@ -1139,18 +1166,35 @@ export function DevicePanel() {
                 <InfoTooltip text="When enabled, smart playlists are written to .rockbox/tagnavi_custom.config as live, auto-updating tagtree views instead of frozen .m3u snapshots. Requires Rockbox firmware on the device. Other playlist kinds still write .m3u." />
               </span>
             </label>
-            <label className="flex items-center gap-2.5 cursor-pointer">
+            {/* Auto Podcasts is a timer in the *server* process, so it needs a
+                player the server can reach without anybody present. A remote
+                player is connected only while its tab is open. The main process
+                refuses it too — this only saves the user the round trip. */}
+            <label
+              className={`flex items-center gap-2.5 ${
+                autoPodcastBlock(webTransport ? "web" : "local")
+                  ? "cursor-not-allowed opacity-60"
+                  : "cursor-pointer"
+              }`}
+              title={autoPodcastBlock(webTransport ? "web" : "local") ?? undefined}
+            >
               <input
                 type="checkbox"
                 className={checkboxClass}
-                checked={autoPodcastsEnabled}
+                checked={autoPodcastsEnabled && !webTransport}
+                disabled={autoPodcastBlock(webTransport ? "web" : "local") !== null}
                 onChange={(e) => setAutoPodcastsEnabled(e.target.checked)}
               />
               <span className="text-sm text-foreground flex items-center gap-1">
                 Auto Podcasts
-                <InfoTooltip text="When enabled, new podcast episodes are automatically copied to this device in the background as they are downloaded, independently of any manual sync." />
+                <InfoTooltip text="When enabled, new podcast episodes are automatically copied to this device in the background as they are downloaded, independently of any manual sync. Unavailable for a remote player: the schedule runs on the server, and a remote player is only connected while its browser tab is open." />
               </span>
             </label>
+            {webTransport && (
+              <p className="-mt-1 ml-7 text-xs text-muted-foreground">
+                {autoPodcastBlock("web")}
+              </p>
+            )}
             <label className="flex items-center gap-2.5 cursor-pointer">
               <input
                 type="checkbox"

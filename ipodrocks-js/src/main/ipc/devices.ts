@@ -2,6 +2,7 @@ import * as path from "path";
 import { handle as bridgeHandle } from "../host/bridge";
 import {
   safe,
+  blockWrongLocality,
   getLibrary,
   getPlaylistCore,
   getDevicesCore,
@@ -206,9 +207,11 @@ export function registerDeviceHandlers(): void {
 
   bridgeHandle(
     "device:check",
-    safe("device:check", async (_event, deviceId: number) => {
+    safe("device:check", async (event, deviceId: number) => {
       const device = getDevicesCore().getDeviceById(deviceId);
       if (!device) return { error: `Device ${deviceId} not found` };
+      const wrongMachine = blockWrongLocality(event, device.profile.transport);
+      if (wrongMachine) return wrongMachine;
 
       await refreshUsbSnapshot();
       if (!isDeviceOnline(device.profile)) {
