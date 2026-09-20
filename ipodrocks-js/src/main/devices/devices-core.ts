@@ -1,11 +1,6 @@
 import Database from "better-sqlite3";
-import fs from "fs";
 import path from "path";
-import {
-  AddDeviceConfig,
-  DeviceProfile,
-  DeviceValidation,
-} from "../../shared/types";
+import { AddDeviceConfig, DeviceProfile } from "../../shared/types";
 import { Device } from "./device";
 import { sanitizeMountPath } from "../path-allowlist";
 import { normalizeUsbId } from "./usb-devices";
@@ -419,52 +414,6 @@ export class DevicesCore {
       )
       .run(String(deviceId));
     return true;
-  }
-
-  validateDeviceMount(mountPath: string): DeviceValidation {
-    try {
-      const resolved = path.resolve(mountPath);
-
-      if (!fs.existsSync(resolved)) {
-        return { valid: false, error: `Mount path '${mountPath}' does not exist` };
-      }
-
-      const stat = fs.statSync(resolved);
-      if (!stat.isDirectory()) {
-        return { valid: false, error: `Mount path '${mountPath}' is not a directory` };
-      }
-
-      try {
-        fs.accessSync(resolved, fs.constants.W_OK);
-      } catch {
-        return { valid: false, error: `Mount path '${mountPath}' is not writable` };
-      }
-
-      const foldersCreated: string[] = [];
-      for (const folder of ["Music", "Podcasts", "Audiobooks", "Playlists"]) {
-        const folderPath = path.join(resolved, folder);
-        if (!fs.existsSync(folderPath)) {
-          try {
-            fs.mkdirSync(folderPath, { recursive: true });
-            foldersCreated.push(folder);
-          } catch (e) {
-            return {
-              valid: false,
-              error: `Cannot create folder '${folder}': ${e}`,
-            };
-          }
-        }
-      }
-
-      return {
-        valid: true,
-        error: null,
-        normalizedPath: resolved,
-        foldersCreated,
-      };
-    } catch (e) {
-      return { valid: false, error: `Invalid mount path: ${e}` };
-    }
   }
 
   private _rowToProfile(row: DeviceRow): DeviceProfile {

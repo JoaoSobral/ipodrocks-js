@@ -20,6 +20,10 @@ import {
   type LayoutOptions,
 } from "../sync/sync-core";
 import { compareLibraries } from "../sync/name-size-sync";
+import {
+  devicePlaylistStem,
+  findOrphanPlaylistFiles,
+} from "../sync/playlist-sync";
 import { toMountRelative } from "../rockbox/device-path-match";
 import { readAndIngestRuntimeData } from "../rockbox/runtime-ingest";
 import {
@@ -338,30 +342,9 @@ export function registerDeviceHandlers(): void {
         const core = getPlaylistCore();
         const libraryPlaylists = core.getPlaylists();
         const expectedStems = new Set(
-          libraryPlaylists.map((pl) =>
-            (pl.name.replace(/[/\\?*:"<>|]/g, "_").trim() || "Playlist").toLowerCase()
-          )
+          libraryPlaylists.map((pl) => devicePlaylistStem(pl.name).toLowerCase())
         );
-        const walkPlaylists = (dir: string): void => {
-          let entries: fs.Dirent[];
-          try {
-            entries = fs.readdirSync(dir, { withFileTypes: true });
-          } catch {
-            return;
-          }
-          for (const entry of entries) {
-            const fullPath = path.join(dir, entry.name);
-            if (entry.isDirectory()) {
-              walkPlaylists(fullPath);
-            } else if (path.extname(entry.name).toLowerCase() === ".m3u") {
-              const stem = path.parse(entry.name).name.toLowerCase();
-              if (!expectedStems.has(stem)) {
-                playlistOrphans.push(fullPath);
-              }
-            }
-          }
-        };
-        walkPlaylists(playlistFolder);
+        playlistOrphans = findOrphanPlaylistFiles(playlistFolder, expectedStems);
       }
 
       // Keep the on-device location alongside the library path. Rockbox

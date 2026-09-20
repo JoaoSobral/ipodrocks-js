@@ -21,7 +21,11 @@ import {
   removeExtraTracks,
   SyncCancelled,
 } from "../sync/sync-core";
-import { writePlaylistsToDevice } from "../sync/playlist-sync";
+import {
+  devicePlaylistStem,
+  findOrphanPlaylistFiles,
+  writePlaylistsToDevice,
+} from "../sync/playlist-sync";
 import { syncPodcastsToDevice } from "../podcasts/podcast-device-sync";
 import { syncAutoAudiobooksToDevice } from "../audiobooks/audiobook-device-sync";
 import { listSubscriptions as listAudiobookSubs } from "../audiobooks/audiobook-subscriptions";
@@ -585,31 +589,9 @@ export function registerSyncHandlers(): void {
           const expectedStems = new Set(
             libraryPlaylists
               .filter((pl) => !(useTagnavi && pl.typeName === "smart"))
-              .map((pl) =>
-                (pl.name.replace(/[/\\?*:"<>|]/g, "_").trim() || "Playlist").toLowerCase()
-              )
+              .map((pl) => devicePlaylistStem(pl.name).toLowerCase())
           );
-          const orphanPaths: string[] = [];
-          const walkPlaylists = (dir: string): void => {
-            let entries: fs.Dirent[];
-            try {
-              entries = fs.readdirSync(dir, { withFileTypes: true });
-            } catch {
-              return;
-            }
-            for (const entry of entries) {
-              const fullPath = path.join(dir, entry.name);
-              if (entry.isDirectory()) {
-                walkPlaylists(fullPath);
-              } else if (path.extname(entry.name).toLowerCase() === ".m3u") {
-                const stem = path.parse(entry.name).name.toLowerCase();
-                if (!expectedStems.has(stem)) {
-                  orphanPaths.push(fullPath);
-                }
-              }
-            }
-          };
-          walkPlaylists(playlistFolder);
+          const orphanPaths = findOrphanPlaylistFiles(playlistFolder, expectedStems);
           if (orphanPaths.length > 0) {
             result.extras = [...result.extras, ...orphanPaths];
             syncOpts.progressCallback?.({

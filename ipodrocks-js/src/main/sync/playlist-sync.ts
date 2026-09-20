@@ -1,3 +1,4 @@
+import * as fs from "fs";
 import * as fsp from "fs/promises";
 import * as path from "path";
 import { Playlist, AlbumGrouping } from "../../shared/types";
@@ -33,6 +34,47 @@ export interface WritePlaylistsResult {
 const normalizeForCompare = (s: string) =>
   s.replace(/# Generated: .+/g, "# Generated: <date>");
 
+/**
+ * The filename stem a library playlist occupies on the device. The orphan walk
+ * below deletes by stem, so it has to be the same function that named the file.
+ */
+export function devicePlaylistStem(name: string): string {
+  return name.replace(/[/\\?*:"<>|]/g, "_").trim() || "Playlist";
+}
+
+/**
+ * Every `.m3u` under `playlistFolder` whose stem is not in `expectedStems`
+ * (lowercased). `device:check` reports them and the sync sweeps them, and they
+ * must agree on the answer, so there is one walk.
+ */
+export function findOrphanPlaylistFiles(
+  playlistFolder: string,
+  expectedStems: Set<string>
+): string[] {
+  const orphans: string[] = [];
+  const walk = (dir: string): void => {
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        walk(fullPath);
+      } else if (path.extname(entry.name).toLowerCase() === ".m3u") {
+        const stem = path.parse(entry.name).name.toLowerCase();
+        if (!expectedStems.has(stem)) {
+          orphans.push(fullPath);
+        }
+      }
+    }
+  };
+  walk(playlistFolder);
+  return orphans;
+}
+
 export async function writePlaylistsToDevice(
   args: WritePlaylistsArgs
 ): Promise<WritePlaylistsResult> {
@@ -55,7 +97,7 @@ export async function writePlaylistsToDevice(
     }
 
     const content = core.buildM3uContentForDevice(pl.id, m3uOpts);
-    const safeName = pl.name.replace(/[/\\?*:"<>|]/g, "_").trim() || "Playlist";
+    const safeName = devicePlaylistStem(pl.name);
     const outPath = path.join(playlistFolder, `${safeName}.m3u`);
     let existingRaw: string | null = null;
     try {

@@ -19,6 +19,7 @@ import { getFfmpegPath } from "../utils/ffmpeg-path";
 import { extractEmbeddedPicture } from "../utils/embedded-art";
 import { findOnDisk } from "../utils/normalize-path";
 import {
+  IMAGE_HEAD_BYTES,
   longestEdge,
   readImageDimensions,
   readImageDimensionsFromFile,
@@ -167,13 +168,13 @@ export async function generateRockboxCover(
   // was generated at the size currently requested. Mtime alone is not enough:
   // changing a device's artwork_max_dimension does not touch the source art, so
   // every already-synced cover would silently keep its old size.
-  try {
-    const destStat = fs.statSync(destCoverPath);
-    if (destStat.mtimeMs >= source.mtimeMs && coverMatchesMaxDim(destCoverPath, source, maxDim)) {
-      return "skipped";
-    }
-  } catch {
-    /* no existing cover — generate */
+  const existing = readCoverHead(destCoverPath);
+  if (
+    existing &&
+    existing.mtimeMs >= source.mtimeMs &&
+    coverMatchesMaxDim(existing.head, source, maxDim)
+  ) {
+    return "skipped";
   }
 
   try {
@@ -240,6 +241,37 @@ export async function generateRockboxCover(
 }
 
 /**
+ * The existing cover's mtime and the head bytes the dimension probe needs,
+ * from a single open.
+ *
+ * The two facts used to cost a syscall each — a `statSync` here and another
+ * open inside the dimension read. On the device that is two round trips per
+ * album folder, for a check that usually just says "skip".
+ */
+function readCoverHead(
+  coverPath: string
+): { mtimeMs: number; head: Buffer } | null {
+  let fd: number | undefined;
+  try {
+    fd = fs.openSync(coverPath, "r");
+    const mtimeMs = fs.fstatSync(fd).mtimeMs;
+    const buf = Buffer.alloc(IMAGE_HEAD_BYTES);
+    const read = fs.readSync(fd, buf, 0, IMAGE_HEAD_BYTES, 0);
+    return { mtimeMs, head: buf.subarray(0, read) };
+  } catch {
+    return null;
+  } finally {
+    if (fd !== undefined) {
+      try {
+        fs.closeSync(fd);
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+}
+
+/**
  * Does an existing cover already reflect `maxDim`?
  *
  * A cover larger than the bound means the setting was lowered. A cover smaller
@@ -250,11 +282,11 @@ export async function generateRockboxCover(
  * every single sync.
  */
 function coverMatchesMaxDim(
-  destCoverPath: string,
+  destHead: Buffer,
   source: CoverSource,
   maxDim: number
 ): boolean {
-  const destLongest = longestEdge(readImageDimensionsFromFile(destCoverPath));
+  const destLongest = longestEdge(readImageDimensions(destHead));
   if (destLongest == null) return true;
 
   if (destLongest > maxDim + DIMENSION_TOLERANCE) return false;

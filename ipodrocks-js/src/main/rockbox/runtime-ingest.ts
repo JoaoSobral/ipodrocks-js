@@ -2,8 +2,7 @@ import type Database from "better-sqlite3";
 
 import { buildDevicePathResolver } from "./device-path-match";
 import {
-  detectRuntimeCapability,
-  readRuntimeIndex,
+  readRuntimeData,
   type RockboxRuntimeEntry,
   type RuntimeDataState,
 } from "./tagcache-index";
@@ -83,16 +82,10 @@ export function readAndIngestRuntimeData(
     });
   }
 
-  const state = detectRuntimeCapability(mountPath);
-  if (state.kind !== "ok") return emptyResult(state);
-
-  const snapshot = readRuntimeIndex(mountPath);
-  if (!snapshot) {
-    return emptyResult({
-      kind: "unreadable",
-      message: "Rockbox database could not be read.",
-    });
-  }
+  // One read of both `.tcd` files answers both questions: whether this device
+  // has anything to offer, and what it holds.
+  const { state, snapshot } = readRuntimeData(mountPath);
+  if (state.kind !== "ok" || !snapshot) return emptyResult(state);
 
   const resolver = buildDevicePathResolver(db, deviceId);
 

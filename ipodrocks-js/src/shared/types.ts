@@ -214,13 +214,6 @@ export interface UsbSnapshot {
   devices: UsbDeviceInfo[];
 }
 
-export interface DeviceValidation {
-  valid: boolean;
-  error: string | null;
-  normalizedPath?: string;
-  foldersCreated?: string[];
-}
-
 export interface LibraryFolder {
   id: number;
   name: string;
