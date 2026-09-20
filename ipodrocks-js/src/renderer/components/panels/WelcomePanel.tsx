@@ -9,20 +9,19 @@ import logoSrcBlack from "@assets/ipodRocks_black.png?url";
 
 const FEATURES: { icon: string; label: string; description: string }[] = [
   { icon: "📤", label: "Sync", description: "Full or custom sync by album, artist, genre, or playlist." },
-  { icon: "📱", label: "Multiple devices", description: "Each device has its own codec, folder layout, and artwork settings." },
+  { icon: "🌍", label: "Sync from anywhere", description: "Run iPodRocks as a server and reach it from a browser. Your player plugs into the machine you are sitting at, not the one holding your music." },
+  { icon: "📱", label: "Multiple devices", description: "Each device has its own codec, folder layout, and artwork settings — plus USB identity, so two identical iPods never get confused." },
   { icon: "📚", label: "Library & shadows", description: "Music, podcasts, LibriVox audiobooks; FLAC→MPC mirrors that adopt already-transcoded files instead of re-encoding." },
-  { icon: "📋", label: "Playlists", description: "Classic (hand-picked & editable), Smart, Genius, Savant (AI) — plus broken-playlist detection & repair." },
+  { icon: "📋", label: "Playlists", description: "Classic (hand-picked & editable), Smart, and Genius — plus broken-playlist detection & repair." },
   { icon: "🧠", label: "Genius", description: "Auto-generated from real playback history: Most Played, Favorites, Hidden Gems, Top Genre, Top Artist, Top Album, Finish the Album, Deep Dive, and more." },
-  { icon: "📻", label: "Rockbox-native smart playlists", description: "Per-device opt-in: written as live, auto-updating tagnavi tagtree entries instead of frozen .m3u snapshots." },
-  { icon: "🎙️", label: "Podcasts", description: "Search via Podcast Index, paste any RSS feed URL, or auto-subscribe with scheduled downloads." },
-  { icon: "💬", label: "Rocksy", description: "AI assistant that can search your library, create and edit playlists, subscribe to podcasts/audiobooks, manage shadow libraries, adjust device settings, trigger syncs, and more — all from chat." },
-  { icon: "🎹", label: "Harmonic mixing", description: "Key/BPM detection and Camelot wheel." },
-  { icon: "🔄", label: "Conversion & codecs", description: "MP3, AAC, Musepack, Opus via FFmpeg." },
-  { icon: "⭐", label: "Star ratings", description: "5-star (half-star), synced from Rockbox with 3-way merge." },
+  { icon: "⭐", label: "Star ratings", description: "5-star (half-star), synced both ways with Rockbox and merged three ways when they disagree." },
   { icon: "📊", label: "Listening stats", description: "Top tracks, artists, and total listening time from device playback history — All Time, This Year, or This Month — right in the Dashboard." },
-  { icon: "🌐", label: "Web server", description: "Serve the whole app to a browser — same library, same database, same everything. Sign in with Google, GitHub, Facebook or a password, and only the accounts you allow get in." },
-  { icon: "🔌", label: "Remote players", description: "Your iPod does not have to be plugged into the machine holding your library. Pick its folder in your browser and sync it from wherever you are sitting." },
+  { icon: "🎙️", label: "Podcasts", description: "Search via Podcast Index, paste any RSS feed URL, or auto-subscribe with scheduled downloads." },
+  { icon: "📻", label: "Rockbox-native smart playlists", description: "Per-device opt-in: written as live, auto-updating tagnavi tagtree entries instead of frozen .m3u snapshots." },
+  { icon: "🔄", label: "Conversion & codecs", description: "MP3, AAC, Musepack, Opus via FFmpeg — with ReplayGain and Rockbox-ready album art." },
+  { icon: "🎹", label: "Harmonic mixing", description: "Key/BPM detection and Camelot wheel." },
   { icon: "🖥️", label: "Headless daemon", description: "Run the library on a NAS or home server with no screen and no Electron. Ships with a container image, a compose file and a systemd unit." },
+  { icon: "💬", label: "Rocksy (optional)", description: "An AI chat that can act on your behalf rather than only answer. Needs an OpenRouter key; everything it does has a button elsewhere in the app." },
 ];
 
 type UpdateState =
@@ -162,12 +161,13 @@ export function WelcomePanel() {
         <ul className="text-sm text-muted-foreground space-y-2 list-none">
           <li><strong className="text-foreground">Dashboard</strong> — library, device, and shadow-library overview, recent activity, and your Listening Stats (top tracks/artists, plays, listening time).</li>
           <li><strong className="text-foreground">Library</strong> — add folders and scan your music; manage shadow libraries (pre-transcoded mirrors) and playlist repair from here too.</li>
-          <li><strong className="text-foreground">Playlists</strong> — hand-pick a Classic playlist, build a multi-select Smart one, generate a Genius playlist from your listening history, or describe a mood to Savant (AI).</li>
+          <li><strong className="text-foreground">Playlists</strong> — hand-pick a Classic playlist, build a multi-select Smart one, or generate a Genius playlist from your listening history.</li>
           <li><strong className="text-foreground">Auto Podcasts</strong> — search Podcast Index, paste any RSS/website URL, and set auto-download rules per subscription.</li>
           <li><strong className="text-foreground">Extra Audiobooks</strong> — browse and subscribe to free, public-domain audiobooks from LibriVox; chapters download the first time you sync a device that includes the book.</li>
           <li><strong className="text-foreground">Devices</strong> — add as many Rockbox or mountable devices as you want, each with its own codec, folder layout, and artwork settings.</li>
+          <li><strong className="text-foreground">Web Server</strong> (in Settings) — serve iPodRocks to a browser, so a player plugged into another machine syncs from the library on this one.</li>
           <li><strong className="text-foreground">Sync</strong> — full or custom sync (by album, artist, genre, or playlist) with live progress feedback.</li>
-          <li><strong className="text-foreground">Settings</strong> (gear icon) — add your OpenRouter API key to unlock Savant playlists and Rocksy.</li>
+          <li><strong className="text-foreground">Settings</strong> (gear icon) — web server, ratings, podcasts, harmonic analysis. Optionally an OpenRouter API key, which unlocks Savant playlists and the Rocksy chat; everything else works without one.</li>
         </ul>
       </Card>
 
