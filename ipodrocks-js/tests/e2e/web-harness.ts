@@ -1,0 +1,103 @@
+/**
+ * Helpers for the `web` Playwright project.
+ *
+ * The daemon under test is the real one, started by `playwright.config.ts`'s
+ * `webServer` block against a scratch data directory. Nothing here reaches
+ * inside the app: the only thing read out of band is the owner claim token,
+ * which a real operator reads from the server log. A test cannot read that log
+ * through Playwright, so it reads the same value from the row the server wrote
+ * it to — which is also worth doing deliberately, because it means the claim
+ * flow itself is exercised end to end rather than stubbed.
+ */
+import * as path from "path";
+import Database from "better-sqlite3";
+import type { APIRequestContext, Page } from "@playwright/test";
+import { WEB_DATA_DIR, WEB_ORIGIN } from "../../playwright.config";
+
+export { WEB_DATA_DIR, WEB_ORIGIN };
+
+export const OWNER_USERNAME = "e2e-owner";
+export const OWNER_PASSWORD = "correct-horse-battery-staple";
+
+function serverDb(): Database.Database {
+  return new Database(path.join(WEB_DATA_DIR, "ipodrocks-server.db"), {
+    readonly: true,
+  });
+}
+
+export function readClaimToken(): string | null {
+  const db = serverDb();
+  try {
+    const row = db
+      .prepare("SELECT value FROM server_settings WHERE key = 'owner_claim_token'")
+      .get() as { value: string } | undefined;
+    return row?.value ?? null;
+  } finally {
+    db.close();
+  }
+}
+
+export function ownerExists(): boolean {
+  const db = serverDb();
+  try {
+    const row = db
+      .prepare("SELECT COUNT(*) AS n FROM server_identities")
+      .get() as { n: number };
+    return row.n > 0;
+  } finally {
+    db.close();
+  }
+}
+
+/**
+ * Claims the server if nobody has, then signs in.
+ *
+ * Idempotent, because the `web` project runs several spec files against one
+ * long-lived daemon and only the first of them meets an unclaimed server.
+ */
+export async function signIn(request: APIRequestContext): Promise<void> {
+  if (!ownerExists()) {
+    const claimToken = readClaimToken();
+    if (!claimToken) throw new Error("No owner and no claim token — server not ready");
+    const res = await request.post("/api/auth/local/claim", {
+      data: { username: OWNER_USERNAME, password: OWNER_PASSWORD, claimToken },
+    });
+    if (!res.ok()) {
+      throw new Error(`Claim failed: ${res.status()} ${await res.text()}`);
+    }
+    return;
+  }
+  const res = await request.post("/api/auth/local/login", {
+    data: { username: OWNER_USERNAME, password: OWNER_PASSWORD },
+  });
+  if (!res.ok()) {
+    throw new Error(`Login failed: ${res.status()} ${await res.text()}`);
+  }
+}
+
+/** Signs a browser page's context in, so `page.goto("/")` lands on the app
+ *  rather than the login screen. */
+export async function signInPage(page: Page): Promise<void> {
+  await signIn(page.request);
+}
+
+export interface InvokeResponse<T> {
+  result: T | null;
+  error?: string;
+}
+
+/** Calls a channel the way the renderer's web transport does. */
+export async function invoke<T = unknown>(
+  request: APIRequestContext,
+  channel: string,
+  ...args: unknown[]
+): Promise<T> {
+  const res = await request.post(`/api/invoke/${encodeURIComponent(channel)}`, {
+    data: { args },
+  });
+  if (!res.ok()) {
+    throw new Error(`invoke ${channel} failed: ${res.status()} ${await res.text()}`);
+  }
+  const body = (await res.json()) as InvokeResponse<T>;
+  return body.result as T;
+}

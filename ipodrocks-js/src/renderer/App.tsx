@@ -10,6 +10,7 @@ import { AutoPodcastsPanel } from "./components/panels/AutoPodcastsPanel";
 import { AutoAudiobooksPanel } from "./components/panels/AutoAudiobooksPanel";
 import { SettingsPanel } from "./components/panels/SettingsPanel";
 import { FloatChat } from "./components/assistant/FloatChat";
+import { ServerFolderPicker } from "./components/web/ServerFolderPicker";
 import { ThemeToggle } from "./components/common/ThemeToggle";
 import { BuyMeACoffeeButton } from "./components/common/BuyMeACoffeeButton";
 import { PlayerBar } from "./components/player/PlayerBar";
@@ -319,6 +320,10 @@ export function App() {
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
       />
+
+      {/* Registers itself as `pickFolder()`'s fallback and only ever opens on a
+          host with no native dialogs — so under Electron it renders nothing. */}
+      <ServerFolderPicker />
 
       <Toaster theme={theme === "dark" ? "dark" : "light"} richColors />
     </div>

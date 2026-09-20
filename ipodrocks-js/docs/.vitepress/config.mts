@@ -90,6 +90,10 @@ export default defineConfig({
                   text: "Harmonic Analysis",
                   link: "/app-reference/settings-harmonic",
                 },
+                {
+                  text: "Web Server",
+                  link: "/app-reference/settings-web-server",
+                },
               ],
             },
             { text: "Ratings", link: "/app-reference/ratings" },

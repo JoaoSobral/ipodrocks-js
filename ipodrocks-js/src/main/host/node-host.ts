@@ -68,10 +68,29 @@ function readPackageVersion(): string {
 
 class NodePaths implements HostPaths {
   private cachedVersion: string | null = null;
+  private ensured: string | null = null;
 
+  /**
+   * Electron's `app.getPath("userData")` *creates* the directory, and every
+   * caller — `database.ts` opening SQLite, `prefs.ts` writing its JSON —
+   * has always relied on that. The Node host returned a path without making
+   * it, so a daemon pointed at a fresh `IPODROCKS_DATA_DIR` died on
+   * `registerIpcHandlers()` with "Cannot open database because the directory
+   * does not exist", a long way from the line that chose the path.
+   */
   userData(): string {
     const override = process.env.IPODROCKS_DATA_DIR?.trim();
-    return override ? path.resolve(override) : defaultUserDataDir();
+    const dir = override ? path.resolve(override) : defaultUserDataDir();
+    if (this.ensured !== dir) {
+      try {
+        fs.mkdirSync(dir, { recursive: true });
+        this.ensured = dir;
+      } catch {
+        // Report the path anyway; the caller's own error is more specific
+        // than anything that could be thrown from here.
+      }
+    }
+    return dir;
   }
 
   temp(): string {

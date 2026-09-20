@@ -20,6 +20,7 @@ import {
   podcastSearch,
 } from "../../ipc/api";
 import type { OpenRouterConfig, SavantKeyData, PodcastSettings } from "../../ipc/api";
+import { WebServerCard } from "./WebServerCard";
 
 interface SettingsPanelProps {
   open: boolean;
@@ -413,6 +414,7 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
           </div>
 
           {/* Right column */}
+          <div className="space-y-5">
           <Card
             title="Auto Podcasts"
             subtitle="Configure the Podcast Index API for podcast search and auto-download."
@@ -546,6 +548,9 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
               )}
             </div>
           </Card>
+
+          <WebServerCard open={open} />
+          </div>
         </div>
 
         <div className="flex justify-end gap-2 pt-2 border-t border-border">

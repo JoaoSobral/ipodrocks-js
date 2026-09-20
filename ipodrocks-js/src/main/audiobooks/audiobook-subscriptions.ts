@@ -1,5 +1,6 @@
 import * as fs from "fs";
 import * as path from "path";
+import { encodePathToUrl } from "../player/media-url";
 import type Database from "better-sqlite3";
 import type { AudiobookSubscription, AudiobookChapter, LibrivoxSearchResult } from "../../shared/types";
 import { fetchAndParseFeed } from "../podcasts/podcast-feed-import";
@@ -36,8 +37,15 @@ interface ChapterRow {
   created_at: string;
 }
 
+/**
+ * Cover art is an absolute server path in the database and a URL in the API
+ * response. It goes through the shared encoder so that under the web server it
+ * becomes an `/api/media/` token like everything else — before, this was a
+ * second hand-rolled `media://` string and would have been the one image
+ * source that stayed pointed at a scheme the browser has never heard of.
+ */
 function localPathToMediaUrl(p: string): string {
-  return `media://local/${Buffer.from(p, "utf8").toString("base64url")}`;
+  return encodePathToUrl(p);
 }
 
 function rowToSub(r: SubRow): AudiobookSubscription {

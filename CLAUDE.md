@@ -39,7 +39,7 @@ shows a window is useless to a user, so it must stay opt-in.
 Every new user-facing action or feature **must** have a corresponding tool in `src/main/assistant/tools.ts` so Rocksy can perform it on the user's behalf. Tool tiers:
 - `read` — safe reads, run inline
 - `write-safe` — non-destructive mutations, run inline
-- `write-destructive` — deletions, syncs, scans, folder changes; always require a confirm gate
+- `write-destructive` — deletions, syncs, scans, folder changes, **and anything that changes what the outside world can reach** (`web_server_set_enabled`); always require a confirm gate
 
 Also update the system prompt rules in `assistantChat.ts` (`ASSISTANT_SYSTEM_PROMPT`) with an explicit directive so Rocksy calls the new tool instead of saying it can't do something.
 
@@ -573,6 +573,112 @@ everything".
 Pinned in `src/__tests__/regressions/delete-all-path-guard.test.ts`,
 `src/__tests__/behaviors/orphan-reset-policy.test.ts` and
 `tests/e2e/orphan-reset-policy.test.ts`.
+
+## Hazard: a sandboxed preload cannot `require` one of our own files
+
+`BrowserWindow` runs with `sandbox: true`. A sandboxed preload's `require` is a
+polyfill that resolves a short allowlist of Electron and Node built-ins and
+**nothing else** — a relative import of our own source throws at load time.
+
+So the moment `preload.ts` imported `src/shared/ipc-channels.ts` (which exists so
+the channel allowlist has exactly one copy, shared with the web server's
+`/api/invoke` gate), the preload died, `contextBridge.exposeInMainWorld` never
+ran, and `window.api` was undefined in every renderer. The visible symptom names
+neither the preload nor the import: the renderer's bootstrap falls through to
+`isWebMode()`, tries the HTTP transport against a `file://` origin, and the
+window renders **"iPodRocks could not start — Failed to fetch"**. Every UI e2e
+test failed at once; `smoke.test.ts` did not, which is worth knowing.
+
+- **`scripts/bundle-preload.js` (esbuild) produces what Electron loads.** It runs
+  after `tsc` in `build` and in parallel with it under `dev:main`.
+- **It emits `preload.bundle.js`, not `preload.js`.** `tsc` also emits a
+  `preload.js` from the same source; two tools writing one path makes the winner
+  depend on their order, which under `--watch` is a coin flip. The separate name
+  keeps tsc typechecking the file — its output is simply unused — and leaves one
+  writer for the file `src/main/index.ts` points at.
+- **`electron` stays `external`**; that one the sandbox polyfill does resolve.
+- Anything else the preload ever imports is inlined for free. Do not "simplify"
+  this back to a plain `tsc` output, and do not fix a future version of this
+  failure by relaxing `sandbox`.
+
+## Hazard: `playwright.config.ts` is re-imported inside every worker
+
+The `web` Playwright project boots the real daemon against a scratch
+`IPODROCKS_DATA_DIR`, which the config wipes so each run starts from an
+unclaimed server. Playwright re-imports the config module **in every worker
+process**, so an unguarded `fs.rmSync` there deletes the data directory out from
+under the running daemon mid-run. It surfaced as `SqliteError: unable to open
+database file` thrown from the test harness — nowhere near its cause.
+
+The wipe is guarded on `process.env.TEST_WORKER_INDEX === undefined`, which is
+set only in workers. Any other one-time side effect added to that file needs the
+same guard, or a `globalSetup`.
+
+## The web server (`src/server/`)
+
+Phase 2 of the web-server plan. The server owns no application logic: it looks
+handlers up in `host/bridge.ts`, the same registry `attachElectronTransport()`
+attaches to, so the desktop window and a remote browser run against one set of
+handlers and one database. Adding an IPC domain gives the web the same channels
+for free — provided its prefix is in `src/shared/ipc-channels.ts`.
+
+- **`ALLOWED_CHANNEL_PREFIXES` is shared by the preload and `/api/invoke`.** One
+  list, in `src/shared/`, because a second copy drifts the first time a domain is
+  added and the symptom is "works on the desktop, 403s over the web".
+- **`PUSH_CHANNELS` is a closed set**, unlike Electron IPC where `ipcRenderer.on`
+  accepts anything. A server fans frames out to *sessions*, so a client must not
+  be able to name a channel and receive another user's frames.
+- **OAuth identifies; `authorizeIdentity()` admits.** A successful Google login
+  is not authorization — the allowlist is, and the first identity binds against a
+  one-time claim token printed to the server log. Identities are matched on the
+  provider's `subject`, never the email, which users can change. Pinned in
+  `src/__tests__/regressions/web-identity-allowlist.test.ts`.
+- **The session cookie is `SameSite=Lax`, not `Strict`.** Strict withholds the
+  cookie on the cross-site navigation the provider performs on its way back to
+  `/api/auth/<provider>/callback`, so every social login fails.
+- **`trust proxy` is set only to configured addresses.** Left at `true`, a direct
+  client forges `X-Forwarded-For` and walks past the rate limiter, which keys on
+  `req.ip`. The limiter's two buckets have different ceilings on purpose: ten per
+  account, sixty per address, because everyone in a household shares an address
+  and behind an unconfigured proxy *every* request does.
+- **An absent `Origin` on the WebSocket upgrade is refused**, not read as
+  same-origin. Browsers always send one; accepting its absence is the usual way
+  CSWSH protection is lost.
+- **Media URLs are HMAC-signed tokens, checked *and* re-validated against
+  `isServableMediaPath()`** — the same function the `media://` handler calls. The
+  signature stops a forged URL; the path check stops a genuine token from ever
+  having been mintable for something that is not media. A token minted for a
+  session is honoured only for that session, because `getPlayerTempDir()` is one
+  directory for the whole server.
+- **`player-source.ts` keys in-flight transcodes by session.** They were two
+  module-level variables: correct for one window, and "the second person to press
+  play kills the first person's ffmpeg" for a server.
+- **The served `index.html` gets the CSP as a header and a `<base href="/">`.**
+  The baked-in `<meta>` policy names the `media:` scheme and has no
+  `connect-src`, so it cannot be reused; and Vite's `base: "./"` (which the
+  desktop `file://` load needs) makes every asset reference relative, which the
+  SPA fallback would break on any path but `/`.
+- **The Node host's `userData()` creates its directory.** Electron's
+  `app.getPath("userData")` does, and `database.ts` and `prefs.ts` have always
+  relied on it; without it a daemon pointed at a fresh `IPODROCKS_DATA_DIR` died
+  in `registerIpcHandlers()`.
+- **`pickFolder()` gains a fallback at the api layer, not in the panels.** On a
+  host with no native dialogs it opens `ServerFolderPicker`, which browses the
+  *server's* filesystem through `app:listDirectory` (gated by the same
+  `validateFolderPath()` as `library:addFolder`). The three existing call sites
+  are unchanged — that is the test. It is **not** the device picker, which is the
+  browser's own `showDirectoryPicker()` in Phase 4 and answers the opposite
+  question.
+- Deployment shape (port, bind, public URL, proxies, TLS) lives in prefs so the
+  Settings card can write it. **Third-party OAuth client secrets are
+  environment-only**, deliberately: they do not belong in a file the app
+  rewrites, and an `_enc*` blob written by Electron's `safeStorage` is
+  unreadable to the daemon anyway.
+
+E2E lives in `tests/e2e/web-{auth,parity,media}.test.ts`, run by the `web`
+Playwright project (the `electron` project is unchanged and still launches the
+app per test). The web project needs a Chromium download — `npx playwright
+install chromium` — which the Electron-only suite never did.
 
 ## Hazard: the host adapter must never auto-detect its way to the real user data
 

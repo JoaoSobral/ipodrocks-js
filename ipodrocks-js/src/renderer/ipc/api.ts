@@ -501,8 +501,47 @@ export async function clearContentHashes(): Promise<number> {
   return window.api.invoke("library:clearContentHashes") as Promise<number>;
 }
 
+/**
+ * A folder picker that does not need a screen on the host.
+ *
+ * Under Electron this is the native sheet, as it always was. On the headless
+ * server there is no screen, so `ServerFolderPicker` registers a fallback here
+ * that browses the *server's* filesystem in a modal. Doing it at this layer
+ * rather than in the three panels that call `pickFolder()` is the point: none
+ * of them had to learn that two kinds of picker exist.
+ *
+ * Note this is the *library folder* picker. The device picker is a different
+ * thing entirely — the browser's own `showDirectoryPicker()`, arriving in a
+ * later phase — because a device is plugged into the machine holding the
+ * browser, while a library lives on the machine running the scan.
+ */
+type FolderPickerFallback = () => Promise<string | null>;
+
+let folderPickerFallback: FolderPickerFallback | null = null;
+let hostHasNativeDialogs: boolean | null = null;
+
+export function setFolderPickerFallback(fn: FolderPickerFallback | null): void {
+  folderPickerFallback = fn;
+}
+
 export async function pickFolder(): Promise<string | null> {
-  return window.api.invoke("dialog:pickFolder") as Promise<string | null>;
+  if (hostHasNativeDialogs === null) {
+    try {
+      hostHasNativeDialogs = await hasNativeDialogs();
+    } catch {
+      // An older host that does not answer the channel is an Electron one.
+      hostHasNativeDialogs = true;
+    }
+  }
+  if (!hostHasNativeDialogs && folderPickerFallback) {
+    return folderPickerFallback();
+  }
+  const result = (await window.api.invoke("dialog:pickFolder")) as
+    | string
+    | null
+    | { error: string };
+  if (result && typeof result === "object" && "error" in result) return null;
+  return result;
 }
 
 export async function getPlaylists(): Promise<Playlist[]> {
@@ -1075,4 +1114,84 @@ export async function audiobookSetCoverFromUrl(
   url: string
 ): Promise<import("@shared/types").AudiobookSubscription | null> {
   return window.api.invoke("audiobook:setCoverFromUrl", subId, url) as Promise<import("@shared/types").AudiobookSubscription | null>;
+}
+
+// ---------------------------------------------------------------------------
+// Web server + server-side folder browsing
+// ---------------------------------------------------------------------------
+
+export interface WebServerPrefs {
+  enabled?: boolean;
+  host?: string;
+  port?: number;
+  publicUrl?: string;
+  trustedProxies?: string[];
+  allowedOrigins?: string[];
+  tls?: { certPath: string; keyPath: string } | null;
+}
+
+export interface WebServerStatus {
+  running: boolean;
+  url: string | null;
+  port: number | null;
+  host: string | null;
+  /** Non-null only while nobody has claimed ownership of the server. */
+  claimToken: string | null;
+  identityCount: number;
+  providers: string[];
+  tls: boolean;
+  publicUrl: string | null;
+  lastError: string | null;
+  prefs: WebServerPrefs;
+}
+
+export async function getWebServerStatus(): Promise<WebServerStatus> {
+  return window.api.invoke("server:getStatus") as Promise<WebServerStatus>;
+}
+
+export async function setWebServerConfig(
+  prefs: WebServerPrefs
+): Promise<{ prefs: WebServerPrefs }> {
+  return window.api.invoke("server:setConfig", prefs) as Promise<{
+    prefs: WebServerPrefs;
+  }>;
+}
+
+export async function startWebServer(): Promise<WebServerStatus> {
+  return window.api.invoke("server:start") as Promise<WebServerStatus>;
+}
+
+export async function stopWebServer(): Promise<WebServerStatus> {
+  return window.api.invoke("server:stop") as Promise<WebServerStatus>;
+}
+
+export interface DirectoryEntry {
+  name: string;
+  path: string;
+}
+
+export interface DirectoryListing {
+  path: string;
+  parent: string | null;
+  entries: DirectoryEntry[];
+  roots: DirectoryEntry[];
+  error?: string;
+}
+
+/** Whether this host can show a native folder sheet. False on the headless
+ *  server, where `pickFolder()` is answered by `listDirectory` instead. */
+export async function hasNativeDialogs(): Promise<boolean> {
+  const res = (await window.api.invoke("app:hasNativeDialogs")) as {
+    available?: boolean;
+  };
+  return res?.available === true;
+}
+
+/** Lists directories **on the server**. This is the library-folder picker, not
+ *  the device picker — a library genuinely lives on the machine running the
+ *  scan, which in web mode is not the machine running the browser. */
+export async function listServerDirectory(
+  path?: string | null
+): Promise<DirectoryListing> {
+  return window.api.invoke("app:listDirectory", path ?? null) as Promise<DirectoryListing>;
 }

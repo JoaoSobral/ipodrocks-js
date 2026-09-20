@@ -521,6 +521,130 @@ const ratings_set_tag_priority: AiTool = {
   },
 };
 
+/**
+ * Web server. Three tools rather than one, because "tell me about it", "change
+ * where it listens" and "turn it on" have genuinely different risk: starting a
+ * listener exposes the library to the network, so it gets a confirm gate, while
+ * reading the status does not.
+ */
+const web_server_status: AiTool = {
+  name: "web_server_status",
+  description:
+    "Report the web server's state: whether it is running, the URL it is reachable at, which sign-in providers are configured, how many accounts are on the allowlist, and the one-time owner claim token if nobody has claimed it yet. Use whenever the user asks about serving iPodRocks in a browser, syncing an iPod plugged into a different machine, or why they cannot sign in.",
+  parameters: { type: "object", properties: {}, required: [] },
+  kind: "read",
+  summarize: () => "Check the web server status",
+  async run() {
+    const { getServerStatus } = await import("../../server");
+    const status = getServerStatus();
+    return {
+      ...status,
+      // The claim token is a live credential. Rocksy may tell the user it
+      // exists and where to find it, but printing it into a chat transcript
+      // that gets pasted around is a different thing from printing it to a
+      // log only the machine's owner can read.
+      claimToken: undefined,
+      ownerClaimPending: status.claimToken !== null,
+    };
+  },
+};
+
+const web_server_configure: AiTool = {
+  name: "web_server_configure",
+  description:
+    "Change where the web server listens: bind address, port, and the public URL that OAuth callbacks and the WebSocket origin check are built from. Does not start, stop or restart it — call web_server_set_enabled for that. Use when the user wants the server on a different port, reachable from the LAN (bind 0.0.0.0), or set up behind a tunnel or reverse proxy.",
+  parameters: {
+    type: "object",
+    properties: {
+      host: {
+        type: "string",
+        description:
+          "Bind address. 127.0.0.1 (the default) keeps it on this machine, which is what a Cloudflare Tunnel wants; 0.0.0.0 exposes it to the LAN.",
+      },
+      port: { type: "number", description: "TCP port, 1-65535." },
+      publicUrl: {
+        type: "string",
+        description:
+          "The externally visible origin, e.g. https://ipod.example.com. Required for any social sign-in.",
+      },
+    },
+    required: [],
+  },
+  // Writes a preference; the running listener is untouched until an explicit
+  // start/stop, so nothing is exposed by this call on its own.
+  kind: "write-safe",
+  summarize: (a) => {
+    const bits: string[] = [];
+    if (a.host !== undefined) bits.push(`bind ${String(a.host)}`);
+    if (a.port !== undefined) bits.push(`port ${String(a.port)}`);
+    if (a.publicUrl !== undefined) bits.push(`public URL ${String(a.publicUrl)}`);
+    return bits.length
+      ? `Set web server ${bits.join(", ")}`
+      : "Read the web server configuration";
+  },
+  async run(args) {
+    const { setWebServerPrefs, getWebServerPrefs } = await import("../utils/prefs");
+    const next: Record<string, unknown> = {};
+    if (typeof args.host === "string") next.host = args.host.trim();
+    if (typeof args.port === "number") {
+      if (!Number.isInteger(args.port) || args.port < 1 || args.port > 65535) {
+        return { error: "Port must be a whole number between 1 and 65535." };
+      }
+      next.port = args.port;
+    }
+    if (typeof args.publicUrl === "string") next.publicUrl = args.publicUrl.trim();
+    if (Object.keys(next).length === 0) return { prefs: getWebServerPrefs() };
+    setWebServerPrefs(next);
+    const { getServerStatus } = await import("../../server");
+    return {
+      ok: true,
+      prefs: getWebServerPrefs(),
+      restartRequired: getServerStatus().running,
+      message: getServerStatus().running
+        ? "Saved. The server is running with the old settings until it is stopped and started again."
+        : "Saved.",
+    };
+  },
+};
+
+const web_server_set_enabled: AiTool = {
+  name: "web_server_set_enabled",
+  description:
+    "Start or stop the web server. Starting it opens a listening socket and makes the library reachable over the network to anyone who can sign in. Use when the user asks to turn web/browser/remote access on or off.",
+  parameters: {
+    type: "object",
+    properties: {
+      enabled: { type: "boolean", description: "true to start, false to stop." },
+    },
+    required: ["enabled"],
+  },
+  // Destructive in the sense the tier means: it changes what the outside world
+  // can reach. A user should be asked before their library goes on a network.
+  kind: "write-destructive",
+  summarize: (a) => (a.enabled ? "Start the web server" : "Stop the web server"),
+  async run(args) {
+    const { ensureServerStarted, stopServerIfRunning } = await import("../../server");
+    const enabled = Boolean(args.enabled);
+    const status = enabled ? await ensureServerStarted() : await stopServerIfRunning();
+    if (enabled && !status.running) {
+      return { ok: false, error: status.lastError ?? "The server did not start." };
+    }
+    return {
+      ok: true,
+      running: status.running,
+      url: status.url,
+      ownerClaimPending: status.claimToken !== null,
+      message: enabled
+        ? `The web server is running at ${status.url}.${
+            status.claimToken
+              ? " Nobody has claimed it yet — the one-time claim token is in the server log, and in Settings under Web Server."
+              : ""
+          }`
+        : "The web server is stopped.",
+    };
+  },
+};
+
 const playlist_create_genius: AiTool = {
   name: "playlist_create_genius",
   description: "Create a Genius playlist based on listening history (most played, favorites, hidden gems, etc.).",
@@ -1641,6 +1765,9 @@ export const AI_TOOLS: AiTool[] = [
   playlist_list_broken,
   playlist_repair,
   playlist_delete,
+  web_server_status,
+  web_server_configure,
+  web_server_set_enabled,
 ];
 
 export function getToolByName(name: string): AiTool | undefined {

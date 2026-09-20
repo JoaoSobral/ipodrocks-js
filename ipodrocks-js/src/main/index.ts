@@ -12,6 +12,8 @@ import { stopPodcastScheduler } from "./podcasts/podcast-scheduler";
 import { setLibrivoxBaseUrl } from "./audiobooks/librivox-client";
 import { setCoverApiBaseUrls } from "./audiobooks/cover-client";
 import { backfillMissingCovers } from "./audiobooks/audiobook-cover";
+import { getWebServerPrefs } from "./utils/prefs";
+import { ensureServerStarted, stopServerIfRunning } from "../server";
 
 // Prevent SharedImageManager/mailbox GPU overlay errors on macOS
 if (process.platform === "darwin") {
@@ -111,7 +113,10 @@ function attachContextMenu(win: BrowserWindow): void {
 const HEADLESS = process.env.IPODROCKS_HEADLESS === "1";
 
 function createWindow(): BrowserWindow {
-  const preloadPath = path.join(__dirname, "preload.js");
+  // The esbuild bundle, not tsc's emitted `preload.js`. A sandboxed preload
+  // cannot `require` a relative file, so the shared channel allowlist has to
+  // be inlined — see `scripts/bundle-preload.js`.
+  const preloadPath = path.join(__dirname, "preload.bundle.js");
   const iconPath = getIconPath();
 
   const win = new BrowserWindow({
@@ -191,6 +196,22 @@ app.whenReady().then(() => {
     });
   });
 
+  // The web server, if Settings has it switched on. It attaches to the same
+  // handler registry this window is served from, so the desktop app and a
+  // remote browser talk to one set of handlers and one database — which is the
+  // reason `ipcMain.handle` became a registry in the first place.
+  //
+  // Started after the window rather than before it: a bad port or an
+  // unreadable TLS pair must not be able to stop the app from opening, and
+  // `server:getStatus` is how the user finds out what went wrong.
+  if (getWebServerPrefs().enabled) {
+    void ensureServerStarted().then((status) => {
+      if (!status.running) {
+        console.error(`[main] web server did not start: ${status.lastError}`);
+      }
+    });
+  }
+
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       const w = createWindow();
@@ -202,6 +223,7 @@ app.whenReady().then(() => {
 app.on("before-quit", () => {
   cleanupPlayerTemp();
   stopPodcastScheduler();
+  void stopServerIfRunning();
 });
 
 app.on("window-all-closed", () => {

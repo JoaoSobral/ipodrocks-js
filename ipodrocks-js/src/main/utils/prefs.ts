@@ -29,6 +29,27 @@ export interface RatingPrefs {
   tagRatingAlwaysWins?: boolean;
 }
 
+/**
+ * Deployment shape for the web server (`src/server/`). Third-party OAuth client
+ * credentials are deliberately *not* here — they come from the environment
+ * only; see `src/server/config.ts` for why.
+ */
+export interface WebServerPrefs {
+  /** Start the server alongside the desktop window. Off by default. */
+  enabled?: boolean;
+  /** Bind address. Loopback by default, so enabling the toggle does not put an
+   *  install on the LAN before its owner has set a password. */
+  host?: string;
+  port?: number;
+  /** The externally visible origin, e.g. `https://ipod.example.com`. */
+  publicUrl?: string;
+  /** Addresses whose `X-Forwarded-*` headers may be believed. */
+  trustedProxies?: string[];
+  /** Extra origins accepted on the WebSocket upgrade. */
+  allowedOrigins?: string[];
+  tls?: { certPath: string; keyPath: string } | null;
+}
+
 interface Prefs {
   mpcRemindDisabled?: boolean;
   openRouterConfig?: OpenRouterConfig;
@@ -52,6 +73,7 @@ interface Prefs {
     refreshIntervalMinutes?: number;
     downloadDir?: string;
   };
+  webServer?: WebServerPrefs;
 }
 
 // ---------------------------------------------------------------------------
@@ -304,4 +326,14 @@ export function setAutoPodcastSettings(settings: {
 
 export function getPodcastDownloadDir(): string | null {
   return readPrefs().autoPodcasts?.downloadDir ?? null;
+}
+
+export function getWebServerPrefs(): WebServerPrefs {
+  return readPrefs().webServer ?? {};
+}
+
+export function setWebServerPrefs(prefs: WebServerPrefs): void {
+  const all = readPrefs();
+  all.webServer = { ...all.webServer, ...prefs };
+  writePrefs(all);
 }
