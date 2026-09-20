@@ -1,9 +1,9 @@
-import * as fs from "fs";
 import * as path from "path";
 import type Database from "better-sqlite3";
 import { listSubscriptions } from "./podcast-subscriptions";
 import { sanitizeDevicePathComponent } from "../sync/sync-core";
 import { copyFileToDevice } from "../sync/sync-executor";
+import { deviceFsForMountPath, type DeviceFs } from "../devices/fs";
 import type { SyncProgressPayload } from "../sync/sync-core";
 import { isDeviceOnline, deviceRowToOnlineInput } from "../devices/device-online";
 import { refreshUsbSnapshot } from "../devices/usb-devices";
@@ -47,7 +47,8 @@ export function buildDatePrefix(publishedAt: string | null | undefined): string 
 export async function syncPodcastsToDevice(
   db: Database.Database,
   deviceId: number,
-  progressCallback?: ProgressCallback
+  progressCallback?: ProgressCallback,
+  deviceFs?: DeviceFs
 ): Promise<{ synced: number; errors: number }> {
   const device = db
     .prepare(
@@ -63,6 +64,10 @@ export async function syncPodcastsToDevice(
   if (!isDeviceOnline(deviceRowToOnlineInput(device))) {
     return { synced: 0, errors: 0 };
   }
+
+  // The scheduler and the Podcasts tab reach this with a device id and nothing
+  // else; the sync hands its own device's filesystem down.
+  const target = deviceFs ?? deviceFsForMountPath(device.mount_path);
 
   const subs = listSubscriptions(db);
 
@@ -96,13 +101,21 @@ export async function syncPodcastsToDevice(
         .get(deviceId, ep.id) as { device_relative_path: string } | undefined;
       if (syncedRow) {
         const storedAbsolute = path.join(device.mount_path, syncedRow.device_relative_path);
-        if (syncedRow.device_relative_path === destRelative && fs.existsSync(storedAbsolute)) continue;
+        if (
+          syncedRow.device_relative_path === destRelative &&
+          (await target.exists(storedAbsolute))
+        ) {
+          continue;
+        }
         // Either the file is missing or the filename scheme changed (e.g. date prefix added).
         // Drop the stale row and remove the old file so the episode re-syncs under the current name.
         db.prepare("DELETE FROM device_podcast_synced WHERE device_id = ? AND episode_id = ?").run(deviceId, ep.id);
-        if (syncedRow.device_relative_path !== destRelative && fs.existsSync(storedAbsolute)) {
+        if (
+          syncedRow.device_relative_path !== destRelative &&
+          (await target.exists(storedAbsolute))
+        ) {
           try {
-            fs.unlinkSync(storedAbsolute);
+            await target.unlink(storedAbsolute);
           } catch (err) {
             console.warn(`[podcasts] failed to remove stale device file ${storedAbsolute}:`, err);
           }
@@ -125,14 +138,14 @@ export async function syncPodcastsToDevice(
 
   for (const ep of toSync) {
     try {
-      await copyFileToDevice(ep.localPath, ep.destAbsolute);
+      await copyFileToDevice(target, ep.localPath, ep.destAbsolute);
       db.prepare(
         `INSERT OR IGNORE INTO device_podcast_synced (device_id, episode_id, device_relative_path)
          VALUES (?, ?, ?)`
       ).run(deviceId, ep.epId, ep.destRelative);
       // Rockbox can't always parse embedded APIC artwork; drop a cover.jpg
       // sidecar in the show folder so it has a reliable fallback.
-      await ensureShowCoverArt(ep.localPath, path.dirname(ep.destAbsolute));
+      await ensureShowCoverArt(ep.localPath, path.dirname(ep.destAbsolute), target);
       synced++;
       progressCallback?.({
         event: "copy",

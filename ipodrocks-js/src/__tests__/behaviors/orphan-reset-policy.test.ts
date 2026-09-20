@@ -41,7 +41,9 @@ vi.mock("../../main/sync/sync-executor", async (importOriginal) => {
   const actual = (await importOriginal()) as Record<string, unknown>;
   return {
     ...actual,
-    copyFileToDevice: vi.fn(async (src: string, dest: string) => {
+    // `deviceFs` is first and ignored here: this stub is the whole point of
+    // the mock — keep the copy in tmp.
+    copyFileToDevice: vi.fn(async (_deviceFs: unknown, src: string, dest: string) => {
       fs.mkdirSync(path.dirname(dest), { recursive: true });
       fs.copyFileSync(src, dest);
       return true;

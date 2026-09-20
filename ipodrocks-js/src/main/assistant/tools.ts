@@ -1011,7 +1011,7 @@ const device_eject: AiTool = {
     if (!isEjectSupported()) {
       throw new Error("Ejecting from iPodRocks is not supported on this platform yet.");
     }
-    if (isSyncActive()) {
+    if (isSyncActive(deviceId)) {
       throw new Error("A sync is running. Wait for it to finish before ejecting.");
     }
     if (device.profile.devMode) {

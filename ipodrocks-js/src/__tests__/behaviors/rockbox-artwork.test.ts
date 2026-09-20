@@ -17,6 +17,7 @@ import { installElectronMock } from "../harness/ipc-harness";
 installElectronMock();
 
 import { getFfmpegPath } from "../../main/utils/ffmpeg-path";
+import { localFs } from "../../main/devices/fs";
 import {
   findAlbumArtSource,
   generateRockboxCover,
@@ -84,6 +85,7 @@ describe.skipIf(!canRun)("Rockbox cover generation", () => {
     const dest = path.join(workDir, "AlbumA", "cover.jpg");
 
     const result = await generateRockboxCover(
+      localFs(workDir),
       { kind: "file", path: src, mtimeMs: fs.statSync(src).mtimeMs },
       dest,
       { maxDim: 300 }
@@ -105,16 +107,16 @@ describe.skipIf(!canRun)("Rockbox cover generation", () => {
     const dest = path.join(workDir, "AlbumB", "cover.jpg");
     const source = { kind: "file" as const, path: src, mtimeMs: fs.statSync(src).mtimeMs };
 
-    expect(await generateRockboxCover(source, dest, { maxDim: 300 })).toBe("written");
+    expect(await generateRockboxCover(localFs(workDir), source, dest, { maxDim: 300 })).toBe("written");
     const firstMtime = fs.statSync(dest).mtimeMs;
-    expect(await generateRockboxCover(source, dest, { maxDim: 300 })).toBe("skipped");
+    expect(await generateRockboxCover(localFs(workDir), source, dest, { maxDim: 300 })).toBe("skipped");
     expect(fs.statSync(dest).mtimeMs).toBe(firstMtime);
   });
 
   it("never upscales a small source", async () => {
     const src = makeImage("small.png", "120x120");
     const dest = path.join(workDir, "AlbumC", "cover.jpg");
-    await generateRockboxCover({ kind: "file", path: src, mtimeMs: fs.statSync(src).mtimeMs }, dest, { maxDim: 300 });
+    await generateRockboxCover(localFs(workDir), { kind: "file", path: src, mtimeMs: fs.statSync(src).mtimeMs }, dest, { maxDim: 300 });
     const info = inspectJpeg(fs.readFileSync(dest));
     expect(info.width).toBeLessThanOrEqual(120);
   });
@@ -127,6 +129,7 @@ describe.skipIf(!canRun)("Rockbox cover generation", () => {
     // Must not throw; falls back to copying the (bogus) source so at least
     // something is present.
     const result = await generateRockboxCover(
+      localFs(workDir),
       { kind: "file", path: src, mtimeMs: fs.statSync(src).mtimeMs },
       dest,
       { maxDim: 300 }
@@ -140,12 +143,12 @@ describe.skipIf(!canRun)("Rockbox cover generation", () => {
     const dest = path.join(workDir, "AlbumF", "cover.jpg");
     const source = { kind: "file" as const, path: src, mtimeMs: fs.statSync(src).mtimeMs };
 
-    expect(await generateRockboxCover(source, dest, { maxDim: 200 })).toBe("written");
+    expect(await generateRockboxCover(localFs(workDir), source, dest, { maxDim: 200 })).toBe("written");
     expect(inspectJpeg(fs.readFileSync(dest)).width).toBeLessThanOrEqual(202);
 
     // The source art is untouched, so an mtime-only freshness check would skip
     // here and silently leave the cover at the old size.
-    expect(await generateRockboxCover(source, dest, { maxDim: 500 })).toBe("written");
+    expect(await generateRockboxCover(localFs(workDir), source, dest, { maxDim: 500 })).toBe("written");
     const resized = inspectJpeg(fs.readFileSync(dest));
     expect(resized.width).toBeGreaterThan(300);
     expect(resized.width).toBeLessThanOrEqual(502);
@@ -156,8 +159,8 @@ describe.skipIf(!canRun)("Rockbox cover generation", () => {
     const dest = path.join(workDir, "AlbumG", "cover.jpg");
     const source = { kind: "file" as const, path: src, mtimeMs: fs.statSync(src).mtimeMs };
 
-    expect(await generateRockboxCover(source, dest, { maxDim: 750 })).toBe("written");
-    expect(await generateRockboxCover(source, dest, { maxDim: 200 })).toBe("written");
+    expect(await generateRockboxCover(localFs(workDir), source, dest, { maxDim: 750 })).toBe("written");
+    expect(await generateRockboxCover(localFs(workDir), source, dest, { maxDim: 200 })).toBe("written");
     expect(inspectJpeg(fs.readFileSync(dest)).width).toBeLessThanOrEqual(202);
   });
 
@@ -166,10 +169,10 @@ describe.skipIf(!canRun)("Rockbox cover generation", () => {
     const dest = path.join(workDir, "AlbumH", "cover.jpg");
     const source = { kind: "file" as const, path: src, mtimeMs: fs.statSync(src).mtimeMs };
 
-    expect(await generateRockboxCover(source, dest, { maxDim: 300 })).toBe("written");
+    expect(await generateRockboxCover(localFs(workDir), source, dest, { maxDim: 300 })).toBe("written");
     // 150px art is never upscaled, so it legitimately stays under 300px — this
     // must not regenerate on every single sync.
-    expect(await generateRockboxCover(source, dest, { maxDim: 300 })).toBe("skipped");
+    expect(await generateRockboxCover(localFs(workDir), source, dest, { maxDim: 300 })).toBe("skipped");
   });
 
   it("propagates cancellation instead of falling back to a verbatim copy", async () => {
@@ -178,6 +181,7 @@ describe.skipIf(!canRun)("Rockbox cover generation", () => {
     const controller = new AbortController();
 
     const pending = generateRockboxCover(
+      localFs(workDir),
       { kind: "file", path: src, mtimeMs: fs.statSync(src).mtimeMs },
       dest,
       { maxDim: 300, signal: controller.signal }

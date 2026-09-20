@@ -1,6 +1,8 @@
 import * as fs from "fs";
+import * as fsp from "fs/promises";
 import * as path from "path";
 
+import type { DeviceFs } from "../devices/fs";
 import { findOnDisk } from "../utils/normalize-path";
 
 import { ConversionSettings, convertWithCodec, convertWithFfmpeg, updateExtension } from "./sync-conversion";
@@ -27,41 +29,60 @@ export interface CopyToDeviceOptions {
   cancelSignal?: AbortSignal;
 }
 
-export async function copyFileToDevice(src: string, dest: string): Promise<boolean> {
-  const destDir = path.dirname(dest);
-  await fs.promises.mkdir(destDir, { recursive: true });
+/**
+ * Put one library file on the device, with the source's mtime where that is
+ * possible.
+ *
+ * `deviceFs` is first and required. Both the source and the destination are
+ * plain absolute paths and look alike, and a copy that silently went to the
+ * server's own disk in web mode would report a successful sync for a player
+ * that received nothing.
+ *
+ * The `EPERM` handling is the original behaviour and matters on FAT volumes
+ * mounted without ownership: the copy or the mtime write fails with `EPERM`
+ * although the bytes did land, so both catches fall back to comparing sizes and
+ * report success when they match.
+ */
+export async function copyFileToDevice(
+  deviceFs: DeviceFs,
+  src: string,
+  dest: string
+): Promise<boolean> {
+  await deviceFs.mkdir(path.dirname(dest), { recursive: true });
+
+  /** Did the bytes arrive anyway? The only thing an `EPERM` can still tell us. */
+  const sizesMatch = async (): Promise<boolean> => {
+    try {
+      const [destStat, srcStat] = await Promise.all([
+        deviceFs.stat(dest),
+        fsp.stat(src),
+      ]);
+      return destStat != null && destStat.size === srcStat.size;
+    } catch {
+      return false;
+    }
+  };
 
   try {
-    await fs.promises.copyFile(src, dest);
+    await deviceFs.copyFromLocal(src, dest);
+
+    // A device that cannot set mtimes is not an error: `name-size-sync.ts`
+    // compares by size first whenever it knows one, and for a lossy transcode
+    // (where it does not) a just-written file satisfies the mtime test anyway.
+    if (!deviceFs.capabilities.setMtime) return true;
 
     try {
-      const srcStat = await fs.promises.stat(src);
-      await fs.promises.utimes(dest, srcStat.atime, srcStat.mtime);
+      const srcStat = await fsp.stat(src);
+      await deviceFs.setMtime(dest, srcStat.atime, srcStat.mtime);
     } catch (err: unknown) {
       const code = (err as NodeJS.ErrnoException).code;
-      if (code === "EPERM") {
-        try {
-          const [destStat, srcStat] = await Promise.all([
-            fs.promises.stat(dest),
-            fs.promises.stat(src),
-          ]);
-          if (destStat.size === srcStat.size) return true;
-        } catch { /* fall through */ }
-      }
+      if (code === "EPERM" && (await sizesMatch())) return true;
       throw err;
     }
     return true;
   } catch (err: unknown) {
     const code = (err as NodeJS.ErrnoException).code;
-    if (code === "EPERM") {
-      try {
-        const [destStat, srcStat] = await Promise.all([
-          fs.promises.stat(dest),
-          fs.promises.stat(src),
-        ]);
-        if (destStat.size === srcStat.size) return true;
-      } catch { /* fall through */ }
-    }
+    if (code === "EPERM" && (await sizesMatch())) return true;
     throw err;
   }
 }
@@ -80,6 +101,7 @@ interface ConvertJob {
 }
 
 export async function copyToDevice(
+  deviceFs: DeviceFs,
   trackPaths: string[],
   deviceFolder: string,
   options: CopyToDeviceOptions = {}
@@ -95,7 +117,7 @@ export async function copyToDevice(
     cancelSignal,
   } = options;
 
-  await fs.promises.mkdir(deviceFolder, { recursive: true });
+  await deviceFs.mkdir(deviceFolder, { recursive: true });
 
   const copyJobs: CopyJob[] = [];
   const convertJobs: ConvertJob[] = [];
@@ -150,7 +172,7 @@ export async function copyToDevice(
   }
 
   if (copyJobs.length > 0) {
-    await runParallelCopies(copyJobs, { progressCallback, logCallback, cancelSignal });
+    await runParallelCopies(deviceFs, copyJobs, { progressCallback, logCallback, cancelSignal });
   }
 
   for (const job of convertJobs) {
@@ -165,15 +187,19 @@ export async function copyToDevice(
     if (job.hasCodec && job.settings) {
       const dest = updateExtension(job.dest, job.settings.codec!);
       try {
-        const success = await convertWithCodec(job.src, dest, job.settings, logWithCapture, cancelSignal);
+        const success = await convertWithCodec(
+          job.src,
+          dest,
+          job.settings,
+          logWithCapture,
+          cancelSignal,
+          deviceFs
+        );
         if (!success) {
           appendSyncError(job.src, dest, "Conversion failed", conversionLog);
           progressCallback?.({ srcPath: job.src, destPath: dest, status: "error" });
         } else {
-          try {
-            const srcStat = await fs.promises.stat(job.src);
-            await fs.promises.utimes(dest, srcStat.atime, srcStat.mtime);
-          } catch { /* non-fatal: next sync falls back to size check */ }
+          await copyMtimeToDevice(deviceFs, job.src, dest);
           progressCallback?.({ srcPath: job.src, destPath: dest, status: "converted" });
         }
       } catch (err) {
@@ -184,11 +210,15 @@ export async function copyToDevice(
       }
     } else {
       try {
-        await convertWithFfmpeg(job.src, job.dest, job.profile, logWithCapture, cancelSignal);
-        try {
-          const srcStat = await fs.promises.stat(job.src);
-          await fs.promises.utimes(job.dest, srcStat.atime, srcStat.mtime);
-        } catch { /* non-fatal: next sync falls back to size check */ }
+        await convertWithFfmpeg(
+          job.src,
+          job.dest,
+          job.profile,
+          logWithCapture,
+          cancelSignal,
+          deviceFs
+        );
+        await copyMtimeToDevice(deviceFs, job.src, job.dest);
         progressCallback?.({ srcPath: job.src, destPath: job.dest, status: "converted" });
       } catch (err) {
         const msg = String(err);
@@ -200,7 +230,27 @@ export async function copyToDevice(
   }
 }
 
+/**
+ * Stamp a transcode with its source's mtime, where the device allows it.
+ *
+ * Non-fatal either way: the next sync falls back to the size comparison.
+ */
+async function copyMtimeToDevice(
+  deviceFs: DeviceFs,
+  src: string,
+  dest: string
+): Promise<void> {
+  if (!deviceFs.capabilities.setMtime) return;
+  try {
+    const srcStat = await fsp.stat(src);
+    await deviceFs.setMtime(dest, srcStat.atime, srcStat.mtime);
+  } catch {
+    /* non-fatal: next sync falls back to size check */
+  }
+}
+
 async function runParallelCopies(
+  deviceFs: DeviceFs,
   jobs: CopyJob[],
   opts: {
     progressCallback?: (progress: CopyProgress) => void;
@@ -212,7 +262,7 @@ async function runParallelCopies(
 
   const doCopy = async (job: CopyJob): Promise<CopyProgress> => {
     try {
-      const ok = await copyFileToDevice(job.src, job.dest);
+      const ok = await copyFileToDevice(deviceFs, job.src, job.dest);
       return { srcPath: job.src, destPath: job.dest, status: ok ? "copied" : "skipped" };
     } catch (err) {
       const msg = String(err);

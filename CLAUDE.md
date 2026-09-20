@@ -574,6 +574,85 @@ Pinned in `src/__tests__/regressions/delete-all-path-guard.test.ts`,
 `src/__tests__/behaviors/orphan-reset-policy.test.ts` and
 `tests/e2e/orphan-reset-policy.test.ts`.
 
+## Hazard: the device filesystem is `DeviceFs`, and a missed one is silent
+
+Every byte a player receives, and every listing read back off it, goes through
+`DeviceFs` (`src/main/devices/fs/`). `NodeDeviceFs` is `fs` and nothing more and
+is what the desktop uses; web-server mode tunnels the same calls out to the
+browser holding the folder. `device.fs` is the only instance a sync should ever
+use — it belongs to the device, because "which filesystem is this path on" is a
+fact about the device and nothing else.
+
+- **Paths crossing this interface are absolute and in the host's own flavour.**
+  They are built exactly as they always were (`path.join(device.mountPath, …)`),
+  and a remote implementation converts to device-relative POSIX at the RPC
+  boundary where `toMountRelative` already does that job. Forcing POSIX on this
+  side would mean threading a path flavour through six containment guards —
+  `containUnderFolder`, `resolveResettableFolders`, `toMountRelative`,
+  `computeShadowAlbumRelPath`, `findOrphanedAlbumArt` and `sanitizeMountPath` —
+  and missing one collapses every destination to `folder/basename`: the whole
+  library flattens into `Music/` and the next sync sees every track as missing.
+- **A web device's synthetic root is a perfectly ordinary local path**
+  (`/ipodrocks-web/<id>`, `C:\ipodrocks-web\<id>`), so a call that missed its
+  `DeviceFs` would quietly build that tree on the *server's* disk and report a
+  successful sync for a player that got nothing. `NodeDeviceFs` throws on any
+  path under that prefix for exactly this reason. Do not relax it.
+- **The library side is not a `DeviceFs`.** Source files, the scan cache and
+  every temp file an encoder writes stay on plain `fs`; they are on the machine
+  running the sync whatever the device is. `findOnDisk` is library-side only and
+  stays synchronous. Nothing in `tagging/` is fs-injectable: the APEv2 writer,
+  the Musepack `RG` stream-header patch and the M4A `----` append all work on a
+  server-local temp file, and `placeConvertedFile()` is the single step that
+  puts the finished bytes on the destination.
+- **`generateRockboxCover()` takes its target fs as a required first
+  parameter, with no default.** It writes for a device *and* for a shadow-library
+  root, the two destinations are both just absolute paths, and getting them the
+  wrong way round is silent — `cover.jpg` is in `SHADOW_ARTWORK_NAMES`, so the
+  shadow prune would then delete whichever copy landed in the wrong tree.
+  `copyToDevice`/`copyFileToDevice` take theirs first for the same reason.
+- **`cleanEmptyDirectories()` stays synchronous and local; the device gets
+  `cleanEmptyDirectoriesOn()`.** Its second caller is `deleteShadowLibrary()`,
+  which is synchronous all the way up through `shadow:delete` and Rocksy's
+  `shadow_delete`; making it async to serve the device would infect all of that
+  to save fifteen duplicated lines.
+- **`listTree()` exists so a walk is one call, not a readdir-plus-stat storm.**
+  `Device.getTracks`, `getContentStats`, `findOrphanedAlbumArt` and
+  `findOrphanPlaylistFiles` all go through it. An `mtimeMs` of `undefined` is
+  its marker for a stat that failed, and is *not* the same as `0` —
+  `compareLibraries` reads the two differently.
+
+**Still on plain `fs` and deliberately so: the Rockbox runtime read and rating
+write** (`rockbox/tagcache-index.ts`, `sync/rating-propagate.ts`). Making them
+async infects `readAndIngestRuntimeData` and `propagateRatingsToDevice`, which
+`regressions/rating-propagation-gap.test.ts` and `behaviors/rating-writeback.test.ts`
+call synchronously — the suites that pin every rating hazard below. The pure
+half is already extracted (`planRatingProbe`/`planRatingEdits` in
+`rockbox/tcd-format.ts`), so `writeRating` is already one batched two-word read
+followed by the planned edits, and porting it to `readRange`/`patch` is a
+wrapper rather than a redesign. `tagcache-index.ts`'s module-level `backedUp`
+set goes with it: in a daemon running for weeks "once per session" silently
+means "once ever", and the one backup is from the first sync after boot.
+
+Pinned in `src/__tests__/regressions/device-fs-boundary.test.ts`.
+
+## Hazard: one global is one client
+
+`ipc/sync.ts` keys its abort controllers by device (`activeSyncAborts:
+Map<deviceId, AbortController>`) because a single module-level controller is
+correct for exactly one window and one player: a second `sync:start` overwrote
+the first's, a cancel then stopped the wrong sync, and `isSyncActive()` — which
+`device:eject` uses to refuse unmounting under a running copy — answered about
+whichever sync started last. `sync:cancel` takes an optional device id; without
+one it cancels every running sync, which is what the renderer has always meant.
+Pinned in `src/__tests__/behaviors/device-sync.test.ts`.
+
+The same shape is still unfixed elsewhere and each one is a bug the moment a
+second client exists: `tagcache-index.ts`'s `backedUp`, `ipc/savant.ts`'s
+session maps (keyed on a **client-supplied** id, so one user can pass another's),
+`usb-devices.ts` (would report the *server's* USB devices to a remote client),
+`podcast-scheduler.ts`'s timers (would auto-sync to a web device whose browser
+is closed) and `openRouterClient`'s rate-limit map.
+
 ## Hazard: a sandboxed preload cannot `require` one of our own files
 
 `BrowserWindow` runs with `sandbox: true`. A sandboxed preload's `require` is a

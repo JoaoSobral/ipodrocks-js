@@ -1,4 +1,3 @@
-import * as fs from "fs";
 import * as path from "path";
 import { handle as bridgeHandle } from "../host/bridge";
 import {
@@ -158,7 +157,7 @@ export function registerDeviceHandlers(): void {
 
       // Unmounting under a running sync leaves half-copied files behind. The OS
       // would refuse anyway, but "Resource busy" tells the user nothing.
-      if (isSyncActive()) {
+      if (isSyncActive(deviceId)) {
         return { error: "A sync is running. Wait for it to finish before ejecting." };
       }
       // A dev-mode device is an ordinary folder that `isDeviceOnline` reports as
@@ -204,7 +203,7 @@ export function registerDeviceHandlers(): void {
         device.getContentStats("audiobook"),
         device.getContentStats("playlist"),
       ]);
-      const space = device.getAvailableSpace();
+      const space = await device.getAvailableSpace();
 
       const maps = buildLibraryTrackMaps(lib);
       let libraryMusicMap = maps.music;
@@ -338,13 +337,17 @@ export function registerDeviceHandlers(): void {
 
       const playlistFolder = device.getContentPath("playlist");
       let playlistOrphans: string[] = [];
-      if (playlistFolder && fs.existsSync(playlistFolder)) {
+      if (playlistFolder && (await device.fs.exists(playlistFolder))) {
         const core = getPlaylistCore();
         const libraryPlaylists = core.getPlaylists();
         const expectedStems = new Set(
           libraryPlaylists.map((pl) => devicePlaylistStem(pl.name).toLowerCase())
         );
-        playlistOrphans = findOrphanPlaylistFiles(playlistFolder, expectedStems);
+        playlistOrphans = await findOrphanPlaylistFiles(
+          device.fs,
+          playlistFolder,
+          expectedStems
+        );
       }
 
       // Keep the on-device location alongside the library path. Rockbox

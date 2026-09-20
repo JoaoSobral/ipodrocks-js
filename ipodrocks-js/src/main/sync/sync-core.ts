@@ -8,6 +8,7 @@ import {
   sanitizeDevicePathComponent,
 } from "../utils/device-path";
 import { Device } from "../devices/device";
+import { localFs, type DeviceFs } from "../devices/fs";
 import {
   CompareOptions,
   CompareResult,
@@ -128,8 +129,14 @@ export interface ContentAnalysis {
 
 
 /**
- * Recursively removes empty directories under rootDir (post-order traversal).
- * Best-effort; ignores errors.
+ * Recursively removes empty directories under a **local** rootDir (post-order
+ * traversal). Best-effort; ignores errors.
+ *
+ * Deliberately still synchronous and still on `fs`. Its second caller is
+ * `deleteShadowLibrary` in `library/shadow-library.ts`, which is synchronous
+ * all the way up through `shadow:delete` and Rocksy's `shadow_delete`; making
+ * this async to serve the device would infect all of that to save fifteen
+ * duplicated lines. The device gets {@link cleanEmptyDirectoriesOn} instead.
  */
 export function cleanEmptyDirectories(rootDir: string): void {
   if (!fs.existsSync(rootDir)) return;
@@ -150,6 +157,31 @@ export function cleanEmptyDirectories(rootDir: string): void {
 }
 
 
+
+/**
+ * {@link cleanEmptyDirectories} for a device, which may be a folder held in
+ * someone's browser. Same post-order walk, same best-effort silence.
+ */
+export async function cleanEmptyDirectoriesOn(
+  deviceFs: DeviceFs,
+  rootDir: string
+): Promise<void> {
+  if (!(await deviceFs.exists(rootDir))) return;
+  try {
+    const entries = await deviceFs.readdir(rootDir);
+    for (const entry of entries) {
+      if (entry.isDirectory) {
+        await cleanEmptyDirectoriesOn(deviceFs, path.join(rootDir, entry.name));
+      }
+    }
+    const remaining = await deviceFs.readdir(rootDir);
+    if (remaining.length === 0) {
+      await deviceFs.rmdir(rootDir);
+    }
+  } catch {
+    /* best effort */
+  }
+}
 
 export function computeDeviceRelativePath(
   trackPath: string,
@@ -444,6 +476,7 @@ export function analyzeContentType(
 }
 
 export async function copyMissingTracks(
+  deviceFs: DeviceFs,
   deviceContentPath: string,
   contentType: string,
   missingPaths: string[],
@@ -545,26 +578,27 @@ export async function copyMissingTracks(
     cancelSignal,
   };
 
-  await copyToDevice(existingPaths, deviceContentPath, opts);
+  await copyToDevice(deviceFs, existingPaths, deviceContentPath, opts);
   return { synced: stats.synced, missingFiles, errors: stats.errors };
 }
 
-export function removeExtraTracks(
+export async function removeExtraTracks(
+  deviceFs: DeviceFs,
   extraPaths: string[],
   progressCallback?: ProgressCallback,
   cancelSignal?: AbortSignal
-): { removed: number; bytesRemoved: number } {
+): Promise<{ removed: number; bytesRemoved: number }> {
   let removed = 0;
   let bytesRemoved = 0;
 
   for (const p of extraPaths) {
     if (cancelSignal?.aborted) throw new SyncCancelled();
-    let fileSize = 0;
+    // The size is read for the progress report only; a file that has already
+    // gone is reported as zero bytes rather than skipped.
+    const stat = await deviceFs.stat(p);
+    const fileSize = stat?.size ?? 0;
     try {
-      fileSize = fs.statSync(p).size;
-    } catch { /* ignore */ }
-    try {
-      fs.unlinkSync(p);
+      await deviceFs.unlink(p);
       removed++;
       bytesRemoved += fileSize;
       progressCallback?.({ event: "remove", path: p, bytes: fileSize });
@@ -593,6 +627,7 @@ export interface ArtworkSyncResult {
  * re-encodes it to a small baseline JPEG via ffmpeg. See sync/rockbox-cover.ts.
  */
 export async function copyAlbumArtworkToDevice(
+  deviceFs: DeviceFs,
   deviceContentPath: string,
   contentType: string,
   libraryTracks: Record<string, Record<string, unknown>>,
@@ -637,9 +672,9 @@ export async function copyAlbumArtworkToDevice(
     if (!source) continue;
 
     const destPath = path.join(deviceContentPath, deviceRelAlbum, "cover.jpg");
-    const result = await generateRockboxCover(source, destPath, {
+    const result = await generateRockboxCover(deviceFs, source, destPath, {
       maxDim,
-      log: (message) => progressCallback?.({ event: "log", message }),
+      log: (message: string) => progressCallback?.({ event: "log", message }),
       signal: cancelSignal,
     });
 
@@ -694,14 +729,13 @@ export interface FindOrphanedAlbumArtOptions extends LayoutOptions {
  * ever removing the folder it sits in (issue #119). This walks the device
  * tree directly to find them.
  */
-export function findOrphanedAlbumArt(
+export async function findOrphanedAlbumArt(
+  deviceFs: DeviceFs,
   deviceContentPath: string,
   contentType: string,
   libraryTracks: Record<string, Record<string, unknown>>,
   options: FindOrphanedAlbumArtOptions = {}
-): string[] {
-  if (!fs.existsSync(deviceContentPath)) return [];
-
+): Promise<string[]> {
   const expectedAlbumDirs = new Set<string>();
   if (options.skipAlbumArtwork !== true) {
     for (const [trackPath, trackInfo] of Object.entries(libraryTracks)) {
@@ -710,26 +744,17 @@ export function findOrphanedAlbumArt(
     }
   }
 
+  const entries = await deviceFs.listTree(deviceContentPath, {
+    includeDirectories: false,
+  });
+
   const orphans: string[] = [];
-  const walk = (dir: string): void => {
-    let entries: fs.Dirent[];
-    try {
-      entries = fs.readdirSync(dir, { withFileTypes: true });
-    } catch {
-      return;
-    }
-    for (const entry of entries) {
-      const full = path.join(dir, entry.name);
-      if (entry.isDirectory()) {
-        walk(full);
-        continue;
-      }
-      if (entry.name.toLowerCase() !== "cover.jpg") continue;
-      const relDir = path.relative(deviceContentPath, dir).replace(/\\/g, "/") || ".";
-      if (!expectedAlbumDirs.has(relDir)) orphans.push(full);
-    }
-  };
-  walk(deviceContentPath);
+  for (const entry of entries) {
+    if (entry.name.toLowerCase() !== "cover.jpg") continue;
+    const relDir =
+      path.relative(deviceContentPath, path.dirname(entry.path)).replace(/\\/g, "/") || ".";
+    if (!expectedAlbumDirs.has(relDir)) orphans.push(entry.path);
+  }
 
   return orphans;
 }
@@ -774,6 +799,11 @@ export async function copyArtworkToShadowLibrary(
     return { copied: 0, skipped: 0, errors: 0, totalCandidates: 0, failedAlbums: [] };
   }
 
+  // The shadow root is a folder on the machine running the sync, never a
+  // device. Named here rather than defaulted so the contrast with
+  // `copyAlbumArtworkToDevice` above is visible at both call sites.
+  const shadowFs = localFs(shadowRoot);
+
   const albums = new Map<string, { albumRel: string; firstTrack: string }>();
 
   for (const track of allTracks) {
@@ -801,7 +831,7 @@ export async function copyArtworkToShadowLibrary(
     if (!source) continue;
 
     const destPath = path.join(shadowRoot, albumRel, "cover.jpg");
-    const result = await generateRockboxCover(source, destPath, {
+    const result = await generateRockboxCover(shadowFs, source, destPath, {
       maxDim,
       log: progressCallback,
       signal,
@@ -842,6 +872,10 @@ export async function runSync(
   const { extraTrackPolicy, progressCallback, cancelSignal, skipAlbumArtwork, artworkMaxDimension, preloadedMtimes, profileCodecExtOverride, preserveFolderStructure, albumGrouping = "album-artist" } =
     options;
   let artworkErrors = 0;
+
+  // Every pass below writes through the device's own filesystem, which on the
+  // desktop is `fs` and in web-server mode is the browser holding the player.
+  const deviceFs = device.fs;
 
   // Built once and handed to every pass below. The compare, the copy and the
   // artwork walk must agree on where a track lands, so they read the layout
@@ -894,12 +928,18 @@ export async function runSync(
 
   let removedCount = 0;
   if (extrasWereRemoved && analysis.extras.length > 0) {
-    const { removed } = removeExtraTracks(analysis.extras, progressCallback, cancelSignal);
+    const { removed } = await removeExtraTracks(
+      deviceFs,
+      analysis.extras,
+      progressCallback,
+      cancelSignal
+    );
     removedCount = removed;
   }
 
   if (analysis.codecMismatchPaths.length > 0) {
-    const { removed } = removeExtraTracks(
+    const { removed } = await removeExtraTracks(
+      deviceFs,
       analysis.codecMismatchPaths,
       progressCallback,
       cancelSignal
@@ -917,13 +957,21 @@ export async function runSync(
   // once skipAlbumArtwork is on) is invisible to the track-level extras above,
   // so it never gets swept up by them and never lets cleanEmptyDirectories
   // remove the folder it sits in.
-  const orphanedArt = findOrphanedAlbumArt(deviceContentPath, contentType, libraryTracks, {
-    ...layout,
-    skipAlbumArtwork,
-  });
+  const orphanedArt = await findOrphanedAlbumArt(
+    deviceFs,
+    deviceContentPath,
+    contentType,
+    libraryTracks,
+    { ...layout, skipAlbumArtwork }
+  );
   if (orphanedArt.length > 0) {
     if (extrasWereRemoved) {
-      const { removed } = removeExtraTracks(orphanedArt, progressCallback, cancelSignal);
+      const { removed } = await removeExtraTracks(
+        deviceFs,
+        orphanedArt,
+        progressCallback,
+        cancelSignal
+      );
       removedCount += removed;
       if (removed > 0) {
         progressCallback?.({
@@ -944,6 +992,7 @@ export async function runSync(
   }
 
   let { synced, missingFiles, errors } = await copyMissingTracks(
+    deviceFs,
     deviceContentPath,
     contentType,
     analysis.missingPaths,
@@ -960,6 +1009,7 @@ export async function runSync(
 
   if (skipAlbumArtwork !== true && Object.keys(libraryTracks).length > 0) {
     const artworkResult = await copyAlbumArtworkToDevice(
+      deviceFs,
       deviceContentPath,
       contentType,
       libraryTracks,
@@ -1014,7 +1064,7 @@ export async function runSync(
   }
 
   if (removedCount > 0) {
-    cleanEmptyDirectories(deviceContentPath);
+    await cleanEmptyDirectoriesOn(deviceFs, deviceContentPath);
   }
 
   return {
