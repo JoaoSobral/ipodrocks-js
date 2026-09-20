@@ -17,9 +17,10 @@
  */
 import { describe, expect, it } from "vitest";
 import type { HandlerContext } from "../../main/host/bridge";
-import { blockWrongLocality } from "../../main/ipc/common";
+import { blockWrongAdmin, blockWrongLocality } from "../../main/ipc/common";
 import {
   autoPodcastBlock,
+  deviceAdminBlock,
   deviceLocalityBlock,
   isRemoteDevice,
 } from "../../shared/device-locality";
@@ -87,5 +88,37 @@ describe("autoPodcastBlock", () => {
   it("leaves a local player alone", () => {
     expect(autoPodcastBlock("local")).toBeNull();
     expect(autoPodcastBlock(undefined)).toBeNull();
+  });
+});
+
+describe("deviceAdminBlock", () => {
+  it("is asymmetric on purpose, unlike the locality rule", () => {
+    // The desktop app may remove a remote device: it holds the database, and
+    // somebody has to be able to tidy up a browser that is never coming back.
+    expect(deviceAdminBlock("web", false)).toBeNull();
+    // A browser may not touch a server-attached device's settings at all. Its
+    // mount path, USB identity and folder layout are facts about a machine the
+    // browser cannot see and could never verify.
+    expect(deviceAdminBlock("local", true)).toMatch(/machine running the server/i);
+  });
+
+  it("leaves each client its own kind alone", () => {
+    expect(deviceAdminBlock("local", false)).toBeNull();
+    expect(deviceAdminBlock("web", true)).toBeNull();
+  });
+
+  it("is narrower than deviceLocalityBlock, which is the point", () => {
+    // Same client, same device, different verb: the desktop app cannot *sync*
+    // a remote device but can still delete it. Collapsing the two would either
+    // strand rows forever or hand a browser the server's device config.
+    expect(deviceLocalityBlock("web", false)).not.toBeNull();
+    expect(deviceAdminBlock("web", false)).toBeNull();
+  });
+
+  it("is enforced from the transport that carried the call", () => {
+    expect(blockWrongAdmin(webCtx, "local")?.error).toMatch(/machine running the server/i);
+    expect(blockWrongAdmin(webCtx, "web")).toBeNull();
+    expect(blockWrongAdmin(electronCtx, "web")).toBeNull();
+    expect(blockWrongAdmin(electronCtx, "local")).toBeNull();
   });
 });

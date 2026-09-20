@@ -3,7 +3,7 @@ import * as os from "os";
 import * as path from "path";
 import type { HandlerContext } from "../host/bridge";
 import type { DeviceTransport } from "../../shared/types";
-import { deviceLocalityBlock } from "../../shared/device-locality";
+import { deviceAdminBlock, deviceLocalityBlock } from "../../shared/device-locality";
 import { pathMatchesAllowedPrefix } from "../path-allowlist";
 import { Library } from "../library/library";
 import { DevicesCore } from "../devices/devices-core";
@@ -199,5 +199,20 @@ export function blockWrongLocality(
   transport: DeviceTransport | undefined
 ): { error: string } | null {
   const reason = deviceLocalityBlock(transport, ctx.sessionId !== undefined);
+  return reason ? { error: reason } : null;
+}
+
+/**
+ * Refuses an *edit or delete* of a device this caller has no business changing.
+ *
+ * Narrower than {@link blockWrongLocality}: the desktop app may still remove a
+ * remote device (somebody has to be able to tidy up a browser that never comes
+ * back), while a browser may not touch a server-attached one at all.
+ */
+export function blockWrongAdmin(
+  ctx: HandlerContext,
+  transport: DeviceTransport | undefined
+): { error: string } | null {
+  const reason = deviceAdminBlock(transport, ctx.sessionId !== undefined);
   return reason ? { error: reason } : null;
 }

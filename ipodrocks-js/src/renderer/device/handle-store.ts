@@ -126,3 +126,27 @@ export async function requestWritePermission(
 export function supportsDirectoryPicker(): boolean {
   return typeof window !== "undefined" && "showDirectoryPicker" in window;
 }
+
+/**
+ * Opens the browser's folder picker and returns the handle, or null if the
+ * user dismissed it.
+ *
+ * Split out of `DeviceClient.pickAndAttach()` because the Add form needs the
+ * folder *before* the device row exists — there is no id yet to attach to or
+ * to store the handle under. The call must still happen straight out of the
+ * click: Chrome refuses a picker that is not inside a user gesture, and the
+ * refusal is indistinguishable from the user cancelling.
+ */
+export async function pickDeviceFolder(): Promise<FileSystemDirectoryHandle | null> {
+  if (!supportsDirectoryPicker()) return null;
+  try {
+    return await (
+      window as unknown as {
+        showDirectoryPicker(o: { mode: "readwrite" }): Promise<FileSystemDirectoryHandle>;
+      }
+    ).showDirectoryPicker({ mode: "readwrite" });
+  } catch {
+    // Dismissed. Not an error worth showing.
+    return null;
+  }
+}

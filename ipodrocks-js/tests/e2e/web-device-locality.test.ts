@@ -28,7 +28,7 @@
  */
 import { test, expect } from "@playwright/test";
 import type { APIRequestContext } from "@playwright/test";
-import { invoke, signIn } from "./web-harness";
+import { invoke, removeDeviceRow, signIn } from "./web-harness";
 
 test.describe.configure({ mode: "serial" });
 
@@ -51,8 +51,15 @@ async function addDevice(
   return device;
 }
 
-async function removeDevice(request: APIRequestContext, id: number): Promise<void> {
-  await invoke(request, "device:remove", id);
+/** Local devices cannot be removed by a web client — by design — so cleanup
+ *  goes straight at the row. A remote one goes through the app as usual. */
+async function removeDevice(
+  request: APIRequestContext,
+  id: number,
+  transport: "local" | "web"
+): Promise<void> {
+  if (transport === "web") await invoke(request, "device:remove", id);
+  else removeDeviceRow(id);
 }
 
 async function readDevice(
@@ -94,7 +101,7 @@ test("a browser cannot sync a player attached to the server", async ({ request }
     const check = await invoke<{ error?: string }>(request, "device:check", device.id);
     expect(check.error).toMatch(/plugged into the server/i);
   } finally {
-    await removeDevice(request, device.id);
+    await removeDevice(request, device.id, "local");
   }
 });
 
@@ -121,7 +128,7 @@ test("a browser can operate a remote device, and the refusal is not blanket", as
     expect(sync.error ?? "").not.toMatch(/plugged into the server/i);
     expect(sync.error ?? "").not.toMatch(/remote device/i);
   } finally {
-    await removeDevice(request, device.id);
+    await removeDevice(request, device.id, "web");
   }
 });
 
@@ -159,7 +166,7 @@ test("Auto Podcasts is refused on a remote device", async ({ request }) => {
     );
     expect(off?.error).toBeUndefined();
   } finally {
-    await removeDevice(request, device.id);
+    await removeDevice(request, device.id, "web");
   }
 });
 
@@ -185,6 +192,6 @@ test("a local player still takes Auto Podcasts", async ({ request }) => {
 
     expect((await readDevice(request, device.id))?.autoPodcastsEnabled).toBe(true);
   } finally {
-    await removeDevice(request, device.id);
+    await removeDevice(request, device.id, "local");
   }
 });

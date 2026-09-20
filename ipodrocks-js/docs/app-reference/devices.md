@@ -64,24 +64,32 @@ where the thing is physically plugged in, not a preference:
 | Auto Podcasts | yes | no |
 | Eject from iPodRocks | macOS/Linux | no — use your own file manager |
 
-**Each one is only usable from its own side.** In the browser, a player attached
-to the server is listed but greyed out, with a line saying why; in the desktop
-app, a remote device is listed but greyed out the same way. Both are still
-yours: you can rename them, change their settings and remove them from either
-side. Only the things that touch the player's filesystem — Check Device, Sync,
-Eject — are refused, and they are refused by the app itself, not just hidden
-from the buttons.
+**Each one is only usable from its own side**, and both are still listed on the
+other — hiding a device would read as "iPodRocks lost my iPod".
+
+What the other side may do differs, on purpose:
+
+- **In the browser, a server-attached device is read-only.** Sync, Check, Edit
+  and Remove are all refused. Its mount path, USB identity and folder layout are
+  facts about a machine the browser cannot see and could never verify, so it has
+  no business changing them.
+- **In the desktop app, a remote device can still be removed** — somebody has to
+  be able to tidy up a device whose browser is never coming back — but not
+  synced or checked.
+
+These are refused by the app itself, not merely hidden from the buttons.
 
 ### Adding one
 
-In the browser, **+ Add Device** always adds a remote device. There is no mount
-path to type and no Browse button, because there is no folder on the server to
-point at — the picker you want is your own browser's, and it comes later.
+In the browser, **+ Add Remote Device** is the only kind you can add. There is
+no mount path to type and no Browse button, because there is no folder on the
+server to point at — and no **USB Device** dropdown, because that list is the
+server's own USB bus and says nothing about the device in your hand.
 
-Fill in the name and model, save, then press **Connect this player** on the
-device's card. Your browser opens its own folder picker; choose the root of the
-player — the folder holding `Music` and `.rockbox` — and grant access. From then
-on that tab *is* the device.
+Press **Choose folder** and pick the root of the device: the folder holding
+`Music` and `.rockbox`. It is optional — save without it and press **Connect
+this player** on the device's card whenever you like. Either way, from that
+point the tab *is* the device.
 
 ### What to expect, and why
 
@@ -116,9 +124,9 @@ on that tab *is* the device.
   the player on your next sync.
 - **Eject is greyed out.** The volume belongs to your computer, not the server,
   so nothing iPodRocks runs can unmount it. Use your own file manager.
-- **The USB Device dropdown is empty**, and is meant to be. That list is the
-  *server's* USB bus, which says nothing about the player in your hand.
-- **Modification times are not set on the player.** The File System Access API
+- **There is no USB Device dropdown.** That list is the *server's* USB bus,
+  which says nothing about the device in your hand.
+- **Modification times are not set on the device.** The File System Access API
   cannot set them, so the sync compares file sizes instead — which it already
   tried first. iPodRocks also measures the difference between your browser's
   clock and the server's and corrects for it, because a clock a few seconds out

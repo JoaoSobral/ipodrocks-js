@@ -36,8 +36,17 @@ import {
 import { MpcUnavailableModal } from "../modals/MpcUnavailableModal";
 import { WebDeviceLink } from "../web/WebDeviceLink";
 import { isWebMode } from "../../ipc/web-transport";
-import { supportsDirectoryPicker } from "../../device";
-import { autoPodcastBlock, deviceLocalityBlock } from "@shared/device-locality";
+import {
+  getDeviceClient,
+  pickDeviceFolder,
+  saveDeviceHandle,
+  supportsDirectoryPicker,
+} from "../../device";
+import {
+  autoPodcastBlock,
+  deviceAdminBlock,
+  deviceLocalityBlock,
+} from "@shared/device-locality";
 import { restoreWebDevices } from "../../device";
 import { formatCodecLabel, formatGb } from "../../utils/format";
 import {
@@ -154,6 +163,16 @@ export function DevicePanel() {
   const [runtimeDataEnabled, setRuntimeDataEnabled] = useState(true);
   const [rockboxSmartPlaylists, setRockboxSmartPlaylists] = useState(false);
   const [autoPodcastsEnabled, setAutoPodcastsEnabled] = useState(false);
+  /**
+   * The folder picked for a remote device *before* it exists.
+   *
+   * There is no device id to attach to until the row is saved, so the handle is
+   * held here and attached in `handleSaveDevice()`. The picker itself has to
+   * run straight out of the click — Chrome refuses one outside a user gesture,
+   * and the refusal is indistinguishable from the user cancelling.
+   */
+  const [pendingFolder, setPendingFolder] =
+    useState<FileSystemDirectoryHandle | null>(null);
   const [skipAlbumArtwork, setSkipAlbumArtwork] = useState(false);
   const [artworkMaxDimension, setArtworkMaxDimension] = useState(300);
   const [vbrEnabled, setVbrEnabled] = useState(false);
@@ -259,6 +278,7 @@ export function DevicePanel() {
     setRuntimeDataEnabled(true); // true = import Rockbox's runtime data (default)
     setRockboxSmartPlaylists(false);
     setAutoPodcastsEnabled(false);
+    setPendingFolder(null);
     setSkipAlbumArtwork(false);
     setArtworkMaxDimension(300);
     setVbrEnabled(false);
@@ -498,6 +518,22 @@ export function DevicePanel() {
       if (device?.id) {
         await podcastSetDeviceAutoPodcasts(device.id, autoPodcastsEnabled);
       }
+      // Attach the folder the user picked in the form. It could not be done
+      // earlier: the handle is stored per device id, and there was no id until
+      // now. Failing here must not lose the device that was just created — the
+      // card's Connect button is the retry.
+      if (device?.id && pendingFolder) {
+        try {
+          await saveDeviceHandle(device.id, pendingFolder);
+          await getDeviceClient()?.attachHandle(device.id, pendingFolder);
+        } catch (err) {
+          toast.warning(
+            `'${name}' was added, but its folder could not be opened: ` +
+              `${err instanceof Error ? err.message : String(err)}. ` +
+              "Press Connect on its card to try again."
+          );
+        }
+      }
       if (isDefault && device?.id) {
         await setDefaultDevice(device.id);
         setDefaultDeviceId(device.id);
@@ -575,6 +611,18 @@ export function DevicePanel() {
     [codecConfigs, mpcAvailable]
   );
 
+  /**
+   * Picks the remote device's folder before the device exists.
+   *
+   * Straight out of the click, with no `await` before the picker call: Chrome
+   * refuses a picker that is not inside a user gesture, and it refuses it the
+   * same way the user dismissing it looks.
+   */
+  async function handlePickDeviceFolder() {
+    const handle = await pickDeviceFolder();
+    if (handle) setPendingFolder(handle);
+  }
+
   async function handlePickMount() {
     const result = await pickFolder();
     if (result) setMountPath(result);
@@ -629,6 +677,11 @@ export function DevicePanel() {
             // and removable — it is the user's device either way — but nothing
             // that touches its filesystem is offered.
             const localityBlock = deviceLocalityBlock(d?.transport, isWebMode());
+            // Narrower, and deliberately asymmetric: the desktop app may still
+            // remove a remote device — somebody has to be able to tidy up a
+            // browser that never comes back — while a browser may not touch a
+            // server-attached device's settings at all.
+            const adminBlock = deviceAdminBlock(d?.transport, isWebMode());
             return (
               <Card key={d?.id ?? `device-${idx}`}>
                 <div className="flex items-start gap-3 mb-4">
@@ -877,16 +930,26 @@ export function DevicePanel() {
                       {isEjecting ? <Spinner size="sm" className="!w-4 !h-4" /> : <EjectIcon />}
                     </Button>
                   </span>
-                  <Button size="sm" variant="secondary" onClick={() => d && openForEdit(d)}>
-                    Edit
-                  </Button>
-                  <Button
-                    variant="danger"
-                    size="sm"
-                    onClick={() => d?.id != null && handleRemove(d.id)}
-                  >
-                    Remove
-                  </Button>
+                  <span title={adminBlock ?? "Edit"} className="inline-flex">
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      onClick={() => d && openForEdit(d)}
+                      disabled={adminBlock !== null}
+                    >
+                      Edit
+                    </Button>
+                  </span>
+                  <span title={adminBlock ?? "Remove"} className="inline-flex">
+                    <Button
+                      variant="danger"
+                      size="sm"
+                      onClick={() => d?.id != null && handleRemove(d.id)}
+                      disabled={adminBlock !== null}
+                    >
+                      Remove
+                    </Button>
+                  </span>
                 </div>
               </Card>
             );
@@ -908,6 +971,7 @@ export function DevicePanel() {
               ? "Add Remote Device"
               : "Add Device"
         }
+        wide
       >
         <div className="space-y-4">
           {/* Device Name */}
@@ -935,29 +999,50 @@ export function DevicePanel() {
             hint={formSubmitted && modelId == null ? "Please select a device model" : undefined}
           />
 
-          {/* Where the player is plugged in.
-              Not a question any more, in either direction. In the desktop app
-              the answer is always "this machine"; in a browser it is always
-              "the machine running the browser", because a player attached to
-              the *server* can only be driven by the app running there. Offering
-              the choice is what sent someone browsing the server's own disk
-              looking for their iPod. */}
+          {/* Where the device is plugged in.
+              Not a question any more, in either direction: in the desktop app
+              the answer is always "this machine", in a browser always "the
+              machine running the browser". The long version lives in the
+              tooltip — as body text it was four lines of prose above the one
+              control that matters. */}
           {isWebMode() && editingDeviceId == null && (
-            <div className="rounded-lg border border-border bg-muted/30 p-3 text-sm">
-              <p className="font-medium text-foreground">Remote device</p>
-              <p className="mt-1 text-xs text-muted-foreground">
-                You pick its folder in this browser, and every file travels from
-                the server through this tab onto the player. A player plugged
-                into the server itself is added from the app running there.
-              </p>
-              {!supportsDirectoryPicker() && (
+            <div className="rounded-lg border border-border bg-muted/30 p-3">
+              <div className="flex items-center gap-1.5">
+                <span className="text-sm font-medium text-foreground">
+                  Remote device
+                </span>
+                <InfoTooltip text="You pick its folder in this browser, and every file travels from the server through this tab onto the device. A device plugged into the server itself is added from the app running there." />
+              </div>
+
+              {!supportsDirectoryPicker() ? (
                 <p className="mt-2 text-xs text-amber-600 dark:text-amber-500">
                   <strong>This browser cannot hold a device.</strong> Granting a
-                  page access to a folder needs the File System Access API,
-                  which exists only in Chrome, Edge and other Chromium browsers
-                  on a desktop — not Firefox or Safari, and not on iOS. Open
-                  iPodRocks in one of those to add a device.
+                  page access to a folder needs the File System Access API —
+                  Chrome, Edge or another Chromium browser on a desktop.
                 </p>
+              ) : (
+                <>
+                  <div className="mt-2 flex items-center gap-2">
+                    <Button
+                      size="sm"
+                      onClick={handlePickDeviceFolder}
+                      className="whitespace-nowrap"
+                    >
+                      {pendingFolder ? "Change folder" : "Choose folder"}
+                    </Button>
+                    <span
+                      className={`min-w-0 flex-1 truncate text-xs ${
+                        pendingFolder ? "text-foreground" : "text-muted-foreground"
+                      }`}
+                      title={pendingFolder?.name}
+                    >
+                      {pendingFolder ? `✓ ${pendingFolder.name}` : "No folder chosen"}
+                    </span>
+                  </div>
+                  <p className="mt-1.5 text-[11px] text-muted-foreground">
+                    Optional — you can connect it from its card later.
+                  </p>
+                </>
               )}
             </div>
           )}
@@ -989,7 +1074,14 @@ export function DevicePanel() {
           )}
 
           {/* USB identity — optional. Pins the device to a physical USB unit so
-              two players that mount at the same path stay distinguishable. */}
+              two devices that mount at the same path stay distinguishable.
+
+              Hidden for a remote device, and not merely disabled: this list is
+              the *server's* USB bus, which says nothing whatever about the
+              player in the user's hand. Leaving it visible meant a dropdown
+              that is always empty, above a red "Could not read USB devices on
+              this system" that is both true and entirely beside the point. */}
+          {!webTransport && (
           <div>
             <div className="flex gap-2 items-end">
               <div className="flex-1">
@@ -1009,6 +1101,7 @@ export function DevicePanel() {
               </Button>
             </div>
           </div>
+          )}
 
           {/* Transfer Mode */}
           <div>

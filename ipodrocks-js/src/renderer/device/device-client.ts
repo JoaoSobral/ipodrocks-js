@@ -28,6 +28,7 @@ import {
   requestWritePermission,
   saveDeviceHandle,
   supportsDirectoryPicker,
+  pickDeviceFolder,
 } from "./handle-store";
 
 /** What the client needs of the transport: a way to send, and a way to hear. */
@@ -89,17 +90,8 @@ export class DeviceClient {
       });
       return;
     }
-    let handle: FileSystemDirectoryHandle;
-    try {
-      handle = await (
-        window as unknown as {
-          showDirectoryPicker(o: { mode: "readwrite" }): Promise<FileSystemDirectoryHandle>;
-        }
-      ).showDirectoryPicker({ mode: "readwrite" });
-    } catch {
-      // The user dismissed it. Not an error worth showing.
-      return;
-    }
+    const handle = await pickDeviceFolder();
+    if (!handle) return; // dismissed
     await saveDeviceHandle(deviceId, handle);
     await this.attachHandle(deviceId, handle);
   }

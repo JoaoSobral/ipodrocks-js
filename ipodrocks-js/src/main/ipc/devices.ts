@@ -2,6 +2,7 @@ import * as path from "path";
 import { handle as bridgeHandle } from "../host/bridge";
 import {
   safe,
+  blockWrongAdmin,
   blockWrongLocality,
   getLibrary,
   getPlaylistCore,
@@ -122,7 +123,11 @@ export function registerDeviceHandlers(): void {
 
   bridgeHandle(
     "device:update",
-    safe("device:update", async (_event, deviceId: number, updates: Record<string, unknown>) => {
+    safe("device:update", async (event, deviceId: number, updates: Record<string, unknown>) => {
+      const existing = getDevicesCore().getDeviceById(deviceId);
+      if (!existing) return { error: `Device ${deviceId} not found` };
+      const wrongAdmin = blockWrongAdmin(event, existing.profile.transport);
+      if (wrongAdmin) return wrongAdmin;
       const ok = getDevicesCore().updateDevice(deviceId, updates);
       if (!ok) return { error: "Update failed" };
       const device = getDevicesCore().getDeviceById(deviceId)?.profile;
@@ -138,7 +143,12 @@ export function registerDeviceHandlers(): void {
 
   bridgeHandle(
     "device:remove",
-    safe("device:remove", async (_event, deviceId: number) => {
+    safe("device:remove", async (event, deviceId: number) => {
+      const existing = getDevicesCore().getDeviceById(deviceId);
+      if (existing) {
+        const wrongAdmin = blockWrongAdmin(event, existing.profile.transport);
+        if (wrongAdmin) return wrongAdmin;
+      }
       const result = getDevicesCore().deleteDevice(deviceId);
       invalidateAssistantCache(); // F9: device config changed
       return result;

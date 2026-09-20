@@ -762,9 +762,26 @@ with an error naming the filesystem rather than the reason.
 - **A missing `transport` reads as `local`.** Every row written before the
   column existed. Reading it as remote would lock the desktop app out of its own
   devices on upgrade. Pinned.
-- **Listed, not hidden.** A device from the wrong side stays in both lists,
-  renameable and removable, with a line saying why the rest is off. A device
-  that vanishes from the picker reads as "iPodRocks lost my iPod".
+- **Listed, not hidden.** A device from the wrong side stays in both lists with
+  a line saying why the rest is off. A device that vanishes from the picker
+  reads as "iPodRocks lost my iPod".
+- **`deviceAdminBlock()` is narrower than the locality rule, and asymmetric on
+  purpose.** The desktop app may still *remove* a remote device — somebody has
+  to be able to tidy up a browser that is never coming back, and refusing
+  strands the row forever. A browser may not edit or remove a server-attached
+  one at all: its mount path, USB identity and folder layout are facts about a
+  machine the browser cannot see and could never verify. Enforced at
+  `device:update` / `device:remove` by `blockWrongAdmin()`. Collapsing the two
+  rules into one breaks whichever half you pick.
+- **In a browser the Add form has no USB dropdown**, and hiding it beats
+  disabling it: that list enumerates the *server's* USB bus, so it rendered as
+  an always-empty select above a red "Could not read USB devices on this
+  system" — true, and entirely beside the point.
+- **The remote device's folder is picked in the Add form**, before the device
+  exists, and attached in `handleSaveDevice()` once there is an id to store the
+  handle under. `pickDeviceFolder()` must be called straight out of the click:
+  Chrome refuses a picker outside a user gesture, and the refusal is
+  indistinguishable from the user cancelling.
 - **Auto Podcasts is refused on a remote device** (`autoPodcastBlock()`), and
   `getAutoPodcastDeviceIds()` excludes them in SQL. The scheduler is a timer in
   the server process: aimed at a remote device it either does nothing or pushes

@@ -52,7 +52,35 @@ export function deviceLocalityBlock(
   return null;
 }
 
-/** A player held by a browser rather than attached to the sync engine's host. */
+/**
+ * Why this client may not *edit or delete* the device, or null.
+ *
+ * Deliberately narrower than `deviceLocalityBlock()`, and asymmetric, because
+ * the two directions are not the same relationship:
+ *
+ * - **The desktop app may remove a remote device.** It is the machine that
+ *   holds the database; somebody has to be able to tidy up a device whose
+ *   browser is never coming back, and refusing would strand the row forever.
+ * - **A browser may not touch a server-attached device's settings at all.**
+ *   That configuration belongs to the machine the player is plugged into —
+ *   its mount path, its USB identity, its folder layout are all facts about
+ *   *there* — and a remote client editing or deleting it is changing something
+ *   it cannot see and will never be able to verify.
+ */
+export function deviceAdminBlock(
+  transport: DeviceTransport | undefined,
+  clientIsWeb: boolean
+): string | null {
+  if (clientIsWeb && !isRemoteDevice(transport)) {
+    return (
+      "This device belongs to the machine running the server. Change or remove " +
+      "it from the app running there."
+    );
+  }
+  return null;
+}
+
+/** A device held by a browser rather than attached to the sync engine's host. */
 export function isRemoteDevice(transport: DeviceTransport | undefined): boolean {
   return transport === "web";
 }

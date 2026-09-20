@@ -20,7 +20,7 @@
  * Run with: `npm run build && npx playwright test --project=web`
  */
 import { test, expect } from "@playwright/test";
-import { invoke, signIn, signInPage } from "./web-harness";
+import { invoke, removeDeviceRow, signIn, signInPage } from "./web-harness";
 
 test.describe.configure({ mode: "serial" });
 
@@ -62,9 +62,40 @@ test("the Add form asks for no folder on the server", async ({ page }) => {
   await expect(dialog.getByPlaceholder("/mnt/ipod")).toHaveCount(0);
   await expect(dialog.getByRole("button", { name: "Browse" })).toHaveCount(0);
 
-  // And it says what it is instead.
+  // And it says what it is instead. The long explanation moved into the
+  // heading's tooltip — as body text it was four lines of prose above the one
+  // control that matters — so what is asserted here is the label and the
+  // control, not the prose.
   await expect(dialog.getByText("Remote device", { exact: true })).toBeVisible();
-  await expect(dialog).toContainText("pick its folder in this browser");
+});
+
+test("the Add form offers the browser's own folder picker", async ({ page }) => {
+  await openDevices(page);
+  await page.getByRole("button", { name: "+ Add Remote Device" }).first().click();
+
+  const dialog = page.getByRole("dialog").filter({ hasText: "Add Remote Device" });
+  // The folder *is* pickable here — from this machine, through the browser.
+  // `showDirectoryPicker()` itself is a user-gesture-gated native dialog no
+  // test can drive, so what is pinned is that the control exists and says what
+  // it is for; the File System Access path beyond it is covered by
+  // `web-device-sync.test.ts` against an OPFS handle.
+  await expect(dialog.getByRole("button", { name: "Choose folder" })).toBeVisible();
+  await expect(dialog.getByText("No folder chosen")).toBeVisible();
+  // ...and it is optional, because the card's Connect button is the other way in.
+  await expect(dialog).toContainText("connect it from its card later");
+});
+
+test("the Add form hides the server's USB list", async ({ page }) => {
+  await openDevices(page);
+  await page.getByRole("button", { name: "+ Add Remote Device" }).first().click();
+
+  const dialog = page.getByRole("dialog").filter({ hasText: "Add Remote Device" });
+  // That dropdown enumerates the *server's* USB bus, which says nothing about
+  // the player in the user's hand. Left visible it was an always-empty select
+  // above a red "Could not read USB devices on this system" — true, and
+  // entirely beside the point.
+  await expect(dialog.getByText("USB Device (optional)")).toHaveCount(0);
+  await expect(dialog.getByText(/Could not read USB devices/)).toHaveCount(0);
 });
 
 test("Auto Podcasts is disabled in the Add form", async ({ page }) => {
@@ -78,6 +109,35 @@ test("Auto Podcasts is disabled in the Add form", async ({ page }) => {
     .locator('input[type="checkbox"]');
   await expect(autoPodcasts).toBeDisabled();
   await expect(dialog).toContainText("only connected while its browser tab is open");
+});
+
+test("the server refuses a web client's edit or delete of a server-side device", async ({
+  request,
+}) => {
+  await signIn(request);
+  const device = await invoke<{ id: number }>(request, "device:add", {
+    name: "E2E Admin Guard",
+    mountPath: "/tmp/ipr-e2e-adminguard",
+    transport: "local",
+  });
+
+  try {
+    // The disabled buttons are a courtesy; these are the guard. Without them a
+    // browser could rename or delete the configuration of a player it cannot
+    // see and could never verify.
+    const updated = await invoke<{ error?: string }>(request, "device:update", device.id, {
+      name: "Renamed From The Web",
+    });
+    expect(updated.error).toMatch(/machine running the server/i);
+
+    const removed = await invoke<{ error?: string }>(request, "device:remove", device.id);
+    expect(removed.error).toMatch(/machine running the server/i);
+
+    const list = await invoke<{ id: number; name: string }[]>(request, "device:list");
+    expect(list.find((d) => d.id === device.id)?.name).toBe("E2E Admin Guard");
+  } finally {
+    removeDeviceRow(device.id);
+  }
 });
 
 test("a server-side device is listed but not operable from the browser", async ({
@@ -100,9 +160,13 @@ test("a server-side device is listed but not operable from the browser", async (
     await expect(
       page.getByRole("button", { name: "Check Device" }).first()
     ).toBeDisabled();
-    // Still removable from either side: it is the user's device either way.
-    await expect(page.getByRole("button", { name: "Remove" }).first()).toBeEnabled();
+    // ...and its settings belong to the machine it is plugged into, so a
+    // browser may not edit or delete them either.
+    await expect(page.getByRole("button", { name: "Edit" }).first()).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Remove" }).first()).toBeDisabled();
   } finally {
-    await invoke(request, "device:remove", device.id);
+    // Removed straight from the database: the point of the test is that the
+    // web client cannot do this, so it cannot be the thing that cleans up.
+    removeDeviceRow(device.id);
   }
 });

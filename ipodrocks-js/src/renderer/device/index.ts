@@ -10,7 +10,7 @@ import { getWebTransport } from "@renderer/ipc/web-transport";
 import { DeviceClient, type DeviceAttachState, type DeviceSocket } from "./device-client";
 
 export type { DeviceAttachState };
-export { supportsDirectoryPicker } from "./handle-store";
+export { supportsDirectoryPicker, pickDeviceFolder, saveDeviceHandle } from "./handle-store";
 
 let client: DeviceClient | null = null;
 /** Devices this tab has attached, so a reconnect can re-announce them. */

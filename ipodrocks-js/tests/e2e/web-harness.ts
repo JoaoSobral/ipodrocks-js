@@ -37,6 +37,22 @@ export function readClaimToken(): string | null {
   }
 }
 
+/**
+ * Deletes a device row directly.
+ *
+ * For the one case a test cannot clean up through the app: a server-attached
+ * device, which the web client is now refused — correctly — the right to
+ * remove. Reaching past the app is otherwise exactly what this harness avoids.
+ */
+export function removeDeviceRow(deviceId: number): void {
+  const db = new Database(path.join(WEB_DATA_DIR, "ipodrock.db"));
+  try {
+    db.prepare("DELETE FROM devices WHERE id = ?").run(deviceId);
+  } finally {
+    db.close();
+  }
+}
+
 export function ownerExists(): boolean {
   const db = serverDb();
   try {
