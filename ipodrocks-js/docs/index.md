@@ -4,7 +4,7 @@ layout: home
 hero:
   name: iPodRocks
   text: Sync your iPod from anywhere
-  tagline: A sync manager for Rockbox and any mountable player. Keep the library on one machine, plug the player into another, and sync over the web. Multiple libraries, shadow transcoding, podcasts, audiobooks, playlists and ratings — no account, no API key.
+  tagline: A sync manager for Rockbox and any mountable player. Keep the library on one machine, plug the player into another, and sync over the web. Multiple libraries, shadow transcoding, podcasts, audiobooks, playlists and ratings.
   image:
     src: /logo.png
     alt: iPodRocks
