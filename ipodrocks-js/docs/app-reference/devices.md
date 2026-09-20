@@ -64,6 +64,11 @@ where the thing is physically plugged in, not a preference:
 | Auto Podcasts | yes | no |
 | Eject from iPodRocks | macOS/Linux | no — use your own file manager |
 
+A remote device carries an orange **REMOTE** badge on its card, in both the
+browser and the desktop app — which machine a device is plugged into is the one
+thing that changes what its card can do, and it is otherwise legible only from
+what is missing.
+
 **Each one is only usable from its own side**, and both are still listed on the
 other — hiding a device would read as "iPodRocks lost my iPod".
 

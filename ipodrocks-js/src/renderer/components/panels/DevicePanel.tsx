@@ -46,6 +46,7 @@ import {
   autoPodcastBlock,
   deviceAdminBlock,
   deviceLocalityBlock,
+  isRemoteDevice,
 } from "@shared/device-locality";
 import { restoreWebDevices } from "../../device";
 import { formatCodecLabel, formatGb } from "../../utils/format";
@@ -697,6 +698,22 @@ export function DevicePanel() {
                       {isDefaultDev && (
                         <span className="px-1.5 py-0.5 text-[9px] font-medium rounded bg-primary/15 text-primary">
                           DEFAULT
+                        </span>
+                      )}
+                      {/* Which machine this device is plugged into is the one
+                          thing that changes what the card can do, and it is
+                          otherwise only legible from what is missing. Same
+                          badge on both sides — in the desktop app it says "not
+                          mine to sync", in a browser it says "this is the one
+                          you are holding" — because a badge that means
+                          different things in different windows is worse than
+                          none. `warning` is the established token for it. */}
+                      {isRemoteDevice(d?.transport) && (
+                        <span
+                          className="px-1.5 py-0.5 text-[9px] font-medium rounded bg-warning/20 text-warning"
+                          title="Held by a browser through the web server, not plugged into the machine running iPodRocks."
+                        >
+                          REMOTE
                         </span>
                       )}
                       {d?.usbVendorId && d?.usbProductId && (

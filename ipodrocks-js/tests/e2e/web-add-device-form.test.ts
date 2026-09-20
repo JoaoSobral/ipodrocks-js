@@ -140,6 +140,32 @@ test("the server refuses a web client's edit or delete of a server-side device",
   }
 });
 
+test("a remote device is badged, and a server-side one is not", async ({
+  page,
+  request,
+}) => {
+  await signIn(request);
+  const remote = await invoke<{ id: number }>(request, "device:add", {
+    name: "E2E Badge Remote",
+    transport: "web",
+  });
+  const local = await invoke<{ id: number }>(request, "device:add", {
+    name: "E2E Badge Local",
+    mountPath: "/tmp/ipr-e2e-badge",
+    transport: "local",
+  });
+
+  try {
+    await openDevices(page);
+    // Which machine a device is plugged into changes what its card can do, and
+    // is otherwise legible only from what is missing.
+    await expect(page.getByText("REMOTE", { exact: true })).toHaveCount(1);
+  } finally {
+    await invoke(request, "device:remove", remote.id);
+    removeDeviceRow(local.id);
+  }
+});
+
 test("a server-side device is listed but not operable from the browser", async ({
   page,
   request,
