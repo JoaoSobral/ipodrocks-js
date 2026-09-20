@@ -42,9 +42,14 @@ const RECONNECT_MAX_MS = 30_000;
 class WebTransport {
   private socket: WebSocket | null = null;
   private listeners = new Map<string, Set<Callback>>();
+  /** Raw-frame subscribers. The device link rides this same socket rather than
+   *  opening a second one, which would need its own upgrade, origin check and
+   *  authentication for no gain. */
+  private frameListeners = new Set<(frame: Record<string, unknown>) => void>();
   private reconnectAttempts = 0;
   private reconnectTimer: number | null = null;
   private closed = false;
+  private reopenListeners = new Set<() => void>();
 
   /**
    * `platform` is the *server's*, not the browser's.
@@ -115,6 +120,23 @@ class WebTransport {
     }
   }
 
+  /** Sends a frame the push-channel machinery knows nothing about. */
+  sendFrame(frame: unknown): void {
+    this.send(frame);
+  }
+
+  /** Called every time the socket opens, including after a drop. */
+  onReopen(listener: () => void): () => void {
+    this.reopenListeners.add(listener);
+    return () => this.reopenListeners.delete(listener);
+  }
+
+  /** Subscribes to every non-push frame. Returns the unsubscribe. */
+  onFrame(listener: (frame: Record<string, unknown>) => void): () => void {
+    this.frameListeners.add(listener);
+    return () => this.frameListeners.delete(listener);
+  }
+
   private send(msg: unknown): void {
     if (this.socket?.readyState === WebSocket.OPEN) {
       this.socket.send(JSON.stringify(msg));
@@ -136,6 +158,16 @@ class WebTransport {
 
       socket.addEventListener("open", () => {
         this.reconnectAttempts = 0;
+        // A reconnect gives the server a brand new socket, and with it an
+        // empty device attachment table. Anything holding a device has to say
+        // so again or the next sync finds the player "not connected".
+        for (const listener of [...this.reopenListeners]) {
+          try {
+            listener();
+          } catch (err) {
+            console.error("[web-transport] reopen listener threw", err);
+          }
+        }
         // Re-subscribe: after a reconnect the server has a fresh socket with
         // no subscriptions, and a scan that is still running would otherwise
         // report into nothing for the rest of its life.
@@ -153,7 +185,18 @@ class WebTransport {
         } catch {
           return;
         }
-        if (frame.type !== "push") return;
+        if (frame.type !== "push") {
+          // Anything that is not a renderer push belongs to another subsystem
+          // — today the device RPC. Handed on raw.
+          for (const listener of [...this.frameListeners]) {
+            try {
+              listener(frame as Record<string, unknown>);
+            } catch (err) {
+              console.error("[web-transport] frame listener threw", err);
+            }
+          }
+          return;
+        }
         const push = frame as PushFrame;
         const set = this.listeners.get(push.channel);
         if (!set) return;
@@ -215,6 +258,23 @@ export interface WebBootstrap {
   transport: WebTransport;
 }
 
+export type { WebTransport };
+
+/**
+ * The live transport, for the few things that need the socket itself rather
+ * than `window.api`.
+ *
+ * The device link is the only one: it exchanges RPC frames, not IPC calls, and
+ * `window.api`'s shape deliberately has no room for that — keeping it to
+ * `{ platform, invoke, on, off }` is what let the whole UI cross to the web
+ * untouched.
+ */
+let activeTransport: WebTransport | null = null;
+
+export function getWebTransport(): WebTransport | null {
+  return activeTransport;
+}
+
 /**
  * True when there is no preload — i.e. this bundle is being served over HTTP
  * rather than loaded into an Electron window.
@@ -236,6 +296,7 @@ export function isWebMode(): boolean {
 export async function installWebTransport(): Promise<WebBootstrap> {
   const transport = new WebTransport();
   window.api = transport as unknown as IpcApi;
+  activeTransport = transport;
 
   const auth = await fetchAuthStatus();
   if (auth.authenticated) {

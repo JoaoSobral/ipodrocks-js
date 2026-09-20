@@ -13,6 +13,7 @@ type ProgressCallback = (event: SyncProgressPayload) => void;
 
 interface DeviceRow {
   id: number;
+  transport: string | null;
   mount_path: string;
   podcast_folder: string;
   auto_podcasts_enabled: number;
@@ -52,7 +53,7 @@ export async function syncPodcastsToDevice(
 ): Promise<{ synced: number; errors: number }> {
   const device = db
     .prepare(
-      "SELECT id, mount_path, podcast_folder, auto_podcasts_enabled, dev_mode, usb_vendor_id, usb_product_id, usb_serial FROM devices WHERE id = ?"
+      "SELECT id, transport, mount_path, podcast_folder, auto_podcasts_enabled, dev_mode, usb_vendor_id, usb_product_id, usb_serial FROM devices WHERE id = ?"
     )
     .get(deviceId) as DeviceRow | undefined;
 

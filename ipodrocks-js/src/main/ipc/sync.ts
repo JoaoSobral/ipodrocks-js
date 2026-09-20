@@ -33,8 +33,8 @@ import {
   ingestDeviceRatings,
   invalidatePushedRatings,
 } from "../sync/rating-merge";
-import { propagateRatingsToDevice } from "../sync/rating-propagate";
-import { readAndIngestRuntimeData } from "../rockbox/runtime-ingest";
+import { propagateRatingsForDevice } from "../sync/rating-propagate";
+import { ingestRuntimeDataForDevice } from "../rockbox/runtime-ingest";
 import { logActivity } from "../activity/activity-logger";
 import { resetDeviceContent } from "../sync/device-reset";
 import type {
@@ -322,16 +322,16 @@ export function registerSyncHandlers(): void {
       // ratings together, plus the index position of each record — which is
       // what Phase 3 needs to write a rating back without re-reading the
       // device database.
-      let runtimeImport: ReturnType<typeof readAndIngestRuntimeData> | null = null;
+      let runtimeImport: Awaited<ReturnType<typeof ingestRuntimeDataForDevice>> | null = null;
       try {
         syncOpts.progressCallback?.({
           event: "log",
           message: "Reading runtime data from device...",
         });
-        runtimeImport = readAndIngestRuntimeData(
+        runtimeImport = await ingestRuntimeDataForDevice(
           lib.getConnection(),
           opts.deviceId,
-          device.mountPath,
+          device,
           device.profile.skipRuntimeData ?? false
         );
         if (runtimeImport.imported > 0) {
@@ -674,10 +674,10 @@ export function registerSyncHandlers(): void {
             }
           }
 
-          const report = propagateRatingsToDevice(
+          const report = await propagateRatingsForDevice(
             lib.getConnection(),
             opts.deviceId,
-            device.mountPath,
+            device,
             runtimeImport.idxIds,
             selectedTrackIds
           );

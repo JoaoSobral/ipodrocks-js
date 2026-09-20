@@ -22,6 +22,13 @@ import {
 } from "./auth/routes";
 import { getOrCreateClaimToken } from "./auth/identities";
 import { attachEventsServer, resetEventSessions, type EventsServer } from "./events";
+import {
+  attachDeviceSessions,
+  handleDeviceIo,
+  resetDeviceSessions,
+  type DeviceSessions,
+} from "./device-session";
+import { getLibraryDb } from "../main/ipc/common";
 import { handleInvoke, MAX_INVOKE_BODY_BYTES } from "./invoke-route";
 import { handleMediaRequest } from "./media-route";
 import { issueMediaToken, resetMediaTokenKey } from "./media-token";
@@ -160,6 +167,7 @@ export async function startServer(
 
   resetMediaTokenKey();
   resetEventSessions();
+  resetDeviceSessions();
   resetPassport();
 
   const app: Express = express();
@@ -232,6 +240,15 @@ export async function startServer(
   app.get("/api/media/:token", requireAuth(config), handleMediaRequest);
   app.head("/api/media/:token", requireAuth(config), handleMediaRequest);
 
+  // The device data plane. No body parser: the payload is a raw audio file and
+  // it is piped, not buffered.
+  app.get("/api/device-io/:direction/:token", requireAuth(config), (req, res) => {
+    void handleDeviceIo(req, res);
+  });
+  app.post("/api/device-io/:direction/:token", requireAuth(config), (req, res) => {
+    void handleDeviceIo(req, res);
+  });
+
   // The renderer bundle. Served after the API routes so a file called
   // `api` could never shadow one, and without `index: false` shortcuts that
   // would bypass the CSP-meta strip below.
@@ -268,6 +285,22 @@ export async function startServer(
     sessionMiddleware,
     allowedOrigins,
     authenticate: (req) => authenticatedSubject(req as unknown as Request, config),
+  });
+
+  // Devices held in a browser. The lookup is what stops one authenticated
+  // session claiming another user's player by id.
+  const deviceSessions: DeviceSessions = attachDeviceSessions({
+    lookupTransport: (deviceId) => {
+      try {
+        const row = getLibraryDb()
+          .prepare("SELECT transport FROM devices WHERE id = ?")
+          .get(deviceId) as { transport?: string } | undefined;
+        if (!row) return null;
+        return row.transport === "web" ? "web" : "local";
+      } catch {
+        return null;
+      }
+    },
   });
 
   // Media URLs now have to be tokens. Installed here, torn down in `stop()`,
@@ -319,6 +352,8 @@ export async function startServer(
     config,
     async stop(): Promise<void> {
       setMediaUrlEncoder(null);
+      deviceSessions.close();
+      resetDeviceSessions();
       await events.close();
       await new Promise<void>((resolve) => httpServer.close(() => resolve()));
       resetEventSessions();

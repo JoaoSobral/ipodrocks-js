@@ -34,6 +34,9 @@ import {
   podcastSetDeviceAutoPodcasts,
 } from "../../ipc/api";
 import { MpcUnavailableModal } from "../modals/MpcUnavailableModal";
+import { WebDeviceLink } from "../web/WebDeviceLink";
+import { isWebMode } from "../../ipc/web-transport";
+import { restoreWebDevices } from "../../device";
 import { formatCodecLabel, formatGb } from "../../utils/format";
 import {
   getTranscodableCodecConfigs,
@@ -141,6 +144,8 @@ export function DevicePanel() {
   const [name, setName] = useState("");
   const [modelId, setModelId] = useState<number | null>(null);
   const [mountPath, setMountPath] = useState("");
+  /** Adding a device that is plugged into this browser rather than the server. */
+  const [webTransport, setWebTransport] = useState(false);
   const [defaultCodecConfigId, setDefaultCodecConfigId] = useState<number | null>(null);
   const [description, setDescription] = useState("");
   const [isDefault, setIsDefault] = useState(false);
@@ -192,6 +197,25 @@ export function DevicePanel() {
     isMpcencAvailable().then((r) => setMpcAvailable(r.available)).catch(() => setMpcAvailable(false));
     getMpcRemindDisabled().then((r) => setMpcRemindDisabledState(r.disabled)).catch(console.error);
   }, [fetchDevices]);
+
+  // Re-open the folders this browser picked in an earlier session. Silent by
+  // design: a handle whose permission has lapsed needs a user gesture to
+  // re-grant, so the card offers a button rather than the app throwing a
+  // dialog at someone who just opened a tab.
+  useEffect(() => {
+    if (!isWebMode()) return;
+    const webIds = (Array.isArray(devices) ? devices : [])
+      .filter((d) => d?.transport === "web" && d?.id != null)
+      .map((d) => d.id);
+    if (webIds.length === 0) return;
+    void restoreWebDevices(webIds).then(() => {
+      for (const id of webIds) {
+        pingDevice(id)
+          .then((r) => setOnlineStatus((prev) => ({ ...prev, [id]: r.online })))
+          .catch(() => {});
+      }
+    });
+  }, [devices]);
 
   useEffect(() => {
     const list = Array.isArray(devices) ? devices : [];
@@ -251,6 +275,7 @@ export function DevicePanel() {
     setName(device.name);
     setModelId(device.modelId ?? null);
     setMountPath(device.mountPath);
+    setWebTransport(device.transport === "web");
     setDescription(device.description ?? "");
     setIsDefault(defaultDeviceId === device.id);
     setMusicFolder(device.musicFolder ?? "Music");
@@ -295,6 +320,7 @@ export function DevicePanel() {
 
   const openForAdd = useCallback(() => {
     resetForm();
+    setWebTransport(false);
     setShowDeviceModal(true);
   }, [resetForm]);
 
@@ -398,7 +424,9 @@ export function DevicePanel() {
   }
 
   async function handleSaveDevice() {
-    if (!name.trim() || !mountPath.trim() || modelId == null) {
+    // A web device has no mount path to give: the folder is picked in the
+    // browser afterwards, and the synthetic root is minted by `addDevice`.
+    if (!name.trim() || (!webTransport && !mountPath.trim()) || modelId == null) {
       setFormSubmitted(true);
       return;
     }
@@ -420,7 +448,8 @@ export function DevicePanel() {
 
     const payload = {
       name,
-      mountPath,
+      mountPath: webTransport ? undefined : mountPath,
+      transport: webTransport ? ("web" as const) : ("local" as const),
       modelId,
       defaultCodecConfigId: resolvedCodecConfigId,
       description: description || null,
@@ -580,6 +609,7 @@ export function DevicePanel() {
               platform: window.api?.platform,
               online: status,
               deviceName: d?.name ?? "this device",
+              transport: d?.transport,
             });
             return (
               <Card key={d?.id ?? `device-${idx}`}>
@@ -612,11 +642,19 @@ export function DevicePanel() {
                   </div>
                 </div>
 
+                {d?.transport === "web" && d?.id != null && (
+                  <div className="mb-4">
+                    <WebDeviceLink deviceId={d.id} />
+                  </div>
+                )}
+
                 <div className="space-y-2 text-xs mb-4">
+                  {d?.transport !== "web" && (
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Device Path</span>
                     <span className="text-muted-foreground truncate max-w-[60%] text-right">{d?.mountPath ?? ""}</span>
                   </div>
+                  )}
                   {d.modelName && (
                     <div className="flex justify-between">
                       <span className="text-muted-foreground">Model</span>
@@ -863,7 +901,29 @@ export function DevicePanel() {
             hint={formSubmitted && modelId == null ? "Please select a device model" : undefined}
           />
 
+          {/* Where the player is plugged in. Only a question in web mode: in the
+              desktop app the answer is always "this machine". */}
+          {isWebMode() && editingDeviceId == null && (
+            <label className="flex items-start gap-2 text-sm text-foreground cursor-pointer">
+              <input
+                type="checkbox"
+                className="mt-0.5"
+                checked={webTransport}
+                onChange={(e) => setWebTransport(e.target.checked)}
+              />
+              <span>
+                This player is plugged into <strong>my computer</strong>
+                <span className="block text-xs text-muted-foreground">
+                  You pick its folder in this browser, and every file travels
+                  from the server through this tab onto the player. Leave it
+                  unticked for a player plugged into the server itself.
+                </span>
+              </span>
+            </label>
+          )}
+
           {/* Mount Path */}
+          {!webTransport && (
           <div>
             <Label>
               <span className="inline-flex items-center gap-1">
@@ -886,6 +946,7 @@ export function DevicePanel() {
               <p className="mt-1 text-xs text-blue-500">Please enter a mount path</p>
             )}
           </div>
+          )}
 
           {/* USB identity — optional. Pins the device to a physical USB unit so
               two players that mount at the same path stay distinguishable. */}

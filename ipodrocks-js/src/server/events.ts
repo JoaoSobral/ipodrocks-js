@@ -31,6 +31,61 @@ export interface EventSession {
 
 const sessions = new Map<string, EventSession>();
 
+/**
+ * Frame handlers for message types this module does not own.
+ *
+ * The device RPC rides the same socket — a second one would need its own
+ * upgrade, its own origin check and its own auth, for no gain — but
+ * `device-session.ts` is the module that understands it. Registering here
+ * rather than importing it keeps the dependency pointing one way.
+ */
+export type SocketFrameHandler = (
+  frame: Record<string, unknown>,
+  ctx: { sessionId: string; subject: string; socket: WebSocket }
+) => void;
+
+const frameHandlers = new Map<string, SocketFrameHandler>();
+
+export function registerFrameHandler(
+  type: string,
+  handler: SocketFrameHandler
+): () => void {
+  frameHandlers.set(type, handler);
+  return () => {
+    if (frameHandlers.get(type) === handler) frameHandlers.delete(type);
+  };
+}
+
+/**
+ * Sends one raw frame to a session, bypassing the push-channel allowlist.
+ *
+ * That allowlist exists because a push channel names something the *renderer*
+ * subscribes to and a server fans frames out to sessions — a client must not
+ * be able to name a channel and receive another user's frames. A device RPC
+ * request is the opposite direction and is addressed to one session that has
+ * already proved it holds the device, so the allowlist has nothing to say
+ * about it.
+ *
+ * Returns false when the session has no open socket, which is how the device
+ * transport learns it has been detached.
+ */
+export function sendRawToSession(sessionId: string, frame: unknown): boolean {
+  const session = sessions.get(sessionId);
+  if (!session) return false;
+  const payload = JSON.stringify(frame);
+  for (const ws of session.sockets) {
+    if (ws.readyState === WebSocket.OPEN) {
+      try {
+        ws.send(payload);
+        return true;
+      } catch {
+        // Try the next socket; a dead one is cleaned up by its close handler.
+      }
+    }
+  }
+  return false;
+}
+
 /** A frame the browser can tell apart from an RPC reply. */
 interface PushFrame {
   type: "push";
@@ -184,9 +239,9 @@ export function attachEventsServer(
           session.sockets.add(ws);
 
           ws.on("message", (raw) => {
-            let msg: { type?: string; channel?: string };
+            let msg: { type?: string; channel?: string } & Record<string, unknown>;
             try {
-              msg = JSON.parse(String(raw)) as { type?: string; channel?: string };
+              msg = JSON.parse(String(raw)) as typeof msg;
             } catch {
               return;
             }
@@ -196,11 +251,18 @@ export function attachEventsServer(
               session.subscriptions.delete(msg.channel);
             } else if (msg.type === "ping") {
               ws.send(JSON.stringify({ type: "pong" }));
+            } else if (typeof msg.type === "string") {
+              frameHandlers.get(msg.type)?.(msg as Record<string, unknown>, {
+                sessionId,
+                subject,
+                socket: ws,
+              });
             }
           });
 
           ws.on("close", () => {
             session.sockets.delete(ws);
+            for (const l of socketClosedListeners) l(sessionId, ws);
             // The session entry itself is kept: a reconnect within the same
             // express session must land back on the same one, or a sync
             // started before a laptop slept would report into nothing.
@@ -263,10 +325,22 @@ function scheduleSessionSweep(sessionId: string): void {
 }
 
 /** Tests and server restart. */
+/** Notified when a socket closes, so a device attached over it is released
+ *  rather than left looking connected until its next RPC times out. */
+type SocketClosedListener = (sessionId: string, socket: WebSocket) => void;
+const socketClosedListeners = new Set<SocketClosedListener>();
+
+export function onSocketClosed(listener: SocketClosedListener): () => void {
+  socketClosedListeners.add(listener);
+  return () => socketClosedListeners.delete(listener);
+}
+
 export function resetEventSessions(): void {
   for (const t of sweepTimers.values()) clearTimeout(t);
   sweepTimers.clear();
   sessions.clear();
+  frameHandlers.clear();
+  socketClosedListeners.clear();
 }
 
 /** Exposed so the invoke dispatcher can register a session that has no socket

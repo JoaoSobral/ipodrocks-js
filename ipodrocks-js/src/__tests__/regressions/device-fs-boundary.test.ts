@@ -35,6 +35,7 @@ import {
   webDeviceRoot,
   WEB_DEVICE_ROOT_NAME,
 } from "../../main/devices/fs";
+import { containUnderFolderOn } from "../../main/sync/sync-executor";
 
 let root: string;
 
@@ -69,6 +70,49 @@ describe("the synthetic web-device root", () => {
     // A folder that merely *contains* the name deeper down is a real local path.
     expect(isWebDevicePath(path.join(root, WEB_DEVICE_ROOT_NAME, "1"))).toBe(false);
   });
+});
+
+/**
+ * The failure this guards against is total loss, not a wrong answer.
+ *
+ * Six containment guards do host `path` arithmetic on device paths.
+ * `containUnderFolder` is the one that matters: if it stops recognising a
+ * destination as being inside the content folder, it falls back to
+ * `folder/basename` — the entire library flattens into `Music/`, the runtime
+ * matcher goes ambiguous across thousands of keys, and the next sync sees every
+ * track as missing. An earlier draft of the plan forced POSIX paths
+ * server-side, which is exactly how that happens on Windows.
+ */
+describe("a web device's root is host-flavoured on both platforms", () => {
+  for (const flavour of ["posix", "win32"] as const) {
+    const impl = path[flavour];
+    // What `webDeviceRoot` builds on a host of this flavour.
+    const root = impl.join(impl.sep, WEB_DEVICE_ROOT_NAME, "3");
+
+    it(`keeps a destination inside the content folder on ${flavour}`, () => {
+      const music = impl.join(root, "Music");
+      const dest = impl.join(music, "Artist", "Album", "01 Song.mp3");
+
+      const contained = containUnderFolderOn(dest, music, "/lib/01 Song.mp3", impl);
+
+      // Not `Music/01 Song.mp3` — the flattening fallback.
+      expect(contained).toBe(impl.resolve(dest));
+      expect(contained.split(impl.sep).length).toBeGreaterThan(
+        impl.resolve(music).split(impl.sep).length + 1
+      );
+    });
+
+    it(`still refuses an escape on ${flavour}`, () => {
+      const music = impl.join(root, "Music");
+      const escape = impl.join(music, "..", "..", "etc", "passwd");
+
+      // The guard is not being weakened to make the above pass: a path that
+      // really does leave the folder still collapses to the basename.
+      expect(containUnderFolderOn(escape, music, "/lib/01 Song.mp3", impl)).toBe(
+        impl.join(impl.resolve(music), "01 Song.mp3")
+      );
+    });
+  }
 });
 
 describe("NodeDeviceFs refuses a browser-held device", () => {

@@ -47,11 +47,12 @@ import { listUsbDevices } from "../devices/usb-devices";
 import { ejectDevice, isEjectSupported } from "../devices/device-eject";
 import { isDeviceMountPathOnline } from "../devices/device-online";
 import { isSyncActive } from "../ipc/sync";
+import { isDeviceAttached } from "../devices/fs/device-transport";
 import {
   getGeniusTypesWithAvailability,
   generateGeniusPlaylistFromDb,
 } from "../playlists/genius-engine";
-import { readAndIngestRuntimeData } from "../rockbox/runtime-ingest";
+import { ingestRuntimeDataForDevice } from "../rockbox/runtime-ingest";
 import { getRatingPrefs, setRatingPrefs } from "../utils/prefs";
 
 export interface AiToolContext {
@@ -213,7 +214,11 @@ const podcast_list_episodes: AiTool = {
 
 const device_list: AiTool = {
   name: "device_list",
-  description: "List all configured devices (iPods/DAPs) and their basic settings.",
+  description:
+    "List all configured devices (iPods/DAPs) and their basic settings. " +
+    "`transport` is 'local' for a player plugged into this machine and 'web' " +
+    "for one held open in a browser tab; `connected` says whether a web " +
+    "device's browser is attached right now.",
   parameters: { type: "object", properties: {} },
   kind: "read",
   summarize: () => "List devices",
@@ -224,6 +229,11 @@ const device_list: AiTool = {
       mountPath: d.profile.mountPath,
       model: d.profile.modelName,
       lastSyncDate: d.profile.lastSyncDate,
+      transport: d.profile.transport,
+      // Only meaningful for a web device: a local one's connection state is a
+      // question about the filesystem, and `device_check` answers it properly.
+      connected:
+        d.profile.transport === "web" ? isDeviceAttached(d.profile.id) : null,
       usbVendorId: d.profile.usbVendorId ?? null,
       usbProductId: d.profile.usbProductId ?? null,
       usbSerial: d.profile.usbSerial ?? null,
@@ -777,10 +787,10 @@ const device_read_runtime_data: AiTool = {
     const device = ctx.getDevicesCore().getDeviceById(deviceId);
     if (!device) throw new Error(`Device #${deviceId} not found`);
 
-    const result = readAndIngestRuntimeData(
+    const result = await ingestRuntimeDataForDevice(
       ctx.db,
       deviceId,
-      device.mountPath,
+      device,
       device.profile.skipRuntimeData ?? false
     );
 
@@ -1016,6 +1026,12 @@ const device_eject: AiTool = {
     }
     if (device.profile.devMode) {
       throw new Error(`'${name}' is a dev-mode device, so there is nothing to eject.`);
+    }
+    if (!device.fs.capabilities.eject) {
+      throw new Error(
+        `'${name}' is connected through a browser, so it has to be ejected from ` +
+          "the computer it is plugged into."
+      );
     }
     if (!isDeviceMountPathOnline(mountPath)) {
       throw new Error(`'${name}' is not mounted.`);

@@ -34,6 +34,7 @@ export class AppDatabase {
     this.migrateDeviceArtworkMaxDimension();
     this.migrateVbrEnabled();
     this.migrateDeviceUsbIdentity();
+    this.migrateDeviceTransport();
     this.migrateShadowPausedStatus();
     this.migrateShadowTrackStat();
     this.migrateClassicPlaylists();
@@ -330,6 +331,40 @@ export class AppDatabase {
    * databases. Backfills with 0 (CBR / fixed-bitrate) so upgrades keep their
    * current encoding behavior; fresh installs default to 0 via SCHEMA_SQL.
    */
+  /**
+   * Add the `transport` column for existing databases.
+   *
+   * Backfilled with 'local', which is what every device predating web-server
+   * mode is. The index is created *here*, immediately after the ALTER TABLE,
+   * and deliberately not in SCHEMA_SQL — see the note on the column there, and
+   * the `SCHEMA_SQL` hazard in CLAUDE.md. A CHECK constraint cannot be added
+   * by ALTER TABLE either, so an upgraded database enforces the two values at
+   * the application layer (`normalizeTransport`) rather than in SQLite; a
+   * fresh install gets both.
+   */
+  private migrateDeviceTransport(): void {
+    if (!this.db) return;
+    try {
+      const rows = this.db
+        .prepare("PRAGMA table_info(devices)")
+        .all() as { name: string }[];
+      if (!new Set(rows.map((r) => r.name)).has("transport")) {
+        this.db
+          .prepare(
+            "ALTER TABLE devices ADD COLUMN transport TEXT NOT NULL DEFAULT 'local'"
+          )
+          .run();
+      }
+      this.db
+        .prepare(
+          "CREATE INDEX IF NOT EXISTS idx_devices_transport ON devices(transport)"
+        )
+        .run();
+    } catch (err) {
+      console.error("[db] migration failed (migrateDeviceTransport):", err);
+    }
+  }
+
   private migrateVbrEnabled(): void {
     if (!this.db) return;
     for (const table of ["devices", "shadow_libraries"]) {

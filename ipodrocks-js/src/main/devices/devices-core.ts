@@ -1,8 +1,13 @@
 import Database from "better-sqlite3";
 import path from "path";
-import { AddDeviceConfig, DeviceProfile } from "../../shared/types";
+import {
+  AddDeviceConfig,
+  DeviceProfile,
+  DeviceTransport,
+} from "../../shared/types";
 import { Device } from "./device";
 import { sanitizeMountPath } from "../path-allowlist";
+import { webDeviceRoot } from "./fs/device-fs";
 import { normalizeUsbId } from "./usb-devices";
 
 interface DeviceRow {
@@ -41,6 +46,7 @@ interface DeviceRow {
   dev_mode: number;
   auto_podcasts_enabled: number;
   vbr_enabled: number;
+  transport: string | null;
   usb_vendor_id: string | null;
   usb_product_id: string | null;
   usb_serial: string | null;
@@ -53,7 +59,7 @@ const DEVICES_QUERY = `
          d.override_bitrate, d.override_quality, d.override_bits,
          d.partial_sync_enabled, d.skip_playback_log, d.skip_album_artwork, d.artwork_max_dimension, d.rockbox_smart_playlists, d.dev_mode,
          d.auto_podcasts_enabled, d.vbr_enabled, d.source_library_type, d.shadow_library_id,
-         d.usb_vendor_id, d.usb_product_id, d.usb_serial,
+         d.transport, d.usb_vendor_id, d.usb_product_id, d.usb_serial,
          dtm.name as transfer_mode_name,
          cc.name as codec_config_name, cc.bitrate_value, cc.quality_value,
          cc.bits_per_sample, c.name as codec_name,
@@ -93,6 +99,13 @@ const ALLOWED_UPDATE_FIELDS = new Set([
   "vbr_enabled",
   // NOTE: the usb_* columns are deliberately absent. They are written as one
   // unit by updateDevice(), never through the generic loop — see USB_IDENTITY_KEYS.
+  //
+  // NOTE: `transport` is deliberately absent too, and must stay that way. It
+  // decides which filesystem every path on this device resolves against, and a
+  // device:update that flipped it would point an in-flight sync at the wrong
+  // one — writing a remote user's library into `/ipodrocks-web/<id>` on the
+  // server, or asking a browser for a folder that is really a local mount. It
+  // is set once, by addDevice.
 ]);
 
 const FIELD_MAP: Record<string, string> = {
@@ -131,6 +144,19 @@ const FIELD_MAP: Record<string, string> = {
  * the three columns on its own and leave a half-formed identity behind.
  */
 const USB_IDENTITY_KEYS = new Set(["usbVendorId", "usbProductId", "usbSerial"]);
+
+/**
+ * Read the stored transport, defaulting to `local`.
+ *
+ * A database upgraded by `migrateDeviceTransport()` has no CHECK constraint —
+ * SQLite cannot add one by ALTER TABLE — so the two values are enforced here
+ * instead. Anything unrecognised reads as `local`, which is the safe way round:
+ * a device that is really local and read as web simply fails to attach, while
+ * the reverse would send a sync at the server's own filesystem.
+ */
+function normalizeTransport(value: string | null | undefined): DeviceTransport {
+  return value === "web" ? "web" : "local";
+}
 
 /** Allowed generated-cover dimensions (px). 300 default keeps iPods responsive. */
 export const ARTWORK_MAX_DIMENSIONS = [200, 300, 500, 750] as const;
@@ -217,7 +243,12 @@ export class DevicesCore {
 
   addDevice(config: AddDeviceConfig): Device {
     if (!config.name?.trim()) throw new Error("Device name cannot be empty");
-    const mountPath = sanitizeMountPath(config.mountPath);
+
+    // A web device has no mount path to validate: its files live in a folder
+    // held open in a browser tab, and the root it is given is synthetic and
+    // depends on the row id, which does not exist yet. It is filled in below.
+    const transport: DeviceTransport = config.transport === "web" ? "web" : "local";
+    const mountPath = transport === "web" ? "" : sanitizeMountPath(config.mountPath);
 
     const existing = this.db
       .prepare("SELECT id FROM devices WHERE name = ?")
@@ -246,8 +277,8 @@ export class DevicesCore {
          (name, mount_path, music_folder, podcast_folder, audiobook_folder, playlist_folder,
           default_transfer_mode_id, default_codec_config_id, description,
           model_id, source_library_type, shadow_library_id, skip_playback_log, rockbox_smart_playlists, dev_mode, vbr_enabled,
-          skip_album_artwork, artwork_max_dimension, usb_vendor_id, usb_product_id, usb_serial)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          skip_album_artwork, artwork_max_dimension, transport, usb_vendor_id, usb_product_id, usb_serial)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         config.name,
@@ -268,12 +299,25 @@ export class DevicesCore {
         config.vbrEnabled ? 1 : 0,
         config.skipAlbumArtwork ? 1 : 0,
         sanitizeArtworkMaxDimension(config.artworkMaxDimension),
+        transport,
         usb?.vendorId ?? null,
         usb?.productId ?? null,
         usb?.serial ?? null
       );
 
     const newId = Number(info.lastInsertRowid);
+
+    // The synthetic root is host-flavoured and keyed on the row id, so it can
+    // only be written once the row exists. Every containment guard in the sync
+    // does plain host `path` arithmetic on device paths — forcing POSIX here
+    // would mean threading a path flavour through all six of them, and missing
+    // one collapses every destination to `folder/basename`.
+    if (transport === "web") {
+      this.db
+        .prepare("UPDATE devices SET mount_path = ? WHERE id = ?")
+        .run(webDeviceRoot(newId), newId);
+    }
+
     return this.getDeviceById(newId)!;
   }
 
@@ -453,6 +497,7 @@ export class DevicesCore {
       devMode: !!(row.dev_mode ?? 0),
       autoPodcastsEnabled: !!(row.auto_podcasts_enabled ?? 0),
       vbrEnabled: !!(row.vbr_enabled ?? 0),
+      transport: normalizeTransport(row.transport),
       usbVendorId: row.usb_vendor_id ?? null,
       usbProductId: row.usb_product_id ?? null,
       usbSerial: row.usb_serial ?? null,

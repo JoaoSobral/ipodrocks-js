@@ -8,6 +8,7 @@ import {
   isWebMode,
   type AuthStatus,
 } from "./ipc/web-transport";
+import { getDeviceClient } from "./device";
 import "./index.css";
 
 /**
@@ -70,8 +71,15 @@ async function bootstrap(): Promise<void> {
 
   try {
     const { auth } = await installWebTransport();
-    if (auth.authenticated) renderApp(root);
-    else renderLogin(root, auth);
+    if (auth.authenticated) {
+      // Built before React mounts so the socket's device frames have a
+      // listener from the first one, and so a page can attach a folder
+      // without waiting for the Devices panel to render.
+      getDeviceClient();
+      renderApp(root);
+    } else {
+      renderLogin(root, auth);
+    }
   } catch (err) {
     // A failed bootstrap in web mode is almost always "the server restarted
     // under us". Re-check the auth state so the user gets the login screen

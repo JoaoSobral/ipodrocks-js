@@ -1,6 +1,8 @@
 import * as fs from "fs";
 import * as path from "path";
 
+import type { DeviceFs } from "../devices/fs/device-fs";
+
 import {
   FLAG,
   MASTER_HEADER_SIZE,
@@ -118,19 +120,19 @@ function readIndexFile(mountPath: string): IndexRead {
 }
 
 /**
- * Join the index records to the filename tag file.
+ * Build a snapshot from bytes already read. Pure.
  *
- * Returns null when the tag file cannot be read, which is reported the same
- * way a malformed index is: one bad device must not abort a sync.
+ * Shared by the local path and the browser-held one: only the two reads differ —
+ * everything downstream is the same decoding of the same bytes.
  */
-function decodeSnapshot(
-  mountPath: string,
+function decodeSnapshotFrom(
   idxBuf: Buffer,
-  header: MasterHeader
+  header: MasterHeader,
+  tagBuf: Buffer
 ): RockboxRuntimeSnapshot | null {
   let paths: Map<number, string>;
   try {
-    paths = decodeTagFile(fs.readFileSync(filenameTagPath(mountPath)), header.swapped);
+    paths = decodeTagFile(tagBuf, header.swapped);
   } catch (err) {
     console.error("[tagcache-index] failed to read filename tags:", err);
     return null;
@@ -162,33 +164,37 @@ function decodeSnapshot(
 }
 
 /**
- * What one read of a device's runtime data says, and what it holds.
+ * Join the index records to the filename tag file, reading it locally.
  *
- * ``snapshot`` is non-null exactly when ``state.kind === "ok"``.
+ * Returns null when the tag file cannot be read, which is reported the same
+ * way a malformed index is: one bad device must not abort a sync.
  */
-export interface RuntimeRead {
-  state: RuntimeDataState;
-  snapshot: RockboxRuntimeSnapshot | null;
+function decodeSnapshot(
+  mountPath: string,
+  idxBuf: Buffer,
+  header: MasterHeader
+): RockboxRuntimeSnapshot | null {
+  let tagBuf: Buffer;
+  try {
+    tagBuf = fs.readFileSync(filenameTagPath(mountPath));
+  } catch (err) {
+    console.error("[tagcache-index] failed to read filename tags:", err);
+    return null;
+  }
+  return decodeSnapshotFrom(idxBuf, header, tagBuf);
 }
 
 /**
- * Read and classify a device's runtime data in a single pass over the two
- * ``.tcd`` files.
- *
- * A single track with no plays is never an error — it simply has not been
- * played. Only a database with *no* recorded plays at all points at the
- * Gather Runtime Data setting being off.
+ * What the index read alone already settles, or null when the answer needs the
+ * snapshot. Pure, and shared by both read paths.
  */
-export function readRuntimeData(mountPath: string): RuntimeRead {
-  const idx = readIndexFile(mountPath);
-
+function classifyIndexRead(idx: IndexRead): RuntimeRead | null {
   if (idx.kind === "missing") {
     return {
       state: { kind: "no-database", message: MSG_NO_DATABASE },
       snapshot: null,
     };
   }
-
   if (idx.kind === "unreadable") {
     const message =
       idx.error instanceof TcdFormatError
@@ -196,14 +202,16 @@ export function readRuntimeData(mountPath: string): RuntimeRead {
         : "Rockbox database could not be read.";
     return { state: { kind: "unreadable", message }, snapshot: null };
   }
-
   // The filename tag file is not even opened for a database Rockbox is still
   // updating: the answer is "busy" whatever it holds.
   if (idx.header.dirty !== 0) {
     return { state: { kind: "busy", message: MSG_BUSY }, snapshot: null };
   }
+  return null;
+}
 
-  const snapshot = decodeSnapshot(mountPath, idx.buf, idx.header);
+/** What the snapshot settles. Pure, and shared by both read paths. */
+function classifySnapshot(snapshot: RockboxRuntimeSnapshot | null): RuntimeRead {
   if (!snapshot) {
     return {
       state: {
@@ -233,6 +241,72 @@ export function readRuntimeData(mountPath: string): RuntimeRead {
 }
 
 /**
+ * What one read of a device's runtime data says, and what it holds.
+ *
+ * ``snapshot`` is non-null exactly when ``state.kind === "ok"``.
+ */
+export interface RuntimeRead {
+  state: RuntimeDataState;
+  snapshot: RockboxRuntimeSnapshot | null;
+}
+
+/**
+ * Read and classify a device's runtime data in a single pass over the two
+ * ``.tcd`` files.
+ *
+ * A single track with no plays is never an error — it simply has not been
+ * played. Only a database with *no* recorded plays at all points at the
+ * Gather Runtime Data setting being off.
+ */
+export function readRuntimeData(mountPath: string): RuntimeRead {
+  const idx = readIndexFile(mountPath);
+  const settled = classifyIndexRead(idx);
+  if (settled) return settled;
+  const ok = idx as Extract<IndexRead, { kind: "ok" }>;
+  return classifySnapshot(decodeSnapshot(mountPath, ok.buf, ok.header));
+}
+
+/**
+ * {@link readRuntimeData} for a device reached through a `DeviceFs`.
+ *
+ * Separate from the local path rather than replacing it, because making the
+ * local one async would infect `readAndIngestRuntimeData` and with it the
+ * rating regression suites that pin every hazard in CLAUDE.md. Everything
+ * below the two reads is the same pure code, so the duplication is two file
+ * reads and nothing else.
+ */
+export async function readRuntimeDataOn(
+  deviceFs: DeviceFs,
+  mountPath: string
+): Promise<RuntimeRead> {
+  const idxFile = indexPath(mountPath);
+  let idx: IndexRead;
+  if (!(await deviceFs.exists(idxFile))) {
+    idx = { kind: "missing" };
+  } else {
+    try {
+      const buf = await deviceFs.readFile(idxFile);
+      idx = { kind: "ok", buf, header: decodeMasterHeader(buf, buf.length) };
+    } catch (error) {
+      idx = { kind: "unreadable", error };
+    }
+  }
+
+  const settled = classifyIndexRead(idx);
+  if (settled) return settled;
+  const ok = idx as Extract<IndexRead, { kind: "ok" }>;
+
+  let tagBuf: Buffer;
+  try {
+    tagBuf = await deviceFs.readFile(filenameTagPath(mountPath));
+  } catch (err) {
+    console.error("[tagcache-index] failed to read filename tags:", err);
+    return classifySnapshot(null);
+  }
+  return classifySnapshot(decodeSnapshotFrom(ok.buf, ok.header, tagBuf));
+}
+
+/**
  * Read the runtime snapshot off a mounted device.
  *
  * Returns null when there is no database to read; throws only on genuinely
@@ -259,8 +333,26 @@ export function detectRuntimeCapability(mountPath: string): RuntimeDataState {
   return readRuntimeData(mountPath).state;
 }
 
-/** Mount paths whose index we have already backed up this session. */
+/**
+ * Mount paths whose index this *run* has already backed up.
+ *
+ * It used to mean "this session", which was true enough for a desktop app that
+ * a user quits. In a daemon running for weeks it silently became "once ever":
+ * the only backup anyone had was the one taken by the first sync after boot,
+ * and every rating write for the next fortnight went in unprotected. Worse on
+ * a browser-held device, where the player can be unplugged, rebuilt and
+ * reconnected without the server process noticing at all.
+ *
+ * {@link beginIndexBackupRun} clears the entry at the top of each propagation
+ * pass, so the cost is one file copy per sync per device — and only when a
+ * write actually happens, because the backup is still taken lazily.
+ */
 const backedUp = new Set<string>();
+
+/** Starts a fresh backup scope for one device. See {@link backedUp}. */
+export function beginIndexBackupRun(mountPath: string): void {
+  backedUp.delete(path.resolve(mountPath));
+}
 
 /**
  * Copy the index aside once per session, before the first write to it.
@@ -276,6 +368,33 @@ export function backupIndexOnce(mountPath: string): void {
   if (!fs.existsSync(src)) return;
   try {
     fs.copyFileSync(src, src + BACKUP_SUFFIX);
+    backedUp.add(key);
+  } catch (err) {
+    console.error("[tagcache-index] failed to back up index:", err);
+    throw err;
+  }
+}
+
+/**
+ * {@link backupIndexOnce} for a device reached through a `DeviceFs`.
+ *
+ * It matters *more* here than locally, not less: Chrome's `createWritable()`
+ * copies the file to a `<name>.crswap` sibling and rewrites it wholesale
+ * rather than patching in place, so a tab that dies mid-write can leave the
+ * index in a state the local path would never produce — and it carries no
+ * checksum.
+ */
+async function backupIndexOnceOn(
+  deviceFs: DeviceFs,
+  mountPath: string
+): Promise<void> {
+  const key = path.resolve(mountPath);
+  if (backedUp.has(key)) return;
+
+  const src = indexPath(mountPath);
+  if (!(await deviceFs.exists(src))) return;
+  try {
+    await deviceFs.writeFile(src + BACKUP_SUFFIX, await deviceFs.readFile(src));
     backedUp.add(key);
   } catch (err) {
     console.error("[tagcache-index] failed to back up index:", err);
@@ -360,4 +479,56 @@ export function writeRating(
   } finally {
     fs.closeSync(fd);
   }
+}
+
+/**
+ * {@link writeRating} for a device reached through a `DeviceFs`.
+ *
+ * Byte-for-byte the same decision — {@link planRatingProbe} and
+ * {@link planRatingEdits} are the whole of it, and are shared — over two
+ * batched reads and one `patch`. That shape is why they were split out in the
+ * first place: locally it saves a couple of syscalls, and here it is the
+ * difference between three round trips and a dozen.
+ *
+ * Kept beside the local version rather than replacing it, because making
+ * `writeRating` async infects `propagateRatingsToDevice` and with it
+ * `regressions/rating-propagation-gap.test.ts`, which pins issue #138.
+ */
+export async function writeRatingOn(
+  deviceFs: DeviceFs,
+  mountPath: string,
+  idxId: number,
+  rating: number
+): Promise<RatingWriteResult> {
+  if (!Number.isInteger(rating) || rating < 0 || rating > 10) {
+    throw new RangeError(`invalid Rockbox rating: ${rating}`);
+  }
+
+  const idxFile = indexPath(mountPath);
+  const stat = await deviceFs.stat(idxFile);
+  if (!stat || stat.isDirectory) return "unavailable";
+
+  const headerBuf = await deviceFs.readRange(idxFile, 0, MASTER_HEADER_SIZE);
+  const header = decodeMasterHeader(headerBuf, stat.size);
+
+  // Never write into a database Rockbox is still updating.
+  if (header.dirty !== 0) return "unavailable";
+
+  const probe = planRatingProbe(header, idxId);
+  const [ratingWord, flagWord] = await Promise.all([
+    deviceFs.readRange(idxFile, probe.ratingAt, 4),
+    deviceFs.readRange(idxFile, probe.flagAt, 4),
+  ]);
+
+  const edits = planRatingEdits(header, probe, rating, { ratingWord, flagWord });
+  if (edits.length === 0) return "unchanged";
+
+  // Back up only once we know a write is actually going to happen.
+  await backupIndexOnceOn(deviceFs, mountPath);
+
+  await deviceFs.patch(
+    idxFile,
+    edits.map((edit) => ({ offset: edit.offset, bytes: edit.bytes }))
+  );
+  return "written";
 }

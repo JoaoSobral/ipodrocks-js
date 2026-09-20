@@ -24,7 +24,7 @@ import {
   findOrphanPlaylistFiles,
 } from "../sync/playlist-sync";
 import { toMountRelative } from "../rockbox/device-path-match";
-import { readAndIngestRuntimeData } from "../rockbox/runtime-ingest";
+import { ingestRuntimeDataForDevice } from "../rockbox/runtime-ingest";
 import {
   buildAnalysisSummaryFromDb,
   getArtistsFromPlaybackStats,
@@ -57,7 +57,16 @@ export function registerDeviceHandlers(): void {
 
   bridgeHandle(
     "device:listUsb",
-    safe("device:listUsb", async () => {
+    safe("device:listUsb", async (event) => {
+      // A remote browser must never be shown this. The enumeration is of the
+      // *server's* USB bus, so over the web it is both nonsense as UX — the
+      // user is offered hardware plugged into a machine in another room — and
+      // an information leak about the host. A web client gets an empty,
+      // explicitly unavailable snapshot, which the picker already knows how to
+      // render.
+      if (event.sessionId !== undefined) {
+        return { available: false, devices: [] };
+      }
       // Force a fresh enumeration: the user opens this dropdown precisely when
       // they have just plugged something in, so a cached snapshot is wrong.
       return await listUsbDevices();
@@ -164,6 +173,17 @@ export function registerDeviceHandlers(): void {
       // online unconditionally — there is no volume to eject.
       if (device.profile.devMode) {
         return { error: `'${name}' is a dev-mode device, so there is nothing to eject.` };
+      }
+      // Ejecting is something the machine holding the device does, and for a
+      // web device that is the user's own browser, not this server. Running
+      // `diskutil` here would unmount whatever the server happens to have at
+      // that path, which is nothing at all — the root is synthetic.
+      if (!device.fs.capabilities.eject) {
+        return {
+          error:
+            `'${name}' is connected through a browser, so it has to be ejected ` +
+            "from the computer it is plugged into.",
+        };
       }
       // The st_dev check is what separates a live volume from a plain directory
       // or the orphan left behind by a previous eject. Without it we would hand
@@ -383,12 +403,7 @@ export function registerDeviceHandlers(): void {
       // which is what lets Rockbox's records be matched exactly instead of by
       // filename — including on a device being checked for the first time.
       if (!device.profile.skipRuntimeData) {
-        const ingest = readAndIngestRuntimeData(
-          conn,
-          deviceId,
-          device.mountPath,
-          false
-        );
+        const ingest = await ingestRuntimeDataForDevice(conn, deviceId, device, false);
         if (ingest.imported > 0) {
           logActivity(
             conn,
@@ -446,10 +461,10 @@ export function registerDeviceHandlers(): void {
 
       const lib = getLibrary();
       const db = lib.getConnection();
-      const ingest = readAndIngestRuntimeData(
+      const ingest = await ingestRuntimeDataForDevice(
         db,
         deviceId,
-        device.mountPath,
+        device,
         device.profile.skipRuntimeData ?? false
       );
       logActivity(

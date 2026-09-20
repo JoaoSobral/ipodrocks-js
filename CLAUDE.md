@@ -621,19 +621,115 @@ fact about the device and nothing else.
   its marker for a stat that failed, and is *not* the same as `0` —
   `compareLibraries` reads the two differently.
 
-**Still on plain `fs` and deliberately so: the Rockbox runtime read and rating
-write** (`rockbox/tagcache-index.ts`, `sync/rating-propagate.ts`). Making them
-async infects `readAndIngestRuntimeData` and `propagateRatingsToDevice`, which
-`regressions/rating-propagation-gap.test.ts` and `behaviors/rating-writeback.test.ts`
-call synchronously — the suites that pin every rating hazard below. The pure
-half is already extracted (`planRatingProbe`/`planRatingEdits` in
-`rockbox/tcd-format.ts`), so `writeRating` is already one batched two-word read
-followed by the planned edits, and porting it to `readRange`/`patch` is a
-wrapper rather than a redesign. `tagcache-index.ts`'s module-level `backedUp`
-set goes with it: in a daemon running for weeks "once per session" silently
-means "once ever", and the one backup is from the first sync after boot.
+**The Rockbox runtime read and rating write keep a local `fs` path as well as a
+`DeviceFs` one** (`rockbox/tagcache-index.ts`, `sync/rating-propagate.ts`), and
+that is deliberate rather than leftover — see "The rating engine has two
+implementations now" below.
 
 Pinned in `src/__tests__/regressions/device-fs-boundary.test.ts`.
+
+## Hazard: a browser-held device is a second implementation of the device
+
+`transport: "local" | "web"` on a device row decides which `DeviceFs` it gets.
+A web device's files live in a folder someone picked in their own browser, and
+its `mountPath` is a **synthetic host-flavoured root** — `/ipodrocks-web/<id>`
+on POSIX, `C:\ipodrocks-web\<id>` on Windows — that exists on no filesystem.
+
+- **`transport` is set once, by `addDevice`, and is deliberately absent from
+  `ALLOWED_UPDATE_FIELDS`.** A `device:update` that flipped it would point an
+  in-flight sync at the wrong filesystem: a remote user's library written into
+  `/ipodrocks-web/<id>` on the server, or a browser asked for a folder that is
+  really a local mount. The column is in `SCHEMA_SQL`; its index is created
+  only inside `migrateDeviceTransport()` (the `SCHEMA_SQL` hazard above).
+- **The root stays host-flavoured, and only the RPC boundary converts to
+  relative POSIX.** Forcing POSIX server-side means threading a path flavour
+  through six containment guards, and `containUnderFolder` falling through does
+  not error — it returns `folder/basename`, so the whole library flattens into
+  `Music/`, the matcher goes ambiguous across thousands of keys and the next
+  sync sees every track as missing. Pinned on a simulated win32 host in
+  `regressions/device-fs-boundary.test.ts`.
+- **A web device with no browser attached gets `DetachedDeviceFs`, which
+  throws.** Answering "not found" would be far worse than an error: a mirror
+  sync reads an empty device as "every track is missing" and starts copying the
+  library, and an orphan sweep reads it as "nothing here to keep".
+- **`isDeviceOnline` asks the attachment table, not the filesystem.** A web
+  device is connected exactly while a tab holds its handle. This is also what
+  gates the podcast scheduler away from a device whose browser is closed.
+- **`device:listUsb` returns an empty snapshot to a web client.** The
+  enumeration is of the *server's* USB bus: nonsense as UX, and an information
+  leak about the host.
+- **A second attach of the same device detaches the first.** That is the
+  per-device mutex — two tabs holding one iPod would otherwise interleave
+  rating patches into a file with no checksum.
+
+### The three things the File System Access API does not do
+
+- **It has no NFC/NFD forgiveness.** `getDirectoryHandle("Album")` matches one
+  exact name; macOS and Windows resolve either form for you and this does not.
+  Ask in NFC for a folder stored as NFD and the sync **creates a second
+  folder** — and from then on the device holds two for one album, at which point
+  `buildDevicePathResolver`'s ambiguity guard plants its `-1` marker and every
+  runtime record and rating for that album silently stops matching. That is
+  issue #117 arrived at from a new direction. `RemoteDeviceFs` therefore
+  implements `findOnDisk` semantics itself: enumerate, NFC-fold, match, and pass
+  the name back through **exactly as the browser spelled it**. Folding on the
+  way out would put the server's idea of the name into `device_synced_tracks`
+  and the matcher would look for a path the device does not have.
+- **It cannot set an mtime.** `capabilities.setMtime` is false and
+  `copyFileToDevice` skips the stamp; the comparison in `name-size-sync.ts`
+  falls back to its size-first path, which it already tries first whenever a
+  size is known. `RemoteDeviceFs.setMtime()` **throws** rather than no-opping,
+  so a future caller that forgets the capability check finds out immediately
+  instead of shipping a sync that re-copies the library every run.
+- **`createWritable()` rewrites the file wholesale** through a `<name>.crswap`
+  sibling rather than patching in place. So `patch()` passes
+  `keepExistingData: true` — without it everything outside the written ranges is
+  lost, which on the checksum-less Rockbox index is unrecoverable — and the
+  index backup matters *more* here, not less. A tab dying mid-write also leaves
+  `.crswap` junk on the device: `Device.getTracks` filters on `AUDIO_EXTENSIONS`
+  so it never sees them, but Rockbox will.
+
+### Hazard: the browser's clock is not the server's
+
+`RemoteDeviceFs` measures `clientNow - serverNow` when the browser attaches and
+shifts **every** mtime the device reports into server time. The sync's test for
+a lossy transcode is `libMtime <= devMtime + 2500ms`, so a laptop whose clock is
+more than 2.5 seconds out re-copies the entire library on every single run —
+with no error anywhere and nothing in the log to say why. `stat` and `listTree`
+must both apply it; one without the other is worse than neither. Pinned in
+`regressions/web-clock-skew.test.ts`, which includes the control showing the
+uncorrected reading failing the same comparison.
+
+### The rating engine has two implementations now, on purpose
+
+`tagcache-index.ts` and `rating-propagate.ts` keep their synchronous local
+functions *and* gain `…On(deviceFs)` twins, chosen by
+`ingestRuntimeDataForDevice()` / `propagateRatingsForDevice()`. The local path
+is unchanged because it is the code every rating regression suite drives —
+having production call something else would leave the hazards those suites pin
+unpinned for the code that actually runs. Everything below the two file reads
+is shared pure code (`decodeSnapshotFrom`, `classifyIndexRead`,
+`classifySnapshot`, `planRatingProbe`, `planRatingEdits`), so the duplication is
+the I/O and nothing else. **A change to how a rating is decided belongs in the
+shared half**; if you find yourself editing the same logic twice, it is in the
+wrong place.
+
+`backedUp` in `tagcache-index.ts` is now scoped per *sync run*
+(`beginIndexBackupRun`), not per process. It used to mean "once per session",
+which in a daemon running for weeks silently meant "once ever" — the only
+backup anyone had was from the first sync after boot. On a browser-held device
+it was worse still: the player can be unplugged, rebuilt and reconnected without
+the server process noticing. Found by `tests/e2e/web-device-ratings.test.ts`,
+which is also what pins it.
+
+Coverage: `regressions/device-fs-parity.test.ts` (Node and Remote answer
+identically, over the *real* browser dispatcher),
+`regressions/web-clock-skew.test.ts`, `tests/e2e/web-device-sync.test.ts` and
+`tests/e2e/web-device-ratings.test.ts`. The last two attach an **OPFS**
+directory — a real `FileSystemDirectoryHandle` with the identical interface — so
+every line of the File System Access path runs with no picker. Only
+`showDirectoryPicker()` itself is manual-verification, the way the `mpcenc` skip
+already is.
 
 ## Hazard: one global is one client
 

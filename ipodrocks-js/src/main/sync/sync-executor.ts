@@ -300,16 +300,37 @@ async function runParallelCopies(
  * absolute custom path), falls back to placing the source basename directly
  * inside `folder`. This prevents path-traversal writes to arbitrary locations.
  */
-function containUnderFolder(dest: string, folder: string, srcPath: string): string {
-  const resolvedDest = path.resolve(dest);
-  const resolvedFolder = path.resolve(folder);
+/**
+ * The same guard against an explicit path flavour, so it can be tested on a
+ * host of the other kind.
+ *
+ * Exported for that test alone, and it is worth having: this function falling
+ * through is the single most expensive failure in the sync. It does not return
+ * an error — it quietly returns `folder/basename`, so the whole library
+ * flattens into `Music/`, the runtime matcher goes ambiguous across thousands
+ * of keys, and the next sync reports every track as missing. A web device's
+ * synthetic root is host-flavoured precisely so this arithmetic keeps working
+ * unchanged on Windows.
+ */
+export function containUnderFolderOn(
+  dest: string,
+  folder: string,
+  srcPath: string,
+  impl: typeof path = path
+): string {
+  const resolvedDest = impl.resolve(dest);
+  const resolvedFolder = impl.resolve(folder);
   if (
     resolvedDest === resolvedFolder ||
-    resolvedDest.startsWith(resolvedFolder + path.sep)
+    resolvedDest.startsWith(resolvedFolder + impl.sep)
   ) {
     return resolvedDest;
   }
-  return path.join(resolvedFolder, path.basename(srcPath));
+  return impl.join(resolvedFolder, impl.basename(srcPath));
+}
+
+function containUnderFolder(dest: string, folder: string, srcPath: string): string {
+  return containUnderFolderOn(dest, folder, srcPath);
 }
 
 function getDestinationPath(src: string, deviceFolder: string): string {

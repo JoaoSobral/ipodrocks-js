@@ -412,7 +412,15 @@ export function ejectDisabledReason(opts: {
   /** `null` while the connection ping is still in flight. */
   online: boolean | null | undefined;
   deviceName: string;
+  /** A device held in a browser: see below. */
+  transport?: "local" | "web";
 }): string | null {
+  // A web device is plugged into the *user's* machine, and `platform` here is
+  // the server's — the two are different computers, which is the whole point
+  // of web mode. Nothing this app runs can unmount it.
+  if (opts.transport === "web") {
+    return `'${opts.deviceName}' is connected through your browser. Eject it from your computer's own file manager when the sync has finished.`;
+  }
   if (opts.platform !== "darwin" && opts.platform !== "linux") {
     return "Ejecting from iPodRocks works on macOS and Linux only. On Windows, use Explorer's Safely Remove Hardware.";
   }

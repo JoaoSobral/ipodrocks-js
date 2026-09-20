@@ -259,6 +259,14 @@ CREATE TABLE IF NOT EXISTS devices (
     skip_album_artwork BOOLEAN NOT NULL DEFAULT 0,
     artwork_max_dimension INTEGER NOT NULL DEFAULT 300,
     vbr_enabled BOOLEAN NOT NULL DEFAULT 0,
+    -- 'local' is a folder on the machine running the sync; 'web' is a folder
+    -- held open in a browser tab and reached over the device RPC. The column
+    -- is here but its index is created only inside migrateDeviceTransport():
+    -- SCHEMA_SQL is exec'd before any migration, and on an existing database
+    -- CREATE TABLE IF NOT EXISTS is a no-op, so an index over a column an
+    -- ALTER TABLE has not added yet takes initialize() down for every
+    -- upgrading user while working perfectly on a fresh install.
+    transport TEXT NOT NULL DEFAULT 'local' CHECK(transport IN ('local', 'web')),
     usb_vendor_id TEXT,
     usb_product_id TEXT,
     usb_serial TEXT,
