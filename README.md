@@ -16,15 +16,9 @@ iPodRocks is a sync manager for [Rockbox devices](https://www.rockbox.org/) — 
 
 ### 🌍 Your player no longer has to be plugged into the machine with your music
 
-This is the big one. Run iPodRocks as a **server** — on a NAS, a home server, an old desktop in a cupboard — then open it in a **browser from wherever you happen to be**. Plug your player into *that* laptop, point the browser at its folder, and sync it to the library sitting at home.
-
-No files copied to the laptop first. No syncing a subset onto a USB stick. No VPN gymnastics. Same app, same library, same database, same ratings and play history — reached over HTTPS, behind a login you control, and optionally through a Cloudflare Tunnel that opens no inbound port at all.
+Run iPodRocks as a **server** on a NAS, a home server, an old desktop, then open it in a **browser from wherever you happen to be**. Plug your player into *that* laptop, point the browser at its folder, and sync it to the library sitting at home.
 
 It also runs **headless**: a plain daemon with no Electron, shipped with a `Dockerfile`, a `docker-compose.yml` and a systemd unit.
-
-### 🔌 …and everything works offline, with no account and no API key
-
-The whole feature set above needs nothing but the app: no sign-up, no subscription, no cloud. There are two **optional** AI extras — mood-based Savant playlists and a chat assistant called Rocksy — which need an OpenRouter key if you want them. Skip them and you lose nothing else.
 
 ### What is not!
 
