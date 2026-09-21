@@ -20,9 +20,34 @@
  * Run with: `npm run build && npx playwright test --project=web`
  */
 import { test, expect } from "@playwright/test";
-import { invoke, removeDeviceRow, signIn, signInPage } from "./web-harness";
+import {
+  invoke,
+  removeDeviceRow,
+  setMpcReminderDisabled,
+  signIn,
+  signInPage,
+} from "./web-harness";
 
 test.describe.configure({ mode: "serial" });
+
+// `DevicePanel` raises `MpcUnavailableModal` by itself when mpcenc is missing,
+// and its backdrop intercepts every click on the panel behind it. That is
+// correct product behaviour and is exactly what a CI runner looks like — no
+// `musepack-tools` — so this spec, which is the only one that clicks its way
+// around a rendered Devices panel, has to turn the reminder off and put it
+// back. In serial mode the very first click failing takes the whole file with
+// it, which is what "1 failed, 5 skipped" was.
+let mpcReminderWasDisabled = false;
+
+test.beforeAll(async ({ request }) => {
+  await signIn(request);
+  mpcReminderWasDisabled = await setMpcReminderDisabled(request, true);
+});
+
+test.afterAll(async ({ request }) => {
+  await signIn(request);
+  await setMpcReminderDisabled(request, mpcReminderWasDisabled);
+});
 
 /** Opens the app, signed in, on the Devices panel. */
 async function openDevices(page: import("@playwright/test").Page) {

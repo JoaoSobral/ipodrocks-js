@@ -336,6 +336,12 @@ and the trailing slash.
 does not match the address you are actually typing; the session cookie is
 `SameSite=Lax` and the origin check is built from `IPODROCKS_PUBLIC_URL`.
 
+**The app loads and reads fine, but saving anything says "Cross-origin request
+refused".** The same mismatch, seen from the other side: requests that change
+something are accepted only from an origin this server serves. Point
+`IPODROCKS_PUBLIC_URL` at the address you type, or list it in
+`IPODROCKS_ALLOWED_ORIGINS`.
+
 **Add Device offers no folder picker / "This browser cannot hold a device."**
 Not a Chromium browser, or not on HTTPS.
 

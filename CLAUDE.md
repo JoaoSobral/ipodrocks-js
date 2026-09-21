@@ -967,6 +967,34 @@ The wipe is guarded on `process.env.TEST_WORKER_INDEX === undefined`, which is
 set only in workers. Any other one-time side effect added to that file needs the
 same guard, or a `globalSetup`.
 
+## Hazard: a rendered e2e spec meets every modal the app raises by itself
+
+`tests/e2e/web-add-device-form.test.ts` timed out on CI and passed everywhere a
+developer ran it. The click it was waiting on was on a perfectly visible,
+enabled, stable button — behind `MpcUnavailableModal`'s backdrop.
+
+`DevicePanel` raises that modal on its own the moment the codec configs and the
+mpcenc probe have both answered and the "don't remind me" preference reads
+false. A CI runner has no `musepack-tools`, so the modal is always up there; a
+Mac with Homebrew's `musepack` never sees it. `Modal` renders a
+`fixed inset-0 z-50` backdrop, which swallows every click on the panel behind
+it, and the spec is `mode: "serial"` — so the first click failing took the
+whole file with it and the run read "1 failed, 5 skipped" with nothing naming a
+modal.
+
+- **Turn the preference off, do not dismiss the modal.** The modal arrives
+  after two independent IPC round trips, so "close it if it is there" races it.
+  `setMpcReminderDisabled()` in `web-harness.ts` is the deterministic lever, and
+  it returns the previous value so an `afterAll` can put it back — the `web`
+  project runs every spec against one long-lived daemon.
+- **This generalizes.** Any spec that *renders* a panel rather than driving
+  `/api/invoke` inherits whatever that panel decides to pop: the scan-progress
+  modal while a shared-daemon scan is still running, the update-available
+  modal, a rating-conflicts prompt. A handler test cannot see any of it.
+- The product behaviour is correct and was not changed. In web mode the mpcenc
+  probe is the *server's*, which is the right answer — shadow libraries are
+  built there.
+
 ## The web server (`src/server/`)
 
 Phase 2 of the web-server plan. The server owns no application logic: it looks
@@ -1040,6 +1068,54 @@ The step is `playwright install --with-deps chromium`, which does both jobs so
 the two cannot drift apart again. **Every spec runs
 against one long-lived daemon**, so a spec that changes server state (an added
 account, a revoked session) has to put it back.
+
+## The two coarse guards in front of `/api` (from the PR #140 CodeQL review)
+
+CodeQL raised `js/missing-token-validation` against the session cookie and
+eleven `js/missing-rate-limiting` alerts against every route that does work.
+Neither was a hole on its own — `SameSite=Lax` withholds the cookie from a
+cross-site POST, and every flagged route sits behind `requireAuth` — but
+"the cookie policy happens to save us" is not a guard anyone can point at, and
+a counter that only counts *failed logins* says nothing about a client asking
+for legitimate things as fast as it can. Both are now explicit.
+
+- **`origin-guard.ts` refuses a state-changing `/api` request whose origin we
+  do not serve**, mounted on `/api` before any route so nothing added later can
+  be forgotten. `originAllowed()` is the same function the WebSocket upgrade
+  has always used and `allowedOriginsFor(config)` is computed once and handed
+  to both, so the two cannot disagree about what this server is called.
+  - **Safe methods are exempt, and that is load-bearing.**
+    `GET /api/auth/<provider>/callback` is a top-level navigation the provider
+    performs; it is cross-site by construction and guarding it breaks every
+    social login.
+  - **An absent `Origin` is admitted here and refused on the WebSocket.** CSRF
+    needs a browser and a browser always sends `Origin` on a POST, so a request
+    without one is not a forgery — it is `curl`, a script, or the e2e harness.
+    The WebSocket can afford the stricter rule because its only real client
+    *is* a browser.
+  - `Sec-Fetch-Site` is believed first when present: a page cannot set it.
+    `same-site` is refused along with `cross-site` — a sibling subdomain is not
+    us, and on a LAN install it is quite possibly somebody else's box.
+- **`rate-limits.ts` is a flood ceiling, not the brute-force protection.** That
+  is still `auth/rate-limit.ts`, whose two SQLite buckets survive a restart and
+  lock out for fifteen minutes. The two are complementary; neither replaces the
+  other. `/api/auth` gets 600 per fifteen minutes (a household shares one
+  address behind NAT), `/api/auth/identities` 120, `/api/invoke` and
+  `/api/media` 2000 per *minute* — a panel load fires dozens of channels and a
+  seek fires a Range request per jump.
+- **`/api/device-io` is deliberately unlimited**, and
+  `deviceIoIsDeliberatelyUnlimited` exists so a reader finds the reasoning
+  instead of an oversight: a sync is one request per file, so copying a
+  twenty-thousand-track library is tens of thousands of requests as fast as the
+  wire allows. Any ceiling low enough to be protection stops a library copying.
+  CodeQL's four alerts on it are false positives and should be dismissed as
+  such.
+
+Pinned in `src/__tests__/regressions/request-guards.test.ts` (the origin matrix,
+which is mostly header combinations no browser will produce to order, plus the
+limiter actually answering 429) and `tests/e2e/web-request-guards.test.ts` (both
+guards mounted, over a real daemon — including the control that `/api/device-io`
+carries no `RateLimit` header while `/api/invoke` does).
 
 ## Hazard: `/api/invoke` checks authentication, not authorization
 

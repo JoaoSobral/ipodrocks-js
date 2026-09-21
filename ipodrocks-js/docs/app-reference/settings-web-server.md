@@ -20,9 +20,10 @@ can be any computer on your network, or anywhere at all through a tunnel.
   reachable from your local network.
 - **Port** — Defaults to `8780`.
 - **Public URL** — The address people actually reach it on, e.g.
-  `https://ipod.example.com`. Sign-in callback URLs are built from it and it is
-  the origin the app's WebSocket accepts, so set it before configuring Google,
-  GitHub or Facebook sign-in.
+  `https://ipod.example.com`. Sign-in callback URLs are built from it, and it is
+  the origin the app accepts — both on its WebSocket and on any request that
+  changes something — so set it before configuring Google, GitHub or Facebook
+  sign-in.
 - **Apply** — Saves the three fields. A running server keeps its current
   settings until you stop and start it.
 

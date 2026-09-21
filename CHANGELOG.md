@@ -130,6 +130,10 @@ to re-scan.
 
 ### Security
 
+- **A cross-origin request can no longer reach anything that changes state.** The session cookie was already `SameSite=Lax`, which withholds it from a cross-site POST, but that left the protection resting on a cookie attribute rather than on anything the server checks. Every `/api` request that is not a plain read is now refused unless it comes from an origin this server actually serves — the same rule the event WebSocket has always applied to its upgrade, and reading from the same list. OAuth callbacks are unaffected: they arrive as ordinary navigations.
+
+- **Flood ceilings on the HTTP surface.** Failed logins were already counted and locked out per account and per address; total request volume was not. The control plane, media streaming and the auth endpoints now each carry a ceiling set far above anything a person generates. Copying a library is deliberately exempt — a sync is one request per file, and any limit low enough to be protection would stop it.
+
 - Updated two build-time dependencies flagged by Dependabot: `browserslist` (4.28.2 → 4.28.9) and `@xmldom/xmldom` (0.8.13 → 0.8.15). Both are development tooling and were never part of the shipped app.
 
 ## [2.3.1] — 2026-08

@@ -22,6 +22,12 @@ import {
 } from "./auth/routes";
 import { getOrCreateClaimToken } from "./auth/identities";
 import { attachEventsServer, resetEventSessions, type EventsServer } from "./events";
+import { requireSameOrigin } from "./origin-guard";
+import {
+  apiRateLimiter,
+  authRateLimiter,
+  identityAdminRateLimiter,
+} from "./rate-limits";
 import {
   attachDeviceSessions,
   handleDeviceIo,
@@ -216,20 +222,42 @@ export async function startServer(
     next();
   });
 
+  // Hoisted above the routes: the origin guard needs the same list the
+  // WebSocket upgrade is checked against, and one list means the two cannot
+  // disagree about what this server is called.
+  const allowedOrigins = allowedOriginsFor(config);
+
+  // Cross-origin refusal for everything that mutates, mounted before any
+  // route so nothing added later can be forgotten. `SameSite=Lax` on the
+  // session cookie is the primary protection; this is the second opinion, and
+  // it is the rule `events.ts` has always applied to the upgrade.
+  app.use("/api", requireSameOrigin(allowedOrigins));
+
   const enabledProviders = configurePassport(config);
 
-  app.use("/api/auth", express.json({ limit: "64kb" }), createAuthRouter({
-    config,
-    enabledProviders,
-  }));
+  // The allowlist routes get their own, tighter bucket, mounted first so it is
+  // the one that answers for them.
+  app.use("/api/auth/identities", identityAdminRateLimiter());
+  app.use(
+    "/api/auth",
+    authRateLimiter(),
+    express.json({ limit: "64kb" }),
+    createAuthRouter({
+      config,
+      enabledProviders,
+    })
+  );
 
   const subjectFor = (req: Request): string | null => {
     const identity = currentIdentity(req);
     return identity ? `${identity.provider}:${identity.subject}` : null;
   };
 
+  const apiLimiter = apiRateLimiter();
+
   app.post(
     "/api/invoke/:channel",
+    apiLimiter,
     requireAuth(config),
     express.json({ limit: MAX_INVOKE_BODY_BYTES }),
     (req, res) => {
@@ -237,11 +265,14 @@ export async function startServer(
     }
   );
 
-  app.get("/api/media/:token", requireAuth(config), handleMediaRequest);
-  app.head("/api/media/:token", requireAuth(config), handleMediaRequest);
+  app.get("/api/media/:token", apiLimiter, requireAuth(config), handleMediaRequest);
+  app.head("/api/media/:token", apiLimiter, requireAuth(config), handleMediaRequest);
 
   // The device data plane. No body parser: the payload is a raw audio file and
-  // it is piped, not buffered.
+  // it is piped, not buffered. Deliberately *not* rate-limited either — see
+  // `deviceIoIsDeliberatelyUnlimited` in `rate-limits.ts`: a sync is one
+  // request per file, so any ceiling that would be protection would also stop
+  // a library copying.
   app.get("/api/device-io/:direction/:token", requireAuth(config), (req, res) => {
     void handleDeviceIo(req, res);
   });
@@ -280,7 +311,6 @@ export async function startServer(
     ? https.createServer({ cert: tls.cert, key: tls.key }, app)
     : http.createServer(app);
 
-  const allowedOrigins = allowedOriginsFor(config);
   const events: EventsServer = attachEventsServer(httpServer, {
     sessionMiddleware,
     allowedOrigins,

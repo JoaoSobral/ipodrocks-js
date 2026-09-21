@@ -225,7 +225,7 @@ Server when the desktop app is hosting; the environment always wins.
 | `IPODROCKS_SESSION_SECRET` | random per boot | Set it, or every restart logs everyone out. |
 | `IPODROCKS_TLS_CERT` / `IPODROCKS_TLS_KEY` | — | Terminate TLS in the daemon itself. Both or neither. |
 | `IPODROCKS_TRUSTED_PROXIES` | none | Comma-separated. Whose `X-Forwarded-*` to believe. |
-| `IPODROCKS_ALLOWED_ORIGINS` | `IPODROCKS_PUBLIC_URL` | Extra origins accepted on the WebSocket upgrade. |
+| `IPODROCKS_ALLOWED_ORIGINS` | `IPODROCKS_PUBLIC_URL` | Extra origins accepted on the WebSocket upgrade, and on any API request that changes something. |
 | `IPODROCKS_GOOGLE_CLIENT_ID` / `_SECRET` | — | Google sign-in. Both or neither. |
 | `IPODROCKS_GITHUB_CLIENT_ID` / `_SECRET` | — | GitHub sign-in. |
 | `IPODROCKS_FACEBOOK_CLIENT_ID` / `_SECRET` | — | Facebook sign-in. |
@@ -258,6 +258,13 @@ WebSocket upgrade is refused when the request's `Origin` is not `publicUrl` or
 one of `IPODROCKS_ALLOWED_ORIGINS` — and an *absent* `Origin` is refused too,
 rather than read as same-origin. Check that `IPODROCKS_PUBLIC_URL` matches the
 hostname you are actually typing, scheme and port included.
+
+**Everything reads fine but nothing can be saved ("Cross-origin request
+refused").** Same list, same cause, one step further in: an API request that
+changes something is refused from an origin this server does not serve. Reading
+still works, which is what makes it look like a permissions problem rather than
+a hostname one. Set `IPODROCKS_PUBLIC_URL` to the address you actually type, or
+add it to `IPODROCKS_ALLOWED_ORIGINS`.
 
 **Musepack profiles are greyed out.** No `mpcenc`. The startup log says so.
 

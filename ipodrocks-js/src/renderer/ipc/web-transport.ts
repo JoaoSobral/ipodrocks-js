@@ -204,7 +204,11 @@ class WebTransport {
           try {
             cb(...push.args);
           } catch (err) {
-            console.error(`[web-transport] listener for ${push.channel} threw`, err);
+            // The channel name is server-supplied, so it stays an *argument*
+            // rather than part of the format string: `console.error` honours
+            // `%s`/`%d` directives, and a channel called `%s%s%s` would
+            // otherwise reformat the message around it.
+            console.error("[web-transport] listener threw", push.channel, err);
           }
         }
       });

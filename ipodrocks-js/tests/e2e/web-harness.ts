@@ -117,3 +117,32 @@ export async function invoke<T = unknown>(
   const body = (await res.json()) as InvokeResponse<T>;
   return body.result as T;
 }
+
+/**
+ * Silences the "mpcenc is not installed" reminder for the duration of a spec,
+ * and returns the previous setting so the caller can put it back.
+ *
+ * Any spec that *renders* a panel needs this, and it is not optional dressing:
+ * `DevicePanel` pops `MpcUnavailableModal` on its own as soon as the codec
+ * configs and the mpcenc probe have both answered, and a modal backdrop
+ * (`fixed inset-0`) swallows every click behind it. On a host with mpcenc
+ * installed the spec passes; on one without — which is every CI runner, and
+ * `musepack-tools` is not installed in the e2e workflow — the modal is up by
+ * the time the first click lands and the test times out waiting for an element
+ * that is visible, enabled, stable and unreachable.
+ *
+ * Dismissing the modal from the spec instead would be a race: it appears after
+ * two independent IPC round trips, so "close it if it is there" can run before
+ * it arrives. The preference is the deterministic lever.
+ */
+export async function setMpcReminderDisabled(
+  request: APIRequestContext,
+  disabled: boolean
+): Promise<boolean> {
+  const before = await invoke<{ disabled: boolean }>(
+    request,
+    "app:getMpcRemindDisabled"
+  );
+  await invoke(request, "app:setMpcRemindDisabled", disabled);
+  return before.disabled;
+}
