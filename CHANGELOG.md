@@ -2,31 +2,92 @@
 
 ## [3.0.0] — 2026-09
 
-### Features
+### 🌍 Sync from anywhere
 
-- **iPodRocks can now run as a web app.** Turn on the web server in Settings and iPodRocks serves its whole interface to a browser — the same library, devices, sync, playlists, ratings and Rocksy you get on the desktop, reached from any machine on your network or, through a tunnel, from anywhere. Nothing is cut down for the web: it is the same app, not a companion view of it.
+**Your player no longer has to be plugged into the machine that holds your music.**
 
-- **Your player does not have to be plugged into the same machine as your library.** This is the point of the web app. The library, the database and the encoders stay on whichever computer runs the server — a NAS, a home server, an old desktop in a cupboard — and the player is plugged into whatever laptop you happen to be sitting at. Your browser asks you to pick the player's folder once, and from then on iPodRocks reads and writes it through the browser as if it were local: syncs, ratings, playlists and listening history all work the way they always have. Picking the folder needs Chrome, Edge, or another Chromium browser — Firefox and Safari have no way to grant a website access to a folder, and iPodRocks says so rather than failing halfway through.
+Run iPodRocks as a server — on a NAS, a home server, an old desktop in a
+cupboard — and open it in a browser from wherever you happen to be. Plug your
+player into *that* laptop, point the browser at its folder, and sync it to the
+library at home.
 
-- **The server can run on its own, with no app open.** As well as the Settings toggle, iPodRocks ships a headless server you can run as a background service or in a container, so the machine holding your library does not need a screen, a login session, or Electron installed at all. Point it at a data folder and a port and it is up.
+Nothing is copied to the laptop in between. Same app, same library, same
+database, same ratings and play history. Just reached over the network.
 
-- **Sign in with Google, GitHub or Facebook, or with a password.** The web server is not open to whoever finds it. Social sign-in is there because it is the least painful option when the server is reachable from the internet, and a plain password account is there because it is the only option that works on a home network with no public hostname. Either way, **signing in is not the same as being let in**: only the accounts you have explicitly allowed can reach your library, and the first person to claim the server — using a one-time code it prints on startup — becomes its owner. Everyone else is refused, however valid their Google account is.
+```
+  the machine with your music            the machine you are sitting at
+  ───────────────────────────            ──────────────────────────────
+  library + SQLite + ffmpeg   ──HTTPS──▶  a browser tab   ──USB──▶  your player
+  the sync engine             ◀──WS────   holds the device
+```
 
-- **There is a container image, a compose file and a systemd unit for it.** Along with a deployment guide covering Docker, Cloudflare Tunnel and running it as a service, so putting iPodRocks on a NAS or a home server is a page to follow rather than a puzzle to solve. The image installs `mpcenc` too, which nothing bundles — without it Musepack shadow libraries are unavailable, and the server now says so at startup instead of failing at the first track.
+That is the release. Everything below is what it took to make it work properly.
 
-- **Remote devices are their own kind of device.** In a browser, **+ Add Remote Device** adds a device plugged into *your* machine: no mount path to type and no USB list, because both describe the server. You pick the folder with your own browser's picker, right in the form. A device belongs to exactly one machine and iPodRocks no longer pretends otherwise — a server-attached device is listed in the browser but cannot be synced, edited or removed from there, because its settings are facts about a machine the browser cannot see; a remote device is listed in the desktop app but cannot be synced from there, though it can still be removed, since somebody has to be able to tidy up a browser that is never coming back. Auto Podcasts is unavailable for a remote device, and says why — the schedule runs on the server, and a remote device is only connected while its browser tab is open.
+### The whole app, in a browser
 
-- **Ask Rocksy who can reach your server.** "Who can sign in to my server?", "is anyone connected right now?", "give my partner an account", "cut off access for that old account", "sign every browser out" — Rocksy reads and edits the allowlist and the live sessions, asking you to confirm before anything that grants or removes access. These are **owner-only**: asked by anyone else signed in to your server, Rocksy says so and does nothing. It will not read a claim token or a password out into the chat either.
+Turn on **Settings → Web Server** and iPodRocks serves its entire interface over
+HTTP — library, devices, sync, playlists, ratings, podcasts, audiobooks. Not a
+cut-down companion view: the same app, against the same database. The desktop
+window and a browser can both be open at once.
 
-- **Built to sit behind Cloudflare Tunnel.** The recommended setup opens no inbound port at all: the server listens only on the local machine and `cloudflared` reaches out to Cloudflare, which gives you an HTTPS address and, if you want it, a second front door in Cloudflare Access that has to be passed before a request ever arrives. Any other reverse proxy works too, and you can hand the server your own certificate instead.
+### Remote devices
 
-### Fixes
+**+ Add Remote Device** registers a player plugged into the machine running your
+browser. There is no mount path to type — you pick the folder with your browser's
+own picker, right in the form — and that tab holds the device for as long as it
+is open. Remote devices carry an orange **REMOTE** badge on their card.
 
-- **A short sync no longer reports "Nothing to sync — device up to date." over work it just did.** The progress modal stopped listening the moment `sync:start` returned, and on a sync of a few files the result reliably arrives before the per-file progress it is reporting on — so the modal dropped every copy event and then described the sync as a no-op. It now listens for as long as it is open and reconciles what it saw with what the sync itself reported.
+A device belongs to exactly one machine, and iPodRocks no longer pretends
+otherwise: a server-attached device cannot be synced or edited from a browser,
+and a remote device cannot be synced from the desktop app. Both stay visible on
+both sides, each saying plainly why the rest is greyed out.
 
-### Notes
+Remote devices need **Chrome, Edge or another Chromium browser on a desktop,
+over HTTPS** — Firefox and Safari have no way to grant a page access to a folder,
+and iPodRocks says so up front rather than failing halfway through.
 
-- **Everything you sync travels to your browser and then to the player.** That is what makes a remote device possible, and it is also the cost: a large lossless library is not a practical thing to push down a home connection. Sync a selection, or sync from a shadow library, and it is comfortable.
+### Runs headless
+
+A standalone daemon with no Electron at all, so the machine holding your library
+needs no screen and no login session. Ships with a `Dockerfile`, a
+`docker-compose.yml` with a `cloudflared` sidecar, a systemd unit, and a
+deployment guide that walks the whole thing end to end.
+
+### Signing in is not the same as being let in
+
+Sign in with Google, GitHub, Facebook or a plain password account — but a valid
+Google login gets you nowhere on its own. Only accounts on an allowlist you
+control reach your library. The first person to arrive claims the server with a
+one-time code it prints at startup and becomes its owner; everyone else is
+refused until the owner adds them.
+
+Built to sit behind a **Cloudflare Tunnel**, which opens no inbound port at all.
+Cloudflare Access is verified at the origin rather than merely trusted. Any
+reverse proxy works too, or hand the server your own certificate.
+
+### Also in this release
+
+- **Fixed:** a short sync could report "Nothing to sync — device up to date."
+  over work it had just done. The progress window stopped listening too early
+  and missed its own results.
+- Rocksy can manage the server's allowlist and active sessions — "who can sign
+  in to my server?", "give my partner an account", "sign every browser out" —
+  owner-only, and it never reads a claim token or password into the chat.
+- The container installs `mpcenc`, and the server now reports both encoders at
+  startup instead of failing at the first Musepack track.
+
+### Worth knowing
+
+**Everything you sync travels to your browser and then to the player.** That is
+what makes a remote device possible, and it is also the cost: pushing a large
+lossless library down a home connection is not practical. Sync a selection, or
+sync from a shadow library, and it is comfortable.
+
+### Upgrading
+
+Nothing changes until you turn the web server on — it is off by default, and the
+desktop app behaves exactly as it did in 2.x. No settings to migrate, no library
+to re-scan.
 
 
 ## [2.3.3] — 2026-09
