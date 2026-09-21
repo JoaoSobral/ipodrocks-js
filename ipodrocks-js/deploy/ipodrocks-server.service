@@ -38,6 +38,16 @@ Environment=IPODROCKS_SERVER_PORT=8780
 StateDirectory=ipodrocks
 ReadWritePaths=/var/lib/ipodrocks
 
+# The state directory holds ipodrocks-server.db, which *is* the authentication
+# store: the session signing secret (generated there whenever
+# IPODROCKS_SESSION_SECRET is unset, which the optional EnvironmentFile above
+# permits), every live session id, and every local account's password hash.
+# systemd's defaults are 0755/0022, and the app chmods only secret.key, so
+# without these two lines any other local account on the host can read it --
+# secret plus a live sid is enough to forge the owner's cookie.
+StateDirectoryMode=0700
+UMask=0077
+
 # The daemon needs to read the library, write /var/lib/ipodrocks, and spawn
 # ffmpeg/mpcenc into a temp directory. Nothing else.
 NoNewPrivileges=yes

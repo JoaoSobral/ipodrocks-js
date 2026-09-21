@@ -93,6 +93,98 @@ reasoning behind the current shape of the code:
 
 > Note: `src/main/ipc.ts` was split into per-domain modules under `src/main/ipc/` (one `registerXHandlers()` per channel prefix, shared helpers in `ipc/common.ts`). Add new handlers to the matching domain module.
 
+## Security audit, 2026-09-21 — the invariants the fixes restored
+
+A full source audit of the web-server surface. Everything below was
+demonstrated against the built `dist/`, fixed, and pinned in
+`src/__tests__/regressions/security-audit-hardening.test.ts` and
+`regressions/login-lockout-bypasses.test.ts`. The rules, not the bugs, are the
+part worth keeping.
+
+- **A media capability may only be minted for a path the *server* derived.**
+  `media-route.ts` states this as its own precondition, and `player:prepare`
+  was fixed for it once — but `encodePathToUrl()` had a *second* producer.
+  `audiobook:subscribe` stored the client's `imageUrl` verbatim and
+  `rowToSub()` minted a token for any absolute value, with no `sessionId`, so
+  it was honoured for every other logged-in session. `localPathToMediaUrl()`
+  now refuses a path outside `getAudiobooksRoot()` and `subscribe()` refuses an
+  absolute `imageUrl`. **Check every caller of `encodePathToUrl()` before
+  adding one** — the uncontained middle arm of `isServableMediaPath()` means
+  the mint site *is* the containment.
+- **`librivox_id` is a path component, and `INTEGER` affinity does not coerce
+  it.** SQLite stores a non-integer literal as TEXT, so `"../../.."` came back
+  a string, `path.join` resolved it out of the audiobooks root and
+  `audiobook:unsubscribe` `rmSync`'d it recursively. `assertLibrivoxId()` in
+  `audiobooks/audiobook-storage.ts` is the single choke point; a column type is
+  not validation.
+- **A rate-limit bucket and the lookup it protects must be keyed on one
+  value.** The account bucket was chosen with `typeof username === "string"`
+  while the account was resolved with `String(username)`, so `["owner"]` named
+  a real account and created no bucket for it. And **reserve, don't
+  check-then-act**: `checkRateLimit()` + a later `recordFailure()` sat either
+  side of an `await` on scrypt, so a concurrent burst all passed. Both login
+  paths now reject a non-string username and call `reserveAttempt()`.
+- **Locality is not ownership.** `deviceLocalityBlock`/`deviceAdminBlock` ask
+  "is this player on my machine", which *every* allowlisted identity satisfies
+  for *every* web device. `web_owner_subject` was compared only on the
+  `device-attach` handshake, so any account could name another's device id and
+  reach `deviceFs.rm(recursive)` in their folder. `blockWrongDeviceOwner()` /
+  `deviceOwnerBlock()` (`ipc/common.ts`) now gate `sync:start`,
+  `device:update`, `device:remove`, `device:check`, `device:eject` and
+  `device:readRuntimeData`. A **null owner still admits** — that is a
+  pre-column device, same rule as attach.
+- **In a browser, `device:add` always creates a *remote* device.** `transport`
+  decides which filesystem every later call uses; a web client registering
+  `transport: "local"` with its own mount path is how a host volume reached
+  `device:eject`.
+- **Every `getHostDialogs()` call site needs `blockWebClientDialog()`.**
+  `dialog:pickFolder` and `app:openExternal` always refused a web client;
+  `playlist:export` and `podcast:browseDownloadDir` reached the same sink with
+  no check, which on the desktop-hosted server puts a modal on the owner's
+  screen with an attacker-chosen filename. There are exactly three call sites —
+  keep it that way.
+- **An assistant tool is a front door, not a convenience.**
+  `assistant:confirmAction` runs `getToolByName(action.tool).run(args, ctx)` on
+  a client-supplied object, so the tier, the confirm dialog and the system
+  prompt are all advisory. `deviceGate()` in `assistant/tools.ts` now applies
+  the same locality+ownership checks the channels do. **Any new tool that
+  reaches a gated operation must re-apply that gate inside `run()`.**
+- **Assistant history is per identity.** `assistant_chat_history` gained
+  `identity_subject`; every read, trim, pin and clear is scoped by
+  `identity_subject IS ?` (null-safe, and NULL is the desktop app's own).
+  Before this, one web user read every other's prompts and
+  `assistant:history:clear` erased everybody's. The column is in `SCHEMA_SQL`
+  and **its index is created only in `migrateAssistantHistoryIdentity()`** —
+  see the `SCHEMA_SQL` hazard below.
+- **A URL a client chose goes through `utils/safe-fetch.ts`.** Feed discovery,
+  feed preview, `audiobook:setCoverFromUrl` and both downloaders fetched
+  anything, followed redirects unrevalidated, and the preview *reflected the
+  body back* — an internal-network read primitive from the daemon's position.
+  `safeFetch()` allows only http(s), refuses loopback/RFC1918/link-local/ULA,
+  and **re-checks every redirect hop**, which is the half that is easy to
+  forget. `IPODROCKS_ALLOW_PRIVATE_FETCH=1` (or `setPrivateFetchAllowed()`) is
+  the opt-in for someone whose feed really is on their LAN; tests that use a
+  loopback fixture set it explicitly.
+- **Clamp a device-supplied rating at the parse boundary.**
+  `decodeSnapshotFrom()` copied the raw int32 from the `.tcd` record, which on
+  a fresh schema tripped the CHECK and rolled back the *whole* sync's rating
+  merge (logged "non-fatal"), and on a database upgraded by `migrateRatings()`
+  — which omitted the CHECK — became the canonical rating that `writeRating()`
+  then refused forever. `sanitizeDeviceRating()` reads out-of-range as unrated;
+  `migrateRatings()` now declares the same CHECK a fresh install does.
+- **`ipodrocks-server.db` is the authentication store and is now `0600`.** It
+  holds the session signing secret, every live sid and every password hash;
+  only `secret.key` was ever chmodded. `deploy/ipodrocks-server.service` also
+  sets `UMask=0077` and `StateDirectoryMode=0700`.
+
+Two things were **looked at and deliberately left alone**: `shadow:create`
+accepting any folder and `shadow:pruneOrphans` deleting anything prunable under
+it is the intended contract (a shadow library owns its root) — but note those
+two channels are **not owner-gated**, so on the web server a non-owner can aim
+them at a library folder. And `isServableMediaPath()`'s middle arm is still an
+uncontained extension test, which is why the mint-site rule above is
+load-bearing.
+
 ## Hazard: an index in `SCHEMA_SQL` over a column added by a migration
 
 `db.exec(SCHEMA_SQL)` runs at the top of `AppDatabase.initialize()`, **before any

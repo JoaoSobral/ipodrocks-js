@@ -630,13 +630,14 @@ Format your replies with **Markdown** for readability:
 // ---------------------------------------------------------------------------
 
 export function loadAssistantHistory(
-  db: Database.Database
+  db: Database.Database,
+  subject: string | null = null
 ): Array<{ role: "user" | "assistant"; content: string }> {
   const rows = db
     .prepare(
-      "SELECT role, content FROM assistant_chat_history ORDER BY id ASC"
+      "SELECT role, content FROM assistant_chat_history WHERE identity_subject IS ? ORDER BY id ASC"
     )
-    .all() as Array<{ role: string; content: string }>;
+    .all(subject) as Array<{ role: string; content: string }>;
   return rows.map((r) => ({
     role: r.role as "user" | "assistant",
     content: r.content,
@@ -644,13 +645,14 @@ export function loadAssistantHistory(
 }
 
 export function loadNonPinnedHistory(
-  db: Database.Database
+  db: Database.Database,
+  subject: string | null = null
 ): Array<{ role: "user" | "assistant"; content: string }> {
   const rows = db
     .prepare(
-      "SELECT role, content FROM assistant_chat_history WHERE pinned = 0 ORDER BY id ASC"
+      "SELECT role, content FROM assistant_chat_history WHERE pinned = 0 AND identity_subject IS ? ORDER BY id ASC"
     )
-    .all() as Array<{ role: string; content: string }>;
+    .all(subject) as Array<{ role: string; content: string }>;
   return rows.map((r) => ({
     role: r.role as "user" | "assistant",
     content: r.content,
@@ -660,31 +662,38 @@ export function loadNonPinnedHistory(
 export function saveAssistantMessages(
   db: Database.Database,
   userContent: string,
-  assistantContent: string
+  assistantContent: string,
+  subject: string | null = null
 ): { userMsgId: number; assistantMsgId: number } {
   const insert = db.prepare(
-    "INSERT INTO assistant_chat_history (role, content) VALUES (?, ?)"
+    "INSERT INTO assistant_chat_history (role, content, identity_subject) VALUES (?, ?, ?)"
   );
+  // The trim is per identity too, or a chatty user would evict everyone else's
+  // history rather than their own.
   const trim = db.prepare(`
     DELETE FROM assistant_chat_history
-    WHERE pinned = 0 AND id NOT IN (
-      SELECT id FROM assistant_chat_history WHERE pinned = 0 ORDER BY id DESC LIMIT ?
+    WHERE pinned = 0 AND identity_subject IS ? AND id NOT IN (
+      SELECT id FROM assistant_chat_history
+      WHERE pinned = 0 AND identity_subject IS ? ORDER BY id DESC LIMIT ?
     )
   `);
   let userMsgId = 0;
   let assistantMsgId = 0;
   db.transaction(() => {
-    const ur = insert.run("user", userContent);
+    const ur = insert.run("user", userContent, subject);
     userMsgId = Number(ur.lastInsertRowid);
-    const ar = insert.run("assistant", assistantContent);
+    const ar = insert.run("assistant", assistantContent, subject);
     assistantMsgId = Number(ar.lastInsertRowid);
-    trim.run(MAX_ASSISTANT_HISTORY);
+    trim.run(subject, subject, MAX_ASSISTANT_HISTORY);
   })();
   return { userMsgId, assistantMsgId };
 }
 
-export function clearAssistantHistory(db: Database.Database): void {
-  db.prepare("DELETE FROM assistant_chat_history").run();
+export function clearAssistantHistory(
+  db: Database.Database,
+  subject: string | null = null
+): void {
+  db.prepare("DELETE FROM assistant_chat_history WHERE identity_subject IS ?").run(subject);
 }
 
 // ---------------------------------------------------------------------------
@@ -694,25 +703,27 @@ export function clearAssistantHistory(db: Database.Database): void {
 export function pinMessages(
   db: Database.Database,
   userMsgId: number,
-  assistantMsgId: number
+  assistantMsgId: number,
+  subject: string | null = null
 ): void {
   db.prepare(
-    "UPDATE assistant_chat_history SET pinned = 1 WHERE id IN (?, ?)"
-  ).run(userMsgId, assistantMsgId);
+    "UPDATE assistant_chat_history SET pinned = 1 WHERE id IN (?, ?) AND identity_subject IS ?"
+  ).run(userMsgId, assistantMsgId, subject);
 }
 
 export function unpinMessages(
   db: Database.Database,
-  userMsgId: number
+  userMsgId: number,
+  subject: string | null = null
 ): void {
   db.prepare(
-    "UPDATE assistant_chat_history SET pinned = 0 WHERE id = ?"
-  ).run(userMsgId);
+    "UPDATE assistant_chat_history SET pinned = 0 WHERE id = ? AND identity_subject IS ?"
+  ).run(userMsgId, subject);
   const next = db
     .prepare(
-      "SELECT id FROM assistant_chat_history WHERE id > ? AND role = 'assistant' AND pinned = 1 ORDER BY id ASC LIMIT 1"
+      "SELECT id FROM assistant_chat_history WHERE id > ? AND role = 'assistant' AND pinned = 1 AND identity_subject IS ? ORDER BY id ASC LIMIT 1"
     )
-    .get(userMsgId) as { id: number } | undefined;
+    .get(userMsgId, subject) as { id: number } | undefined;
   if (next) {
     db.prepare(
       "UPDATE assistant_chat_history SET pinned = 0 WHERE id = ?"
@@ -720,24 +731,28 @@ export function unpinMessages(
   }
 }
 
-export function getPinnedCount(db: Database.Database): number {
+export function getPinnedCount(
+  db: Database.Database,
+  subject: string | null = null
+): number {
   return (
     db
       .prepare(
-        "SELECT COUNT(*) as c FROM assistant_chat_history WHERE pinned = 1 AND role = 'user'"
+        "SELECT COUNT(*) as c FROM assistant_chat_history WHERE pinned = 1 AND role = 'user' AND identity_subject IS ?"
       )
-      .get() as { c: number }
+      .get(subject) as { c: number }
   ).c;
 }
 
 function buildPinnedMemoriesContext(
-  db: Database.Database
+  db: Database.Database,
+  subject: string | null = null
 ): { text: string; count: number } {
   const rows = db
     .prepare(
-      "SELECT id, role, content FROM assistant_chat_history WHERE pinned = 1 ORDER BY id ASC"
+      "SELECT id, role, content FROM assistant_chat_history WHERE pinned = 1 AND identity_subject IS ? ORDER BY id ASC"
     )
-    .all() as Array<{ id: number; role: string; content: string }>;
+    .all(subject) as Array<{ id: number; role: string; content: string }>;
   if (rows.length === 0) return { text: "No pinned memories yet.", count: 0 };
 
   const pairs: string[] = [];
@@ -1036,7 +1051,9 @@ export async function sendAssistantMessage(
   db: Database.Database,
   config: OpenRouterConfig,
   appPaths: AppPaths,
-  toolCtx: AiToolContext
+  toolCtx: AiToolContext,
+  /** Whose pinned memories to load. Null is the desktop app's own. */
+  subject: string | null = null
 ): Promise<AssistantResult> {
   // F9: Cache the expensive context queries with a 5-minute TTL
   const now = Date.now();
@@ -1065,7 +1082,7 @@ export async function sendAssistantMessage(
   const appPathsContext = buildAppPathsContext(db, appPaths);
   const activityContext = buildActivityContext(db);
 
-  const { text: pinnedText, count: pinnedCount } = buildPinnedMemoriesContext(db);
+  const { text: pinnedText, count: pinnedCount } = buildPinnedMemoriesContext(db, subject);
   const memoryInstructions = buildMemoryInstructions(pinnedText, pinnedCount);
 
   const systemMessages: OpenRouterMessage[] = [

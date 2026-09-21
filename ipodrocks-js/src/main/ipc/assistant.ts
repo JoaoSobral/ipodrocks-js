@@ -1,4 +1,5 @@
 import { handle as bridgeHandle } from "../host/bridge";
+import { subjectForSessionId } from "../../server/auth/sessions";
 import { getUserDataPath } from "../host";
 import { safe, getLibrary, getPlaylistCore, getDevicesCore } from "./common";
 import { checkRateLimit } from "../llm/openRouterClient";
@@ -55,7 +56,11 @@ export function registerAssistantHandlers(): void {
       if (!config?.apiKey?.trim())
         return { error: "OpenRouter API key not configured" };
       const db = getLibrary().getConnection();
-      const recentHistory = loadNonPinnedHistory(db);
+      // Whose conversation this is. Null over Electron IPC, which has no
+      // identity and is the machine holding the database.
+      const subject =
+        event.sessionId === undefined ? null : subjectForSessionId(event.sessionId);
+      const recentHistory = loadNonPinnedHistory(db, subject);
       const fullHistory = [
         ...recentHistory,
         { role: "user" as const, content: userMessage },
@@ -69,7 +74,14 @@ export function registerAssistantHandlers(): void {
         autoPodcastIntervalMin: autoPodcastSettings.refreshIntervalMinutes,
       };
       const toolCtx = buildToolContext(db, event.sessionId);
-      const result = await sendAssistantMessage(fullHistory, db, config, appPaths, toolCtx);
+      const result = await sendAssistantMessage(
+        fullHistory,
+        db,
+        config,
+        appPaths,
+        toolCtx,
+        subject
+      );
 
       const { reply, playlistCreated, pendingAction, pin, unpinIds, replaceId } = result;
 
@@ -77,14 +89,14 @@ export function registerAssistantHandlers(): void {
       // is shown in the renderer; the real reply is stored after confirmation).
       const replyToSave = reply || (pendingAction ? `[Pending: ${pendingAction.summary}]` : "");
 
-      const { userMsgId, assistantMsgId } = saveAssistantMessages(db, userMessage, replyToSave);
+      const { userMsgId, assistantMsgId } = saveAssistantMessages(db, userMessage, replyToSave, subject);
 
-      for (const uid of unpinIds ?? []) unpinMessages(db, uid);
-      if (replaceId) unpinMessages(db, replaceId);
+      for (const uid of unpinIds ?? []) unpinMessages(db, uid, subject);
+      if (replaceId) unpinMessages(db, replaceId, subject);
 
       if (pin || replaceId) {
-        if (replaceId || getPinnedCount(db) < MAX_PINNED_MEMORIES) {
-          pinMessages(db, userMsgId, assistantMsgId);
+        if (replaceId || getPinnedCount(db, subject) < MAX_PINNED_MEMORIES) {
+          pinMessages(db, userMsgId, assistantMsgId, subject);
         }
       }
 
@@ -119,17 +131,23 @@ export function registerAssistantHandlers(): void {
 
   bridgeHandle(
     "assistant:history:load",
-    safe("assistant:history:load", async () => {
+    safe("assistant:history:load", async (event) => {
       const db = getLibrary().getConnection();
-      return loadAssistantHistory(db);
+      return loadAssistantHistory(
+        db,
+        event.sessionId === undefined ? null : subjectForSessionId(event.sessionId)
+      );
     })
   );
 
   bridgeHandle(
     "assistant:history:clear",
-    safe("assistant:history:clear", async () => {
+    safe("assistant:history:clear", async (event) => {
       const db = getLibrary().getConnection();
-      clearAssistantHistory(db);
+      clearAssistantHistory(
+        db,
+        event.sessionId === undefined ? null : subjectForSessionId(event.sessionId)
+      );
     })
   );
 }

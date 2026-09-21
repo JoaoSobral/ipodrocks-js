@@ -1,5 +1,6 @@
 import * as fs from "fs";
 import * as path from "path";
+import { safeFetch } from "../utils/safe-fetch";
 import * as crypto from "crypto";
 import { pipeline } from "stream/promises";
 import { Readable } from "stream";
@@ -79,7 +80,9 @@ async function runDownload(
   try {
     ensureChapterDir(row.librivox_id);
 
-    const res = await fetch(row.enclosure_url, {
+    // enclosure_url comes from a feed the caller chose, so it is no more
+    // trusted than the feed URL itself.
+    const res = await safeFetch(row.enclosure_url, {
       headers: DOWNLOAD_HEADERS,
     });
 

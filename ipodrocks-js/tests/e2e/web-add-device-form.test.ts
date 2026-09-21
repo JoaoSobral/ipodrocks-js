@@ -23,6 +23,7 @@ import { test, expect } from "@playwright/test";
 import {
   invoke,
   removeDeviceRow,
+  seedLocalDeviceRow,
   setMpcReminderDisabled,
   signIn,
   signInPage,
@@ -140,11 +141,10 @@ test("the server refuses a web client's edit or delete of a server-side device",
   request,
 }) => {
   await signIn(request);
-  const device = await invoke<{ id: number }>(request, "device:add", {
-    name: "E2E Admin Guard",
-    mountPath: "/tmp/ipr-e2e-adminguard",
-    transport: "local",
-  });
+  // Seeded directly: a browser can no longer *create* a server-side device
+  // (see the assertion at the end of this test), so the row this guard is
+  // about has to come from somewhere the app would have put it.
+  const device = { id: seedLocalDeviceRow("E2E Admin Guard", "/tmp/ipr-e2e-adminguard") };
 
   try {
     // The disabled buttons are a courtesy; these are the guard. Without them a
@@ -160,6 +160,22 @@ test("the server refuses a web client's edit or delete of a server-side device",
 
     const list = await invoke<{ id: number; name: string }[]>(request, "device:list");
     expect(list.find((d) => d.id === device.id)?.name).toBe("E2E Admin Guard");
+
+    // And the browser cannot mint one of these in the first place: `transport`
+    // decides which filesystem every later call uses, so a web client asking
+    // for `local` with a mount path of its own is refused by being given a
+    // remote device instead.
+    const smuggled = await invoke<{ id: number; transport?: string; mountPath?: string }>(
+      request,
+      "device:add",
+      { name: "E2E Smuggled Local", mountPath: "/", transport: "local" }
+    );
+    try {
+      expect(smuggled.transport).toBe("web");
+      expect(smuggled.mountPath).not.toBe("/");
+    } finally {
+      removeDeviceRow(smuggled.id);
+    }
   } finally {
     removeDeviceRow(device.id);
   }
@@ -174,11 +190,7 @@ test("a remote device is badged, and a server-side one is not", async ({
     name: "E2E Badge Remote",
     transport: "web",
   });
-  const local = await invoke<{ id: number }>(request, "device:add", {
-    name: "E2E Badge Local",
-    mountPath: "/tmp/ipr-e2e-badge",
-    transport: "local",
-  });
+  const local = { id: seedLocalDeviceRow("E2E Badge Local", "/tmp/ipr-e2e-badge") };
 
   try {
     await openDevices(page);
@@ -198,11 +210,9 @@ test("a server-side device is listed but not operable from the browser", async (
   await signIn(request);
   // What the desktop app would have created. The browser must show it — hiding
   // it reads as "iPodRocks lost my iPod" — but offer nothing that touches it.
-  const device = await invoke<{ id: number }>(request, "device:add", {
-    name: "E2E Server Side Player",
-    mountPath: "/tmp/ipr-e2e-serverside",
-    transport: "local",
-  });
+  const device = {
+    id: seedLocalDeviceRow("E2E Server Side Player", "/tmp/ipr-e2e-serverside"),
+  };
 
   try {
     await openDevices(page);

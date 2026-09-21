@@ -65,10 +65,25 @@ export function getServerDb(): Database.Database {
   if (db) return db;
   const dir = getUserDataPath();
   fs.mkdirSync(dir, { recursive: true });
-  const conn = new Database(path.join(dir, DB_FILENAME));
+  const dbPath = path.join(dir, DB_FILENAME);
+  const conn = new Database(dbPath);
   conn.pragma("journal_mode = WAL");
   conn.pragma("foreign_keys = ON");
   conn.exec(SCHEMA_SQL);
+  // This file *is* the authentication store: the session signing secret, every
+  // live session id and every local password hash. `node-host.ts` already
+  // 0600s `secret.key` beside it; nothing did the same here, so under the
+  // default 0022 umask it was world-readable and secret-plus-live-sid is
+  // enough to forge the owner's cookie. WAL puts the same content in the
+  // sidecars, so they get the same treatment.
+  for (const f of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`]) {
+    try {
+      fs.chmodSync(f, 0o600);
+    } catch {
+      /* not every platform or filesystem honours this, and the sidecars may
+         not exist yet; the systemd unit sets UMask=0077 as the real backstop */
+    }
+  }
   db = conn;
   return conn;
 }

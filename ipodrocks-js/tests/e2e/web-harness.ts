@@ -53,6 +53,34 @@ export function removeDeviceRow(deviceId: number): void {
   }
 }
 
+/**
+ * Inserts a server-attached device straight into the library database.
+ *
+ * `device:add` from a browser now always creates a *remote* device — a web
+ * client registering `transport: "local"` with a mount path of its own
+ * choosing is how a host volume reached `device:eject`. So a spec that needs a
+ * server-side device to prove the locality guard refuses it can no longer
+ * build one through the app, and reaches past it here instead. That is the
+ * same exception `removeDeviceRow` already makes, for the same reason.
+ */
+export function seedLocalDeviceRow(name: string, mountPath: string): number {
+  const db = new Database(path.join(WEB_DATA_DIR, "ipodrock.db"));
+  try {
+    const mode = db
+      .prepare("SELECT id FROM device_transfer_modes WHERE name = 'copy'")
+      .get() as { id: number } | undefined;
+    const info = db
+      .prepare(
+        `INSERT INTO devices (name, mount_path, default_transfer_mode_id, transport)
+         VALUES (?, ?, ?, 'local')`
+      )
+      .run(name, mountPath, mode?.id ?? null);
+    return Number(info.lastInsertRowid);
+  } finally {
+    db.close();
+  }
+}
+
 export function ownerExists(): boolean {
   const db = serverDb();
   try {

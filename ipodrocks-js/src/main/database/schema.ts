@@ -482,6 +482,15 @@ CREATE TABLE IF NOT EXISTS assistant_chat_history (
     role TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
     content TEXT NOT NULL,
     pinned INTEGER NOT NULL DEFAULT 0,
+    -- "<provider>:<subject>" of the web identity whose conversation this is,
+    -- or NULL for the desktop app, which has no identity. Every read and
+    -- delete is scoped by it: this table holds whatever the user typed at
+    -- Rocksy, and on a shared server that is one person's conversation, not
+    -- the library's. NULL is the desktop owner's own history, not "everyone".
+    -- Its index is created in migrateAssistantHistoryIdentity(), never here --
+    -- SCHEMA_SQL runs before any migration, so an index over a column an
+    -- ALTER TABLE adds would throw on every upgrading install.
+    identity_subject TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 

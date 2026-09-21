@@ -36,6 +36,7 @@ export class AppDatabase {
     this.migrateDeviceUsbIdentity();
     this.migrateDeviceTransport();
     this.migrateDeviceWebOwner();
+    this.migrateAssistantHistoryIdentity();
     this.migrateShadowPausedStatus();
     this.migrateShadowTrackStat();
     this.migrateClassicPlaylists();
@@ -392,6 +393,46 @@ export class AppDatabase {
       }
     } catch (err) {
       console.error("[db] migration failed (migrateDeviceWebOwner):", err);
+    }
+  }
+
+  /**
+   * Scopes the assistant's stored conversation to the identity that had it.
+   *
+   * `assistant_chat_history` was one global table. On the desktop that is
+   * right — one machine, one user — but the same handlers serve every
+   * allowlisted web identity, so one person's prompts (and whatever they
+   * pasted into them) were readable by every other, and
+   * `assistant:history:clear` erased everybody's.
+   *
+   * Existing rows keep `identity_subject = NULL`, which is the desktop
+   * owner's own history. That is deliberate: the rows were written before
+   * anyone was distinguishable, and the machine holding the database is the
+   * one principal entitled to all of them.
+   *
+   * The index lives here and not in SCHEMA_SQL for the reason that file's own
+   * hazard note gives: SCHEMA_SQL runs before every migration, so an index
+   * over a column an ALTER TABLE has not added yet throws and takes the whole
+   * launch down for an upgrading user.
+   */
+  private migrateAssistantHistoryIdentity(): void {
+    if (!this.db) return;
+    try {
+      const rows = this.db
+        .prepare("PRAGMA table_info(assistant_chat_history)")
+        .all() as { name: string }[];
+      if (!new Set(rows.map((r) => r.name)).has("identity_subject")) {
+        this.db
+          .prepare("ALTER TABLE assistant_chat_history ADD COLUMN identity_subject TEXT")
+          .run();
+      }
+      this.db
+        .prepare(
+          "CREATE INDEX IF NOT EXISTS idx_assistant_history_identity ON assistant_chat_history(identity_subject, id)"
+        )
+        .run();
+    } catch (err) {
+      console.error("[db] migration failed (migrateAssistantHistoryIdentity):", err);
     }
   }
 
@@ -889,7 +930,7 @@ export class AppDatabase {
       const trackColNames = new Set(trackCols.map((r) => r.name));
 
       if (!trackColNames.has("rating")) {
-        this.db.prepare("ALTER TABLE tracks ADD COLUMN rating INTEGER").run();
+        this.db.prepare("ALTER TABLE tracks ADD COLUMN rating INTEGER CHECK(rating IS NULL OR (rating >= 0 AND rating <= 10))").run();
       }
       if (!trackColNames.has("rating_source_device_id")) {
         this.db.prepare("ALTER TABLE tracks ADD COLUMN rating_source_device_id INTEGER").run();

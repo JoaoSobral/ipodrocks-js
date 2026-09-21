@@ -1,6 +1,12 @@
 import { handle as bridgeHandle } from "../host/bridge";
 import { getHostDialogs } from "../host";
-import { safe, getLibrary, getPlaylistCore, getDevicesCore } from "./common";
+import {
+  safe,
+  blockWebClientDialog,
+  getLibrary,
+  getPlaylistCore,
+  getDevicesCore,
+} from "./common";
 import { getDeviceSyncPreferences } from "../sync/device-sync-preferences";
 import { logActivity } from "../activity/activity-logger";
 import { invalidateAssistantCache } from "../assistant/assistantChat";
@@ -109,7 +115,12 @@ export function registerPlaylistHandlers(): void {
 
   bridgeHandle(
     "playlist:export",
-    safe("playlist:export", async (_event, playlistId: number, deviceId?: number) => {
+    safe("playlist:export", async (event, playlistId: number, deviceId?: number) => {
+      // Same boundary as `dialog:pickFolder` and `app:openExternal`: this opens
+      // a modal save sheet on the *host's* screen, prefilled with a name the
+      // caller chose through `playlist:createClassic`.
+      const noDialog = blockWebClientDialog(event);
+      if (noDialog) return noDialog;
       const core = getPlaylistCore();
       const defaultName = core.getPlaylistById(playlistId)?.name ?? "playlist";
       const filePath = await getHostDialogs().saveFile({

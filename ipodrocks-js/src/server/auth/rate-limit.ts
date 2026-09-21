@@ -116,6 +116,28 @@ export function clearFailures(buckets: string[]): void {
   clearAll(buckets);
 }
 
+/**
+ * Admission and accounting in one synchronous step.
+ *
+ * `checkRateLimit()` followed by a later `recordFailure()` is check-then-act:
+ * the caller yields on `crypto.scrypt` in between, so every request already in
+ * flight passes the check before any of them writes and the per-account ceiling
+ * becomes the burst size. better-sqlite3 transactions are synchronous, so
+ * reserving inside one closes that window. A successful login still calls
+ * `clearFailures()`, which erases the reservation, so a legitimate user is not
+ * charged for it.
+ */
+export function reserveAttempt(
+  buckets: string[],
+  now = Date.now()
+): RateLimitVerdict {
+  return getServerDb().transaction((list: string[]) => {
+    const verdict = checkRateLimit(list, now);
+    if (verdict.allowed) recordFailure(list, now);
+    return verdict;
+  })(buckets);
+}
+
 export function bucketsFor(remoteAddress: string, account: string | null): string[] {
   const buckets = [`ip:${remoteAddress}`];
   if (account) buckets.push(`acct:${account.trim().toLowerCase()}`);

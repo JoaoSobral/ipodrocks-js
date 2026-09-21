@@ -22,6 +22,14 @@ import * as path from "path";
 
 import { createTestDb, closeDb, canRunDbTests, type TestDb } from "../harness";
 
+// `safeFetch` refuses non-public targets and resolves DNS before calling
+// `fetch`. These tests point at loopback fixtures and stubbed hosts on
+// purpose, so the network guard is switched off for them; the guard itself
+// is covered by regressions/ssrf-safe-fetch.test.ts.
+import { setPrivateFetchAllowed } from "@main/utils/safe-fetch";
+let _restorePrivateFetch = false;
+
+
 // downloadEpisode → podcast-storage → electron.app.getPath("userData")
 vi.mock("electron", () => ({
   app: {
@@ -87,12 +95,14 @@ describe.skipIf(!canRunDbTests)("podcast download — Accept-Language regression
   let srv: Awaited<ReturnType<typeof makeAdInsertionServer>>;
 
   beforeEach(async () => {
+    _restorePrivateFetch = setPrivateFetchAllowed(true);
     _testUserData = fs.mkdtempSync(path.join(os.tmpdir(), "ipr-pod-dl-"));
     db = createTestDb();
     srv = await makeAdInsertionServer();
   });
 
   afterEach(async () => {
+    setPrivateFetchAllowed(_restorePrivateFetch);
     closeDb(db);
     await new Promise<void>((r) => srv.server.close(() => r()));
     try { fs.rmSync(_testUserData, { recursive: true, force: true }); } catch { /* ignore */ }

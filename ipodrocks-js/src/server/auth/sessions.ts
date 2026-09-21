@@ -1,6 +1,7 @@
 import * as crypto from "crypto";
 import { getServerDb } from "../db";
 import { findIdentityById, type Identity } from "./identities";
+import { closeSessionSockets } from "../events";
 
 /**
  * Reading and revoking the live logins.
@@ -129,12 +130,19 @@ export function revokeSessionsForIdentity(identityId: number): number {
     for (const sid of sids) stmt.run(sid);
   });
   run(victims);
+  // The row is gone, so the next HTTP request fails; a WebSocket authenticated
+  // at its upgrade would otherwise keep streaming to a revoked identity.
+  closeSessionSockets(victims);
   return victims.length;
 }
 
 /** Destroys every session, including the caller's. "Sign everyone out". */
 export function revokeAllSessions(): number {
+  const sids = (
+    getServerDb().prepare("SELECT sid FROM server_sessions").all() as { sid: string }[]
+  ).map((r) => r.sid);
   const info = getServerDb().prepare("DELETE FROM server_sessions").run();
+  closeSessionSockets(sids);
   return info.changes;
 }
 

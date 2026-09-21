@@ -28,7 +28,7 @@
  */
 import { test, expect } from "@playwright/test";
 import type { APIRequestContext } from "@playwright/test";
-import { invoke, removeDeviceRow, signIn } from "./web-harness";
+import { invoke, removeDeviceRow, seedLocalDeviceRow, signIn } from "./web-harness";
 
 test.describe.configure({ mode: "serial" });
 
@@ -78,11 +78,12 @@ test("a browser cannot sync a player attached to the server", async ({ request }
 
   // A perfectly ordinary server-side device: this is what the desktop app adds,
   // and what a daemon with a player on its own USB bus would have.
-  const device = await addDevice(request, {
-    name: `Locality local ${Date.now()}`,
-    mountPath: "/tmp/ipr-locality-local",
-    transport: "local",
-  });
+  // Seeded past the app: `device:add` from a browser now always yields a
+  // remote device, so a server-side one has to be planted the way the desktop
+  // app would have created it.
+  const device = {
+    id: seedLocalDeviceRow(`Locality local ${Date.now()}`, "/tmp/ipr-locality-local"),
+  };
 
   try {
     const sync = await invoke<{ error?: string }>(request, "sync:start", {
@@ -175,11 +176,12 @@ test("a local player still takes Auto Podcasts", async ({ request }) => {
 
   // The control for the test above: the refusal is about the transport, not
   // about the channel having been broken.
-  const device = await addDevice(request, {
-    name: `Locality podcasts local ${Date.now()}`,
-    mountPath: "/tmp/ipr-locality-local-pod",
-    transport: "local",
-  });
+  const device = {
+    id: seedLocalDeviceRow(
+      `Locality podcasts local ${Date.now()}`,
+      "/tmp/ipr-locality-local-pod"
+    ),
+  };
 
   try {
     const on = await invoke<{ error?: string }>(

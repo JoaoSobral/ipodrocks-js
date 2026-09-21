@@ -557,6 +557,41 @@ const ratings_set_tag_priority: AiTool = {
  * two implementations has one that is weaker, which is the lesson of the
  * duplicated conflict resolution in CLAUDE.md's debt table.
  */
+/**
+ * The device guards the IPC handlers apply, for the tools that reach the same
+ * operations.
+ *
+ * `assistant:confirmAction` runs `getToolByName(action.tool).run(action.args,
+ * ctx)` on a `PendingAction` the *client* supplies, so a tool is a front door
+ * in its own right: the tier, the confirm dialog and the system prompt are all
+ * client-side or model-side and none of them is a gate. Anything a tool does
+ * that a channel refuses is therefore a way around that channel. These tools
+ * reconfigure, sync, eject and delete devices, which `ipc/devices.ts` and
+ * `ipc/sync.ts` gate on locality *and* ownership — so they must too.
+ *
+ * Returns the string to hand back to the model, or null to proceed.
+ */
+async function deviceGate(
+  ctx: AiToolContext,
+  deviceId: number,
+  kind: "admin" | "operate" = "admin"
+): Promise<string | null> {
+  const device = ctx.getDevicesCore().getDeviceById(deviceId);
+  if (!device) return null; // the tool's own "not found" message is better
+  const { deviceAdminBlock, deviceLocalityBlock } = await import(
+    "../../shared/device-locality"
+  );
+  const clientIsWeb = ctx.sessionId !== undefined;
+  const transport = device.profile.transport;
+  const reason =
+    kind === "admin"
+      ? deviceAdminBlock(transport, clientIsWeb)
+      : deviceLocalityBlock(transport, clientIsWeb);
+  if (reason) return reason;
+  const { deviceOwnerBlock } = await import("../ipc/common");
+  return deviceOwnerBlock(ctx.sessionId, deviceId);
+}
+
 async function ownerGate(
   ctx: AiToolContext
 ): Promise<{ error: string } | null> {
@@ -1002,6 +1037,8 @@ const device_check: AiTool = {
     if (!Number.isInteger(deviceId) || deviceId <= 0) throw new Error("Invalid device_id");
     const device = ctx.getDevicesCore().getDeviceById(deviceId);
     if (!device) throw new Error(`Device #${deviceId} not found`);
+    const blocked = await deviceGate(ctx, deviceId, "operate");
+    if (blocked) return { error: blocked };
     return { deviceId, name: device.profile.name, note: "Full check requires mounting the device — please use the Devices panel for a detailed sync analysis." };
   },
 };
@@ -1026,6 +1063,8 @@ const device_read_runtime_data: AiTool = {
     if (!Number.isInteger(deviceId) || deviceId <= 0) throw new Error("Invalid device_id");
     const device = ctx.getDevicesCore().getDeviceById(deviceId);
     if (!device) throw new Error(`Device #${deviceId} not found`);
+    const blocked = await deviceGate(ctx, deviceId, "operate");
+    if (blocked) return { error: blocked };
 
     const result = await ingestRuntimeDataForDevice(
       ctx.db,
@@ -1229,6 +1268,8 @@ const device_remove: AiTool = {
     if (!Number.isInteger(deviceId) || deviceId <= 0) throw new Error("Invalid device_id");
     const device = ctx.getDevicesCore().getDeviceById(deviceId);
     if (!device) throw new Error(`Device #${deviceId} not found`);
+    const blocked = await deviceGate(ctx, deviceId, "admin");
+    if (blocked) return { error: blocked };
     const name = device.profile.name;
     const ok = ctx.getDevicesCore().deleteDevice(deviceId);
     if (!ok) throw new Error(`Failed to remove device #${deviceId}`);
@@ -1256,6 +1297,8 @@ const device_eject: AiTool = {
     if (!Number.isInteger(deviceId) || deviceId <= 0) throw new Error("Invalid device_id");
     const device = ctx.getDevicesCore().getDeviceById(deviceId);
     if (!device) throw new Error(`Device #${deviceId} not found`);
+    const blocked = await deviceGate(ctx, deviceId, "operate");
+    if (blocked) return { error: blocked };
     const { name, mountPath } = device.profile;
 
     if (!isEjectSupported()) {
@@ -1316,6 +1359,8 @@ const device_update_settings: AiTool = {
     if (!Number.isInteger(deviceId) || deviceId <= 0) throw new Error("Invalid device_id");
     const device = ctx.getDevicesCore().getDeviceById(deviceId);
     if (!device) throw new Error(`Device #${deviceId} not found`);
+    const blocked = await deviceGate(ctx, deviceId, "admin");
+    if (blocked) return { error: blocked };
 
     const updates: Record<string, unknown> = {};
     if (args.skip_album_artwork !== undefined) {
@@ -1396,6 +1441,8 @@ const device_set_usb_identity: AiTool = {
     if (!Number.isInteger(deviceId) || deviceId <= 0) throw new Error("Invalid device_id");
     const device = ctx.getDevicesCore().getDeviceById(deviceId);
     if (!device) throw new Error(`Device #${deviceId} not found`);
+    const blocked = await deviceGate(ctx, deviceId, "admin");
+    if (blocked) return { error: blocked };
 
     const clearing = !args.usb_vendor_id || !args.usb_product_id;
     const ok = ctx.getDevicesCore().updateDevice(deviceId, {
@@ -1451,6 +1498,8 @@ const device_set_sync_preferences: AiTool = {
     if (!Number.isInteger(deviceId) || deviceId <= 0) throw new Error("Invalid device_id");
     const device = ctx.getDevicesCore().getDeviceById(deviceId);
     if (!device) throw new Error(`Device #${deviceId} not found`);
+    const blocked = await deviceGate(ctx, deviceId, "admin");
+    if (blocked) return { error: blocked };
 
     if (
       args.preserve_folder_structure === undefined &&
@@ -1535,6 +1584,8 @@ const device_set_orphan_policy: AiTool = {
     if (!Number.isInteger(deviceId) || deviceId <= 0) throw new Error("Invalid device_id");
     const device = ctx.getDevicesCore().getDeviceById(deviceId);
     if (!device) throw new Error(`Device #${deviceId} not found`);
+    const blocked = await deviceGate(ctx, deviceId, "admin");
+    if (blocked) return { error: blocked };
 
     const policy = String(args.policy) as ExtraTrackPolicy;
     if (!["keep", "remove", "delete-all", "prompt"].includes(policy)) {
@@ -1591,6 +1642,8 @@ const device_sync: AiTool = {
     if (!Number.isInteger(deviceId) || deviceId <= 0) throw new Error("Invalid device_id");
     const device = ctx.getDevicesCore().getDeviceById(deviceId);
     if (!device) throw new Error(`Device #${deviceId} not found`);
+    const blocked = await deviceGate(ctx, deviceId, "operate");
+    if (blocked) return { error: blocked };
     const { BrowserWindow } = await import("electron");
     const win = BrowserWindow.getAllWindows()[0];
     if (win) {

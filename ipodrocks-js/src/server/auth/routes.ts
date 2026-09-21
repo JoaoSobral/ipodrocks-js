@@ -19,6 +19,7 @@ import {
   checkRateLimit,
   clearFailures,
   recordFailure,
+  reserveAttempt,
 } from "./rate-limit";
 import { verifyCfAccessJwt } from "./cf-access";
 import { revokeSessionsForIdentity } from "./sessions";
@@ -170,11 +171,19 @@ export function createAuthRouter(deps: AuthDeps): Router {
   router.post("/local/login", (req, res) => {
     void (async () => {
       const { username, password } = (req.body ?? {}) as Record<string, unknown>;
-      const buckets = bucketsFor(
-        remoteAddress(req),
-        typeof username === "string" ? username : null
-      );
-      const verdict = checkRateLimit(buckets);
+      // The bucket and the account lookup must be keyed on the *same* value.
+      // Reading the bucket off `typeof username === "string"` while the lookup
+      // coerced with `String(username)` let a JSON array -- ["owner"] -- name a
+      // real account while creating no per-account bucket for it, so the
+      // ten-attempt ceiling never applied to it.
+      if (typeof username !== "string" || typeof password !== "string") {
+        res.status(400).json({ error: "Invalid username or password" });
+        return;
+      }
+      const buckets = bucketsFor(remoteAddress(req), username);
+      // Reserve rather than check: the scrypt derivation below yields, and a
+      // check whose write lands afterwards lets a whole burst through at once.
+      const verdict = reserveAttempt(buckets);
       if (!verdict.allowed) {
         res.setHeader("Retry-After", String(verdict.retryAfterSeconds));
         res.status(429).json({
@@ -184,12 +193,9 @@ export function createAuthRouter(deps: AuthDeps): Router {
         return;
       }
 
-      const identity = await verifyLocalLogin(
-        String(username ?? ""),
-        String(password ?? "")
-      );
+      const identity = await verifyLocalLogin(username, password);
       if (!identity) {
-        recordFailure(buckets);
+        // Already recorded by reserveAttempt().
         res.status(401).json({ error: "Invalid username or password" });
         return;
       }
@@ -281,7 +287,10 @@ export function createAuthRouter(deps: AuthDeps): Router {
 
     router.get(`/${provider}/callback`, (req, res, next) => {
       const buckets = bucketsFor(remoteAddress(req), `oauth:${provider}`);
-      const verdict = checkRateLimit(buckets);
+      // Same check-then-act shape as /local/login: passport.authenticate's
+      // callback is asynchronous, so a check whose write lands afterwards lets
+      // a burst through. Reserve up front; clearFailures() below erases it.
+      const verdict = reserveAttempt(buckets);
       if (!verdict.allowed) {
         res.setHeader("Retry-After", String(verdict.retryAfterSeconds));
         res.status(429).type("text/plain").send("Too many attempts. Try again later.");
@@ -293,7 +302,7 @@ export function createAuthRouter(deps: AuthDeps): Router {
         (err: unknown, profile: ProviderProfile | false) => {
           void (async () => {
             if (err || !profile) {
-              recordFailure(buckets);
+              // Already recorded by reserveAttempt().
               res.redirect("/?auth=provider_failed");
               return;
             }
@@ -309,7 +318,7 @@ export function createAuthRouter(deps: AuthDeps): Router {
               claimToken,
             });
             if ("error" in outcome) {
-              recordFailure(buckets);
+              // Already recorded by reserveAttempt().
               delete req.session.pendingClaimToken;
               res.redirect("/?auth=not_allowed");
               return;

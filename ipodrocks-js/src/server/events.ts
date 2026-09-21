@@ -381,6 +381,38 @@ export function onSocketClosed(listener: SocketClosedListener): () => void {
   return () => socketClosedListeners.delete(listener);
 }
 
+/**
+ * Closes every live socket belonging to these session ids and forgets the
+ * sessions.
+ *
+ * Revocation deletes the `server_sessions` row, which stops the *next* HTTP
+ * request cold because `requireAuth` re-resolves the identity every time. A
+ * WebSocket is authenticated once, at the upgrade, and never again: the
+ * message loop re-checks nothing, so without this an already-open socket keeps
+ * receiving pushes after its identity has been revoked. Revoking has to reach
+ * the socket registry, and this is the only door into it.
+ */
+export function closeSessionSockets(sessionIds: readonly string[]): number {
+  let closed = 0;
+  for (const sessionId of sessionIds) {
+    const session = sessions.get(sessionId);
+    if (!session) continue;
+    for (const ws of session.sockets) {
+      try {
+        // 1008 "policy violation" — the client is told why rather than seeing
+        // an unexplained drop it would immediately try to reconnect through.
+        ws.close(1008, "session revoked");
+      } catch {
+        /* already closing */
+      }
+      closed++;
+    }
+    session.sockets.clear();
+    sessions.delete(sessionId);
+  }
+  return closed;
+}
+
 export function resetEventSessions(): void {
   for (const t of sweepTimers.values()) clearTimeout(t);
   sweepTimers.clear();

@@ -2,6 +2,7 @@ import * as path from "path";
 import { handle as bridgeHandle } from "../host/bridge";
 import {
   safe,
+  blockWrongDeviceOwner,
   blockWrongLocality,
   getLibrary,
   getDevicesCore,
@@ -84,6 +85,12 @@ export function registerSyncHandlers(): void {
       // `DetachedDeviceFs` with an error that names neither.
       const wrongMachine = blockWrongLocality(event, device.profile.transport);
       if (wrongMachine) return wrongMachine;
+      // Locality says "is this player on my machine"; it does not say "is this
+      // player mine". Without the second question any allowlisted account
+      // could aim a sync -- including the `delete-all` reset -- at another
+      // account's browser-held device.
+      const notYours = blockWrongDeviceOwner(event, opts.deviceId);
+      if (notYours) return notYours;
 
       saveDeviceSyncPreferences(lib.getConnection(), opts.deviceId, {
         syncType: opts.syncType,

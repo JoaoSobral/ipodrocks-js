@@ -125,6 +125,26 @@ function readIndexFile(mountPath: string): IndexRead {
  * Shared by the local path and the browser-held one: only the two reads differ —
  * everything downstream is the same decoding of the same bytes.
  */
+
+/**
+ * Rockbox ratings are 0-10 and the index carries no checksum, so a word
+ * outside that range is a corrupt or hostile record rather than an opinion:
+ * read it as unrated.
+ *
+ * Every other writer of `tracks.rating` already bounds it — `ratings:
+ * setTrackRating` clamps, `writeRating()` throws outside 0-10, and a fresh
+ * `SCHEMA_SQL` declares a CHECK — but the decoder that *introduces* the value
+ * did not, and this is the one function both the local and the `DeviceFs`
+ * read paths share. Unbounded, a single bad record either tripped the CHECK
+ * and rolled back the whole sync's rating merge (fresh install) or became the
+ * library's canonical rating on a database upgraded by `migrateRatings()`,
+ * which omits the CHECK — at which point `writeRating()` refused it forever
+ * and that track's rating could never reach any player again.
+ */
+function sanitizeDeviceRating(raw: number): number {
+  return Number.isInteger(raw) && raw >= 0 && raw <= 10 ? raw : 0;
+}
+
 function decodeSnapshotFrom(
   idxBuf: Buffer,
   header: MasterHeader,
@@ -148,7 +168,7 @@ function decodeSnapshotFrom(
       devicePath,
       playCount: entry.tagSeek[TAG.playcount],
       playTimeMs: entry.tagSeek[TAG.playtime],
-      rating: entry.tagSeek[TAG.rating],
+      rating: sanitizeDeviceRating(entry.tagSeek[TAG.rating]),
       lastPlayedSerial: entry.tagSeek[TAG.lastplayed],
       lengthMs: entry.tagSeek[TAG.length],
       flags: entry.flag,

@@ -3,6 +3,7 @@ import { handle as bridgeHandle } from "../host/bridge";
 import {
   safe,
   blockWrongAdmin,
+  blockWrongDeviceOwner,
   blockWrongLocality,
   getLibrary,
   getPlaylistCore,
@@ -57,12 +58,21 @@ export function registerDeviceHandlers(): void {
       // the registering identity is what turns that mutex back into a safety
       // property. Taken from the transport that carried the call, which is the
       // only source a client cannot lie about.
+      //
+      // A browser may only register a *remote* device. `transport` decides
+      // which filesystem every later call uses, and a web client registering
+      // `transport: "local"` with a mount path of its choosing would create a
+      // row pointing at the server's own disk — which is also how a host
+      // volume reached `device:eject`. The renderer already only offers
+      // "remote" in a browser; this is the guard behind that courtesy.
+      const isWebClient = event.sessionId !== undefined;
       const device = getDevicesCore().addDevice({
         ...config,
-        webOwnerSubject:
-          event.sessionId === undefined
-            ? null
-            : subjectForSessionId(event.sessionId),
+        transport: isWebClient ? "web" : config.transport,
+        mountPath: isWebClient ? undefined : config.mountPath,
+        webOwnerSubject: isWebClient
+          ? subjectForSessionId(event.sessionId as string)
+          : null,
       });
       logActivity(
         getLibrary().getConnection(),
@@ -145,6 +155,8 @@ export function registerDeviceHandlers(): void {
       if (!existing) return { error: `Device ${deviceId} not found` };
       const wrongAdmin = blockWrongAdmin(event, existing.profile.transport);
       if (wrongAdmin) return wrongAdmin;
+      const notYours = blockWrongDeviceOwner(event, deviceId);
+      if (notYours) return notYours;
       const ok = getDevicesCore().updateDevice(deviceId, updates);
       if (!ok) return { error: "Update failed" };
       const device = getDevicesCore().getDeviceById(deviceId)?.profile;
@@ -165,6 +177,8 @@ export function registerDeviceHandlers(): void {
       if (existing) {
         const wrongAdmin = blockWrongAdmin(event, existing.profile.transport);
         if (wrongAdmin) return wrongAdmin;
+        const notYours = blockWrongDeviceOwner(event, deviceId);
+        if (notYours) return notYours;
       }
       const result = getDevicesCore().deleteDevice(deviceId);
       invalidateAssistantCache(); // F9: device config changed
@@ -184,12 +198,17 @@ export function registerDeviceHandlers(): void {
 
   bridgeHandle(
     "device:eject",
-    safe("device:eject", async (_event, deviceId: number) => {
+    safe("device:eject", async (event, deviceId: number) => {
       if (!isEjectSupported()) {
         return { error: "Ejecting from iPodRocks is not supported on this platform yet." };
       }
       const device = getDevicesCore().getDeviceById(deviceId);
       if (!device) return { error: "Device not found" };
+      // Unmounting is a host-level effect on a volume the caller may not own.
+      const wrongMachine = blockWrongLocality(event, device.profile.transport);
+      if (wrongMachine) return wrongMachine;
+      const notYours = blockWrongDeviceOwner(event, deviceId);
+      if (notYours) return notYours;
       const { name, mountPath } = device.profile;
 
       // Unmounting under a running sync leaves half-copied files behind. The OS
@@ -239,6 +258,8 @@ export function registerDeviceHandlers(): void {
       if (!device) return { error: `Device ${deviceId} not found` };
       const wrongMachine = blockWrongLocality(event, device.profile.transport);
       if (wrongMachine) return wrongMachine;
+      const notYours = blockWrongDeviceOwner(event, deviceId);
+      if (notYours) return notYours;
 
       await refreshUsbSnapshot();
       if (!isDeviceOnline(device.profile)) {
@@ -475,9 +496,14 @@ export function registerDeviceHandlers(): void {
 
   bridgeHandle(
     "device:readRuntimeData",
-    safe("device:readRuntimeData", async (_event, deviceId: number) => {
+    safe("device:readRuntimeData", async (event, deviceId: number) => {
       const device = getDevicesCore().getDeviceById(deviceId);
       if (!device) return { error: `Device ${deviceId} not found` };
+      // Same device.fs surface as `device:check`, which has always been gated.
+      const wrongMachine = blockWrongLocality(event, device.profile.transport);
+      if (wrongMachine) return wrongMachine;
+      const notYours = blockWrongDeviceOwner(event, deviceId);
+      if (notYours) return notYours;
 
       await refreshUsbSnapshot();
       if (!isDeviceOnline(device.profile)) {

@@ -1,6 +1,11 @@
 import { handle as bridgeHandle } from "../host/bridge";
 import { getHostDialogs } from "../host";
-import { safe, getLibrary, getDevicesCore } from "./common";
+import {
+  safe,
+  blockWebClientDialog,
+  getLibrary,
+  getDevicesCore,
+} from "./common";
 import { autoPodcastBlock } from "../../shared/device-locality";
 import { searchPodcasts } from "../podcasts/podcast-index-client";
 import {
@@ -216,7 +221,9 @@ export function registerPodcastHandlers(): void {
 
   bridgeHandle(
     "podcast:browseDownloadDir",
-    safe("podcast:browseDownloadDir", async () => {
+    safe("podcast:browseDownloadDir", async (event) => {
+      const noDialog = blockWebClientDialog(event);
+      if (noDialog) return noDialog;
       return getHostDialogs().pickFolder({
         title: "Select Podcast Download Folder",
         defaultPath: getDefaultPodcastsRoot(),

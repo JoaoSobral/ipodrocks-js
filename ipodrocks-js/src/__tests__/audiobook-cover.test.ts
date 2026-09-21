@@ -12,11 +12,20 @@ import * as path from "path";
 
 import { resolveCoverUrl, setCoverApiBaseUrls } from "@main/audiobooks/cover-client";
 
+// `safeFetch` refuses non-public targets and resolves DNS before calling
+// `fetch`. These tests point at loopback fixtures and stubbed hosts on
+// purpose, so the network guard is switched off for them; the guard itself
+// is covered by regressions/ssrf-safe-fetch.test.ts.
+import { setPrivateFetchAllowed } from "@main/utils/safe-fetch";
+let _restorePrivateFetch = false;
+
+
 const GOOGLE_URL = "https://fake-gb.example.com";
 const OL_URL = "https://fake-ol.example.com";
 const OL_COVERS_URL = "https://fake-ol-covers.example.com";
 
 beforeEach(() => {
+  _restorePrivateFetch = setPrivateFetchAllowed(true);
   setCoverApiBaseUrls({ googleBooks: GOOGLE_URL, openLibrary: OL_URL, openLibraryCovers: OL_COVERS_URL });
 });
 
@@ -25,6 +34,7 @@ function mockFetch(handler: (url: string) => Response) {
 }
 
 afterEach(() => {
+  setPrivateFetchAllowed(_restorePrivateFetch);
   vi.unstubAllGlobals();
 });
 
