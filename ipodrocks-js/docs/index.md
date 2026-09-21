@@ -3,7 +3,7 @@ layout: home
 
 hero:
   name: iPodRocks
-  text: Sync your iPod from anywhere
+  text: Sync your player from anywhere
   tagline: A sync manager for Rockbox and any mountable player. Keep the library on one machine, plug the player into another, and sync over the web. Multiple libraries, shadow transcoding, podcasts, audiobooks, playlists and ratings.
   image:
     src: /logo.png
@@ -41,16 +41,16 @@ iPodRocks is a **sync manager** for [Rockbox devices](https://www.rockbox.org/) 
 Your player no longer has to be plugged into the machine holding your music.
 
 Run iPodRocks as a **server** — on a NAS, a home server, an old desktop in a
-cupboard — and open it in a **browser wherever you happen to be**. Plug the iPod
-into *that* laptop, point the browser at its folder, and sync it to the library
-at home. Nothing is copied to the laptop in between: the same app, the same
+cupboard — and open it in a **browser wherever you happen to be**. Plug the
+player into *that* laptop, point the browser at its folder, and sync it to the
+library at home. Nothing is copied to the laptop in between: the same app, the same
 database, the same ratings and play history, reached over HTTPS behind a login
 you control.
 
 ```
   the machine with your music            the machine you are sitting at
   ───────────────────────────            ──────────────────────────────
-  library + SQLite + ffmpeg   ──HTTPS──▶  a browser tab   ──USB──▶  your iPod
+  library + SQLite + ffmpeg   ──HTTPS──▶  a browser tab   ──USB──▶  your player
   the sync engine             ◀──WS────   holds the device
 ```
 
@@ -63,7 +63,7 @@ behind a Cloudflare Tunnel that opens no inbound port at all.
 ## Key features
 
 - **Multiple library folders** — Music, podcasts, audiobooks in one catalog
-- **Multiple devices** — iPods, Rockbox players, any FAT32/exFAT-mounted drive, each with its own codec, folder layout and artwork settings. Pin a device to its USB hardware so two identical iPods never get confused for each other
+- **Multiple devices** — any Rockbox-capable player or FAT32/exFAT-mounted drive: iPods, Sansa, iRiver, Cowon, Archos, a plain USB stick. Each has its own codec, folder layout and artwork settings, and can be pinned to its USB hardware so two identical units never get confused for each other
 - **Remote devices** — A player plugged into the machine running your *browser*, synced from the library on the server. Chrome, Edge or another Chromium browser, over HTTPS
 - **Shadow libraries** — Pre-transcoded mirrors (e.g. FLAC → MPC) for fast sync, and a faithful one: rename or delete an album and the shadow follows
 - **Mirror library folder structure** — A per-device sync toggle (on by default) that copies your music to the device using the *exact* source folder layout — album folders keep their original names, year and all (`Avicii/Levels (2011)/…`). With it off, the device path is rebuilt from the artist/album tags (so `Levels (2011)` becomes `Levels`). Keep it on if you export M3U playlists from Plex, beets, or similar and need the device paths to match 1:1.

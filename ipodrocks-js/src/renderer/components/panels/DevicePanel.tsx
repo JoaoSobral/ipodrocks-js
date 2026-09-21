@@ -652,7 +652,7 @@ export function DevicePanel() {
           title={isWebMode() ? "No remote devices yet" : "No devices configured"}
           description={
             isWebMode()
-              ? "Add the player plugged into this computer. You pick its folder in this browser."
+              ? "Add the device plugged into this computer. You pick its folder in this browser."
               : "Add a device to manage your iPod or music player"
           }
           action={

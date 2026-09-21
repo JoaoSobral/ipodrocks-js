@@ -16,7 +16,7 @@ iPodRocks is a sync manager for [Rockbox devices](https://www.rockbox.org/) — 
 
 ### 🌍 Your player no longer has to be plugged into the machine with your music
 
-This is the big one. Run iPodRocks as a **server** — on a NAS, a home server, an old desktop in a cupboard — then open it in a **browser from wherever you happen to be**. Plug your iPod into *that* laptop, point the browser at its folder, and sync it to the library sitting at home.
+This is the big one. Run iPodRocks as a **server** — on a NAS, a home server, an old desktop in a cupboard — then open it in a **browser from wherever you happen to be**. Plug your player into *that* laptop, point the browser at its folder, and sync it to the library sitting at home.
 
 No files copied to the laptop first. No syncing a subset onto a USB stick. No VPN gymnastics. Same app, same library, same database, same ratings and play history — reached over HTTPS, behind a login you control, and optionally through a Cloudflare Tunnel that opens no inbound port at all.
 
@@ -78,7 +78,7 @@ If you really like iPodRocks and want to keep it caffeinated, you can buy me a c
 - Build once, sync many — no re-encoding on every sync
 
 ### Multiple Devices
-- **Add as many devices as you want** — iPods, Rockbox players, any FAT32/exFAT-mounted drive
+- **Add as many devices as you want** — any Rockbox-capable player or FAT32/exFAT-mounted drive: iPods, Sansa, iRiver, Cowon, Archos, a plain USB stick
 - Per-device codec configs (direct copy, MP3, AAC, Musepack, Opus, OGG)
 - Device check: compare what’s on disk vs library, spot orphans
 - **Per-device icons** — iPod Classic, Nano, and Mini get their own artwork; other devices each get a distinct generic Rockbox icon so cards are easy to tell apart at a glance
@@ -124,7 +124,7 @@ If you really like iPodRocks and want to keep it caffeinated, you can buy me a c
 - **Albums grouped by album artist** — Compilations show up once, under "Various Artists", instead of once per contributing track artist, so the custom-sync album list stays usable. The same choice decides the on-device folder layout when you are not mirroring your library structure, so a 20-artist compilation lands in one folder rather than twenty. Switch to **Track artist** per device if you prefer the old grouping.
 - **Mirror library folder structure** — Reproduce your library's folder tree on the device 1:1, album folder names and all, instead of rebuilding paths from tags
 - FFmpeg conversion with metadata preserved
-- **Rockbox-compatible album art** — Generates a single baseline-JPEG `cover.jpg` per album folder, resized to a per-device maximum (default 300 px so iPods stay responsive), so artwork loads reliably on Rockbox. Uses folder art or embedded artwork as the source; no extra software required
+- **Rockbox-compatible album art** — Generates a single baseline-JPEG `cover.jpg` per album folder, resized to a per-device maximum (default 300 px, which keeps older players responsive), so artwork loads reliably on Rockbox. Uses folder art or embedded artwork as the source; no extra software required
 - Live progress feedback
 
 ### Harmonic Mixing
@@ -312,7 +312,7 @@ and no browser grants folder access on an insecure origin.
 
 - Add multiple devices with custom folder layouts
 - Configure codec per device (direct copy, MP3, AAC, Musepack, etc.)
-- Choose the generated album-art size per device (200–750 px; default 300 px keeps iPods responsive), or turn artwork off entirely
+- Choose the generated album-art size per device (200–750 px; default 300 px keeps older players responsive), or turn artwork off entirely
 - Use shadow libraries for devices that need pre-converted files
 - Check device status: synced tracks, orphan files, and sync history
 

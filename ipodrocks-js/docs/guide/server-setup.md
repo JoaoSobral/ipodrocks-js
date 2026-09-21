@@ -1,6 +1,6 @@
 # Setting up the server, end to end
 
-This page takes you from nothing to "my iPod is plugged into my laptop and
+This page takes you from nothing to "my player is plugged into my laptop and
 syncing from the library on my NAS." It covers both ways of running the server
 and every sign-in option.
 
@@ -9,8 +9,8 @@ If you only want the shape of the thing first:
 ```
   the machine with your music            the machine you are sitting at
   ───────────────────────────            ──────────────────────────────
-  library + SQLite + ffmpeg   ──HTTPS──▶  a browser tab   ──USB──▶  your iPod
-  the sync engine             ◀──WS────   holds the player
+  library + SQLite + ffmpeg   ──HTTPS──▶  a browser tab   ──USB──▶  your player
+  the sync engine             ◀──WS────   holds the device
 ```
 
 ## Step 1 — decide how the server runs
@@ -272,7 +272,7 @@ providers are set up?"*
 Sign in and add your library folders as usual. The folder picker browses the
 **server's** filesystem, because that is where a library lives.
 
-That is a different question from picking a player, which is a folder on the
+That is a different question from picking a device, which is a folder on the
 machine you are sitting at — see below.
 
 Scan, and optionally build a [shadow library](/app-reference/library). For a
@@ -296,15 +296,15 @@ not the email address. If you do not have it, have the person try to sign in
 once: the attempt is refused, and the subject the provider sent is in the server
 log.
 
-## Step 8 — connect a player
+## Step 8 — connect a device
 
-On the machine with the iPod plugged in, open the server in **Chrome, Edge or
+On the machine with the device plugged in, open the server in **Chrome, Edge or
 another Chromium browser**, go to Devices, and press **+ Add Device**. In a
 browser this always adds a *remote device*: there is no mount path to type,
 because the folder is on your machine and you pick it with your own browser's
 picker.
 
-Save, then press **Connect this player** on its card and choose the player's
+Save, then press **Connect this device** on its card and choose the device's
 root folder — the one holding `Music` and `.rockbox`.
 
 Firefox and Safari cannot do this; neither can iOS. That is not a policy choice,
@@ -312,7 +312,7 @@ it is the File System Access API not existing there, and the Add Device form
 says so up front.
 
 See [Devices → Remote devices](/app-reference/devices#remote-devices)
-for what differs from a local player.
+for what differs from a local device.
 
 ## Troubleshooting
 
@@ -336,10 +336,10 @@ and the trailing slash.
 does not match the address you are actually typing; the session cookie is
 `SameSite=Lax` and the origin check is built from `IPODROCKS_PUBLIC_URL`.
 
-**Add Device offers no folder picker / "This browser cannot hold a player."**
+**Add Device offers no folder picker / "This browser cannot hold a device."**
 Not a Chromium browser, or not on HTTPS.
 
 **A device is listed but everything is greyed out.** It belongs to the other
-side: a server-attached player seen from a browser, or a remote device seen from
+side: a server-attached device seen from a browser, or a remote device seen from
 the desktop app. See
 [Devices → Remote devices](/app-reference/devices#remote-devices).

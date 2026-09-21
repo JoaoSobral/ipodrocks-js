@@ -62,7 +62,7 @@ export function WebDeviceLink({ deviceId }: { deviceId: number }) {
             else void client.pickAndAttach(deviceId);
           }}
         >
-          {connected ? "Disconnect" : "Connect this player"}
+          {connected ? "Disconnect" : "Connect this device"}
         </Button>
         {state.status === "attaching" && (
           <span className="text-xs text-muted-foreground">Connecting…</span>
@@ -102,7 +102,7 @@ export function WebDeviceLink({ deviceId }: { deviceId: number }) {
 function ThroughputNote() {
   return (
     <p className="text-[11px] leading-snug text-muted-foreground">
-      Files travel from the server to this browser and then onto the player, so
+      Files travel from the server to this browser and then onto the device, so
       a sync is limited by your connection to the server. For a large library,
       sync a <strong>shadow library</strong> or a partial selection rather than
       the whole thing.

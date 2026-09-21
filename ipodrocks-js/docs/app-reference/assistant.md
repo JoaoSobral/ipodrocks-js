@@ -39,7 +39,7 @@ chat. It tells you where to find them instead.
 - "Subscribe to this podcast: `https://…/feed.xml`" → adds it by URL
 - "Find audiobooks by Jules Verne and subscribe to one" → searches and subscribes via LibriVox
 - "Which playlists have missing songs? Repair them." → lists broken playlists, then repairs
-- "Sync my iPod" → asks you to confirm, then runs the sync
+- "Sync my player" → asks you to confirm, then runs the sync
 - "Who can sign in to my server?" → lists the allowlist
 - "Is anyone connected right now?" → lists the live sessions
 - "Give my partner an account on the server" → asks you to confirm, then adds it
