@@ -293,10 +293,17 @@ export async function startServer(
     lookupTransport: (deviceId) => {
       try {
         const row = getLibraryDb()
-          .prepare("SELECT transport FROM devices WHERE id = ?")
-          .get(deviceId) as { transport?: string } | undefined;
+          .prepare(
+            "SELECT transport, web_owner_subject FROM devices WHERE id = ?"
+          )
+          .get(deviceId) as
+          | { transport?: string; web_owner_subject?: string | null }
+          | undefined;
         if (!row) return null;
-        return row.transport === "web" ? "web" : "local";
+        return {
+          transport: row.transport === "web" ? "web" : "local",
+          webOwnerSubject: row.web_owner_subject ?? null,
+        };
       } catch {
         return null;
       }

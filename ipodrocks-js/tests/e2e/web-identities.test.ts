@@ -145,6 +145,78 @@ test("a short password is refused rather than silently weakened", async ({
   expect(stillAbsent).toBeUndefined();
 });
 
+test("a signed-in non-owner cannot reshape the listener", async ({ request }) => {
+  // The allowlist channels were gated from the start; these four were not,
+  // and they are strictly worse. `server:setConfig` writes the bind address,
+  // port, public URL, allowed origins, trusted proxies and TLS pair to prefs,
+  // and `stop` + `start` is a restart that re-reads every one of them — so a
+  // guest could move the server from loopback onto 0.0.0.0, clear the TLS
+  // pair (which also clears the session cookie's `Secure` flag, since that is
+  // derived from `config.tls`/`publicUrl`) and set `trustedProxies` so the
+  // rate limiter believes any `X-Forwarded-For`. CLAUDE.md's own tier rule
+  // calls this the highest one: "anything that changes what the outside world
+  // can reach".
+  await signIn(request);
+  await invoke(request, "server:allowIdentity", {
+    provider: "local",
+    subject: GUEST_USERNAME,
+    displayName: "E2E Guest",
+    password: GUEST_PASSWORD,
+  });
+
+  const before = await invoke<{ prefs?: Record<string, unknown>; error?: string }>(
+    request,
+    "server:getStatus"
+  );
+  expect(before.error, "the owner can read the status").toBeUndefined();
+
+  const guest = await playwrightRequest.newContext({ baseURL: WEB_ORIGIN });
+  expect(
+    (
+      await guest.post("/api/auth/local/login", {
+        data: { username: GUEST_USERNAME, password: GUEST_PASSWORD },
+      })
+    ).ok()
+  ).toBe(true);
+
+  // The control, again: an ordinary channel works, so the refusals below are
+  // the gate and not a broken login.
+  expect((await invoke<{ error?: string }>(guest, "library:getStats")).error)
+    .toBeUndefined();
+
+  for (const [channel, args] of [
+    ["server:getStatus", []],
+    [
+      "server:setConfig",
+      [
+        {
+          host: "0.0.0.0",
+          allowedOrigins: ["https://evil.example"],
+          trustedProxies: ["0.0.0.0/0"],
+          tls: null,
+        },
+      ],
+    ],
+    ["server:stop", []],
+    ["server:start", []],
+  ] as const) {
+    const res = await invoke<{ error?: string }>(guest, channel, ...args);
+    expect(res.error, `${channel} must refuse a non-owner`).toContain("owner");
+  }
+
+  // Nothing took effect: the prefs are byte-for-byte what they were, and the
+  // server is still running — `server:stop` writes `enabled: false` before it
+  // stops, so a successful one would be a permanent lock-out too.
+  const after = await invoke<{ prefs?: Record<string, unknown>; running?: boolean }>(
+    request,
+    "server:getStatus"
+  );
+  expect(after.prefs).toEqual(before.prefs);
+  expect(after.running).toBe(true);
+
+  await guest.dispose();
+});
+
 test("a signed-in non-owner is refused by all five channels", async ({ request }) => {
   await signIn(request);
   // Make sure the guest exists and is genuinely signed in — this is a valid,

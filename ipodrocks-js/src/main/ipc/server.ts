@@ -30,8 +30,21 @@ import { validatePassword } from "../../server/auth/passwords";
  * changing the port would otherwise cut its own connection mid-request and
  * never learn whether the change took. The restart is an explicit second call.
  *
- * The allowlist channels below are the exception to "reachable over the web is
- * fine", and `requireOwner()` is why — see the comment on it.
+ * **Every channel here is owner-gated, and that is wider than the allowlist
+ * rule below.** "Anyone on the allowlist is a full user of the app" is the
+ * right default for the library, the devices and the sync; it is not the right
+ * default for the listener itself. `setConfig` writes `host`, `port`,
+ * `publicUrl`, `allowedOrigins`, `trustedProxies` and `tls` to prefs, and
+ * `stop` + `start` is a full restart that re-reads all of them — so a guest
+ * could move the server off loopback onto `0.0.0.0`, clear the TLS pair (which
+ * also clears the session cookie's `Secure` flag, since `http.ts` derives it
+ * from `config.tls`/`publicUrl`) and set `trustedProxies` so the rate limiter
+ * believes any `X-Forwarded-For`. That is CLAUDE.md's own highest tier —
+ * "anything that changes what the outside world can reach" — reached through a
+ * channel instead of a Rocksy tool.
+ *
+ * `server:getStatus` is gated too: with the listener's shape no longer editable
+ * by a guest, its bind address, port and TLS paths are the owner's business.
  */
 
 /** One line, because the gate itself lives in `server/auth/sessions.ts` and is
@@ -43,15 +56,30 @@ function requireOwner(ctx: HandlerContext): { error: string } | null {
 export function registerServerHandlers(): void {
   bridgeHandle(
     "server:getStatus",
-    safe("server:getStatus", async () => ({
-      ...getServerStatus(),
-      prefs: getWebServerPrefs(),
-    }))
+    safe("server:getStatus", async (event) => {
+      const denied = requireOwner(event);
+      if (denied) return denied;
+      const status = getServerStatus();
+      return {
+        ...status,
+        // The claim token is a live credential and belongs on the machine
+        // holding the database — the Settings card shows it so its owner does
+        // not have to go reading the log. It is unreachable over the web today
+        // (it is non-null only while the allowlist is empty, and an empty
+        // allowlist means nobody is authenticated), but that is a property of
+        // two other rules rather than of this one. Rocksy's `web_server_status`
+        // already redacts it; this is the same answer from the same fact.
+        claimToken: event.sessionId === undefined ? status.claimToken : null,
+        prefs: getWebServerPrefs(),
+      };
+    })
   );
 
   bridgeHandle(
     "server:setConfig",
-    safe("server:setConfig", async (_event, prefs: WebServerPrefs) => {
+    safe("server:setConfig", async (event, prefs: WebServerPrefs) => {
+      const denied = requireOwner(event);
+      if (denied) return denied;
       const next: WebServerPrefs = {};
       if (typeof prefs?.enabled === "boolean") next.enabled = prefs.enabled;
       if (typeof prefs?.host === "string") next.host = prefs.host.trim();
@@ -82,7 +110,9 @@ export function registerServerHandlers(): void {
 
   bridgeHandle(
     "server:start",
-    safe("server:start", async () => {
+    safe("server:start", async (event) => {
+      const denied = requireOwner(event);
+      if (denied) return denied;
       setWebServerPrefs({ enabled: true });
       return ensureServerStarted();
     })
@@ -90,7 +120,9 @@ export function registerServerHandlers(): void {
 
   bridgeHandle(
     "server:stop",
-    safe("server:stop", async () => {
+    safe("server:stop", async (event) => {
+      const denied = requireOwner(event);
+      if (denied) return denied;
       setWebServerPrefs({ enabled: false });
       return stopServerIfRunning();
     })

@@ -32,6 +32,7 @@ import * as path from "path";
 import { NodeDeviceFs, localFs, webDeviceRoot } from "../../main/devices/fs";
 import { RemoteDeviceFs } from "../../main/devices/fs/remote-device-fs";
 import type { DeviceRpcTransport } from "../../main/devices/fs/device-transport";
+import type { DeviceRpcVerb } from "../../shared/device-rpc";
 import type { DeviceFs } from "../../main/devices/fs/device-fs";
 import { makeDirectoryHandle } from "../harness/fs-handle";
 import { dispatchLocalRpc } from "../harness/rpc-dispatch";
@@ -46,7 +47,7 @@ function transportFor(root: string, clockSkewMs = 0): DeviceRpcTransport {
     clockSkewMs,
     rootName: "IPOD",
     writable: true,
-    async call<T>(verb, args): Promise<T> {
+    async call<T>(verb: DeviceRpcVerb, args: unknown[]): Promise<T> {
       return (await dispatchLocalRpc(makeDirectoryHandle(root), verb, args)) as T;
     },
     async pull(localSrc, destRel) {
@@ -283,7 +284,13 @@ describe("RemoteDeviceFs refuses a path that is not its own", () => {
 
   it("refuses to set an mtime rather than pretending it worked", async () => {
     // A silent no-op would make every lossy transcode look stale forever.
-    await expect(remoteFs().setMtime()).rejects.toThrow(/cannot set a file's mtime/);
+    await expect(
+      remoteFs().setMtime(
+        path.join(webDeviceRoot(1), "Music", "x.mp3"),
+        new Date(),
+        new Date()
+      )
+    ).rejects.toThrow(/cannot set a file's mtime/);
   });
 });
 

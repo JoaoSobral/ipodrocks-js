@@ -44,8 +44,15 @@ jobs:
       - name: Install dependencies
         run: cd ipodrocks-js && npm ci
 
-      - name: Install Playwright system dependencies
-        run: cd ipodrocks-js && npx playwright install-deps
+      # `install-deps` alone installs the OS libraries a browser needs and no
+      # browser. That was enough while the only project was `electron`, which
+      # launches the app's own bundled Electron — but the `web` project drives
+      # a plain Chromium page against the daemon, and it failed every one of
+      # its specs with "Executable doesn't exist at .../chrome-headless-shell".
+      # `install --with-deps chromium` does both jobs, so the two cannot drift
+      # apart again.
+      - name: Install Playwright Chromium and system dependencies
+        run: cd ipodrocks-js && npx playwright install --with-deps chromium
 
       - name: Build app
         run: cd ipodrocks-js && npm run build

@@ -99,6 +99,19 @@ export function identityForSessionId(sessionId: string): Identity | null {
 }
 
 /**
+ * The stable `"<provider>:<subject>"` string for a live session, or null.
+ *
+ * The same spelling `authenticatedSubject()` builds and `ctx.subject` carries
+ * on the WebSocket, so a value recorded from an HTTP call compares equal to
+ * one seen on a socket frame. Matched on the provider's `subject`, never the
+ * email, which users can change.
+ */
+export function subjectForSessionId(sessionId: string): string | null {
+  const identity = identityForSessionId(sessionId);
+  return identity ? `${identity.provider}:${identity.subject}` : null;
+}
+
+/**
  * Destroys the sessions belonging to one identity. Returns how many.
  *
  * Scoped by identity rather than by session id on purpose — see the note at the

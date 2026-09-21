@@ -76,6 +76,14 @@ export async function restoreWebDevices(deviceIds: number[]): Promise<void> {
   const c = getDeviceClient();
   if (!c) return;
   for (const deviceId of deviceIds) {
+    // Already held by this tab — leave it alone. `attachHandle()` starts by
+    // detaching, which terminates the worker and fails every RPC in flight
+    // with EDEVICEDETACHED; the Devices panel calls this whenever the device
+    // list changes, so re-attaching here would abort a running sync every
+    // time any panel refreshed the list. `onReopen` re-announces after a
+    // dropped socket by calling `restore()` directly, which this does not
+    // affect.
+    if (c.stateOf(deviceId).status === "attached") continue;
     try {
       await c.restore(deviceId);
     } catch {

@@ -34,6 +34,7 @@ import {
 import { logActivity } from "../activity/activity-logger";
 import { invalidateAssistantCache } from "../assistant/assistantChat";
 import type { AddDeviceConfig } from "../../shared/types";
+import { subjectForSessionId } from "../../server/auth/sessions";
 
 export function registerDeviceHandlers(): void {
   bridgeHandle(
@@ -45,8 +46,24 @@ export function registerDeviceHandlers(): void {
 
   bridgeHandle(
     "device:add",
-    safe("device:add", async (_event, config: AddDeviceConfig) => {
-      const device = getDevicesCore().addDevice(config);
+    safe("device:add", async (event, config: AddDeviceConfig) => {
+      // **Who may attach a browser-held player is decided here, not by the
+      // client.** `device-attach` is otherwise gated only on the row saying
+      // `transport = 'web'`, which every allowlisted user can satisfy for
+      // every web device — so a second identity could announce someone else's
+      // device id, evict them (the per-device mutex detaches the incumbent)
+      // and have every subsequent `RemoteDeviceFs` call, and every one-shot
+      // data-plane token, routed to a folder of their own choosing. Recording
+      // the registering identity is what turns that mutex back into a safety
+      // property. Taken from the transport that carried the call, which is the
+      // only source a client cannot lie about.
+      const device = getDevicesCore().addDevice({
+        ...config,
+        webOwnerSubject:
+          event.sessionId === undefined
+            ? null
+            : subjectForSessionId(event.sessionId),
+      });
       logActivity(
         getLibrary().getConnection(),
         "add_device",

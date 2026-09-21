@@ -5,6 +5,7 @@ import { Input } from "../common/Input";
 import { Switch } from "../common/Switch";
 import {
   getWebServerStatus,
+  isWebServerDenied,
   setWebServerConfig,
   startWebServer,
   stopWebServer,
@@ -28,9 +29,19 @@ export function WebServerCard({ open }: { open: boolean }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  // Set when the server refuses because this client is not the owner. The
+  // channels are owner-only, so a signed-in guest opening Settings gets this
+  // instead of a card whose every control would fail on click.
+  const [denied, setDenied] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     const s = await getWebServerStatus();
+    if (isWebServerDenied(s)) {
+      setDenied(s.error);
+      setStatus(null);
+      return;
+    }
+    setDenied(null);
     setStatus(s);
     setHost(s.prefs.host ?? s.host ?? "127.0.0.1");
     setPort(String(s.prefs.port ?? s.port ?? 8780));
@@ -52,11 +63,15 @@ export function WebServerCard({ open }: { open: boolean }) {
         setError("Port must be between 1 and 65535.");
         return;
       }
-      await setWebServerConfig({
+      const result = await setWebServerConfig({
         host: host.trim(),
         port: parsedPort,
         publicUrl: publicUrl.trim(),
       });
+      if (isWebServerDenied(result)) {
+        setError(result.error);
+        return;
+      }
       setSaved(true);
       await load();
     } finally {
@@ -69,6 +84,10 @@ export function WebServerCard({ open }: { open: boolean }) {
     setError(null);
     try {
       const s = next ? await startWebServer() : await stopWebServer();
+      if (isWebServerDenied(s)) {
+        setError(s.error);
+        return;
+      }
       setStatus(s);
       if (next && !s.running) {
         setError(s.lastError ?? "The server did not start.");
@@ -79,6 +98,20 @@ export function WebServerCard({ open }: { open: boolean }) {
   }
 
   const running = status?.running ?? false;
+
+  // Listed, not hidden — the same choice the Devices panel makes for a device
+  // from the wrong side. A card that vanished would read as a missing feature
+  // rather than as somebody else's setting.
+  if (denied) {
+    return (
+      <Card
+        title="Web Server"
+        subtitle="Serve iPodRocks in a browser, so the library can live on one machine and the iPod on another."
+      >
+        <p className="text-xs text-muted-foreground">{denied}</p>
+      </Card>
+    );
+  }
 
   return (
     <Card

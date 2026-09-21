@@ -39,15 +39,27 @@ import {
   registerDeviceTransport,
   type DeviceRpcTransport,
 } from "../main/devices/fs/device-transport";
+import type { WebSocket } from "ws";
 import {
   onSocketClosed,
   registerFrameHandler,
-  sendRawToSession,
+  sendRawToSocket,
 } from "./events";
 
-/** Resolves a device id to its stored transport, or null when there is no such
- *  device. Injected so this module does not reach into the library core. */
-export type DeviceTransportLookup = (deviceId: number) => "local" | "web" | null;
+/** What the devices table says about one device id. Injected so this module
+ *  does not reach into the library core. */
+export interface DeviceAttachRecord {
+  transport: "local" | "web";
+  /**
+   * `"<provider>:<subject>"` of the identity that registered this web device,
+   * or null for a local one — and for a web device created before the column
+   * existed, which is why null admits rather than refuses.
+   */
+  webOwnerSubject: string | null;
+}
+
+/** Resolves a device id, or null when there is no such device. */
+export type DeviceTransportLookup = (deviceId: number) => DeviceAttachRecord | null;
 
 interface Pending {
   resolve: (value: unknown) => void;
@@ -58,16 +70,34 @@ interface Pending {
 interface Attachment {
   deviceId: number;
   sessionId: string;
+  /**
+   * The exact socket that announced the attach — i.e. the tab holding the
+   * folder handle, which is finer-grained than the session. See
+   * `sendRawToSocket`.
+   */
+  socket: WebSocket;
   subject: string;
   clockSkewMs: number;
   rootName: string;
   writable: boolean;
-  nextId: number;
   pending: Map<number, Pending>;
   release: () => void;
 }
 
 const attachments = new Map<number, Attachment>();
+
+/**
+ * Correlation ids, counted once for the whole process rather than per
+ * attachment.
+ *
+ * A result frame carries only its `id`, and one browser tab can hold two
+ * players — `restoreWebDevices()` re-opens every web device it remembers. With
+ * a per-attachment counter both started at 1, the lookup below matched the
+ * first attachment of that session holding that id, so device B's reply
+ * resolved device A's call with device B's value and A's real reply then timed
+ * out. One counter makes the id unique across every attachment.
+ */
+let nextRpcId = 1;
 
 /** An error carrying a `code`, so the EPERM/ENOENT branches on the server side
  *  keep working against a device that is really a browser. */
@@ -115,18 +145,34 @@ function signIo(body: string): string {
  * The HMAC alone would make a token unforgeable but replayable for its whole
  * lifetime, and these name library files by absolute path. A transfer happens
  * once, so the token is good once.
+ *
+ * Keyed to its expiry so the map can be swept. A token that is issued and
+ * never redeemed — the browser dropped the transfer, the tab closed mid-sync —
+ * would otherwise sit here for the life of the process, one entry per file a
+ * sync ever attempted.
  */
-const liveIoTokens = new Set<string>();
+const liveIoTokens = new Map<string, number>();
 
 const IO_TTL_SECONDS = 6 * 60 * 60;
 
+/** Drops tokens that can no longer be redeemed. Cheap and amortised: it runs
+ *  on issue, and a sync issues one token per file. */
+function sweepIoTokens(nowSeconds: number): void {
+  for (const [token, expiry] of liveIoTokens) {
+    if (expiry < nowSeconds) liveIoTokens.delete(token);
+  }
+}
+
 function issueIoToken(payload: Omit<IoTokenPayload, "e">): string {
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  sweepIoTokens(nowSeconds);
+  const expiry = nowSeconds + IO_TTL_SECONDS;
   const body = Buffer.from(
-    JSON.stringify({ ...payload, e: Math.floor(Date.now() / 1000) + IO_TTL_SECONDS }),
+    JSON.stringify({ ...payload, e: expiry }),
     "utf-8"
   ).toString("base64url");
   const token = `${body}.${signIo(body)}`;
-  liveIoTokens.add(token);
+  liveIoTokens.set(token, expiry);
   return token;
 }
 
@@ -144,7 +190,7 @@ function redeemIoToken(token: string, sessionId: string | null): IoTokenPayload 
   ) {
     return null;
   }
-  if (!liveIoTokens.delete(token)) return null;
+  if (!liveIoTokens.has(token)) return null;
 
   let payload: IoTokenPayload;
   try {
@@ -158,6 +204,10 @@ function redeemIoToken(token: string, sessionId: string | null): IoTokenPayload 
   // paths inside are library files, and every logged-in identity is not
   // necessarily entitled to every other's transfer.
   if (payload.s !== sessionId) return null;
+  // Consumed only once every check has passed. Burning it first meant a
+  // request from the wrong session — or one carrying a stale token — spent the
+  // single use, and the transfer it was minted for then failed for good.
+  liveIoTokens.delete(token);
   return payload;
 }
 
@@ -171,7 +221,7 @@ function makeTransport(attachment: Attachment): DeviceRpcTransport {
         new DeviceRpcError("The browser holding this device disconnected.", "EDEVICEDETACHED")
       );
     }
-    const id = attachment.nextId++;
+    const id = nextRpcId++;
     const frame: DeviceRpcRequestFrame = {
       type: DEVICE_RPC_REQUEST,
       id,
@@ -191,7 +241,9 @@ function makeTransport(attachment: Attachment): DeviceRpcTransport {
       }, DEVICE_RPC_TIMEOUT_MS);
       timer.unref?.();
       attachment.pending.set(id, { resolve, reject, timer });
-      if (!sendRawToSession(attachment.sessionId, frame)) {
+      // Addressed to the tab that attached, not fanned out to the login: only
+      // that one has the directory handle.
+      if (!sendRawToSocket(attachment.socket, frame)) {
         attachment.pending.delete(id);
         clearTimeout(timer);
         reject(
@@ -272,11 +324,35 @@ export function attachDeviceSessions(opts: DeviceSessionsOptions): DeviceSession
     // The client names the device; the database decides whether that is a
     // thing it may hold. Without this any authenticated session could claim
     // someone else's player and start receiving its listings.
-    if (opts.lookupTransport(deviceId) !== "web") {
-      sendRawToSession(ctx.sessionId, {
+    const record = opts.lookupTransport(deviceId);
+    if (record?.transport !== "web") {
+      sendRawToSocket(ctx.socket, {
         type: "device-attach-refused",
         deviceId,
         reason: "That device is not a browser-connected device.",
+      });
+      return;
+    }
+
+    // **"It is a web device" is not "it is *your* web device".** Every
+    // allowlisted identity satisfies the check above for every web device, so
+    // on its own it left `detach()` below — the per-device mutex — working as
+    // a takeover primitive: announce someone else's id, evict them, and every
+    // later `RemoteDeviceFs` call plus every one-shot data-plane token is
+    // addressed to your browser instead. That hands you the library files the
+    // sync meant for their player, and lets your folder answer as their
+    // device — including the Rockbox index whose ratings are merged back into
+    // the shared library.
+    //
+    // A null owner admits: it means a device registered before the column
+    // existed, and inventing an owner for one would strand a player nobody
+    // can reconnect. The refusal is deliberate rather than an eviction —
+    // taking the device away from its holder is exactly what must not happen.
+    if (record.webOwnerSubject !== null && record.webOwnerSubject !== ctx.subject) {
+      sendRawToSocket(ctx.socket, {
+        type: "device-attach-refused",
+        deviceId,
+        reason: "That device belongs to a different account.",
       });
       return;
     }
@@ -292,27 +368,29 @@ export function attachDeviceSessions(opts: DeviceSessionsOptions): DeviceSession
       clockSkewMs: Number(frame.clientNow) - Date.now(),
       rootName: typeof frame.rootName === "string" ? frame.rootName : "device",
       writable: frame.writable !== false,
-      nextId: 1,
+      socket: ctx.socket,
       pending: new Map(),
       release: () => {},
     };
     attachment.release = registerDeviceTransport(deviceId, makeTransport(attachment));
     attachments.set(deviceId, attachment);
 
-    sendRawToSession(ctx.sessionId, { type: "device-attached", deviceId });
+    sendRawToSocket(ctx.socket, { type: "device-attached", deviceId });
   });
 
   const offDetach = registerFrameHandler(DEVICE_DETACH, (raw, ctx) => {
     const frame = raw as unknown as { deviceId?: number };
     const deviceId = Number(frame.deviceId);
     const attachment = attachments.get(deviceId);
-    if (attachment && attachment.sessionId === ctx.sessionId) detach(deviceId);
+    if (attachment && attachment.socket === ctx.socket) detach(deviceId);
   });
 
   const offResult = registerFrameHandler(DEVICE_RPC_RESULT, (raw, ctx) => {
     const frame = raw as unknown as DeviceRpcResultFrame;
     for (const attachment of attachments.values()) {
-      if (attachment.sessionId !== ctx.sessionId) continue;
+      // Matched on the socket the request went out on, for the same reason it
+      // was sent there: a reply can only come from the tab that was asked.
+      if (attachment.socket !== ctx.socket) continue;
       const pending = attachment.pending.get(Number(frame.id));
       if (!pending) continue;
       attachment.pending.delete(Number(frame.id));
@@ -326,9 +404,11 @@ export function attachDeviceSessions(opts: DeviceSessionsOptions): DeviceSession
   // A tab that goes away takes its devices with it. Without this the device
   // still looks attached, and the first sync after the tab closed waits two
   // minutes per call before failing.
-  const offClosed = onSocketClosed((sessionId) => {
+  const offClosed = onSocketClosed((_sessionId, socket) => {
+    // Per socket, not per session: closing one of two tabs must not take the
+    // other tab's device down with it.
     for (const [deviceId, attachment] of [...attachments]) {
-      if (attachment.sessionId === sessionId) detach(deviceId);
+      if (attachment.socket === socket) detach(deviceId);
     }
   });
 

@@ -26,8 +26,28 @@ export interface EventSession {
   readonly sessionId: string;
   readonly subject: string;
   sockets: Set<WebSocket>;
-  subscriptions: Set<string>;
 }
+
+/**
+ * **There is deliberately no per-session subscription set.**
+ *
+ * There was one: `subscribe`/`unsubscribe` wrote to it and nothing ever read
+ * it, so it was state that looked like a filter and filtered nothing. Both
+ * jobs it might have done are already done elsewhere, and better:
+ *
+ * - *Which channels may be pushed at all* is `isPushChannel()`, a closed set
+ *   checked in `pushToSession` — that is the security-relevant half, and it
+ *   does not depend on what a client remembered to ask for.
+ * - *Which channels this client cares about* is the client's own
+ *   `listeners` map in `web-transport.ts`, which drops a frame nobody
+ *   registered for.
+ *
+ * Filtering on it here would also actively break things: `ensureSession()`
+ * exists so a handler can push the moment a call starts, before the socket
+ * has had a chance to send its first `subscribe` — gating on the set would
+ * drop exactly those first frames, which is the bug it was added to prevent.
+ * The frames are still *accepted* so an older client is not an error.
+ */
 
 const sessions = new Map<string, EventSession>();
 
@@ -86,6 +106,31 @@ export function sendRawToSession(sessionId: string, frame: unknown): boolean {
   return false;
 }
 
+/**
+ * Sends one raw frame to **one socket**, which is what an addressed request
+ * needs.
+ *
+ * {@link sendRawToSession} picks whichever of a session's sockets is open
+ * first, and a session is a *login*, not a tab — two tabs of the same browser
+ * share one express session and land in one `sockets` set. Only one of them
+ * holds any given device's directory handle, so a device RPC fanned out by
+ * session had a coin-flip chance of reaching the tab that does not: that tab
+ * answers `EDEVICEDETACHED` and the sync fails, with nothing anywhere saying
+ * that a second tab was the reason.
+ *
+ * Returns false when the socket is gone, which is how the device transport
+ * learns it has been detached — the `close` handler has already run by then.
+ */
+export function sendRawToSocket(socket: WebSocket, frame: unknown): boolean {
+  if (socket.readyState !== WebSocket.OPEN) return false;
+  try {
+    socket.send(JSON.stringify(frame));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** A frame the browser can tell apart from an RPC reply. */
 interface PushFrame {
   type: "push";
@@ -96,7 +141,7 @@ interface PushFrame {
 function getOrCreate(sessionId: string, subject: string): EventSession {
   let s = sessions.get(sessionId);
   if (!s) {
-    s = { sessionId, subject, sockets: new Set(), subscriptions: new Set() };
+    s = { sessionId, subject, sockets: new Set() };
     sessions.set(sessionId, s);
   }
   return s;
@@ -245,10 +290,11 @@ export function attachEventsServer(
             } catch {
               return;
             }
-            if (msg.type === "subscribe" && typeof msg.channel === "string") {
-              if (isPushChannel(msg.channel)) session.subscriptions.add(msg.channel);
-            } else if (msg.type === "unsubscribe" && typeof msg.channel === "string") {
-              session.subscriptions.delete(msg.channel);
+            if (
+              (msg.type === "subscribe" || msg.type === "unsubscribe") &&
+              typeof msg.channel === "string"
+            ) {
+              // Accepted and ignored — see the note on `EventSession`.
             } else if (msg.type === "ping") {
               ws.send(JSON.stringify({ type: "pong" }));
             } else if (typeof msg.type === "string") {
@@ -346,5 +392,12 @@ export function resetEventSessions(): void {
 /** Exposed so the invoke dispatcher can register a session that has no socket
  *  yet — a client may issue its first RPC before the WebSocket opens. */
 export function ensureSession(sessionId: string, subject: string): EventSession {
-  return getOrCreate(sessionId, subject);
+  const session = getOrCreate(sessionId, subject);
+  // A session registered from here may never get a socket at all — a client
+  // that only ever POSTs, a tab whose upgrade is blocked by a proxy. Nothing
+  // else schedules the sweep for those (it is armed on socket *close*), so on
+  // a long-running daemon the map grew by one entry per such session and never
+  // shrank. Re-arming on each invoke doubles as a keepalive.
+  if (session.sockets.size === 0) scheduleSessionSweep(sessionId);
+  return session;
 }

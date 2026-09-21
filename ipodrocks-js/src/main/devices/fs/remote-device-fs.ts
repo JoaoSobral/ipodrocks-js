@@ -192,6 +192,20 @@ export class RemoteDeviceFs implements DeviceFs {
     }
   }
 
+  /**
+   * "The tab went away" is never an answer about the device's contents.
+   *
+   * The readers below degrade a failure to `null` or `[]`, which is right for
+   * a missing folder and catastrophic for a detached browser: an empty listing
+   * reads to a mirror sync as "every track is missing" and to an orphan sweep
+   * as "nothing here to keep". {@link DetachedDeviceFs} refuses those calls
+   * outright for exactly this reason, and a browser that disconnects *during*
+   * an operation has to be refused the same way.
+   */
+  private rethrowIfDetached(err: unknown): void {
+    if ((err as { code?: string })?.code === "EDEVICEDETACHED") throw err;
+  }
+
   // ------------------------------------------------------------- readings --
 
   async exists(p: string): Promise<boolean> {
@@ -208,7 +222,8 @@ export class RemoteDeviceFs implements DeviceFs {
         mtimeMs: this.shiftMtime(s.mtimeMs),
         isDirectory: s.isDirectory,
       };
-    } catch {
+    } catch (err) {
+      this.rethrowIfDetached(err);
       return null;
     }
   }
@@ -219,7 +234,8 @@ export class RemoteDeviceFs implements DeviceFs {
       const entries = await this.call<RpcDirent[]>("readdir", [rel]);
       this.cacheDir(rel, entries);
       return entries.map((e) => ({ name: e.name, isDirectory: e.isDirectory }));
-    } catch {
+    } catch (err) {
+      this.rethrowIfDetached(err);
       return [];
     }
   }
@@ -234,7 +250,8 @@ export class RemoteDeviceFs implements DeviceFs {
       // One call for the whole tree. Four hundred files is four hundred round
       // trips done one at a time and one frame done properly.
       entries = await this.call<RpcTreeEntry[]>("listTree", [baseRel]);
-    } catch {
+    } catch (err) {
+      this.rethrowIfDetached(err);
       return [];
     }
 

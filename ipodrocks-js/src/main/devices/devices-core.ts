@@ -106,6 +106,12 @@ const ALLOWED_UPDATE_FIELDS = new Set([
   // one — writing a remote user's library into `/ipodrocks-web/<id>` on the
   // server, or asking a browser for a folder that is really a local mount. It
   // is set once, by addDevice.
+  //
+  // NOTE: `web_owner_subject` is absent for the same reason and one more. It
+  // records which browser identity may attach this player, so a device:update
+  // that could write it would let any allowlisted user reassign someone else's
+  // device to themselves — which is precisely the takeover the column exists
+  // to prevent. Set once, by addDevice, from the calling session.
 ]);
 
 const FIELD_MAP: Record<string, string> = {
@@ -277,8 +283,9 @@ export class DevicesCore {
          (name, mount_path, music_folder, podcast_folder, audiobook_folder, playlist_folder,
           default_transfer_mode_id, default_codec_config_id, description,
           model_id, source_library_type, shadow_library_id, skip_playback_log, rockbox_smart_playlists, dev_mode, vbr_enabled,
-          skip_album_artwork, artwork_max_dimension, transport, usb_vendor_id, usb_product_id, usb_serial)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          skip_album_artwork, artwork_max_dimension, transport, web_owner_subject,
+          usb_vendor_id, usb_product_id, usb_serial)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         config.name,
@@ -300,6 +307,11 @@ export class DevicesCore {
         config.skipAlbumArtwork ? 1 : 0,
         sanitizeArtworkMaxDimension(config.artworkMaxDimension),
         transport,
+        // Only a web device gets one, and only from the handler's own session:
+        // whoever registered the player is the only browser allowed to attach
+        // it. A local device has no such notion — it is a folder on the
+        // machine running the sync.
+        transport === "web" ? (config.webOwnerSubject ?? null) : null,
         usb?.vendorId ?? null,
         usb?.productId ?? null,
         usb?.serial ?? null

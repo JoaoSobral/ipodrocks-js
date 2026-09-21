@@ -16,6 +16,29 @@ import { findIdentityById, type Identity, type Provider } from "./identities";
  * succeeding does not log anyone in.
  */
 
+/**
+ * `state: true` on every strategy — the OAuth anti-CSRF nonce.
+ *
+ * passport-oauth2 then mints a nonce, stashes it in `req.session` on the way
+ * out and requires it back on the callback. Without it the callback is a bare
+ * GET, and `SameSite=Lax` sends the session cookie on exactly that kind of
+ * top-level navigation — so an attacker who completes the provider leg
+ * themselves and hands the resulting callback URL to a victim silently logs
+ * that browser in **as the attacker**. Every rating, playlist and device the
+ * victim touches afterwards lands in the wrong account.
+ *
+ * It goes on the constructor rather than on `passport.authenticate()` because
+ * `@types/passport` declares `AuthenticateOptions.state` as a `string` (its
+ * pre-nonce meaning, an opaque value echoed back), while the strategies'
+ * own option types take the boolean. Setting it here also means the authorize
+ * and callback legs cannot disagree, which is its own class of bug: a nonce
+ * minted and never checked looks exactly like one that works.
+ *
+ * **The session must survive the round trip**, which is why the cookie is
+ * `SameSite=Lax` and not `Strict` — see `http.ts`. Social login needs a real
+ * provider to exercise, so this is manual-verification the way
+ * `showDirectoryPicker()` is.
+ */
 export interface ProviderProfile {
   provider: Provider;
   subject: string;
@@ -58,6 +81,7 @@ export function configurePassport(config: ServerConfig): string[] {
             clientSecret: config.oauth.google.clientSecret,
             callbackURL,
             scope: ["profile", "email"],
+            state: true,
           },
           (_accessToken, _refreshToken, profile, done) => {
             const email = profile.emails?.[0];
@@ -88,6 +112,13 @@ export function configurePassport(config: ServerConfig): string[] {
             clientSecret: config.oauth.github.clientSecret,
             callbackURL,
             scope: ["read:user", "user:email"],
+            // `passport-github2`'s own `StrategyOptions` still declares
+            // `state` as a `string` — the pre-nonce meaning. The strategy
+            // extends passport-oauth2, which has taken the boolean and done
+            // the session-backed nonce for years; Google's and Facebook's
+            // types already say so. The cast is the type stub being behind,
+            // not a behaviour we are forcing.
+            state: true as unknown as string,
           },
           (
             _accessToken: string,
@@ -131,6 +162,7 @@ export function configurePassport(config: ServerConfig): string[] {
             clientSecret: config.oauth.facebook.clientSecret,
             callbackURL,
             profileFields: ["id", "displayName", "emails"],
+            state: true,
           },
           (
             _accessToken: string,

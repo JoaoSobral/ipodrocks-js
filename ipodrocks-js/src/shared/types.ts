@@ -186,6 +186,14 @@ export interface AddDeviceConfig {
    */
   mountPath?: string;
   transport?: DeviceTransport;
+  /**
+   * `"<provider>:<subject>"` of the web identity that may attach this device.
+   *
+   * **Set by the `device:add` handler from the calling session, never by the
+   * client** — it is the whole point of the field that a browser cannot name
+   * whose device this is. Ignored unless `transport === "web"`.
+   */
+  webOwnerSubject?: string | null;
   defaultCodecConfigId?: number | null;
   musicFolder?: string;
   podcastFolder?: string;

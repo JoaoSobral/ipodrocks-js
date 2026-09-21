@@ -225,6 +225,15 @@ export async function fetchChangelogSection(
 }
 
 export async function openExternal(url: string): Promise<void> {
+  // A browser opens its own links. Round-tripping this to the host would ask
+  // the *server's* default browser to open the URL — on the server's screen,
+  // in the server owner's session — which the main process now refuses for
+  // exactly that reason. `noopener` because the opened page must not get a
+  // handle back to this one.
+  if (isWebMode()) {
+    window.open(url, "_blank", "noopener,noreferrer");
+    return;
+  }
   return window.api.invoke("app:openExternal", url) as Promise<void>;
 }
 
@@ -1162,24 +1171,53 @@ export interface WebServerStatus {
   prefs: WebServerPrefs;
 }
 
-export async function getWebServerStatus(): Promise<WebServerStatus> {
-  return window.api.invoke("server:getStatus") as Promise<WebServerStatus>;
+/**
+ * Every `server:*` channel is owner-only, so each of these can come back as
+ * `{ error }` for a signed-in guest. They are typed as a union rather than
+ * thrown, because the Web Server card's answer to "you are not the owner" is a
+ * sentence, not an error state — and a card that throws on mount would take
+ * the whole Settings modal with it.
+ */
+export type WebServerResult<T> = T | { error: string };
+
+export function isWebServerDenied<T>(
+  result: WebServerResult<T>
+): result is { error: string } {
+  return (
+    typeof result === "object" && result !== null && "error" in result
+  );
+}
+
+export async function getWebServerStatus(): Promise<
+  WebServerResult<WebServerStatus>
+> {
+  return window.api.invoke("server:getStatus") as Promise<
+    WebServerResult<WebServerStatus>
+  >;
 }
 
 export async function setWebServerConfig(
   prefs: WebServerPrefs
-): Promise<{ prefs: WebServerPrefs }> {
-  return window.api.invoke("server:setConfig", prefs) as Promise<{
-    prefs: WebServerPrefs;
-  }>;
+): Promise<WebServerResult<{ prefs: WebServerPrefs }>> {
+  return window.api.invoke("server:setConfig", prefs) as Promise<
+    WebServerResult<{ prefs: WebServerPrefs }>
+  >;
 }
 
-export async function startWebServer(): Promise<WebServerStatus> {
-  return window.api.invoke("server:start") as Promise<WebServerStatus>;
+export async function startWebServer(): Promise<
+  WebServerResult<WebServerStatus>
+> {
+  return window.api.invoke("server:start") as Promise<
+    WebServerResult<WebServerStatus>
+  >;
 }
 
-export async function stopWebServer(): Promise<WebServerStatus> {
-  return window.api.invoke("server:stop") as Promise<WebServerStatus>;
+export async function stopWebServer(): Promise<
+  WebServerResult<WebServerStatus>
+> {
+  return window.api.invoke("server:stop") as Promise<
+    WebServerResult<WebServerStatus>
+  >;
 }
 
 export interface DirectoryEntry {

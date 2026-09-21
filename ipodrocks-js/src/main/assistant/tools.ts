@@ -543,6 +543,28 @@ const ratings_set_tag_priority: AiTool = {
 };
 
 /**
+ * The gate every `web_server_*` tool shares.
+ *
+ * Every other tool in this file is something any allowlisted user of the
+ * server is entitled to do. These are not: they manage *who is allowlisted*,
+ * and *what the outside world can reach* — the listener's bind address, port,
+ * TLS and on/off switch. Without the gate, a guest who cannot call
+ * `server:setConfig` or `server:revokeIdentity` directly could simply ask
+ * Rocksy to, which is the same escalation with an extra step and a friendlier
+ * interface. Rocksy is a second front door and needs the same lock.
+ *
+ * It is the *same function* `ipc/server.ts` calls, deliberately. A gate with
+ * two implementations has one that is weaker, which is the lesson of the
+ * duplicated conflict resolution in CLAUDE.md's debt table.
+ */
+async function ownerGate(
+  ctx: AiToolContext
+): Promise<{ error: string } | null> {
+  const { denyIfNotOwner } = await import("../../server/auth/sessions");
+  return denyIfNotOwner(ctx.sessionId);
+}
+
+/**
  * Web server. Three tools rather than one, because "tell me about it", "change
  * where it listens" and "turn it on" have genuinely different risk: starting a
  * listener exposes the library to the network, so it gets a confirm gate, while
@@ -555,7 +577,9 @@ const web_server_status: AiTool = {
   parameters: { type: "object", properties: {}, required: [] },
   kind: "read",
   summarize: () => "Check the web server status",
-  async run() {
+  async run(_args, ctx) {
+    const denied = await ownerGate(ctx);
+    if (denied) return denied;
     const { getServerStatus } = await import("../../server");
     const status = getServerStatus();
     return {
@@ -603,7 +627,9 @@ const web_server_configure: AiTool = {
       ? `Set web server ${bits.join(", ")}`
       : "Read the web server configuration";
   },
-  async run(args) {
+  async run(args, ctx) {
+    const denied = await ownerGate(ctx);
+    if (denied) return denied;
     const { setWebServerPrefs, getWebServerPrefs } = await import("../utils/prefs");
     const next: Record<string, unknown> = {};
     if (typeof args.host === "string") next.host = args.host.trim();
@@ -643,7 +669,9 @@ const web_server_set_enabled: AiTool = {
   // can reach. A user should be asked before their library goes on a network.
   kind: "write-destructive",
   summarize: (a) => (a.enabled ? "Start the web server" : "Stop the web server"),
-  async run(args) {
+  async run(args, ctx) {
+    const denied = await ownerGate(ctx);
+    if (denied) return denied;
     const { ensureServerStarted, stopServerIfRunning } = await import("../../server");
     const enabled = Boolean(args.enabled);
     const status = enabled ? await ensureServerStarted() : await stopServerIfRunning();
@@ -665,26 +693,6 @@ const web_server_set_enabled: AiTool = {
     };
   },
 };
-
-/**
- * The allowlist, and who is signed in.
- *
- * These five share one gate. Every other tool in this file is something any
- * allowlisted user of the server is entitled to do; these manage *who is
- * allowlisted*, which is the gate itself. Without it, a non-owner who cannot
- * call `server:revokeIdentity` directly could simply ask Rocksy to — the same
- * escalation with an extra step.
- *
- * It is the *same function* `ipc/server.ts` calls, deliberately. A gate with
- * two implementations has one that is weaker, which is the lesson of the
- * duplicated conflict resolution in CLAUDE.md's debt table.
- */
-async function ownerGate(
-  ctx: AiToolContext
-): Promise<{ error: string } | null> {
-  const { denyIfNotOwner } = await import("../../server/auth/sessions");
-  return denyIfNotOwner(ctx.sessionId);
-}
 
 const web_server_list_identities: AiTool = {
   name: "web_server_list_identities",

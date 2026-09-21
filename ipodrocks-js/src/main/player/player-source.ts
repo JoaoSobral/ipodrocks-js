@@ -9,6 +9,16 @@ import { AUDIO_EXTENSIONS } from "../utils/audio-extensions";
 import { encodePathToUrl, decodeUrlToPath } from "./media-url";
 import type { PlaybackStrategy, Track } from "../../shared/types";
 
+/**
+ * All this module needs of a track, and deliberately no more.
+ *
+ * `ipc/player.ts` reads both fields off the `tracks` row rather than off the
+ * request — narrowing the parameter is what makes that visible at the type
+ * level, so a future caller cannot quietly hand the whole client-supplied
+ * `Track` back in. See the note there for why that matters.
+ */
+export type PlayableSource = Pick<Track, "path" | "codec">;
+
 export type { PlaybackStrategy };
 export { encodePathToUrl, decodeUrlToPath };
 
@@ -39,7 +49,7 @@ export function getPlayerTempDir(): string {
   return getTempDir();
 }
 
-export function pickStrategy(track: Track): PlaybackStrategy {
+export function pickStrategy(track: PlayableSource): PlaybackStrategy {
   return NATIVE_CODECS.has(track.codec) ? "native" : "transcode";
 }
 
@@ -63,7 +73,7 @@ export async function cancelPrepare(sessionId?: string): Promise<void> {
 }
 
 export async function prepareTrack(
-  track: Track,
+  track: PlayableSource,
   forceTranscode = false,
   sessionId?: string
 ): Promise<{ url: string; strategy: PlaybackStrategy }> {

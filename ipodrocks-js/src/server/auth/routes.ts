@@ -84,13 +84,30 @@ export async function authenticatedSubject(
 
 export function requireAuth(config: ServerConfig) {
   return (req: Request, res: Response, next: NextFunction): void => {
-    void authenticatedSubject(req, config).then((subject) => {
-      if (!subject) {
+    void authenticatedSubject(req, config).then(
+      (subject) => {
+        if (!subject) {
+          res.status(401).json({ error: "Not authenticated" });
+          return;
+        }
+        next();
+      },
+      // A rejection here is a *failure to decide*, so it must answer, not fall
+      // through. `verifyCfAccessJwt` swallows a bad token but not a JWKS fetch
+      // that throws outside its try — and without this arm that request never
+      // gets a response at all: the browser hangs on the spinner while the
+      // socket is held open, which reads as "the server is down" rather than
+      // as an auth problem. 401 is the honest answer: we could not establish
+      // who this is.
+      (err: unknown) => {
+        console.error(
+          `[server] authentication check failed — ${
+            err instanceof Error ? err.message : String(err)
+          }`
+        );
         res.status(401).json({ error: "Not authenticated" });
-        return;
       }
-      next();
-    });
+    );
   };
 }
 
@@ -127,7 +144,9 @@ export function createAuthRouter(deps: AuthDeps): Router {
   router.get("/status", (req, res) => {
     void (async () => {
       const identity = currentIdentity(req);
-      const subject = await authenticatedSubject(req, config);
+      // Same reasoning as `requireAuth`: a throw here would leave the login
+      // page waiting forever for the JSON it renders itself from.
+      const subject = await authenticatedSubject(req, config).catch(() => null);
       res.json({
         authenticated: subject !== null,
         needsOwnerClaim: countIdentities() === 0,
@@ -255,6 +274,8 @@ export function createAuthRouter(deps: AuthDeps): Router {
       // parameter, which is echoed through the provider's logs.
       const token = req.query.claimToken;
       if (typeof token === "string" && token) req.session.pendingClaimToken = token;
+      // The anti-CSRF nonce is configured on each Strategy (`state: true` in
+      // `passport-setup.ts`), not here — see the note there.
       passport.authenticate(provider, { session: false })(req, res, next);
     });
 

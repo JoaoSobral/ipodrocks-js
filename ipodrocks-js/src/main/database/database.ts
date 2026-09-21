@@ -35,6 +35,7 @@ export class AppDatabase {
     this.migrateVbrEnabled();
     this.migrateDeviceUsbIdentity();
     this.migrateDeviceTransport();
+    this.migrateDeviceWebOwner();
     this.migrateShadowPausedStatus();
     this.migrateShadowTrackStat();
     this.migrateClassicPlaylists();
@@ -362,6 +363,35 @@ export class AppDatabase {
         .run();
     } catch (err) {
       console.error("[db] migration failed (migrateDeviceTransport):", err);
+    }
+  }
+
+  /**
+   * Add `devices.web_owner_subject` for existing databases.
+   *
+   * Left NULL, which the attach check reads as "no recorded owner" and admits
+   * — a web device registered before this column existed has no identity
+   * stored anywhere, and refusing it would strand a player its owner can no
+   * longer connect. The first `device:add` from a browser after the upgrade
+   * stamps new ones.
+   *
+   * No index: the only read is by device id, which is already the primary key.
+   * (An index here would also have to be created in this method rather than in
+   * SCHEMA_SQL — see the hazard note on the column itself.)
+   */
+  private migrateDeviceWebOwner(): void {
+    if (!this.db) return;
+    try {
+      const rows = this.db
+        .prepare("PRAGMA table_info(devices)")
+        .all() as { name: string }[];
+      if (!new Set(rows.map((r) => r.name)).has("web_owner_subject")) {
+        this.db
+          .prepare("ALTER TABLE devices ADD COLUMN web_owner_subject TEXT")
+          .run();
+      }
+    } catch (err) {
+      console.error("[db] migration failed (migrateDeviceWebOwner):", err);
     }
   }
 

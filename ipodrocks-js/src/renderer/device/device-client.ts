@@ -204,7 +204,25 @@ export class DeviceClient {
         // The worker died. Fall back to the main thread rather than leaving
         // the device wedged.
         const held = this.held.get(deviceId);
-        if (held) held.worker = null;
+        if (!held) return;
+        held.worker = null;
+        // Anything it was already carrying will never answer. Settling those
+        // promises here is what keeps the failure to one call: left pending,
+        // no result frame is ever sent and the server waits out the full
+        // two-minute RPC timeout for every one of them, in order.
+        for (const [, settle] of held.pending) {
+          settle({
+            ok: false,
+            error: "The device worker stopped; retrying on the main thread.",
+            code: "EIO",
+          });
+        }
+        held.pending.clear();
+        try {
+          worker.terminate();
+        } catch {
+          /* already gone */
+        }
       };
       worker.postMessage({ kind: "init", root: handle });
       return worker;

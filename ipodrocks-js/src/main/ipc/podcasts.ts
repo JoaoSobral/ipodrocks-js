@@ -151,7 +151,11 @@ export function registerPodcastHandlers(): void {
     "podcast:syncDeviceNow",
     safe("podcast:syncDeviceNow", async (_event, deviceId: number) => {
       const db = getLibrary().getConnection();
-      return syncPodcastsToDevice(db, deviceId);
+      // Hand the device's own filesystem down. Without it this falls back to
+      // `deviceFsForMountPath`, which for a browser-held device is a
+      // `NodeDeviceFs` over the synthetic root and refuses every path.
+      const device = getDevicesCore().getDeviceById(deviceId);
+      return syncPodcastsToDevice(db, deviceId, undefined, device?.fs);
     })
   );
 

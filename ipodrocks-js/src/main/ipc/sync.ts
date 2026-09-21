@@ -71,9 +71,7 @@ export function isSyncActive(deviceId?: number): boolean {
 }
 
 export function registerSyncHandlers(): void {
-  bridgeHandle(
-    "sync:start",
-    safe("sync:start", async (event, opts: SyncOptions) => {
+  const runStartSync = safe("sync:start", async (event, opts: SyncOptions) => {
       const lib = getLibrary();
       const dc = getDevicesCore();
       const device = dc.getDeviceById(opts.deviceId);
@@ -532,7 +530,12 @@ export function registerSyncHandlers(): void {
 
       if (hasAutoPodcasts) {
         try {
-          const autoPodResult = await syncPodcastsToDevice(lib.getConnection(), opts.deviceId, syncOpts.progressCallback);
+          const autoPodResult = await syncPodcastsToDevice(
+            lib.getConnection(),
+            opts.deviceId,
+            syncOpts.progressCallback,
+            device.fs
+          );
           result.synced += autoPodResult.synced;
           result.errors += autoPodResult.errors;
         } catch (err) {
@@ -551,7 +554,8 @@ export function registerSyncHandlers(): void {
             selectedLabels: opts.selections?.audiobooks ?? [],
             mode: opts.selections?.mode ?? "include",
           },
-          syncOpts.progressCallback
+          syncOpts.progressCallback,
+          device.fs
         );
         result.synced += autoAbResult.synced;
         result.errors += autoAbResult.errors;
@@ -767,8 +771,22 @@ export function registerSyncHandlers(): void {
       syncOpts.progressCallback?.({ event: "complete", path: "", status: "complete" });
 
       return result;
-    })
-  );
+  });
+
+  // The `finally` is the point of the wrapper. The body above deletes its own
+  // entry on the way out, but every throw — a `SyncCancelled`, a failed copy,
+  // an unreadable device — skips that line, and `safe()` swallows the error
+  // into an `{ error }` result. The entry then stays in the map for the life
+  // of the process, so `isSyncActive(deviceId)` is permanently true and
+  // `device:eject` refuses that player forever, with no user action that
+  // clears it.
+  bridgeHandle("sync:start", async (event, opts: SyncOptions) => {
+    try {
+      return await runStartSync(event, opts);
+    } finally {
+      if (typeof opts?.deviceId === "number") activeSyncAborts.delete(opts.deviceId);
+    }
+  });
 
   bridgeHandle(
     "sync:cancel",

@@ -267,6 +267,14 @@ CREATE TABLE IF NOT EXISTS devices (
     -- ALTER TABLE has not added yet takes initialize() down for every
     -- upgrading user while working perfectly on a fresh install.
     transport TEXT NOT NULL DEFAULT 'local' CHECK(transport IN ('local', 'web')),
+    -- Which web identity ('<provider>:<subject>') may attach this device, for a
+    -- transport='web' row. NULL on every local device, and on a web device
+    -- created before this column existed — those stay attachable by anyone who
+    -- can sign in, because inventing an owner for them would strand the row.
+    -- Written once by addDevice from the calling session and never updatable:
+    -- see ALLOWED_UPDATE_FIELDS, and the device-attach hazard in CLAUDE.md.
+    -- No index — the only read is by device id, which is the primary key.
+    web_owner_subject TEXT,
     usb_vendor_id TEXT,
     usb_product_id TEXT,
     usb_serial TEXT,

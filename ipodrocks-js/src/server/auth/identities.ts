@@ -109,7 +109,14 @@ export function addIdentity(input: {
         "(provider, subject, email, display_name, is_owner, password_hash) " +
         "VALUES (?, ?, ?, ?, ?, ?) " +
         "ON CONFLICT(provider, subject) DO UPDATE SET " +
-        "email = excluded.email, display_name = excluded.display_name"
+        "email = excluded.email, display_name = excluded.display_name, " +
+        // COALESCE, not a plain assignment. A caller that supplies a hash means
+        // it — `createLocalAccount()` on a username that already exists used to
+        // report "X can now sign in with that password" and leave the old one
+        // in place, because this clause did not touch the column. A caller that
+        // supplies none (every provider login, which refreshes the profile on
+        // the way through) must not wipe one that is already there.
+        "password_hash = COALESCE(excluded.password_hash, server_identities.password_hash)"
     )
     .run(
       input.provider,

@@ -195,6 +195,23 @@ test("the server answers dialog:pickFolder with a directory browser instead", as
   expect(refused.error).toBeTruthy();
 });
 
+test("the server refuses to open a link on its own screen", async ({ request }) => {
+  // `shell.openExternal()` opens a URL in the *host's* default browser, in the
+  // host's own session. With the desktop app hosting the server that is the
+  // owner's machine, so an allowlisted guest could aim it at services on its
+  // loopback and LAN that they cannot otherwise reach — and pop windows on
+  // somebody else's desktop at will. Same boundary as `dialog:pickFolder`
+  // above; a link belongs to the browser of whoever clicked it, and the web
+  // renderer short-circuits to `window.open` rather than calling here at all.
+  const res = await invoke<{ ok?: boolean; error?: string }>(
+    request,
+    "app:openExternal",
+    "http://127.0.0.1:1/should-not-open"
+  );
+  expect(res.ok).toBe(false);
+  expect(res.error ?? "").toMatch(/your own browser/i);
+});
+
 test("the web folder picker browses the server and fills the form", async ({
   page,
 }) => {

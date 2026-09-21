@@ -22,6 +22,7 @@ import * as path from "path";
 
 import { RemoteDeviceFs } from "../../main/devices/fs/remote-device-fs";
 import type { DeviceRpcTransport } from "../../main/devices/fs/device-transport";
+import type { DeviceRpcVerb } from "../../shared/device-rpc";
 import { webDeviceRoot } from "../../main/devices/fs";
 import {
   compareLibraries,
@@ -41,7 +42,7 @@ function transport(clockSkewMs: number): DeviceRpcTransport {
     clockSkewMs,
     rootName: "IPOD",
     writable: true,
-    async call<T>(verb, args): Promise<T> {
+    async call<T>(verb: DeviceRpcVerb, args: unknown[]): Promise<T> {
       return (await dispatchLocalRpc(makeDirectoryHandle(deviceRoot), verb, args)) as T;
     },
     async pull() {

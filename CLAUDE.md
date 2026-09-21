@@ -66,6 +66,18 @@ These are confirmed reuse/efficiency issues found during `src/main/` review. Add
 | Reuse | `ipc/ratings.ts:135` + `assistant/tools.ts:440` | Conflict resolution implemented twice; the assistant copy has no `manual` branch and no test coverage |
 | Trap | `database.ts` — `migrateContentTypeAudiobook()` | Rebuilds `tracks` from an **explicit column list** that predates the rating columns. Harmless in production (sentinel-gated, and a database old enough to run it has no ratings) but it silently drops any later column, so a test fixture built from bare `SCHEMA_SQL` — no sentinel — loses every rating before the migration under test is reached. Build such fixtures by running `initialize()` once and then stripping the one column back out (see `regressions/rating-version-baseline.test.ts`) |
 
+### From the PR #140 review (2026-09-21)
+
+Everything found in that review was fixed in the same PR except the rows below,
+which are real and deliberately deferred.
+
+| Area | File | Issue |
+|---|---|---|
+| Efficiency | `rockbox/tagcache-index.ts` — `writeRatingOn()` | One `deviceFs.patch()` per rating, and on a browser-held device `createWritable({keepExistingData:true})` rewrites the whole file through a `.crswap` sibling. Propagating 500 ratings is 500 full copies of a multi-megabyte `database_idx.tcd` plus four RPCs each. Batching needs a plan-then-patch shape across `planRatingEdits`/`propagateRatingsToDeviceOn` |
+| Containment | `player/media-path.ts` — `isServableMediaPath()` | Its middle arm is an extension test with no containment, so the *only* thing keeping it honest is that nothing mints a token from client input any more — see the hazard above. Bounding it by the library roots, the shadow roots and the audiobooks root would make it a gate in its own right instead of a second opinion |
+| Enumeration | `ipc/app.ts` — `app:listDirectory` | Every allowlisted user can walk the server's home directory and mount roots. Deliberate — it is the web folder picker, and library folders genuinely live on the server, gated by the same `validateFolderPath()` as `library:addFolder` — but worth knowing it is a listing oracle for anyone admitted |
+| Verification | `server/auth/passport-setup.ts` — `state: true` | The OAuth anti-CSRF nonce is set on all three strategies, and no automated test can reach it: the e2e daemon has no provider configured. Manual-verification, the way `showDirectoryPicker()` and `mpcenc` already are |
+
 ### From the PR #116 review (2026-08-22)
 
 All five items found in that review were fixed in the same PR. Kept here as the
@@ -635,6 +647,42 @@ implementations now" below.
 
 Pinned in `src/__tests__/regressions/device-fs-boundary.test.ts`.
 
+## Hazard: a handler that takes a path from the client mints capabilities with it
+
+`player:prepare` took the whole `Track` the renderer was holding and used
+`track.path` from it. Harmless while the only client was a trusted Electron
+renderer on the user's own machine; over the web server that string is remote
+input reaching two sinks that do as they are told.
+
+- **`encodePathToUrl()` mints a signed `/api/media/:token` for it.**
+  `media-route.ts` re-checks with `isServableMediaPath()`, and that function's
+  middle arm is `isAudioFilePath(resolved)` — **an extension test with no
+  containment at all**, because the library genuinely lives wherever the user
+  pointed it. So any file on the server ending `.mp3`, `.flac`, `.m4a`… was
+  readable by anyone on the allowlist, and probeable for existence everywhere
+  else. The route's own comment states the precondition this broke: "the token
+  alone would be enough only for as long as nobody ever mints one from a path
+  that came in over IPC."
+- **`ffmpeg -i <path>` on the transcode branch**, which an attacker selects for
+  free with `forceTranscode: true`. ffmpeg resolves a top-level `-i` as a *URL*
+  with no protocol allowlist — `http:`, `tcp:`, `concat:`, `data:` — so that
+  argument was server-side request forgery from the daemon's network position.
+
+**`ipc/player.ts` now takes the track id and reads `path` and `codec` off the
+row** (joined through `codecs`, like `LibraryCore.getTracks()`), and
+`prepareTrack` takes `PlayableSource = Pick<Track, "path" | "codec">` so the
+narrowing is visible at the type level. The rest of the `Track` a client sends
+is display data the player never used.
+
+The general rule, because this is not the only handler shaped like it:
+**anything that mints a capability — a media token, a device-io token, an
+encoder argument — takes an id and resolves it server-side.** Check the other
+callers of `encodePathToUrl()` before adding one: today they are this handler,
+the transcode's own temp file, and the audiobook cover path, and the last two
+are server-derived. Pinned in `tests/e2e/web-media.test.ts`, including the
+control that a path smuggled in beside a *valid* id is ignored rather than
+honoured.
+
 ## Hazard: a browser-held device is a second implementation of the device
 
 `transport: "local" | "web"` on a device row decides which `DeviceFs` it gets.
@@ -668,6 +716,35 @@ on POSIX, `C:\ipodrocks-web\<id>` on Windows — that exists on no filesystem.
 - **A second attach of the same device detaches the first.** That is the
   per-device mutex — two tabs holding one iPod would otherwise interleave
   rating patches into a file with no checksum.
+- **But a cross-account attach is *refused*, not granted**, or that mutex is a
+  takeover primitive rather than a safety property. "The row says
+  `transport = 'web'`" is satisfied by every allowlisted identity for every
+  web device, so on its own it let a second account announce someone else's
+  device id, evict them, and have every later `RemoteDeviceFs` call plus every
+  one-shot `/api/device-io` token addressed to *their* browser: the library
+  files the sync meant for the real player, and a folder of their choosing
+  answering as the device — including the Rockbox index whose ratings
+  `ingestDeviceRatings()` merges into the shared library.
+  `devices.web_owner_subject` records `"<provider>:<subject>"`, **stamped by
+  the `device:add` handler from `event.sessionId`, never from the request
+  body**, and is absent from `ALLOWED_UPDATE_FIELDS` for the same reason
+  `transport` is — a `device:update` that could write it would be the takeover
+  by a shorter route. A **null** owner admits: that is a device registered
+  before the column existed, and inventing an owner for one would strand a
+  player nobody can reconnect. Pinned in
+  `tests/e2e/web-device-ownership.test.ts`, whose load-bearing assertion is
+  not the refusal but that **the incumbent still holds the device afterwards**
+  — an "evict, then refuse" passes the first and fails the user.
+- **A device RPC is addressed to the socket that attached, not to the
+  session.** `sendRawToSession()` picks whichever of a session's sockets is
+  open first, and a session is a *login*, not a tab: two tabs of one browser
+  share one express session and land in one `sockets` set, while only one of
+  them holds the directory handle. So the request had a coin-flip chance of
+  reaching the tab that answers `EDEVICEDETACHED`, and the sync failed with
+  nothing anywhere naming a second tab as the reason. `Attachment.socket`
+  holds it, `sendRawToSocket()` uses it, and the detach, the result match and
+  the attach verdicts are all scoped the same way — closing one of two tabs
+  must not take the other tab's device down with it.
 
 ### The three things the File System Access API does not do
 
@@ -788,6 +865,18 @@ with an error naming the filesystem rather than the reason.
   gigabytes through a browser nobody is watching. Turning the flag *off* is
   never refused — a device that should not have had it must be able to give it
   up.
+- **`app:openExternal` is refused to a web client, like `dialog:pickFolder`.**
+  `shell.openExternal()` opens a URL in the *host's* default browser, in the
+  host's own session — so with the desktop app hosting the server, an
+  allowlisted guest could aim the owner's browser at services on its loopback
+  and LAN that the guest cannot otherwise reach, and pop windows on somebody
+  else's desktop at will. The scheme allowlist in `external-url.ts` does not
+  help: `http:` is exactly the dangerous one. `openExternal()` in the
+  renderer's `api.ts` short-circuits to `window.open(url, "_blank",
+  "noopener,noreferrer")` in web mode, so the round trip never happens; the
+  handler is the guard. Under the headless daemon `NodeShell.openExternal` is
+  already a no-op, so this only ever bit the desktop-hosted deployment —
+  which is the supported one.
 - **In a browser, `+ Add Device` always adds a remote device.** There is no
   mount path and no Browse button, because `pickFolder()` browses the *server's*
   filesystem: offering it here is what sent a user hunting for their iPod on the
@@ -942,7 +1031,13 @@ for free — provided its prefix is in `src/shared/ipc-channels.ts`.
 E2E lives in `tests/e2e/web-{auth,parity,media,identities}.test.ts`, run by the
 `web` Playwright project (the `electron` project is unchanged and still launches
 the app per test). The web project needs a Chromium download — `npx playwright
-install chromium` — which the Electron-only suite never did. **Every spec runs
+install chromium` — which the Electron-only suite never did. **CI has to do it
+too**: `.github/workflows/ci.yml` ran `playwright install-deps`, which installs
+the OS libraries a browser needs and *no browser*, so every `web` spec failed
+with "Executable doesn't exist at …/chrome-headless-shell" while the `electron`
+project — which launches the app's own bundled Electron — passed beside them.
+The step is `playwright install --with-deps chromium`, which does both jobs so
+the two cannot drift apart again. **Every spec runs
 against one long-lived daemon**, so a spec that changes server state (an added
 account, a revoked session) has to put it back.
 
@@ -971,6 +1066,30 @@ dressed as a convenience.
   threaded from `ipc/assistant.ts`'s handler context — is the only thing that
   carries "who is asking" that far. Wire it and forget to read it and a
   non-owner simply asks Rocksy to do what the channel refused.
+- **The four `server:*` control channels are gated too, and that is wider than
+  "the allowlist".** `server:getStatus`, `server:setConfig`, `server:start` and
+  `server:stop` were not, and they are strictly worse than the allowlist ones:
+  `setConfig` writes `host`, `port`, `publicUrl`, `allowedOrigins`,
+  `trustedProxies` and `tls` to prefs, and `stop` + `start` is a restart that
+  re-reads every one of them. A guest could move the listener from loopback
+  onto `0.0.0.0`, clear the TLS pair — which also clears the session cookie's
+  `Secure` flag, since `http.ts` derives it from `config.tls`/`publicUrl`, so
+  the owner's cookie then crosses the LAN in the clear — and set
+  `trustedProxies` so the rate limiter believes any `X-Forwarded-For`. That is
+  this file's own highest tool tier, "anything that changes what the outside
+  world can reach", reached through a channel instead of a tool. The prefs
+  persist, so the exposure survives restarts. The Web Server card renders the
+  refusal as a sentence rather than crashing on the absent `prefs`.
+- **Rocksy's `web_server_status`, `web_server_configure` and
+  `web_server_set_enabled` call `ownerGate()` as well.** They did not; only the
+  five allowlist tools did. A guest who cannot call `server:setConfig` could
+  simply ask Rocksy to, which is the same escalation with a friendlier
+  interface. Note that the confirm gate is **not** what protects these:
+  `assistant:confirmAction` runs `getToolByName(action.tool).run(action.args,
+  ctx)` on a `PendingAction` the *client* supplies, so a client can reach any
+  tool directly without the LLM. That is acceptable only because every gate
+  lives inside `run()`, reading `ctx.sessionId`. **A gate enforced by the
+  confirm UI, the tool tier, or the system prompt is not enforced at all.**
 - **Ownership is granted exactly once**, by the one-time claim token in
   `authorizeIdentity()`. Neither `server:allowIdentity` nor
   `web_server_allow_identity` has an `isOwner` parameter, and passing one anyway

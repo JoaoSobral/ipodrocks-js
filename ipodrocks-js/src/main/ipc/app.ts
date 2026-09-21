@@ -106,7 +106,21 @@ export function registerAppHandlers(): void {
   );
   bridgeHandle(
     "app:openExternal",
-    safe("app:openExternal", async (_event, url: string) => {
+    safe("app:openExternal", async (event, url: string) => {
+      // **A link opens in the browser of whoever clicked it**, and for a web
+      // client that is their own — not the host's. `shell.openExternal()` on
+      // the desktop app hosting the server pops a window on *its* screen, in
+      // *its* default browser, carrying *its* cookies: an allowlisted guest
+      // could aim the owner's browser at anything reachable from that machine,
+      // including services on its loopback and LAN that the guest cannot
+      // otherwise touch. Same boundary as `dialog:pickFolder` below, and the
+      // web renderer short-circuits to `window.open` rather than calling here.
+      if (event.sessionId !== undefined) {
+        return {
+          ok: false,
+          error: "Links open in your own browser, not on the server's screen.",
+        };
+      }
       return openExternalUrl(url);
     })
   );
