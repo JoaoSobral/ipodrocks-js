@@ -15,10 +15,12 @@
 import * as fs from "fs";
 import * as path from "path";
 
+import type { DeviceFs } from "../devices/fs";
 import { getFfmpegPath } from "../utils/ffmpeg-path";
 import { extractEmbeddedPicture } from "../utils/embedded-art";
 import { findOnDisk } from "../utils/normalize-path";
 import {
+  IMAGE_HEAD_BYTES,
   longestEdge,
   readImageDimensions,
   readImageDimensionsFromFile,
@@ -26,7 +28,7 @@ import {
 import {
   isCancellationError,
   makeSafeConversionTempPath,
-  moveConvertedFile,
+  placeConvertedFile,
   runLoggedSubprocess,
 } from "./sync-conversion";
 import { SyncCancelled } from "./sync-core";
@@ -147,11 +149,22 @@ export function buildCoverFfmpegArgs(
 }
 
 /**
- * Generate `destCoverPath` (a `cover.jpg`) from `source`. Skips when an
- * up-to-date cover already exists. On ffmpeg failure falls back to a verbatim
+ * Generate `destCoverPath` (a `cover.jpg`) on `target` from `source`. Skips when
+ * an up-to-date cover already exists. On ffmpeg failure falls back to a verbatim
  * copy of a source file (better than nothing). Never throws except on cancel.
+ *
+ * **`target` is required and has no default.** This is called for a device
+ * (`copyAlbumArtworkToDevice`) and for a shadow-library root
+ * (`copyArtworkToShadowLibrary`), the two destinations are both just absolute
+ * paths, and getting them the wrong way round is silent: `cover.jpg` is in
+ * `SHADOW_ARTWORK_NAMES`, so the shadow prune would then delete whichever copy
+ * landed in the wrong tree.
+ *
+ * `source` is always on the machine running the sync — it is library art — so
+ * it is read with plain `fs`, and so is every temp file ffmpeg touches.
  */
 export async function generateRockboxCover(
+  target: DeviceFs,
   source: CoverSource,
   destCoverPath: string,
   opts: {
@@ -167,17 +180,17 @@ export async function generateRockboxCover(
   // was generated at the size currently requested. Mtime alone is not enough:
   // changing a device's artwork_max_dimension does not touch the source art, so
   // every already-synced cover would silently keep its old size.
-  try {
-    const destStat = fs.statSync(destCoverPath);
-    if (destStat.mtimeMs >= source.mtimeMs && coverMatchesMaxDim(destCoverPath, source, maxDim)) {
-      return "skipped";
-    }
-  } catch {
-    /* no existing cover — generate */
+  const existing = await readCoverHead(target, destCoverPath);
+  if (
+    existing &&
+    existing.mtimeMs >= source.mtimeMs &&
+    coverMatchesMaxDim(existing.head, source, maxDim)
+  ) {
+    return "skipped";
   }
 
   try {
-    fs.mkdirSync(path.dirname(destCoverPath), { recursive: true });
+    await target.mkdir(path.dirname(destCoverPath), { recursive: true });
   } catch (err) {
     opts.log?.(`Artwork: mkdir failed for ${destCoverPath}: ${errMsg(err)}`);
     return "failed";
@@ -211,7 +224,7 @@ export async function generateRockboxCover(
     if (code !== 0 || !fs.existsSync(tmpDest)) {
       throw new Error(`ffmpeg exited ${code}`);
     }
-    moveConvertedFile(tmpDest, destCoverPath);
+    await placeConvertedFile(tmpDest, destCoverPath, target);
     return "written";
   } catch (err) {
     safeUnlink(tmpDest);
@@ -224,7 +237,7 @@ export async function generateRockboxCover(
     // Fallback: copy a source file verbatim (embedded-only sources can't).
     if (source.kind === "file") {
       try {
-        fs.copyFileSync(source.path, destCoverPath);
+        await target.copyFromLocal(source.path, destCoverPath);
         opts.log?.(`Artwork: ffmpeg failed, copied original (${errMsg(err)})`);
         return "written";
       } catch (copyErr) {
@@ -240,6 +253,28 @@ export async function generateRockboxCover(
 }
 
 /**
+ * The existing cover's mtime and the head bytes the dimension probe needs,
+ * from a single open.
+ *
+ * The two facts used to cost a syscall each — a `statSync` here and another
+ * open inside the dimension read. On a device reached over the network that is
+ * two round trips per album folder, for a check that usually just says "skip".
+ */
+async function readCoverHead(
+  target: DeviceFs,
+  coverPath: string
+): Promise<{ mtimeMs: number; head: Buffer } | null> {
+  const stat = await target.stat(coverPath);
+  if (!stat || stat.isDirectory) return null;
+  try {
+    const head = await target.readRange(coverPath, 0, IMAGE_HEAD_BYTES);
+    return { mtimeMs: stat.mtimeMs, head };
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Does an existing cover already reflect `maxDim`?
  *
  * A cover larger than the bound means the setting was lowered. A cover smaller
@@ -250,11 +285,11 @@ export async function generateRockboxCover(
  * every single sync.
  */
 function coverMatchesMaxDim(
-  destCoverPath: string,
+  destHead: Buffer,
   source: CoverSource,
   maxDim: number
 ): boolean {
-  const destLongest = longestEdge(readImageDimensionsFromFile(destCoverPath));
+  const destLongest = longestEdge(readImageDimensions(destHead));
   if (destLongest == null) return true;
 
   if (destLongest > maxDim + DIMENSION_TOLERANCE) return false;

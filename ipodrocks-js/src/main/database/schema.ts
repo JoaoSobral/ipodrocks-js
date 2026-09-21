@@ -259,6 +259,22 @@ CREATE TABLE IF NOT EXISTS devices (
     skip_album_artwork BOOLEAN NOT NULL DEFAULT 0,
     artwork_max_dimension INTEGER NOT NULL DEFAULT 300,
     vbr_enabled BOOLEAN NOT NULL DEFAULT 0,
+    -- 'local' is a folder on the machine running the sync; 'web' is a folder
+    -- held open in a browser tab and reached over the device RPC. The column
+    -- is here but its index is created only inside migrateDeviceTransport():
+    -- SCHEMA_SQL is exec'd before any migration, and on an existing database
+    -- CREATE TABLE IF NOT EXISTS is a no-op, so an index over a column an
+    -- ALTER TABLE has not added yet takes initialize() down for every
+    -- upgrading user while working perfectly on a fresh install.
+    transport TEXT NOT NULL DEFAULT 'local' CHECK(transport IN ('local', 'web')),
+    -- Which web identity ('<provider>:<subject>') may attach this device, for a
+    -- transport='web' row. NULL on every local device, and on a web device
+    -- created before this column existed — those stay attachable by anyone who
+    -- can sign in, because inventing an owner for them would strand the row.
+    -- Written once by addDevice from the calling session and never updatable:
+    -- see ALLOWED_UPDATE_FIELDS, and the device-attach hazard in CLAUDE.md.
+    -- No index — the only read is by device id, which is the primary key.
+    web_owner_subject TEXT,
     usb_vendor_id TEXT,
     usb_product_id TEXT,
     usb_serial TEXT,
@@ -466,6 +482,15 @@ CREATE TABLE IF NOT EXISTS assistant_chat_history (
     role TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
     content TEXT NOT NULL,
     pinned INTEGER NOT NULL DEFAULT 0,
+    -- "<provider>:<subject>" of the web identity whose conversation this is,
+    -- or NULL for the desktop app, which has no identity. Every read and
+    -- delete is scoped by it: this table holds whatever the user typed at
+    -- Rocksy, and on a shared server that is one person's conversation, not
+    -- the library's. NULL is the desktop owner's own history, not "everyone".
+    -- Its index is created in migrateAssistantHistoryIdentity(), never here --
+    -- SCHEMA_SQL runs before any migration, so an index over a column an
+    -- ALTER TABLE adds would throw on every upgrading install.
+    identity_subject TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 

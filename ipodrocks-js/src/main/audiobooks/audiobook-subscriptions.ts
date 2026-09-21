@@ -1,9 +1,10 @@
 import * as fs from "fs";
 import * as path from "path";
+import { encodePathToUrl } from "../player/media-url";
 import type Database from "better-sqlite3";
 import type { AudiobookSubscription, AudiobookChapter, LibrivoxSearchResult } from "../../shared/types";
 import { fetchAndParseFeed } from "../podcasts/podcast-feed-import";
-import { getChapterDir } from "./audiobook-storage";
+import { assertLibrivoxId, getAudiobooksRoot, getChapterDir } from "./audiobook-storage";
 import { downloadCover } from "./audiobook-cover";
 
 interface SubRow {
@@ -36,8 +37,24 @@ interface ChapterRow {
   created_at: string;
 }
 
-function localPathToMediaUrl(p: string): string {
-  return `media://local/${Buffer.from(p, "utf8").toString("base64url")}`;
+/**
+ * Cover art is an absolute server path in the database and a URL in the API
+ * response. It goes through the shared encoder so that under the web server it
+ * becomes an `/api/media/` token like everything else — before, this was a
+ * second hand-rolled `media://` string and would have been the one image
+ * source that stayed pointed at a scheme the browser has never heard of.
+ */
+function localPathToMediaUrl(p: string): string | null {
+  // Only a cover *this app downloaded* may become a capability. `image_url`
+  // can also hold whatever string a client sent to `audiobook:subscribe`, and
+  // minting a token for that is exactly the "token from a path that came in
+  // over IPC" that `media-route.ts` names as its own precondition: the middle
+  // arm of `isServableMediaPath()` is a bare extension test with no
+  // containment, so the mint site is the containment.
+  const root = path.resolve(getAudiobooksRoot());
+  const resolved = path.resolve(p);
+  if (resolved !== root && !resolved.startsWith(root + path.sep)) return null;
+  return encodePathToUrl(p);
 }
 
 function rowToSub(r: SubRow): AudiobookSubscription {
@@ -88,9 +105,19 @@ export async function subscribe(
   result: LibrivoxSearchResult,
   onCoverReady?: (sub: AudiobookSubscription) => void
 ): Promise<AudiobookSubscription> {
+  // `result` is the request body; its TypeScript type is erased at runtime.
+  // The id becomes a directory name (see assertLibrivoxId), and a cover the
+  // caller supplies is always a remote URL -- never a path on this machine,
+  // which `rowToSub` would otherwise turn into a media capability.
+  const librivoxId = assertLibrivoxId(result.librivoxId);
+  const clientImageUrl =
+    typeof result.imageUrl === "string" && !path.isAbsolute(result.imageUrl)
+      ? result.imageUrl
+      : null;
+
   const existing = db
     .prepare("SELECT * FROM audiobook_subscriptions WHERE librivox_id = ?")
-    .get(result.librivoxId) as SubRow | undefined;
+    .get(librivoxId) as SubRow | undefined;
   if (existing) return rowToSub(existing);
 
   const info = db
@@ -100,11 +127,11 @@ export async function subscribe(
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
-      result.librivoxId,
+      librivoxId,
       result.title,
       result.author ?? null,
       result.description ?? null,
-      result.imageUrl ?? null,
+      clientImageUrl,
       result.rssUrl,
       result.language ?? null,
       result.numSections,
@@ -124,7 +151,7 @@ export async function subscribe(
       chapters.forEach((ep, idx) => {
         insert.run(
           subId,
-          ep.guid || `${result.librivoxId}-${idx}`,
+          ep.guid || `${librivoxId}-${idx}`,
           idx + 1,
           ep.title,
           ep.enclosureUrl,
@@ -163,9 +190,11 @@ export function unsubscribe(db: Database.Database, subId: number): void {
 
   // Clean up local files
   if (sub) {
-    const dir = getChapterDir(sub.librivox_id);
+    // getChapterDir throws on a malformed id rather than resolving outside the
+    // audiobooks root; a row that predates that validation must not take the
+    // delete with it, so the row is still removed below.
     try {
-      fs.rmSync(dir, { recursive: true, force: true });
+      fs.rmSync(getChapterDir(sub.librivox_id), { recursive: true, force: true });
     } catch { /* ignore */ }
   }
 

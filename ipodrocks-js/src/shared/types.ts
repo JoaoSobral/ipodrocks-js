@@ -89,7 +89,25 @@ export interface Device {
   defaultCodecConfigId: number | null;
 }
 
+/**
+ * Where a device's files actually live.
+ *
+ * `local` is a folder on the machine running the sync — a mounted iPod, or a
+ * dev-mode directory. `web` is a folder the user picked in their own browser,
+ * reached over the device RPC; its `mountPath` is a synthetic root
+ * (`/ipodrocks-web/<id>`) that exists on no filesystem.
+ */
+export type DeviceTransport = "local" | "web";
+
 export interface DeviceProfile extends Device {
+  /**
+   * Local, or held open in a browser tab. Set once when the device is added
+   * and never updatable: see `ALLOWED_UPDATE_FIELDS` in `devices-core.ts`,
+   * which deliberately omits it so a `device:update` cannot turn a real mount
+   * into a web device (or the reverse) and point the sync at the wrong
+   * filesystem.
+   */
+  transport: DeviceTransport;
   description: string | null;
   lastSyncDate: string | null;
   totalSyncedItems: number;
@@ -162,7 +180,20 @@ export interface ContentStats {
 
 export interface AddDeviceConfig {
   name: string;
-  mountPath: string;
+  /**
+   * Omitted for a web device — the synthetic root cannot be known until the
+   * row has an id, so `addDevice` fills it in.
+   */
+  mountPath?: string;
+  transport?: DeviceTransport;
+  /**
+   * `"<provider>:<subject>"` of the web identity that may attach this device.
+   *
+   * **Set by the `device:add` handler from the calling session, never by the
+   * client** — it is the whole point of the field that a browser cannot name
+   * whose device this is. Ignored unless `transport === "web"`.
+   */
+  webOwnerSubject?: string | null;
   defaultCodecConfigId?: number | null;
   musicFolder?: string;
   podcastFolder?: string;
@@ -212,13 +243,6 @@ export interface UsbDeviceInfo {
 export interface UsbSnapshot {
   available: boolean;
   devices: UsbDeviceInfo[];
-}
-
-export interface DeviceValidation {
-  valid: boolean;
-  error: string | null;
-  normalizedPath?: string;
-  foldersCreated?: string[];
 }
 
 export interface LibraryFolder {

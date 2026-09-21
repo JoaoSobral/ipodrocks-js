@@ -1,4 +1,4 @@
-import { ipcMain } from "electron";
+import { handle as bridgeHandle } from "../host/bridge";
 import { safe, getLibrary, getPlaylistCore } from "./common";
 import {
   buildAnalysisSummaryFromDb,
@@ -11,7 +11,7 @@ import { logActivity } from "../activity/activity-logger";
 import type { GeniusGenerateOptions, ListeningStatsPeriod } from "../../shared/types";
 
 export function registerGeniusHandlers(): void {
-  ipcMain.handle(
+  bridgeHandle(
     "genius:getSummaryFromDb",
     safe("genius:getSummaryFromDb", async () => {
       const summary = buildAnalysisSummaryFromDb(getLibrary().getConnection());
@@ -20,21 +20,21 @@ export function registerGeniusHandlers(): void {
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "genius:getListeningStats",
     safe("genius:getListeningStats", async (_event, period: ListeningStatsPeriod) => {
       return buildListeningStatsFromDb(getLibrary().getConnection(), period);
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "genius:types",
     safe("genius:types", async () =>
       getGeniusTypesWithAvailability(getLibrary().getConnection())
     )
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "genius:generate",
     safe("genius:generate", async (
       _event,
@@ -47,7 +47,7 @@ export function registerGeniusHandlers(): void {
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "genius:save",
     safe("genius:save", async (
       _event,

@@ -37,7 +37,9 @@ vi.mock("../../main/sync/sync-executor", async (importOriginal) => {
   const actual = (await importOriginal()) as Record<string, unknown>;
   return {
     ...actual,
-    copyFileToDevice: vi.fn(async (src: string, dest: string) => {
+    // `deviceFs` is first and ignored here: this stub is the whole point of
+    // the mock — keep the copy in tmp.
+    copyFileToDevice: vi.fn(async (_deviceFs: unknown, src: string, dest: string) => {
       fs.mkdirSync(path.dirname(dest), { recursive: true });
       fs.copyFileSync(src, dest);
       return true;
@@ -163,6 +165,60 @@ describe("Device sync — IPC journey", () => {
       .readdirSync(device.musicDir, { recursive: true })
       .filter((p) => typeof p === "string" && /\.(flac|mp3)$/i.test(p as string));
     expect(filesOnDevice.length).toBe(2);
+  });
+
+  itDb("a cancel names the device it means, and leaves another device's sync alone", async () => {
+    // The abort controller used to be one module-level variable, which was
+    // correct for exactly one window and one player. A second `sync:start`
+    // overwrote the first's controller, so a cancel then stopped the wrong
+    // sync — and `isSyncActive`, which `device:eject` uses to refuse unmounting
+    // under a running copy, answered about whichever sync started last.
+    seedAudioOnDisk(libraryDir, "Y/one.flac", {
+      title: "One",
+      artist: "Y",
+      album: "Alb",
+      duration: 100,
+      bitrate: 1000,
+      codec: "FLAC",
+    });
+
+    await session.invoke("library:addFolder", { name: "Music", path: libraryDir, contentType: "music" });
+    await session.invoke("library:scan", {
+      folders: [{ name: "Music", path: libraryDir, contentType: "music" }],
+    });
+
+    const other = createFakeDevice(path.dirname(userDataDir), "device-b");
+    const deviceA = await session.invoke<{ id: number }>("device:add", {
+      name: "Player A",
+      mountPath: device.mountPath,
+    });
+    const deviceB = await session.invoke<{ id: number }>("device:add", {
+      name: "Player B",
+      mountPath: other.mountPath,
+    });
+
+    const syncA = session.invoke<{ status: string; synced: number }>("sync:start", {
+      deviceId: deviceA.id,
+      syncType: "full",
+      extraTrackPolicy: "keep",
+      includeMusic: true,
+      includePodcasts: false,
+      includeAudiobooks: false,
+      includePlaylists: false,
+    });
+
+    // Cancelling the *other* player must be a no-op, not an abort of A.
+    const cancelB = await session.invoke<{ cancelled: boolean }>("sync:cancel", deviceB.id);
+    expect(cancelB.cancelled).toBe(false);
+
+    const resultA = await syncA;
+    expect(resultA.status).toBe("completed");
+    expect(resultA.synced).toBe(1);
+
+    // And once A has finished, nothing is left claiming to be running — which
+    // is what keeps `device:eject` from refusing forever.
+    const cancelAfter = await session.invoke<{ cancelled: boolean }>("sync:cancel");
+    expect(cancelAfter.cancelled).toBe(false);
   });
 
   itDb("re-syncing after removing a library track removes the file from the device", async () => {

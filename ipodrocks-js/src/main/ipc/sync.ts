@@ -1,8 +1,9 @@
-import * as fs from "fs";
 import * as path from "path";
-import { ipcMain } from "electron";
+import { handle as bridgeHandle } from "../host/bridge";
 import {
   safe,
+  blockWrongDeviceOwner,
+  blockWrongLocality,
   getLibrary,
   getDevicesCore,
   getPlaylistCore,
@@ -21,7 +22,11 @@ import {
   removeExtraTracks,
   SyncCancelled,
 } from "../sync/sync-core";
-import { writePlaylistsToDevice } from "../sync/playlist-sync";
+import {
+  devicePlaylistStem,
+  findOrphanPlaylistFiles,
+  writePlaylistsToDevice,
+} from "../sync/playlist-sync";
 import { syncPodcastsToDevice } from "../podcasts/podcast-device-sync";
 import { syncAutoAudiobooksToDevice } from "../audiobooks/audiobook-device-sync";
 import { listSubscriptions as listAudiobookSubs } from "../audiobooks/audiobook-subscriptions";
@@ -30,8 +35,8 @@ import {
   ingestDeviceRatings,
   invalidatePushedRatings,
 } from "../sync/rating-merge";
-import { propagateRatingsToDevice } from "../sync/rating-propagate";
-import { readAndIngestRuntimeData } from "../rockbox/runtime-ingest";
+import { propagateRatingsForDevice } from "../sync/rating-propagate";
+import { ingestRuntimeDataForDevice } from "../rockbox/runtime-ingest";
 import { logActivity } from "../activity/activity-logger";
 import { resetDeviceContent } from "../sync/device-reset";
 import type {
@@ -41,27 +46,51 @@ import type {
 } from "../../shared/types";
 import { albumLabelsForTrack } from "../../shared/album-label";
 
-let activeSyncAbort: AbortController | null = null;
+/**
+ * The sync running on each device, if any.
+ *
+ * This was one module-level controller, which was correct for exactly one
+ * window and one device. A second `sync:start` overwrote the first's
+ * controller, so `sync:cancel` then cancelled the wrong sync and
+ * {@link isSyncActive} — which `device:eject` depends on to refuse unmounting
+ * under a running copy — answered about whichever sync started last.
+ */
+const activeSyncAborts = new Map<number, AbortController>();
 
 /**
- * Is a sync running right now?
+ * Is a sync running right now — on `deviceId`, or on any device at all?
  *
  * Exposed for `device:eject`, which must refuse mid-sync: unmounting under a
  * running copy leaves half-written files behind, and the OS would fail the
- * unmount with an opaque "Resource busy" anyway.
+ * unmount with an opaque "Resource busy" anyway. Ejecting one player has no
+ * reason to care about a sync running on another, so callers that know which
+ * device they mean should say so.
  */
-export function isSyncActive(): boolean {
-  return activeSyncAbort !== null;
+export function isSyncActive(deviceId?: number): boolean {
+  if (deviceId === undefined) return activeSyncAborts.size > 0;
+  return activeSyncAborts.has(deviceId);
 }
 
 export function registerSyncHandlers(): void {
-  ipcMain.handle(
-    "sync:start",
-    safe("sync:start", async (event, opts: SyncOptions) => {
+  const runStartSync = safe("sync:start", async (event, opts: SyncOptions) => {
       const lib = getLibrary();
       const dc = getDevicesCore();
       const device = dc.getDeviceById(opts.deviceId);
       if (!device) return { error: `Device ${opts.deviceId} not found` };
+      // A player is plugged into exactly one machine. Refused here and not
+      // only in the UI, because a greyed-out button is a courtesy and this is
+      // the guard: a web client reaching a server-attached device would
+      // otherwise run a whole sync against the wrong filesystem, and the
+      // desktop window reaching a browser-held one dies inside
+      // `DetachedDeviceFs` with an error that names neither.
+      const wrongMachine = blockWrongLocality(event, device.profile.transport);
+      if (wrongMachine) return wrongMachine;
+      // Locality says "is this player on my machine"; it does not say "is this
+      // player mine". Without the second question any allowlisted account
+      // could aim a sync -- including the `delete-all` reset -- at another
+      // account's browser-held device.
+      const notYours = blockWrongDeviceOwner(event, opts.deviceId);
+      if (notYours) return notYours;
 
       saveDeviceSyncPreferences(lib.getConnection(), opts.deviceId, {
         syncType: opts.syncType,
@@ -78,8 +107,12 @@ export function registerSyncHandlers(): void {
       const preserveFolderStructure = opts.preserveFolderStructure !== false;
       const albumGrouping = opts.albumGrouping ?? "album-artist";
 
-      activeSyncAbort = new AbortController();
-      const syncSignal = activeSyncAbort.signal;
+      // A second sync of the *same* device would still clobber this entry, but
+      // that is already refused upstream; two different devices no longer
+      // interfere.
+      const syncAbort = new AbortController();
+      activeSyncAborts.set(opts.deviceId, syncAbort);
+      const syncSignal = syncAbort.signal;
 
       const { music: musicMap, podcast: podcastMap, audiobook: audiobookMap } =
         buildLibraryTrackMaps(lib);
@@ -253,20 +286,20 @@ export function registerSyncHandlers(): void {
       // empty because a scan failed can't be read as "delete everything".
       const sweepsOrphans =
         opts.extraTrackPolicy === "remove" || opts.extraTrackPolicy === "delete-all";
-      const hasFilesOnDevice = (contentType: ContentType): boolean => {
+      const hasFilesOnDevice = async (contentType: ContentType): Promise<boolean> => {
         const contentPath = device.getContentPath(contentType);
-        return !!contentPath && fs.existsSync(contentPath);
+        return !!contentPath && (await device.fs.exists(contentPath));
       };
 
       const willRunMusic =
         Object.keys(musicLibraryTracks).length > 0 ||
-        (sweepsOrphans && hasFilesOnDevice("music"));
+        (sweepsOrphans && (await hasFilesOnDevice("music")));
       const willRunPodcast =
         Object.keys(podcastLibraryTracks).length > 0 ||
-        (sweepsOrphans && hasFilesOnDevice("podcast"));
+        (sweepsOrphans && (await hasFilesOnDevice("podcast")));
       const willRunAudiobook =
         Object.keys(audiobookLibraryTracks).length > 0 ||
-        (sweepsOrphans && hasFilesOnDevice("audiobook"));
+        (sweepsOrphans && (await hasFilesOnDevice("audiobook")));
       const hasAutoPodcasts = device.profile.autoPodcastsEnabled === true;
       const hasAutoAudiobooks = listAudiobookSubs(lib.getConnection()).length > 0;
       const isEmptyLibrary = !willRunMusic && !willRunPodcast && !willRunAudiobook;
@@ -278,17 +311,17 @@ export function registerSyncHandlers(): void {
           : "Library contains no music, podcast, or audiobook files to sync. Add library folders and scan first.";
         syncOpts.progressCallback?.({ event: "log", message: emptyMessage });
         syncOpts.progressCallback?.({ event: "total", path: "0" });
-        activeSyncAbort = null;
+        activeSyncAborts.delete(opts.deviceId);
         return { error: emptyMessage };
       }
 
       const deviceMusicPath = device.getContentPath("music");
       try {
-        fs.mkdirSync(deviceMusicPath, { recursive: true });
+        await device.fs.mkdir(deviceMusicPath, { recursive: true });
       } catch (err) {
         const code = (err as NodeJS.ErrnoException).code;
         if (code === "EACCES") {
-          activeSyncAbort = null;
+          activeSyncAborts.delete(opts.deviceId);
           return {
             error:
               `Permission denied writing to device (${deviceMusicPath}). ` +
@@ -303,16 +336,16 @@ export function registerSyncHandlers(): void {
       // ratings together, plus the index position of each record — which is
       // what Phase 3 needs to write a rating back without re-reading the
       // device database.
-      let runtimeImport: ReturnType<typeof readAndIngestRuntimeData> | null = null;
+      let runtimeImport: Awaited<ReturnType<typeof ingestRuntimeDataForDevice>> | null = null;
       try {
         syncOpts.progressCallback?.({
           event: "log",
           message: "Reading runtime data from device...",
         });
-        runtimeImport = readAndIngestRuntimeData(
+        runtimeImport = await ingestRuntimeDataForDevice(
           lib.getConnection(),
           opts.deviceId,
-          device.mountPath,
+          device,
           device.profile.skipRuntimeData ?? false
         );
         if (runtimeImport.imported > 0) {
@@ -504,7 +537,12 @@ export function registerSyncHandlers(): void {
 
       if (hasAutoPodcasts) {
         try {
-          const autoPodResult = await syncPodcastsToDevice(lib.getConnection(), opts.deviceId, syncOpts.progressCallback);
+          const autoPodResult = await syncPodcastsToDevice(
+            lib.getConnection(),
+            opts.deviceId,
+            syncOpts.progressCallback,
+            device.fs
+          );
           result.synced += autoPodResult.synced;
           result.errors += autoPodResult.errors;
         } catch (err) {
@@ -523,7 +561,8 @@ export function registerSyncHandlers(): void {
             selectedLabels: opts.selections?.audiobooks ?? [],
             mode: opts.selections?.mode ?? "include",
           },
-          syncOpts.progressCallback
+          syncOpts.progressCallback,
+          device.fs
         );
         result.synced += autoAbResult.synced;
         result.errors += autoAbResult.errors;
@@ -560,6 +599,7 @@ export function registerSyncHandlers(): void {
               albumGrouping,
             };
             const writeResult = await writePlaylistsToDevice({
+              deviceFs: device.fs,
               playlistFolder,
               mountPath: device.profile.mountPath,
               playlistsToWrite,
@@ -578,38 +618,20 @@ export function registerSyncHandlers(): void {
       // Always detect and optionally remove playlist orphans when device has playlist folder
       // (runs even when not syncing playlists, e.g. includePlaylists=false or custom with none)
       const playlistFolder = device.getContentPath("playlist");
-      if (playlistFolder && fs.existsSync(playlistFolder)) {
+      if (playlistFolder && (await device.fs.exists(playlistFolder))) {
         try {
           const core = getPlaylistCore();
           const libraryPlaylists = core.getPlaylists();
           const expectedStems = new Set(
             libraryPlaylists
               .filter((pl) => !(useTagnavi && pl.typeName === "smart"))
-              .map((pl) =>
-                (pl.name.replace(/[/\\?*:"<>|]/g, "_").trim() || "Playlist").toLowerCase()
-              )
+              .map((pl) => devicePlaylistStem(pl.name).toLowerCase())
           );
-          const orphanPaths: string[] = [];
-          const walkPlaylists = (dir: string): void => {
-            let entries: fs.Dirent[];
-            try {
-              entries = fs.readdirSync(dir, { withFileTypes: true });
-            } catch {
-              return;
-            }
-            for (const entry of entries) {
-              const fullPath = path.join(dir, entry.name);
-              if (entry.isDirectory()) {
-                walkPlaylists(fullPath);
-              } else if (path.extname(entry.name).toLowerCase() === ".m3u") {
-                const stem = path.parse(entry.name).name.toLowerCase();
-                if (!expectedStems.has(stem)) {
-                  orphanPaths.push(fullPath);
-                }
-              }
-            }
-          };
-          walkPlaylists(playlistFolder);
+          const orphanPaths = await findOrphanPlaylistFiles(
+            device.fs,
+            playlistFolder,
+            expectedStems
+          );
           if (orphanPaths.length > 0) {
             result.extras = [...result.extras, ...orphanPaths];
             syncOpts.progressCallback?.({
@@ -617,7 +639,8 @@ export function registerSyncHandlers(): void {
               message: `${orphanPaths.length} orphan playlist(s) on device.`,
             });
             if (sweepsOrphans) {
-              const { removed } = removeExtraTracks(
+              const { removed } = await removeExtraTracks(
+                device.fs,
                 orphanPaths,
                 syncOpts.progressCallback,
                 syncSignal
@@ -671,10 +694,10 @@ export function registerSyncHandlers(): void {
             }
           }
 
-          const report = propagateRatingsToDevice(
+          const report = await propagateRatingsForDevice(
             lib.getConnection(),
             opts.deviceId,
-            device.mountPath,
+            device,
             runtimeImport.idxIds,
             selectedTrackIds
           );
@@ -724,7 +747,7 @@ export function registerSyncHandlers(): void {
         console.error("[ipc] Rating propagation failed (non-fatal):", err);
       }
 
-      activeSyncAbort = null;
+      activeSyncAborts.delete(opts.deviceId);
 
       if (result.synced >= 0) {
         try {
@@ -755,22 +778,44 @@ export function registerSyncHandlers(): void {
       syncOpts.progressCallback?.({ event: "complete", path: "", status: "complete" });
 
       return result;
-    })
-  );
+  });
 
-  ipcMain.handle(
+  // The `finally` is the point of the wrapper. The body above deletes its own
+  // entry on the way out, but every throw — a `SyncCancelled`, a failed copy,
+  // an unreadable device — skips that line, and `safe()` swallows the error
+  // into an `{ error }` result. The entry then stays in the map for the life
+  // of the process, so `isSyncActive(deviceId)` is permanently true and
+  // `device:eject` refuses that player forever, with no user action that
+  // clears it.
+  bridgeHandle("sync:start", async (event, opts: SyncOptions) => {
+    try {
+      return await runStartSync(event, opts);
+    } finally {
+      if (typeof opts?.deviceId === "number") activeSyncAborts.delete(opts.deviceId);
+    }
+  });
+
+  bridgeHandle(
     "sync:cancel",
-    safe("sync:cancel", async () => {
-      if (activeSyncAbort) {
-        activeSyncAbort.abort();
-        activeSyncAbort = null;
-        return { cancelled: true };
+    // A device id cancels that device's sync; without one every running sync
+    // is cancelled, which is what the renderer has always meant by "cancel"
+    // when only one could ever be running.
+    safe("sync:cancel", async (_event, deviceId?: number) => {
+      const targets =
+        deviceId === undefined
+          ? [...activeSyncAborts.keys()]
+          : activeSyncAborts.has(deviceId)
+            ? [deviceId]
+            : [];
+      for (const id of targets) {
+        activeSyncAborts.get(id)?.abort();
+        activeSyncAborts.delete(id);
       }
-      return { cancelled: false };
+      return { cancelled: targets.length > 0 };
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "sync:getDevicePreferences",
     safe("sync:getDevicePreferences", async (_e, deviceId: number) =>
       getDeviceSyncPreferences(getLibrary().getConnection(), deviceId))

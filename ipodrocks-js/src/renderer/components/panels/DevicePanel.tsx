@@ -34,6 +34,21 @@ import {
   podcastSetDeviceAutoPodcasts,
 } from "../../ipc/api";
 import { MpcUnavailableModal } from "../modals/MpcUnavailableModal";
+import { WebDeviceLink } from "../web/WebDeviceLink";
+import { isWebMode } from "../../ipc/web-transport";
+import {
+  getDeviceClient,
+  pickDeviceFolder,
+  saveDeviceHandle,
+  supportsDirectoryPicker,
+} from "../../device";
+import {
+  autoPodcastBlock,
+  deviceAdminBlock,
+  deviceLocalityBlock,
+  isRemoteDevice,
+} from "@shared/device-locality";
+import { restoreWebDevices } from "../../device";
 import { formatCodecLabel, formatGb } from "../../utils/format";
 import {
   getTranscodableCodecConfigs,
@@ -141,12 +156,24 @@ export function DevicePanel() {
   const [name, setName] = useState("");
   const [modelId, setModelId] = useState<number | null>(null);
   const [mountPath, setMountPath] = useState("");
+  /** Adding a device that is plugged into this browser rather than the server. */
+  const [webTransport, setWebTransport] = useState(false);
   const [defaultCodecConfigId, setDefaultCodecConfigId] = useState<number | null>(null);
   const [description, setDescription] = useState("");
   const [isDefault, setIsDefault] = useState(false);
   const [runtimeDataEnabled, setRuntimeDataEnabled] = useState(true);
   const [rockboxSmartPlaylists, setRockboxSmartPlaylists] = useState(false);
   const [autoPodcastsEnabled, setAutoPodcastsEnabled] = useState(false);
+  /**
+   * The folder picked for a remote device *before* it exists.
+   *
+   * There is no device id to attach to until the row is saved, so the handle is
+   * held here and attached in `handleSaveDevice()`. The picker itself has to
+   * run straight out of the click — Chrome refuses one outside a user gesture,
+   * and the refusal is indistinguishable from the user cancelling.
+   */
+  const [pendingFolder, setPendingFolder] =
+    useState<FileSystemDirectoryHandle | null>(null);
   const [skipAlbumArtwork, setSkipAlbumArtwork] = useState(false);
   const [artworkMaxDimension, setArtworkMaxDimension] = useState(300);
   const [vbrEnabled, setVbrEnabled] = useState(false);
@@ -193,6 +220,25 @@ export function DevicePanel() {
     getMpcRemindDisabled().then((r) => setMpcRemindDisabledState(r.disabled)).catch(console.error);
   }, [fetchDevices]);
 
+  // Re-open the folders this browser picked in an earlier session. Silent by
+  // design: a handle whose permission has lapsed needs a user gesture to
+  // re-grant, so the card offers a button rather than the app throwing a
+  // dialog at someone who just opened a tab.
+  useEffect(() => {
+    if (!isWebMode()) return;
+    const webIds = (Array.isArray(devices) ? devices : [])
+      .filter((d) => d?.transport === "web" && d?.id != null)
+      .map((d) => d.id);
+    if (webIds.length === 0) return;
+    void restoreWebDevices(webIds).then(() => {
+      for (const id of webIds) {
+        pingDevice(id)
+          .then((r) => setOnlineStatus((prev) => ({ ...prev, [id]: r.online })))
+          .catch(() => {});
+      }
+    });
+  }, [devices]);
+
   useEffect(() => {
     const list = Array.isArray(devices) ? devices : [];
     if (list.length === 0) return;
@@ -222,12 +268,18 @@ export function DevicePanel() {
     setName("");
     setModelId(null);
     setMountPath("");
+    // In a browser there is no other kind of device to add. The library is on
+    // the server and the player is on this machine, which is the whole point of
+    // web mode; offering a server mount path here is how you end up browsing
+    // the *server's* disk looking for your iPod.
+    setWebTransport(isWebMode());
     setDefaultCodecConfigId(null);
     setDescription("");
     setIsDefault(false);
     setRuntimeDataEnabled(true); // true = import Rockbox's runtime data (default)
     setRockboxSmartPlaylists(false);
     setAutoPodcastsEnabled(false);
+    setPendingFolder(null);
     setSkipAlbumArtwork(false);
     setArtworkMaxDimension(300);
     setVbrEnabled(false);
@@ -251,6 +303,7 @@ export function DevicePanel() {
     setName(device.name);
     setModelId(device.modelId ?? null);
     setMountPath(device.mountPath);
+    setWebTransport(device.transport === "web");
     setDescription(device.description ?? "");
     setIsDefault(defaultDeviceId === device.id);
     setMusicFolder(device.musicFolder ?? "Music");
@@ -295,6 +348,10 @@ export function DevicePanel() {
 
   const openForAdd = useCallback(() => {
     resetForm();
+    // `resetForm` already picks the only kind this client can add. It used to
+    // be forced to `false` here, which put a server Mount Path and its Browse
+    // button back into the browser's Add form — the thing that sends people
+    // hunting for their iPod on the server's disk.
     setShowDeviceModal(true);
   }, [resetForm]);
 
@@ -398,7 +455,9 @@ export function DevicePanel() {
   }
 
   async function handleSaveDevice() {
-    if (!name.trim() || !mountPath.trim() || modelId == null) {
+    // A web device has no mount path to give: the folder is picked in the
+    // browser afterwards, and the synthetic root is minted by `addDevice`.
+    if (!name.trim() || (!webTransport && !mountPath.trim()) || modelId == null) {
       setFormSubmitted(true);
       return;
     }
@@ -420,7 +479,8 @@ export function DevicePanel() {
 
     const payload = {
       name,
-      mountPath,
+      mountPath: webTransport ? undefined : mountPath,
+      transport: webTransport ? ("web" as const) : ("local" as const),
       modelId,
       defaultCodecConfigId: resolvedCodecConfigId,
       description: description || null,
@@ -458,6 +518,22 @@ export function DevicePanel() {
       }
       if (device?.id) {
         await podcastSetDeviceAutoPodcasts(device.id, autoPodcastsEnabled);
+      }
+      // Attach the folder the user picked in the form. It could not be done
+      // earlier: the handle is stored per device id, and there was no id until
+      // now. Failing here must not lose the device that was just created — the
+      // card's Connect button is the retry.
+      if (device?.id && pendingFolder) {
+        try {
+          await saveDeviceHandle(device.id, pendingFolder);
+          await getDeviceClient()?.attachHandle(device.id, pendingFolder);
+        } catch (err) {
+          toast.warning(
+            `'${name}' was added, but its folder could not be opened: ` +
+              `${err instanceof Error ? err.message : String(err)}. ` +
+              "Press Connect on its card to try again."
+          );
+        }
       }
       if (isDefault && device?.id) {
         await setDefaultDevice(device.id);
@@ -536,6 +612,18 @@ export function DevicePanel() {
     [codecConfigs, mpcAvailable]
   );
 
+  /**
+   * Picks the remote device's folder before the device exists.
+   *
+   * Straight out of the click, with no `await` before the picker call: Chrome
+   * refuses a picker that is not inside a user gesture, and it refuses it the
+   * same way the user dismissing it looks.
+   */
+  async function handlePickDeviceFolder() {
+    const handle = await pickDeviceFolder();
+    if (handle) setPendingFolder(handle);
+  }
+
   async function handlePickMount() {
     const result = await pickFolder();
     if (result) setMountPath(result);
@@ -546,7 +634,7 @@ export function DevicePanel() {
       {/* Top bar */}
       <div className="flex items-center gap-3">
         <Button variant="primary" size="sm" onClick={openForAdd}>
-          + Add Device
+          {isWebMode() ? "+ Add Remote Device" : "+ Add Device"}
         </Button>
         <span className="text-xs text-muted-foreground ml-auto">
           {deviceList.length} device{deviceList.length !== 1 ? "s" : ""}
@@ -561,11 +649,15 @@ export function DevicePanel() {
       ) : deviceList.length === 0 ? (
         <EmptyState
           icon="⊞"
-          title="No devices configured"
-          description="Add a device to manage your iPod or music player"
+          title={isWebMode() ? "No remote devices yet" : "No devices configured"}
+          description={
+            isWebMode()
+              ? "Add the device plugged into this computer. You pick its folder in this browser."
+              : "Add a device to manage your iPod or music player"
+          }
           action={
             <Button variant="primary" size="sm" onClick={openForAdd}>
-              + Add Device
+              {isWebMode() ? "+ Add Remote Device" : "+ Add Device"}
             </Button>
           }
         />
@@ -580,7 +672,17 @@ export function DevicePanel() {
               platform: window.api?.platform,
               online: status,
               deviceName: d?.name ?? "this device",
+              transport: d?.transport,
             });
+            // A player lives on one machine. From the wrong one it is listed
+            // and removable — it is the user's device either way — but nothing
+            // that touches its filesystem is offered.
+            const localityBlock = deviceLocalityBlock(d?.transport, isWebMode());
+            // Narrower, and deliberately asymmetric: the desktop app may still
+            // remove a remote device — somebody has to be able to tidy up a
+            // browser that never comes back — while a browser may not touch a
+            // server-attached device's settings at all.
+            const adminBlock = deviceAdminBlock(d?.transport, isWebMode());
             return (
               <Card key={d?.id ?? `device-${idx}`}>
                 <div className="flex items-start gap-3 mb-4">
@@ -598,6 +700,22 @@ export function DevicePanel() {
                           DEFAULT
                         </span>
                       )}
+                      {/* Which machine this device is plugged into is the one
+                          thing that changes what the card can do, and it is
+                          otherwise only legible from what is missing. Same
+                          badge on both sides — in the desktop app it says "not
+                          mine to sync", in a browser it says "this is the one
+                          you are holding" — because a badge that means
+                          different things in different windows is worse than
+                          none. `warning` is the established token for it. */}
+                      {isRemoteDevice(d?.transport) && (
+                        <span
+                          className="px-1.5 py-0.5 text-[9px] font-medium rounded bg-warning/20 text-warning"
+                          title="Held by a browser through the web server, not plugged into the machine running iPodRocks."
+                        >
+                          REMOTE
+                        </span>
+                      )}
                       {d?.usbVendorId && d?.usbProductId && (
                         <span
                           className="px-1.5 py-0.5 text-[9px] font-mono rounded bg-muted text-muted-foreground"
@@ -612,11 +730,19 @@ export function DevicePanel() {
                   </div>
                 </div>
 
+                {d?.transport === "web" && d?.id != null && (
+                  <div className="mb-4">
+                    <WebDeviceLink deviceId={d.id} />
+                  </div>
+                )}
+
                 <div className="space-y-2 text-xs mb-4">
+                  {d?.transport !== "web" && (
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Device Path</span>
                     <span className="text-muted-foreground truncate max-w-[60%] text-right">{d?.mountPath ?? ""}</span>
                   </div>
+                  )}
                   {d.modelName && (
                     <div className="flex justify-between">
                       <span className="text-muted-foreground">Model</span>
@@ -785,14 +911,24 @@ export function DevicePanel() {
                   </div>
                 )}
 
+                {localityBlock && (
+                  <p className="mb-3 rounded-lg border border-border bg-muted/30 p-2 text-xs text-muted-foreground">
+                    {localityBlock}
+                  </p>
+                )}
+
                 <div className="flex flex-wrap gap-2">
-                  <Button
-                    size="sm"
-                    onClick={() => d?.id != null && handleCheck(d.id)}
-                    disabled={checking.has(d?.id ?? 0)}
-                  >
-                    {checking.has(d?.id ?? 0) ? "Checking…" : "Check Device"}
-                  </Button>
+                  {/* The title lives on the wrapper for the same reason it does
+                      on Eject below: a disabled Button never gets the hover. */}
+                  <span title={localityBlock ?? "Check Device"} className="inline-flex">
+                    <Button
+                      size="sm"
+                      onClick={() => d?.id != null && handleCheck(d.id)}
+                      disabled={checking.has(d?.id ?? 0) || localityBlock !== null}
+                    >
+                      {checking.has(d?.id ?? 0) ? "Checking…" : "Check Device"}
+                    </Button>
+                  </span>
                   {/* The title lives on the wrapper, not the button: `Button`
                       sets `disabled:pointer-events-none`, so a disabled button
                       never receives the hover that would show its own. */}
@@ -811,16 +947,26 @@ export function DevicePanel() {
                       {isEjecting ? <Spinner size="sm" className="!w-4 !h-4" /> : <EjectIcon />}
                     </Button>
                   </span>
-                  <Button size="sm" variant="secondary" onClick={() => d && openForEdit(d)}>
-                    Edit
-                  </Button>
-                  <Button
-                    variant="danger"
-                    size="sm"
-                    onClick={() => d?.id != null && handleRemove(d.id)}
-                  >
-                    Remove
-                  </Button>
+                  <span title={adminBlock ?? "Edit"} className="inline-flex">
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      onClick={() => d && openForEdit(d)}
+                      disabled={adminBlock !== null}
+                    >
+                      Edit
+                    </Button>
+                  </span>
+                  <span title={adminBlock ?? "Remove"} className="inline-flex">
+                    <Button
+                      variant="danger"
+                      size="sm"
+                      onClick={() => d?.id != null && handleRemove(d.id)}
+                      disabled={adminBlock !== null}
+                    >
+                      Remove
+                    </Button>
+                  </span>
                 </div>
               </Card>
             );
@@ -835,7 +981,14 @@ export function DevicePanel() {
           setShowDeviceModal(false);
           resetForm();
         }}
-        title={editingDeviceId !== null ? "Edit Device" : "Add Device"}
+        title={
+          editingDeviceId !== null
+            ? "Edit Device"
+            : isWebMode()
+              ? "Add Remote Device"
+              : "Add Device"
+        }
+        wide
       >
         <div className="space-y-4">
           {/* Device Name */}
@@ -863,7 +1016,56 @@ export function DevicePanel() {
             hint={formSubmitted && modelId == null ? "Please select a device model" : undefined}
           />
 
+          {/* Where the device is plugged in.
+              Not a question any more, in either direction: in the desktop app
+              the answer is always "this machine", in a browser always "the
+              machine running the browser". The long version lives in the
+              tooltip — as body text it was four lines of prose above the one
+              control that matters. */}
+          {isWebMode() && editingDeviceId == null && (
+            <div className="rounded-lg border border-border bg-muted/30 p-3">
+              <div className="flex items-center gap-1.5">
+                <span className="text-sm font-medium text-foreground">
+                  Remote device
+                </span>
+                <InfoTooltip text="You pick its folder in this browser, and every file travels from the server through this tab onto the device. A device plugged into the server itself is added from the app running there." />
+              </div>
+
+              {!supportsDirectoryPicker() ? (
+                <p className="mt-2 text-xs text-amber-600 dark:text-amber-500">
+                  <strong>This browser cannot hold a device.</strong> Granting a
+                  page access to a folder needs the File System Access API —
+                  Chrome, Edge or another Chromium browser on a desktop.
+                </p>
+              ) : (
+                <>
+                  <div className="mt-2 flex items-center gap-2">
+                    <Button
+                      size="sm"
+                      onClick={handlePickDeviceFolder}
+                      className="whitespace-nowrap"
+                    >
+                      {pendingFolder ? "Change folder" : "Choose folder"}
+                    </Button>
+                    <span
+                      className={`min-w-0 flex-1 truncate text-xs ${
+                        pendingFolder ? "text-foreground" : "text-muted-foreground"
+                      }`}
+                      title={pendingFolder?.name}
+                    >
+                      {pendingFolder ? `✓ ${pendingFolder.name}` : "No folder chosen"}
+                    </span>
+                  </div>
+                  <p className="mt-1.5 text-[11px] text-muted-foreground">
+                    Optional — you can connect it from its card later.
+                  </p>
+                </>
+              )}
+            </div>
+          )}
+
           {/* Mount Path */}
+          {!webTransport && (
           <div>
             <Label>
               <span className="inline-flex items-center gap-1">
@@ -886,9 +1088,17 @@ export function DevicePanel() {
               <p className="mt-1 text-xs text-blue-500">Please enter a mount path</p>
             )}
           </div>
+          )}
 
           {/* USB identity — optional. Pins the device to a physical USB unit so
-              two players that mount at the same path stay distinguishable. */}
+              two devices that mount at the same path stay distinguishable.
+
+              Hidden for a remote device, and not merely disabled: this list is
+              the *server's* USB bus, which says nothing whatever about the
+              player in the user's hand. Leaving it visible meant a dropdown
+              that is always empty, above a red "Could not read USB devices on
+              this system" that is both true and entirely beside the point. */}
+          {!webTransport && (
           <div>
             <div className="flex gap-2 items-end">
               <div className="flex-1">
@@ -908,6 +1118,7 @@ export function DevicePanel() {
               </Button>
             </div>
           </div>
+          )}
 
           {/* Transfer Mode */}
           <div>
@@ -1078,18 +1289,35 @@ export function DevicePanel() {
                 <InfoTooltip text="When enabled, smart playlists are written to .rockbox/tagnavi_custom.config as live, auto-updating tagtree views instead of frozen .m3u snapshots. Requires Rockbox firmware on the device. Other playlist kinds still write .m3u." />
               </span>
             </label>
-            <label className="flex items-center gap-2.5 cursor-pointer">
+            {/* Auto Podcasts is a timer in the *server* process, so it needs a
+                player the server can reach without anybody present. A remote
+                player is connected only while its tab is open. The main process
+                refuses it too — this only saves the user the round trip. */}
+            <label
+              className={`flex items-center gap-2.5 ${
+                autoPodcastBlock(webTransport ? "web" : "local")
+                  ? "cursor-not-allowed opacity-60"
+                  : "cursor-pointer"
+              }`}
+              title={autoPodcastBlock(webTransport ? "web" : "local") ?? undefined}
+            >
               <input
                 type="checkbox"
                 className={checkboxClass}
-                checked={autoPodcastsEnabled}
+                checked={autoPodcastsEnabled && !webTransport}
+                disabled={autoPodcastBlock(webTransport ? "web" : "local") !== null}
                 onChange={(e) => setAutoPodcastsEnabled(e.target.checked)}
               />
               <span className="text-sm text-foreground flex items-center gap-1">
                 Auto Podcasts
-                <InfoTooltip text="When enabled, new podcast episodes are automatically copied to this device in the background as they are downloaded, independently of any manual sync." />
+                <InfoTooltip text="When enabled, new podcast episodes are automatically copied to this device in the background as they are downloaded, independently of any manual sync. Unavailable for a remote device: the schedule runs on the server, and a remote device is only connected while its browser tab is open." />
               </span>
             </label>
+            {webTransport && (
+              <p className="-mt-1 ml-7 text-xs text-muted-foreground">
+                {autoPodcastBlock("web")}
+              </p>
+            )}
             <label className="flex items-center gap-2.5 cursor-pointer">
               <input
                 type="checkbox"

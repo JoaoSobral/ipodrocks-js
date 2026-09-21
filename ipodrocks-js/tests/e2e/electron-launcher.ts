@@ -51,6 +51,13 @@ export async function launchApp(
       // minutes of windows stealing focus. Set IPODROCKS_HEADLESS=0 to watch a
       // run happen, which is worth doing when a UI test fails only in CI.
       IPODROCKS_HEADLESS: process.env.IPODROCKS_HEADLESS ?? "1",
+      // Several specs stand up stub HTTP servers on loopback in place of
+      // LibriVox, Google Books and real podcast feeds. `safeFetch` refuses
+      // non-public addresses by default — that is the SSRF guard — so the
+      // harness has to opt in the way a user with a feed on their own LAN
+      // would. The guard itself is covered by
+      // regressions/security-audit-hardening.test.ts.
+      IPODROCKS_ALLOW_PRIVATE_FETCH: "1",
       ...extraEnv,
     },
   });

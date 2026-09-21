@@ -1,6 +1,6 @@
 # Devices
 
-The Devices panel lets you add, edit, and check Rockbox and mountable players.
+The Devices panel lets you add, edit, and check any Rockbox-capable player or mountable drive — an iPod, a Sansa, an iRiver, a Cowon, an Archos, or a plain USB stick. iPodRocks treats them all the same way: a device is a folder tree it can write to.
 
 ## What it does
 
@@ -45,6 +45,102 @@ aimed at the empty folder macOS sometimes leaves behind after a previous eject.
 
 Rocksy can eject for you too, via `device_eject` — it confirms first.
 
+## Remote devices
+
+When you reach iPodRocks through the [web server](./settings-web-server.md), the
+device does **not** have to be plugged into the machine holding your library.
+It is plugged into the machine you are sitting at, and your browser hands
+iPodRocks access to it. That is a **remote device**.
+
+So there are two kinds of device, and which one a device is is a fact about
+where the thing is physically plugged in, not a preference:
+
+| | Local device | Remote device |
+|---|---|---|
+| Plugged into | the machine running iPodRocks | the machine running your browser |
+| Added from | the desktop app | the browser |
+| Mount path | a folder on that machine | none — you pick the folder in your browser |
+| Synced by | the desktop app | that browser tab |
+| Auto Podcasts | yes | no |
+| Eject from iPodRocks | macOS/Linux | no — use your own file manager |
+
+A remote device carries an orange **REMOTE** badge on its card, in both the
+browser and the desktop app — which machine a device is plugged into is the one
+thing that changes what its card can do, and it is otherwise legible only from
+what is missing.
+
+**Each one is only usable from its own side**, and both are still listed on the
+other — hiding a device would read as "iPodRocks lost my iPod".
+
+What the other side may do differs, on purpose:
+
+- **In the browser, a server-attached device is read-only.** Sync, Check, Edit
+  and Remove are all refused. Its mount path, USB identity and folder layout are
+  facts about a machine the browser cannot see and could never verify, so it has
+  no business changing them.
+- **In the desktop app, a remote device can still be removed** — somebody has to
+  be able to tidy up a device whose browser is never coming back — but not
+  synced or checked.
+
+These are refused by the app itself, not merely hidden from the buttons.
+
+### Adding one
+
+In the browser, **+ Add Remote Device** is the only kind you can add. There is
+no mount path to type and no Browse button, because there is no folder on the
+server to point at — and no **USB Device** dropdown, because that list is the
+server's own USB bus and says nothing about the device in your hand.
+
+Press **Choose folder** and pick the root of the device: the folder holding
+`Music` and `.rockbox`. It is optional — save without it and press **Connect
+this device** on its card whenever you like. Either way, from that point the tab
+*is* the device.
+
+### What to expect, and why
+
+- **It needs Chrome, Edge or another Chromium browser, on a desktop, over
+  HTTPS.** Granting a page access to a folder needs the File System Access API,
+  which Firefox and Safari do not implement and iOS does not have at all. (A
+  Firefox-derived browser such as Zen, LibreWolf or Floorp is Firefox for this
+  purpose and will not work.) iPodRocks checks for the API itself rather than
+  sniffing the browser's name, so a Chromium browser it has never heard of works
+  and a Firefox fork claiming to be Chrome does not. If yours cannot do it, the
+  Add Device form says so before you fill it in.
+- **No browser will do it over plain HTTP.** You need a real HTTPS address; a
+  Cloudflare Tunnel is the easiest way to get one — see
+  [Deploying the Server](/guide/server-deployment).
+- **The tab has to stay open.** Close it and the device goes offline. Next time
+  you press Connect again, because a browser deliberately does not let a page
+  keep silent access to your disk across visits.
+- **Only one tab at a time.** Opening the same device in a second tab detaches
+  the first. Two tabs writing into Rockbox's index — which has no checksum —
+  would corrupt it.
+- **If the folder opens read-only**, the card says so and nothing is written.
+  Disconnect and connect again, granting write access this time.
+- **Every byte crosses the network twice.** A first full sync of a large library
+  over a slow link takes as long as that implies, and the card says so before
+  you start. Transcode once into a [shadow library](./library.md) on the server
+  and sync a selection rather than everything; a device pointed at a shadow
+  copies files as they already are.
+- **Auto Podcasts is unavailable**, and the checkbox says why. The schedule is a
+  timer in the server, and a remote device is connected only while its tab is
+  open — so it would either do nothing or start pushing gigabytes through a
+  browser nobody is watching. Episodes still download on schedule; they reach
+  the device on your next sync.
+- **Eject is greyed out.** The volume belongs to your computer, not the server,
+  so nothing iPodRocks runs can unmount it. Use your own file manager.
+- **There is no USB Device dropdown.** That list is the *server's* USB bus,
+  which says nothing about the device in your hand.
+- **Modification times are not set on the device.** The File System Access API
+  cannot set them, so the sync compares file sizes instead — which it already
+  tried first. iPodRocks also measures the difference between your browser's
+  clock and the server's and corrects for it, because a clock a few seconds out
+  would otherwise make every sync recopy the whole library.
+
+Everything else — codec profiles, folder layout, orphan policy, playlists,
+ratings, runtime data — behaves exactly as it does on the desktop. A device is a
+device; only the filesystem underneath it changed.
+
 ## Identifying a device
 
 A device can be identified in one of two ways.
@@ -53,21 +149,21 @@ A device can be identified in one of two ways.
 
 The catch: mount paths are not unique. Two iPods will both mount at `/Volumes/IPOD` (macOS), `/media/ipod` (Linux) or `E:\` (Windows) if you connect them one at a time. iPodRocks cannot tell them apart, so the second one inherits the first one's sync history, ratings, and podcast state.
 
-**By USB device.** Pick your player from the **USB Device** dropdown in the Add/Edit form and iPodRocks records its USB vendor id, product id and serial number. From then on the device is only considered connected when *that exact unit* is plugged in — a different player at the same mount path will not be mistaken for it.
+**By USB device.** Pick your device from the **USB Device** dropdown in the Add/Edit form and iPodRocks records its USB vendor id, product id and serial number. From then on the device is only considered connected when *that exact unit* is plugged in — a different device at the same mount path will not be mistaken for it.
 
 Notes:
 
-- The dropdown lists what is connected **right now**. Plug the player in first, or press **Refresh** after connecting it. Recognized iPod models are named and listed at the top, including ones in DFU or WTF (recovery) mode.
+- The dropdown lists what is connected **right now**. Plug the device in first, or press **Refresh** after connecting it. Recognized iPod models are named and listed at the top, including ones in DFU or WTF (recovery) mode.
 - A USB-bound device shows as **offline** whenever its unit is unplugged, even if something else is mounted at its path. That is the point of the setting.
 - Some devices report **no serial number**. iPodRocks will say so, and identification falls back to the model level — enough to tell an iPod classic from an iPod nano, but not two identical classics apart.
-- **To fully separate two players that share a mount path, give both of them a USB identity.** An untagged device still matches on mount path alone, so it can still claim a path its tagged sibling has vacated.
+- **To fully separate two devices that share a mount path, give both of them a USB identity.** An untagged device still matches on mount path alone, so it can still claim a path its tagged sibling has vacated.
 - If USB information cannot be read on your system, iPodRocks says so and quietly falls back to mount-path matching rather than reporting every device as offline.
 - **Clearing a USB identity** asks for confirmation, because the device drops back to mount-path matching and another drive at the same path could then be mistaken for it. Changing it to a different unit just shows a notice.
 
 ## How to work with it
 
 1. **Add a device** only when it is mounted. Use the real mount path (e.g. `/media/ipod`, not a symlink if that causes issues).
-2. **Set a USB Device** if you own more than one player, or if you have ever been unsure which device you were about to sync. It costs one dropdown selection and removes a whole class of mix-ups.
+2. **Set a USB Device** if you own more than one device, or if you have ever been unsure which device you were about to sync. It costs one dropdown selection and removes a whole class of mix-ups.
 3. **Choose codec** based on device support. Rockbox supports many formats; use direct copy for FLAC/MP3 if the device plays them. Use MPC or Opus for smaller files.
 4. **Use shadow libraries** when you want to pre-transcode once and sync quickly to multiple devices.
 5. **Check Device** before syncing to see what will change. Use "Recheck" after a sync to confirm.
@@ -79,11 +175,15 @@ Notes:
 [Rocksy](./assistant.md) can inspect and operate your devices from the chat:
 
 - "What devices do I have?" → `device_list`
-- "What USB devices are connected?" / "What's my iPod's serial number?" → `usb_device_list`
-- "Both my iPods mount at the same path — tell them apart" → `device_set_usb_identity` *(asks you to confirm first)*
+- "What USB devices are connected?" / "What's my player's serial number?" → `usb_device_list`
+- "Both my players mount at the same path — tell them apart" → `device_set_usb_identity` *(asks you to confirm first)*
 - "Stop identifying this device by USB" → `device_set_usb_identity` *(asks you to confirm first)*
-- "Check my iPod" → `device_check` *(asks you to confirm first)*
-- "Sync my iPod" → `device_sync` *(asks you to confirm first)*
+- "Check my player" → `device_check` *(asks you to confirm first)*
+- "Sync my player" → `device_sync` *(asks you to confirm first)*
 - "Remove the old Nano" → `device_remove` *(asks you to confirm first)*
 
 Listing devices and USB devices runs immediately; checking, syncing, removing a device, and changing a USB identity each pause for a **Confirm / Cancel** prompt before running.
+
+Rocksy cannot pick the folder for a browser-held device. That picker has to be
+opened by your own click — a page is not allowed to ask for a folder on its own,
+which is exactly the protection you want.

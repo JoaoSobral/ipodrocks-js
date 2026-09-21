@@ -1,5 +1,95 @@
 # Changelog
 
+## [3.0.0] — 2026-09
+
+### 🌍 Sync from anywhere
+
+**Your player no longer has to be plugged into the machine that holds your music.**
+
+Run iPodRocks as a server — on a NAS, a home server, an old desktop in a
+cupboard — and open it in a browser from wherever you happen to be. Plug your
+player into *that* laptop, point the browser at its folder, and sync it to the
+library at home.
+
+Nothing is copied to the laptop in between. Same app, same library, same
+database, same ratings and play history. Just reached over the network.
+
+```
+  the machine with your music            the machine you are sitting at
+  ───────────────────────────            ──────────────────────────────
+  library + SQLite + ffmpeg   ──HTTPS──▶  a browser tab   ──USB──▶  your player
+  the sync engine             ◀──WS────   holds the device
+```
+
+That is the release. Everything below is what it took to make it work properly.
+
+### The whole app, in a browser
+
+Turn on **Settings → Web Server** and iPodRocks serves its entire interface over
+HTTP — library, devices, sync, playlists, ratings, podcasts, audiobooks. Not a
+cut-down companion view: the same app, against the same database. The desktop
+window and a browser can both be open at once.
+
+### Remote devices
+
+**+ Add Remote Device** registers a player plugged into the machine running your
+browser. There is no mount path to type — you pick the folder with your browser's
+own picker, right in the form — and that tab holds the device for as long as it
+is open. Remote devices carry an orange **REMOTE** badge on their card.
+
+A device belongs to exactly one machine, and iPodRocks no longer pretends
+otherwise: a server-attached device cannot be synced or edited from a browser,
+and a remote device cannot be synced from the desktop app. Both stay visible on
+both sides, each saying plainly why the rest is greyed out.
+
+Remote devices need **Chrome, Edge or another Chromium browser on a desktop,
+over HTTPS** — Firefox and Safari have no way to grant a page access to a folder,
+and iPodRocks says so up front rather than failing halfway through.
+
+### Runs headless
+
+A standalone daemon with no Electron at all, so the machine holding your library
+needs no screen and no login session. Ships with a `Dockerfile`, a
+`docker-compose.yml` with a `cloudflared` sidecar, a systemd unit, and a
+deployment guide that walks the whole thing end to end.
+
+### Signing in is not the same as being let in
+
+Sign in with Google, GitHub, Facebook or a plain password account — but a valid
+Google login gets you nowhere on its own. Only accounts on an allowlist you
+control reach your library. The first person to arrive claims the server with a
+one-time code it prints at startup and becomes its owner; everyone else is
+refused until the owner adds them.
+
+Built to sit behind a **Cloudflare Tunnel**, which opens no inbound port at all.
+Cloudflare Access is verified at the origin rather than merely trusted. Any
+reverse proxy works too, or hand the server your own certificate.
+
+### Also in this release
+
+- **Fixed:** a short sync could report "Nothing to sync — device up to date."
+  over work it had just done. The progress window stopped listening too early
+  and missed its own results.
+- Rocksy can manage the server's allowlist and active sessions — "who can sign
+  in to my server?", "give my partner an account", "sign every browser out" —
+  owner-only, and it never reads a claim token or password into the chat.
+- The container installs `mpcenc`, and the server now reports both encoders at
+  startup instead of failing at the first Musepack track.
+
+### Worth knowing
+
+**Everything you sync travels to your browser and then to the player.** That is
+what makes a remote device possible, and it is also the cost: pushing a large
+lossless library down a home connection is not practical. Sync a selection, or
+sync from a shadow library, and it is comfortable.
+
+### Upgrading
+
+Nothing changes until you turn the web server on — it is off by default, and the
+desktop app behaves exactly as it did in 2.x. No settings to migrate, no library
+to re-scan.
+
+
 ## [2.3.3] — 2026-09
 
 ### Fixes
@@ -39,6 +129,10 @@
 - **Musepack files no longer get a cover art tag that hides their ReplayGain.** (#125) The artwork was written with the wrong APEv2 item type — "text" instead of "binary". Tag editors then read the JPEG as text and split it on the zero bytes inside it, which is where the hundreds of empty "Cover Art" fields came from, and Rockbox filled its tag buffer with the image before it ever reached the ReplayGain values that came after it. The type is now correct, and ReplayGain is written *ahead* of the artwork so it is reached either way. Files transcoded from now on are correct; use Settings → Maintenance to repair the ones you already have.
 
 ### Security
+
+- **A cross-origin request can no longer reach anything that changes state.** The session cookie was already `SameSite=Lax`, which withholds it from a cross-site POST, but that left the protection resting on a cookie attribute rather than on anything the server checks. Every `/api` request that is not a plain read is now refused unless it comes from an origin this server actually serves — the same rule the event WebSocket has always applied to its upgrade, and reading from the same list. OAuth callbacks are unaffected: they arrive as ordinary navigations.
+
+- **Flood ceilings on the HTTP surface.** Failed logins were already counted and locked out per account and per address; total request volume was not. The control plane, media streaming and the auth endpoints now each carry a ceiling set far above anything a person generates. Copying a library is deliberately exempt — a sync is one request per file, and any limit low enough to be protection would stop it.
 
 - Updated two build-time dependencies flagged by Dependabot: `browserslist` (4.28.2 → 4.28.9) and `@xmldom/xmldom` (0.8.13 → 0.8.15). Both are development tooling and were never part of the shipped app.
 

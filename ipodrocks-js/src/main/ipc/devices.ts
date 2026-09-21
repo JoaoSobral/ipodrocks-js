@@ -1,8 +1,10 @@
-import * as fs from "fs";
 import * as path from "path";
-import { ipcMain } from "electron";
+import { handle as bridgeHandle } from "../host/bridge";
 import {
   safe,
+  blockWrongAdmin,
+  blockWrongDeviceOwner,
+  blockWrongLocality,
   getLibrary,
   getPlaylistCore,
   getDevicesCore,
@@ -20,8 +22,12 @@ import {
   type LayoutOptions,
 } from "../sync/sync-core";
 import { compareLibraries } from "../sync/name-size-sync";
+import {
+  devicePlaylistStem,
+  findOrphanPlaylistFiles,
+} from "../sync/playlist-sync";
 import { toMountRelative } from "../rockbox/device-path-match";
-import { readAndIngestRuntimeData } from "../rockbox/runtime-ingest";
+import { ingestRuntimeDataForDevice } from "../rockbox/runtime-ingest";
 import {
   buildAnalysisSummaryFromDb,
   getArtistsFromPlaybackStats,
@@ -29,19 +35,45 @@ import {
 import { logActivity } from "../activity/activity-logger";
 import { invalidateAssistantCache } from "../assistant/assistantChat";
 import type { AddDeviceConfig } from "../../shared/types";
+import { subjectForSessionId } from "../../server/auth/sessions";
 
 export function registerDeviceHandlers(): void {
-  ipcMain.handle(
+  bridgeHandle(
     "device:list",
     safe("device:list", async () => {
       return getDevicesCore().getDevices().map((d) => d.profile);
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "device:add",
-    safe("device:add", async (_event, config: AddDeviceConfig) => {
-      const device = getDevicesCore().addDevice(config);
+    safe("device:add", async (event, config: AddDeviceConfig) => {
+      // **Who may attach a browser-held player is decided here, not by the
+      // client.** `device-attach` is otherwise gated only on the row saying
+      // `transport = 'web'`, which every allowlisted user can satisfy for
+      // every web device — so a second identity could announce someone else's
+      // device id, evict them (the per-device mutex detaches the incumbent)
+      // and have every subsequent `RemoteDeviceFs` call, and every one-shot
+      // data-plane token, routed to a folder of their own choosing. Recording
+      // the registering identity is what turns that mutex back into a safety
+      // property. Taken from the transport that carried the call, which is the
+      // only source a client cannot lie about.
+      //
+      // A browser may only register a *remote* device. `transport` decides
+      // which filesystem every later call uses, and a web client registering
+      // `transport: "local"` with a mount path of its choosing would create a
+      // row pointing at the server's own disk — which is also how a host
+      // volume reached `device:eject`. The renderer already only offers
+      // "remote" in a browser; this is the guard behind that courtesy.
+      const isWebClient = event.sessionId !== undefined;
+      const device = getDevicesCore().addDevice({
+        ...config,
+        transport: isWebClient ? "web" : config.transport,
+        mountPath: isWebClient ? undefined : config.mountPath,
+        webOwnerSubject: isWebClient
+          ? subjectForSessionId(event.sessionId as string)
+          : null,
+      });
       logActivity(
         getLibrary().getConnection(),
         "add_device",
@@ -52,16 +84,25 @@ export function registerDeviceHandlers(): void {
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "device:listUsb",
-    safe("device:listUsb", async () => {
+    safe("device:listUsb", async (event) => {
+      // A remote browser must never be shown this. The enumeration is of the
+      // *server's* USB bus, so over the web it is both nonsense as UX — the
+      // user is offered hardware plugged into a machine in another room — and
+      // an information leak about the host. A web client gets an empty,
+      // explicitly unavailable snapshot, which the picker already knows how to
+      // render.
+      if (event.sessionId !== undefined) {
+        return { available: false, devices: [] };
+      }
       // Force a fresh enumeration: the user opens this dropdown precisely when
       // they have just plugged something in, so a cached snapshot is wrong.
       return await listUsbDevices();
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "device:getModels",
     safe("device:getModels", async () => {
       return getLibrary().getConnection()
@@ -70,7 +111,7 @@ export function registerDeviceHandlers(): void {
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "device:getCodecConfigs",
     safe("device:getCodecConfigs", async () => {
       return getLibrary().getConnection().prepare(`
@@ -83,21 +124,21 @@ export function registerDeviceHandlers(): void {
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "device:setDefault",
     safe("device:setDefault", async (_event, deviceId: number | null) => {
       return getDevicesCore().setDefaultDevice(deviceId);
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "device:getDefault",
     safe("device:getDefault", async () => {
       return getDevicesCore().getDefaultDeviceId();
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "device:getSyncedPaths",
     safe("device:getSyncedPaths", async (_event, deviceId: number) => {
       const rows = getLibrary().getConnection()
@@ -107,9 +148,15 @@ export function registerDeviceHandlers(): void {
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "device:update",
-    safe("device:update", async (_event, deviceId: number, updates: Record<string, unknown>) => {
+    safe("device:update", async (event, deviceId: number, updates: Record<string, unknown>) => {
+      const existing = getDevicesCore().getDeviceById(deviceId);
+      if (!existing) return { error: `Device ${deviceId} not found` };
+      const wrongAdmin = blockWrongAdmin(event, existing.profile.transport);
+      if (wrongAdmin) return wrongAdmin;
+      const notYours = blockWrongDeviceOwner(event, deviceId);
+      if (notYours) return notYours;
       const ok = getDevicesCore().updateDevice(deviceId, updates);
       if (!ok) return { error: "Update failed" };
       const device = getDevicesCore().getDeviceById(deviceId)?.profile;
@@ -123,16 +170,23 @@ export function registerDeviceHandlers(): void {
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "device:remove",
-    safe("device:remove", async (_event, deviceId: number) => {
+    safe("device:remove", async (event, deviceId: number) => {
+      const existing = getDevicesCore().getDeviceById(deviceId);
+      if (existing) {
+        const wrongAdmin = blockWrongAdmin(event, existing.profile.transport);
+        if (wrongAdmin) return wrongAdmin;
+        const notYours = blockWrongDeviceOwner(event, deviceId);
+        if (notYours) return notYours;
+      }
       const result = getDevicesCore().deleteDevice(deviceId);
       invalidateAssistantCache(); // F9: device config changed
       return result;
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "device:ping",
     safe("device:ping", async (_event, deviceId: number) => {
       const device = getDevicesCore().getDeviceById(deviceId);
@@ -142,25 +196,41 @@ export function registerDeviceHandlers(): void {
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "device:eject",
-    safe("device:eject", async (_event, deviceId: number) => {
+    safe("device:eject", async (event, deviceId: number) => {
       if (!isEjectSupported()) {
         return { error: "Ejecting from iPodRocks is not supported on this platform yet." };
       }
       const device = getDevicesCore().getDeviceById(deviceId);
       if (!device) return { error: "Device not found" };
+      // Unmounting is a host-level effect on a volume the caller may not own.
+      const wrongMachine = blockWrongLocality(event, device.profile.transport);
+      if (wrongMachine) return wrongMachine;
+      const notYours = blockWrongDeviceOwner(event, deviceId);
+      if (notYours) return notYours;
       const { name, mountPath } = device.profile;
 
       // Unmounting under a running sync leaves half-copied files behind. The OS
       // would refuse anyway, but "Resource busy" tells the user nothing.
-      if (isSyncActive()) {
+      if (isSyncActive(deviceId)) {
         return { error: "A sync is running. Wait for it to finish before ejecting." };
       }
       // A dev-mode device is an ordinary folder that `isDeviceOnline` reports as
       // online unconditionally — there is no volume to eject.
       if (device.profile.devMode) {
         return { error: `'${name}' is a dev-mode device, so there is nothing to eject.` };
+      }
+      // Ejecting is something the machine holding the device does, and for a
+      // web device that is the user's own browser, not this server. Running
+      // `diskutil` here would unmount whatever the server happens to have at
+      // that path, which is nothing at all — the root is synthetic.
+      if (!device.fs.capabilities.eject) {
+        return {
+          error:
+            `'${name}' is connected through a browser, so it has to be ejected ` +
+            "from the computer it is plugged into.",
+        };
       }
       // The st_dev check is what separates a live volume from a plain directory
       // or the orphan left behind by a previous eject. Without it we would hand
@@ -181,11 +251,15 @@ export function registerDeviceHandlers(): void {
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "device:check",
-    safe("device:check", async (_event, deviceId: number) => {
+    safe("device:check", async (event, deviceId: number) => {
       const device = getDevicesCore().getDeviceById(deviceId);
       if (!device) return { error: `Device ${deviceId} not found` };
+      const wrongMachine = blockWrongLocality(event, device.profile.transport);
+      if (wrongMachine) return wrongMachine;
+      const notYours = blockWrongDeviceOwner(event, deviceId);
+      if (notYours) return notYours;
 
       await refreshUsbSnapshot();
       if (!isDeviceOnline(device.profile)) {
@@ -200,7 +274,7 @@ export function registerDeviceHandlers(): void {
         device.getContentStats("audiobook"),
         device.getContentStats("playlist"),
       ]);
-      const space = device.getAvailableSpace();
+      const space = await device.getAvailableSpace();
 
       const maps = buildLibraryTrackMaps(lib);
       let libraryMusicMap = maps.music;
@@ -334,34 +408,17 @@ export function registerDeviceHandlers(): void {
 
       const playlistFolder = device.getContentPath("playlist");
       let playlistOrphans: string[] = [];
-      if (playlistFolder && fs.existsSync(playlistFolder)) {
+      if (playlistFolder && (await device.fs.exists(playlistFolder))) {
         const core = getPlaylistCore();
         const libraryPlaylists = core.getPlaylists();
         const expectedStems = new Set(
-          libraryPlaylists.map((pl) =>
-            (pl.name.replace(/[/\\?*:"<>|]/g, "_").trim() || "Playlist").toLowerCase()
-          )
+          libraryPlaylists.map((pl) => devicePlaylistStem(pl.name).toLowerCase())
         );
-        const walkPlaylists = (dir: string): void => {
-          let entries: fs.Dirent[];
-          try {
-            entries = fs.readdirSync(dir, { withFileTypes: true });
-          } catch {
-            return;
-          }
-          for (const entry of entries) {
-            const fullPath = path.join(dir, entry.name);
-            if (entry.isDirectory()) {
-              walkPlaylists(fullPath);
-            } else if (path.extname(entry.name).toLowerCase() === ".m3u") {
-              const stem = path.parse(entry.name).name.toLowerCase();
-              if (!expectedStems.has(stem)) {
-                playlistOrphans.push(fullPath);
-              }
-            }
-          }
-        };
-        walkPlaylists(playlistFolder);
+        playlistOrphans = await findOrphanPlaylistFiles(
+          device.fs,
+          playlistFolder,
+          expectedStems
+        );
       }
 
       // Keep the on-device location alongside the library path. Rockbox
@@ -397,12 +454,7 @@ export function registerDeviceHandlers(): void {
       // which is what lets Rockbox's records be matched exactly instead of by
       // filename — including on a device being checked for the first time.
       if (!device.profile.skipRuntimeData) {
-        const ingest = readAndIngestRuntimeData(
-          conn,
-          deviceId,
-          device.mountPath,
-          false
-        );
+        const ingest = await ingestRuntimeDataForDevice(conn, deviceId, device, false);
         if (ingest.imported > 0) {
           logActivity(
             conn,
@@ -442,11 +494,16 @@ export function registerDeviceHandlers(): void {
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "device:readRuntimeData",
-    safe("device:readRuntimeData", async (_event, deviceId: number) => {
+    safe("device:readRuntimeData", async (event, deviceId: number) => {
       const device = getDevicesCore().getDeviceById(deviceId);
       if (!device) return { error: `Device ${deviceId} not found` };
+      // Same device.fs surface as `device:check`, which has always been gated.
+      const wrongMachine = blockWrongLocality(event, device.profile.transport);
+      if (wrongMachine) return wrongMachine;
+      const notYours = blockWrongDeviceOwner(event, deviceId);
+      if (notYours) return notYours;
 
       await refreshUsbSnapshot();
       if (!isDeviceOnline(device.profile)) {
@@ -460,10 +517,10 @@ export function registerDeviceHandlers(): void {
 
       const lib = getLibrary();
       const db = lib.getConnection();
-      const ingest = readAndIngestRuntimeData(
+      const ingest = await ingestRuntimeDataForDevice(
         db,
         deviceId,
-        device.mountPath,
+        device,
         device.profile.skipRuntimeData ?? false
       );
       logActivity(

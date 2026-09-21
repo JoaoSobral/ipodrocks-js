@@ -3,11 +3,17 @@
  */
 import { describe, it, expect, vi } from "vitest";
 
-// external-url.ts imports `shell` from electron; stub it so we can assert
-// openExternalUrl only forwards allowed schemes. `vi.hoisted` keeps the mock
-// fn accessible from the hoisted vi.mock factory.
-const { openExternal } = vi.hoisted(() => ({ openExternal: vi.fn(async () => {}) }));
-vi.mock("electron", () => ({ shell: { openExternal } }));
+// external-url.ts reaches the browser through the host adapter rather than
+// Electron's `shell` directly, so the stub goes there: a host registered for
+// this test records what it was asked to open. `vi.hoisted` keeps the mock fn
+// accessible from the hoisted vi.mock factory.
+const { openExternal } = vi.hoisted(() => ({
+  openExternal: vi.fn(async (_url: string) => ({ opened: true })),
+}));
+vi.mock("../main/host", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../main/host")>();
+  return { ...actual, getHostShell: () => ({ openExternal }) };
+});
 
 import { isAllowedExternalUrl, openExternalUrl } from "../main/utils/external-url";
 
@@ -35,7 +41,7 @@ describe("isAllowedExternalUrl", () => {
 });
 
 describe("openExternalUrl", () => {
-  it("forwards allowed URLs to shell.openExternal", async () => {
+  it("forwards allowed URLs to the host shell", async () => {
     openExternal.mockClear();
     const res = await openExternalUrl("https://example.com");
     expect(res).toEqual({ ok: true });

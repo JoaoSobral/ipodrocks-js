@@ -1,13 +1,13 @@
 import Database from "better-sqlite3";
-import fs from "fs";
 import path from "path";
 import {
   AddDeviceConfig,
   DeviceProfile,
-  DeviceValidation,
+  DeviceTransport,
 } from "../../shared/types";
 import { Device } from "./device";
 import { sanitizeMountPath } from "../path-allowlist";
+import { webDeviceRoot } from "./fs/device-fs";
 import { normalizeUsbId } from "./usb-devices";
 
 interface DeviceRow {
@@ -46,6 +46,7 @@ interface DeviceRow {
   dev_mode: number;
   auto_podcasts_enabled: number;
   vbr_enabled: number;
+  transport: string | null;
   usb_vendor_id: string | null;
   usb_product_id: string | null;
   usb_serial: string | null;
@@ -58,7 +59,7 @@ const DEVICES_QUERY = `
          d.override_bitrate, d.override_quality, d.override_bits,
          d.partial_sync_enabled, d.skip_playback_log, d.skip_album_artwork, d.artwork_max_dimension, d.rockbox_smart_playlists, d.dev_mode,
          d.auto_podcasts_enabled, d.vbr_enabled, d.source_library_type, d.shadow_library_id,
-         d.usb_vendor_id, d.usb_product_id, d.usb_serial,
+         d.transport, d.usb_vendor_id, d.usb_product_id, d.usb_serial,
          dtm.name as transfer_mode_name,
          cc.name as codec_config_name, cc.bitrate_value, cc.quality_value,
          cc.bits_per_sample, c.name as codec_name,
@@ -98,6 +99,19 @@ const ALLOWED_UPDATE_FIELDS = new Set([
   "vbr_enabled",
   // NOTE: the usb_* columns are deliberately absent. They are written as one
   // unit by updateDevice(), never through the generic loop — see USB_IDENTITY_KEYS.
+  //
+  // NOTE: `transport` is deliberately absent too, and must stay that way. It
+  // decides which filesystem every path on this device resolves against, and a
+  // device:update that flipped it would point an in-flight sync at the wrong
+  // one — writing a remote user's library into `/ipodrocks-web/<id>` on the
+  // server, or asking a browser for a folder that is really a local mount. It
+  // is set once, by addDevice.
+  //
+  // NOTE: `web_owner_subject` is absent for the same reason and one more. It
+  // records which browser identity may attach this player, so a device:update
+  // that could write it would let any allowlisted user reassign someone else's
+  // device to themselves — which is precisely the takeover the column exists
+  // to prevent. Set once, by addDevice, from the calling session.
 ]);
 
 const FIELD_MAP: Record<string, string> = {
@@ -136,6 +150,19 @@ const FIELD_MAP: Record<string, string> = {
  * the three columns on its own and leave a half-formed identity behind.
  */
 const USB_IDENTITY_KEYS = new Set(["usbVendorId", "usbProductId", "usbSerial"]);
+
+/**
+ * Read the stored transport, defaulting to `local`.
+ *
+ * A database upgraded by `migrateDeviceTransport()` has no CHECK constraint —
+ * SQLite cannot add one by ALTER TABLE — so the two values are enforced here
+ * instead. Anything unrecognised reads as `local`, which is the safe way round:
+ * a device that is really local and read as web simply fails to attach, while
+ * the reverse would send a sync at the server's own filesystem.
+ */
+function normalizeTransport(value: string | null | undefined): DeviceTransport {
+  return value === "web" ? "web" : "local";
+}
 
 /** Allowed generated-cover dimensions (px). 300 default keeps iPods responsive. */
 export const ARTWORK_MAX_DIMENSIONS = [200, 300, 500, 750] as const;
@@ -222,7 +249,12 @@ export class DevicesCore {
 
   addDevice(config: AddDeviceConfig): Device {
     if (!config.name?.trim()) throw new Error("Device name cannot be empty");
-    const mountPath = sanitizeMountPath(config.mountPath);
+
+    // A web device has no mount path to validate: its files live in a folder
+    // held open in a browser tab, and the root it is given is synthetic and
+    // depends on the row id, which does not exist yet. It is filled in below.
+    const transport: DeviceTransport = config.transport === "web" ? "web" : "local";
+    const mountPath = transport === "web" ? "" : sanitizeMountPath(config.mountPath);
 
     const existing = this.db
       .prepare("SELECT id FROM devices WHERE name = ?")
@@ -251,8 +283,9 @@ export class DevicesCore {
          (name, mount_path, music_folder, podcast_folder, audiobook_folder, playlist_folder,
           default_transfer_mode_id, default_codec_config_id, description,
           model_id, source_library_type, shadow_library_id, skip_playback_log, rockbox_smart_playlists, dev_mode, vbr_enabled,
-          skip_album_artwork, artwork_max_dimension, usb_vendor_id, usb_product_id, usb_serial)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          skip_album_artwork, artwork_max_dimension, transport, web_owner_subject,
+          usb_vendor_id, usb_product_id, usb_serial)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         config.name,
@@ -273,12 +306,30 @@ export class DevicesCore {
         config.vbrEnabled ? 1 : 0,
         config.skipAlbumArtwork ? 1 : 0,
         sanitizeArtworkMaxDimension(config.artworkMaxDimension),
+        transport,
+        // Only a web device gets one, and only from the handler's own session:
+        // whoever registered the player is the only browser allowed to attach
+        // it. A local device has no such notion — it is a folder on the
+        // machine running the sync.
+        transport === "web" ? (config.webOwnerSubject ?? null) : null,
         usb?.vendorId ?? null,
         usb?.productId ?? null,
         usb?.serial ?? null
       );
 
     const newId = Number(info.lastInsertRowid);
+
+    // The synthetic root is host-flavoured and keyed on the row id, so it can
+    // only be written once the row exists. Every containment guard in the sync
+    // does plain host `path` arithmetic on device paths — forcing POSIX here
+    // would mean threading a path flavour through all six of them, and missing
+    // one collapses every destination to `folder/basename`.
+    if (transport === "web") {
+      this.db
+        .prepare("UPDATE devices SET mount_path = ? WHERE id = ?")
+        .run(webDeviceRoot(newId), newId);
+    }
+
     return this.getDeviceById(newId)!;
   }
 
@@ -421,52 +472,6 @@ export class DevicesCore {
     return true;
   }
 
-  validateDeviceMount(mountPath: string): DeviceValidation {
-    try {
-      const resolved = path.resolve(mountPath);
-
-      if (!fs.existsSync(resolved)) {
-        return { valid: false, error: `Mount path '${mountPath}' does not exist` };
-      }
-
-      const stat = fs.statSync(resolved);
-      if (!stat.isDirectory()) {
-        return { valid: false, error: `Mount path '${mountPath}' is not a directory` };
-      }
-
-      try {
-        fs.accessSync(resolved, fs.constants.W_OK);
-      } catch {
-        return { valid: false, error: `Mount path '${mountPath}' is not writable` };
-      }
-
-      const foldersCreated: string[] = [];
-      for (const folder of ["Music", "Podcasts", "Audiobooks", "Playlists"]) {
-        const folderPath = path.join(resolved, folder);
-        if (!fs.existsSync(folderPath)) {
-          try {
-            fs.mkdirSync(folderPath, { recursive: true });
-            foldersCreated.push(folder);
-          } catch (e) {
-            return {
-              valid: false,
-              error: `Cannot create folder '${folder}': ${e}`,
-            };
-          }
-        }
-      }
-
-      return {
-        valid: true,
-        error: null,
-        normalizedPath: resolved,
-        foldersCreated,
-      };
-    } catch (e) {
-      return { valid: false, error: `Invalid mount path: ${e}` };
-    }
-  }
-
   private _rowToProfile(row: DeviceRow): DeviceProfile {
     return {
       id: row.id,
@@ -504,6 +509,7 @@ export class DevicesCore {
       devMode: !!(row.dev_mode ?? 0),
       autoPodcastsEnabled: !!(row.auto_podcasts_enabled ?? 0),
       vbrEnabled: !!(row.vbr_enabled ?? 0),
+      transport: normalizeTransport(row.transport),
       usbVendorId: row.usb_vendor_id ?? null,
       usbProductId: row.usb_product_id ?? null,
       usbSerial: row.usb_serial ?? null,

@@ -1,0 +1,73 @@
+# iPodRocks headless server, run from a checkout rather than a container.
+#
+#   sudo cp deploy/ipodrocks-server.service /etc/systemd/system/
+#   sudo systemctl edit ipodrocks-server      # paths and secrets, see below
+#   sudo systemctl enable --now ipodrocks-server
+#
+# Nothing here needs Electron. `better-sqlite3` ships a Node-API prebuild that
+# loads unchanged under both, so an ordinary `npm ci --ignore-scripts` +
+# `npm run build` is the whole install — see docs/guide/server-deployment.md.
+
+[Unit]
+Description=iPodRocks web server
+Documentation=https://github.com/JoaoSobral/ipodrocks-js
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ipodrocks
+Group=ipodrocks
+WorkingDirectory=/opt/ipodrocks
+ExecStart=/usr/bin/node dist/main/server/daemon.js
+Restart=on-failure
+RestartSec=5
+
+# Everything the daemon reads is an environment variable; there is no flag
+# parsing and deliberately no second configuration surface. Put secrets in a
+# root-owned file rather than inline here, because `systemctl show` prints
+# Environment= lines to any user.
+#   IPODROCKS_SESSION_SECRET, IPODROCKS_PUBLIC_URL, the OAuth pairs, TLS paths.
+EnvironmentFile=-/etc/ipodrocks/server.env
+Environment=NODE_ENV=production
+Environment=IPODROCKS_DATA_DIR=/var/lib/ipodrocks
+Environment=IPODROCKS_SERVER_HOST=127.0.0.1
+Environment=IPODROCKS_SERVER_PORT=8780
+
+# The database, prefs and the session store live here and nowhere else.
+StateDirectory=ipodrocks
+ReadWritePaths=/var/lib/ipodrocks
+
+# The state directory holds ipodrocks-server.db, which *is* the authentication
+# store: the session signing secret (generated there whenever
+# IPODROCKS_SESSION_SECRET is unset, which the optional EnvironmentFile above
+# permits), every live session id, and every local account's password hash.
+# systemd's defaults are 0755/0022, and the app chmods only secret.key, so
+# without these two lines any other local account on the host can read it --
+# secret plus a live sid is enough to forge the owner's cookie.
+StateDirectoryMode=0700
+UMask=0077
+
+# The daemon needs to read the library, write /var/lib/ipodrocks, and spawn
+# ffmpeg/mpcenc into a temp directory. Nothing else.
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=no
+
+# Loopback by default: put cloudflared, or a TLS-terminating reverse proxy, in
+# front. Binding 0.0.0.0 here serves the session cookie over plain HTTP to the
+# whole LAN.
+# To bind the LAN anyway, override IPODROCKS_SERVER_HOST *and* set
+# IPODROCKS_TLS_CERT / IPODROCKS_TLS_KEY.
+
+[Install]
+WantedBy=multi-user.target

@@ -100,6 +100,18 @@ vi.mock("electron", () => {
 
 export interface IpcSession {
   invoke: <T = unknown>(channel: string, ...args: unknown[]) => Promise<T>;
+  /**
+   * Invoke as a *web* client.
+   *
+   * The only difference a handler can see between the desktop window and a
+   * remote browser is `ctx.sessionId` — the web transport sets it, Electron IPC
+   * does not — and several handlers turn on exactly that. The `web` Playwright
+   * project cannot drive the interesting half of those, because it boots the
+   * daemon: a headless host has no native dialogs and no local devices, so the
+   * cases that only bite when the *desktop app* is hosting the server never
+   * arise there.
+   */
+  invokeAsWebClient: <T = unknown>(channel: string, ...args: unknown[]) => Promise<T>;
   sentEvents: Array<{ channel: string; payload: unknown }>;
   cleanup: () => void;
 }
@@ -121,6 +133,48 @@ export async function setupIpcSession(opts: IpcSessionOptions): Promise<IpcSessi
   sentRendererEvents.length = 0;
   vi.resetModules();
 
+  // Register a host on the *fresh* module graph resetModules just created, and
+  // do it before importing the IPC modules — the database path is read the
+  // first time a handler touches the library. The paths mirror the `app.getPath`
+  // mock above (`${appPathRoot}/${name}`), which is what these tests have
+  // always resolved to. Without this the host auto-detects, and because
+  // `vi.mock("electron")` cannot intercept a CommonJS `require`, it would
+  // resolve the real user-data directory instead of this temp one.
+  const hostModule = await import("../../main/host");
+  hostModule.setHost({
+    kind: "node",
+    platform: process.platform,
+    paths: {
+      userData: () => `${appPathRoot}/userData`,
+      temp: () => `${appPathRoot}/temp`,
+      music: () => `${appPathRoot}/music`,
+      isPackaged: () => false,
+      version: () => "0.0.0-test",
+    },
+    secrets: {
+      isEncryptionAvailable: () => false,
+      encryptString: (s: string) => Buffer.from(s, "utf-8"),
+      decryptString: (b: Buffer) => b.toString("utf-8"),
+    },
+    shell: {
+      openExternal: async () => ({ opened: true }),
+    },
+    dialogs: {
+      available: true,
+      pickFolder: async () => null,
+      saveFile: async () => null,
+    },
+  });
+
+  // Handlers register with the transport-neutral bridge rather than ipcMain, so
+  // capture them from that registry — same module graph resetModules just made.
+  // The ipcMain mock above stays for anything that still pokes at it directly.
+  const bridgeModule = await import("../../main/host/bridge");
+  bridgeModule.resetBridge();
+  bridgeModule.onHandlerRegistered((channel, fn) => {
+    capturedHandlers.set(channel, fn as (e: unknown, ...a: unknown[]) => Promise<unknown>);
+  });
+
   const ipcModule = await import("../../main/ipc");
   ipcModule.registerIpcHandlers();
 
@@ -140,6 +194,16 @@ export async function setupIpcSession(opts: IpcSessionOptions): Promise<IpcSessi
         throw new Error(`IPC channel "${channel}" not registered`);
       }
       return (await handler(fakeEvent, ...args)) as T;
+    },
+    invokeAsWebClient: async <T = unknown>(channel: string, ...args: unknown[]) => {
+      const handler = capturedHandlers.get(channel);
+      if (!handler) {
+        throw new Error(`IPC channel "${channel}" not registered`);
+      }
+      return (await handler(
+        { ...fakeEvent, sessionId: "harness-web-session" },
+        ...args
+      )) as T;
     },
     sentEvents: sentRendererEvents,
     cleanup: () => {

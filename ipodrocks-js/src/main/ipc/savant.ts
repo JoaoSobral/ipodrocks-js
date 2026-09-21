@@ -1,4 +1,4 @@
-import { ipcMain } from "electron";
+import { handle as bridgeHandle } from "../host/bridge";
 import { randomUUID } from "crypto";
 import { safe, getLibrary, getPlaylistCore } from "./common";
 import { LibraryScanner } from "../library/library-scanner";
@@ -64,7 +64,7 @@ export function startSavantSessionCleanup(): void {
 }
 
 export function registerSavantHandlers(): void {
-  ipcMain.handle(
+  bridgeHandle(
     "savant:generate",
     safe("savant:generate", async (_event, intent: SavantIntent) => {
       const config = getOpenRouterConfig();
@@ -89,7 +89,7 @@ export function registerSavantHandlers(): void {
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "savant:checkKeyData",
     safe("savant:checkKeyData", async () => {
       const db = getLibrary().getConnection();
@@ -119,7 +119,7 @@ export function registerSavantHandlers(): void {
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "savant:backfillFeatures",
     safe("savant:backfillFeatures", async (event, opts?: { percent?: number }) => {
       activeBackfillAbort = new AbortController();
@@ -172,7 +172,7 @@ export function registerSavantHandlers(): void {
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "savant:backfillCancel",
     safe("savant:backfillCancel", async () => {
       if (activeBackfillAbort) {
@@ -182,7 +182,7 @@ export function registerSavantHandlers(): void {
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "savant:chat:start",
     safe("savant:chat:start", async () => {
       if (!checkRateLimit("savant:chat"))
@@ -199,7 +199,7 @@ export function registerSavantHandlers(): void {
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "savant:chat:turn",
     safe("savant:chat:turn", async (
       _event,
@@ -225,14 +225,14 @@ export function registerSavantHandlers(): void {
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "savant:chat:skip",
     safe("savant:chat:skip", async (_event, sessionId: string) => {
       moodChatSessions.delete(sessionId);
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "savant:playlistChat:start",
     safe("savant:playlistChat:start", async () => {
       if (!checkRateLimit("savant:playlistChat"))
@@ -249,7 +249,7 @@ export function registerSavantHandlers(): void {
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "savant:playlistChat:turn",
     safe("savant:playlistChat:turn", async (
       _event,
@@ -275,7 +275,7 @@ export function registerSavantHandlers(): void {
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "savant:playlistChat:skip",
     safe("savant:playlistChat:skip", async (_event, sessionId: string) => {
       savantPlaylistChatSessions.delete(sessionId);

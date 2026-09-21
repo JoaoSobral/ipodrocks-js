@@ -5,6 +5,7 @@ import { listSubscriptions, subLabel } from "./audiobook-subscriptions";
 import { downloadChapter } from "./audiobook-downloader";
 import { sanitizeDevicePathComponent } from "../sync/sync-core";
 import { copyFileToDevice } from "../sync/sync-executor";
+import { deviceFsForMountPath, type DeviceFs } from "../devices/fs";
 import type { SyncProgressPayload } from "../sync/sync-core";
 import { isDeviceOnline, deviceRowToOnlineInput } from "../devices/device-online";
 import { refreshUsbSnapshot } from "../devices/usb-devices";
@@ -13,6 +14,7 @@ type ProgressCallback = (event: SyncProgressPayload) => void;
 
 interface DeviceRow {
   id: number;
+  transport: string | null;
   mount_path: string;
   audiobook_folder: string;
   dev_mode: number;
@@ -39,19 +41,42 @@ export interface AutoAudiobookSyncSelection {
   mode: "include" | "exclude";
 }
 
+/**
+ * Put a book's cover beside its chapters, if it is not already there.
+ *
+ * Best-effort on purpose: a missing cover must never fail an audiobook sync.
+ */
+async function copyCoverIfAbsent(
+  target: DeviceFs,
+  cover: { localPath: string; destAbsolute: string }
+): Promise<void> {
+  try {
+    if (await target.exists(cover.destAbsolute)) return;
+    await target.mkdir(path.dirname(cover.destAbsolute), { recursive: true });
+    await target.copyFromLocal(cover.localPath, cover.destAbsolute);
+  } catch {
+    /* best-effort */
+  }
+}
+
 export async function syncAutoAudiobooksToDevice(
   db: Database.Database,
   deviceId: number,
   selection: AutoAudiobookSyncSelection,
-  progressCallback?: ProgressCallback
+  progressCallback?: ProgressCallback,
+  deviceFs?: DeviceFs
 ): Promise<{ synced: number; errors: number }> {
   const device = db
     .prepare(
-      "SELECT id, mount_path, audiobook_folder, dev_mode, usb_vendor_id, usb_product_id, usb_serial FROM devices WHERE id = ?"
+      "SELECT id, transport, mount_path, audiobook_folder, dev_mode, usb_vendor_id, usb_product_id, usb_serial FROM devices WHERE id = ?"
     )
     .get(deviceId) as DeviceRow | undefined;
 
   if (!device || !device.mount_path) return { synced: 0, errors: 0 };
+
+  // Reached from the sync (which hands its own device's filesystem down) and
+  // from the Audiobooks tab, which has only a device id.
+  const target = deviceFs ?? deviceFsForMountPath(device.mount_path);
 
   await refreshUsbSnapshot();
   if (!isDeviceOnline(deviceRowToOnlineInput(device))) return { synced: 0, errors: 0 };
@@ -139,12 +164,7 @@ export async function syncAutoAudiobooksToDevice(
   if (toSync.length === 0) {
     // Still copy covers even if chapters are already synced
     for (const cover of coversToSync) {
-      try {
-        if (!fs.existsSync(cover.destAbsolute)) {
-          fs.mkdirSync(path.dirname(cover.destAbsolute), { recursive: true });
-          fs.copyFileSync(cover.localPath, cover.destAbsolute);
-        }
-      } catch { /* best-effort */ }
+      await copyCoverIfAbsent(target, cover);
     }
     return { synced: 0, errors: 0 };
   }
@@ -164,12 +184,18 @@ export async function syncAutoAudiobooksToDevice(
 
       if (syncedRow) {
         const storedAbsolute = path.join(device.mount_path, syncedRow.device_relative_path);
-        if (syncedRow.device_relative_path === ch.destRelative && fs.existsSync(storedAbsolute)) {
+        if (
+          syncedRow.device_relative_path === ch.destRelative &&
+          (await target.exists(storedAbsolute))
+        ) {
           continue;
         }
         db.prepare("DELETE FROM device_audiobook_synced WHERE device_id = ? AND chapter_id = ?").run(deviceId, ch.chapterId);
-        if (syncedRow.device_relative_path !== ch.destRelative && fs.existsSync(storedAbsolute)) {
-          try { fs.unlinkSync(storedAbsolute); } catch { /* ignore */ }
+        if (
+          syncedRow.device_relative_path !== ch.destRelative &&
+          (await target.exists(storedAbsolute))
+        ) {
+          try { await target.unlink(storedAbsolute); } catch { /* ignore */ }
         }
       }
 
@@ -183,7 +209,7 @@ export async function syncAutoAudiobooksToDevice(
         localPath = dlResult.localPath;
       }
 
-      await copyFileToDevice(localPath, ch.destAbsolute);
+      await copyFileToDevice(target, localPath, ch.destAbsolute);
       db.prepare(
         `INSERT OR IGNORE INTO device_audiobook_synced (device_id, chapter_id, device_relative_path)
          VALUES (?, ?, ?)`
@@ -212,12 +238,7 @@ export async function syncAutoAudiobooksToDevice(
 
   // Copy cover images after chapters (best-effort, skip if already present)
   for (const cover of coversToSync) {
-    try {
-      if (!fs.existsSync(cover.destAbsolute)) {
-        fs.mkdirSync(path.dirname(cover.destAbsolute), { recursive: true });
-        fs.copyFileSync(cover.localPath, cover.destAbsolute);
-      }
-    } catch { /* best-effort */ }
+    await copyCoverIfAbsent(target, cover);
   }
 
   return { synced, errors };

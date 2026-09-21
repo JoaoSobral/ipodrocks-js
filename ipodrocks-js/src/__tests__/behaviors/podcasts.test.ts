@@ -84,7 +84,7 @@ describe("Podcasts — subscribe and sync to device", () => {
       mountPath: device.mountPath,
       autoPodcastsEnabled: true,
     });
-    vi.mocked(copyFileToDevice).mockImplementation(async (src, dest) => {
+    vi.mocked(copyFileToDevice).mockImplementation(async (_deviceFs, src, dest) => {
       fs.mkdirSync(path.dirname(dest), { recursive: true });
       fs.copyFileSync(src, dest);
       return true;

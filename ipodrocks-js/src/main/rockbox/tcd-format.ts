@@ -226,6 +226,88 @@ export function decodeIndex(buf: Buffer, header: MasterHeader): IndexEntry[] {
 }
 
 /**
+ * Where one record's rating lives, and the flag word that has to be dirtied
+ * alongside it.
+ *
+ * Split out from the write itself so the two halves can be reached
+ * separately: a local write reads these offsets off an open descriptor, while
+ * a device reached over RPC reads both words in one batch and applies the
+ * edits in one patch.
+ */
+export interface RatingProbe {
+  /** Byte offset of the record's rating word. */
+  ratingAt: number;
+  /** Byte offset of the record's flag word. */
+  flagAt: number;
+}
+
+/** One contiguous edit: write ``bytes`` at ``offset``. */
+export interface RatingEdit {
+  offset: number;
+  bytes: Buffer;
+}
+
+/**
+ * The two byte offsets a rating write reads and may rewrite.
+ *
+ * Throws rather than clamping when the id addresses past the records the
+ * header accounts for — the index carries no checksum, so a write outside it
+ * is unrecoverable.
+ */
+export function planRatingProbe(
+  header: MasterHeader,
+  idxId: number
+): RatingProbe {
+  if (idxId < 0 || idxId >= header.entryCount) {
+    throw new TcdFormatError(
+      `index id ${idxId} out of range (${header.entryCount} entries)`
+    );
+  }
+  return {
+    ratingAt: numericTagOffset(idxId, TAG.rating),
+    flagAt: flagOffset(idxId),
+  };
+}
+
+/**
+ * The edits that put ``rating`` into the record the probe addresses, given the
+ * two words as they currently read on the device.
+ *
+ * **Empty means the device already holds this rating** — the caller must
+ * report that as "unchanged" and write nothing, never as a successful write.
+ * A non-empty plan always rewrites the rating word, and also the flag word
+ * when ``DIRTYNUM`` is not already set, so the value survives a database
+ * rebuild exactly as Rockbox's own write does.
+ */
+export function planRatingEdits(
+  header: MasterHeader,
+  probe: RatingProbe,
+  rating: number,
+  current: { ratingWord: Buffer; flagWord: Buffer }
+): RatingEdit[] {
+  const currentRating = readInt32(current.ratingWord, 0, header.swapped);
+  if (currentRating === rating) return [];
+
+  const edits: RatingEdit[] = [];
+
+  const ratingWord = Buffer.alloc(4);
+  if (header.swapped) ratingWord.writeInt32BE(rating, 0);
+  else ratingWord.writeInt32LE(rating, 0);
+  edits.push({ offset: probe.ratingAt, bytes: ratingWord });
+
+  const flag = readInt32(current.flagWord, 0, header.swapped);
+  const dirtied = flag | FLAG.DIRTYNUM;
+  if (dirtied !== flag) {
+    const flagWord = Buffer.alloc(4);
+    if (header.swapped) flagWord.writeInt32BE(dirtied, 0);
+    else flagWord.writeInt32LE(dirtied, 0);
+    edits.push({ offset: probe.flagAt, bytes: flagWord });
+  }
+
+  return edits;
+}
+
+/**
  * Decode a string tag file into ``idx_id -> value``.
  *
  * Rockbox NUL-terminates each string and then pads with ``'X'`` up to 4-byte

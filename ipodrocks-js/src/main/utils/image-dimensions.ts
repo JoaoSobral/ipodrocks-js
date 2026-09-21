@@ -20,7 +20,7 @@ export interface ImageDimensions {
  * marker sits after any EXIF/ICC segments, which are comfortably under this in
  * practice; oversized headers simply yield null.
  */
-const HEAD_BYTES = 128 * 1024;
+export const IMAGE_HEAD_BYTES = 128 * 1024;
 
 const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 
@@ -36,8 +36,8 @@ export function readImageDimensionsFromFile(
   let fd: number | undefined;
   try {
     fd = fs.openSync(filePath, "r");
-    const buf = Buffer.alloc(HEAD_BYTES);
-    const read = fs.readSync(fd, buf, 0, HEAD_BYTES, 0);
+    const buf = Buffer.alloc(IMAGE_HEAD_BYTES);
+    const read = fs.readSync(fd, buf, 0, IMAGE_HEAD_BYTES, 0);
     return readImageDimensions(buf.subarray(0, read));
   } catch {
     return null;

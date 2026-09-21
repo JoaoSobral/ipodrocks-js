@@ -81,8 +81,8 @@ When you switch between devices, the panel live-swaps to that device's saved con
 
 [Rocksy](./assistant.md) can run a sync for you from the chat:
 
-- "Check what would sync to my iPod" → `device_check` *(asks you to confirm first)*
-- "Sync my iPod" → `device_sync` *(asks you to confirm first)*
-- "Which iPod is plugged in right now?" → `usb_device_list`
+- "Check what would sync to my player" → `device_check` *(asks you to confirm first)*
+- "Sync my player" → `device_sync` *(asks you to confirm first)*
+- "Which player is plugged in right now?" → `usb_device_list`
 
 Both are destructive operations, so Rocksy pauses for a **Confirm / Cancel** prompt before running. See [Devices → Rocksy](./devices.md#rocksy).

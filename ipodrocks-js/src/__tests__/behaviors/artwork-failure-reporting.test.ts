@@ -18,6 +18,7 @@ installElectronMock();
 
 import { getFfmpegPath } from "../../main/utils/ffmpeg-path";
 import { copyAlbumArtworkToDevice } from "../../main/sync/sync-core";
+import { localFs } from "../../main/devices/fs";
 
 interface Event {
   event: string;
@@ -83,6 +84,7 @@ describe.skipIf(!canRun)("album artwork failure reporting", () => {
 
     const events: Event[] = [];
     const result = await copyAlbumArtworkToDevice(
+      localFs(deviceDir),
       deviceDir,
       "music",
       { [trackPath]: { artist: "Blocked Artist", album: "Blocked Album" } },
@@ -108,6 +110,7 @@ describe.skipIf(!canRun)("album artwork failure reporting", () => {
     const trackPath = seedAlbum(libRoot, "Fine Artist", "Fine Album");
 
     const result = await copyAlbumArtworkToDevice(
+      localFs(deviceDir),
       deviceDir,
       "music",
       { [trackPath]: { artist: "Fine Artist", album: "Fine Album" } },

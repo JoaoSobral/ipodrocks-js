@@ -40,6 +40,8 @@ export default defineConfig({
             { text: "Getting Started", link: "/guide/getting-started" },
             { text: "Installation", link: "/guide/installation" },
             { text: "Architecture", link: "/guide/architecture" },
+            { text: "Server Setup (end to end)", link: "/guide/server-setup" },
+            { text: "Deploying the Server", link: "/guide/server-deployment" },
             { text: "Troubleshooting", link: "/guide/troubleshooting" },
           ],
         },
@@ -89,6 +91,10 @@ export default defineConfig({
                 {
                   text: "Harmonic Analysis",
                   link: "/app-reference/settings-harmonic",
+                },
+                {
+                  text: "Web Server",
+                  link: "/app-reference/settings-web-server",
                 },
               ],
             },

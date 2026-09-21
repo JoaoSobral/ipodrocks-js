@@ -6,6 +6,7 @@ import { parseFile } from "music-metadata";
 import { getEncoderEnv } from "../utils/encoder-env";
 import { getFfmpegPath } from "../utils/ffmpeg-path";
 import { isMpcFile } from "../utils/audio-extensions";
+import type { DeviceFs } from "../devices/fs";
 import { readApeTags } from "../tagging/reader";
 import {
   dropReplayGainStrings,
@@ -84,9 +85,34 @@ export function makeSafeConversionTempPath(dest: string): string {
 }
 
 /**
- * Move a finished conversion from the temp path to its final destination.
- * Falls back to copy+unlink when src and dest are on different filesystems
- * (rename throws EXDEV, e.g. OS temp dir vs the device mount).
+ * Put a finished conversion at its final destination through `target`, then
+ * drop the temp file.
+ *
+ * Every encoder writes to a temp file on the machine running the sync — see
+ * {@link makeSafeConversionTempPath} — so this is the one step of a transcode
+ * that touches the destination filesystem, and therefore the only step that has
+ * to know whether the destination is a local disk or a player held in someone's
+ * browser.
+ *
+ * `target` has no default on purpose. The two destinations are a device and a
+ * shadow-library root, they look identical at the call site, and putting a
+ * device transcode in the shadow tree (or the reverse) is silent: the shadow
+ * prune would then delete whichever copy landed wrong.
+ */
+export async function placeConvertedFile(
+  from: string,
+  to: string,
+  target: DeviceFs
+): Promise<void> {
+  await target.copyFromLocal(from, to);
+  cleanupTemp(from);
+}
+
+/**
+ * Move a finished conversion from the temp path to its final destination on the
+ * local filesystem. Falls back to copy+unlink when src and dest are on
+ * different filesystems (rename throws EXDEV, e.g. OS temp dir vs the device
+ * mount).
  */
 export function moveConvertedFile(from: string, to: string): void {
   try {
@@ -380,10 +406,18 @@ export async function convertWithCodec(
   dest: string,
   settings: ConversionSettings,
   logCallback?: (line: string) => void,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  target?: DeviceFs
 ): Promise<boolean> {
+  // `target` is optional here, unlike everywhere else a destination filesystem
+  // is passed, and deliberately so: this function's other callers are the
+  // shadow build and five format test suites that all write to an ordinary
+  // local path, and the encoders, the APEv2 writer and the Musepack stream
+  // header all work on a temp file regardless. Omitting it means "the local
+  // filesystem", which is what it always did.
   const destDir = path.dirname(dest);
-  fs.mkdirSync(destDir, { recursive: true });
+  if (target) await target.mkdir(destDir, { recursive: true });
+  else fs.mkdirSync(destDir, { recursive: true });
 
   // Encode to an ASCII-safe temp path, then move to the (possibly space/paren
   // containing) final destination so encoders never see problem characters.
@@ -423,7 +457,8 @@ export async function convertWithCodec(
       await maybeWriteM4aReplayGain(tmpDest, src, logCallback);
     }
 
-    moveConvertedFile(tmpDest, dest);
+    if (target) await placeConvertedFile(tmpDest, dest, target);
+    else moveConvertedFile(tmpDest, dest);
     logCallback?.(`Converted: ${path.basename(dest)}`);
     return true;
   } catch (err) {
@@ -444,10 +479,12 @@ export async function convertWithFfmpeg(
   dest: string,
   profile: string,
   logCallback?: (line: string) => void,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  target?: DeviceFs
 ): Promise<void> {
   const destDir = path.dirname(dest);
-  fs.mkdirSync(destDir, { recursive: true });
+  if (target) await target.mkdir(destDir, { recursive: true });
+  else fs.mkdirSync(destDir, { recursive: true });
 
   const ext = PROFILE_EXT_MAP[profile] ?? ".mp3";
   const parsed = path.parse(dest);
@@ -469,7 +506,8 @@ export async function convertWithFfmpeg(
       await maybeWriteM4aReplayGain(tmpDest, src, logCallback);
     }
 
-    moveConvertedFile(tmpDest, dest);
+    if (target) await placeConvertedFile(tmpDest, dest, target);
+    else moveConvertedFile(tmpDest, dest);
     logCallback?.(`Converted: ${path.basename(src)}`);
   } catch (err) {
     cleanupTemp(tmpDest);

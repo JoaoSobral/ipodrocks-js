@@ -2,6 +2,7 @@ import { XMLParser } from "fast-xml-parser";
 import type Database from "better-sqlite3";
 import type { FeedCandidate, PodcastFeedPreview } from "../../shared/types";
 import { subscribeRssFeed } from "./podcast-subscriptions";
+import { safeFetch } from "../utils/safe-fetch";
 import type { PodcastSubscription } from "../../shared/types";
 
 const UA = "iPodRocks/1.0";
@@ -27,7 +28,9 @@ export function classifyInput(raw: string): InputKind {
 // ---- Feed discovery ----
 
 async function fetchText(url: string): Promise<{ text: string; finalUrl: string }> {
-  const res = await fetch(url, {
+  // The URL came from the caller and the response is reflected back to them,
+  // so this is a read primitive aimed from the server's network position.
+  const res = await safeFetch(url, {
     headers: { "User-Agent": UA, Accept: "*/*", "Accept-Language": "en-US,en;q=0.9" },
     signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
   });
@@ -37,7 +40,7 @@ async function fetchText(url: string): Promise<{ text: string; finalUrl: string 
 
 async function probeIsFeed(url: string): Promise<boolean> {
   try {
-    const res = await fetch(url, {
+    const res = await safeFetch(url, {
       method: "HEAD",
       headers: { "User-Agent": UA, "Accept-Language": "en-US,en;q=0.9" },
       signal: AbortSignal.timeout(8_000),

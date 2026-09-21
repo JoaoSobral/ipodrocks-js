@@ -47,11 +47,12 @@ import { listUsbDevices } from "../devices/usb-devices";
 import { ejectDevice, isEjectSupported } from "../devices/device-eject";
 import { isDeviceMountPathOnline } from "../devices/device-online";
 import { isSyncActive } from "../ipc/sync";
+import { isDeviceAttached } from "../devices/fs/device-transport";
 import {
   getGeniusTypesWithAvailability,
   generateGeniusPlaylistFromDb,
 } from "../playlists/genius-engine";
-import { readAndIngestRuntimeData } from "../rockbox/runtime-ingest";
+import { ingestRuntimeDataForDevice } from "../rockbox/runtime-ingest";
 import { getRatingPrefs, setRatingPrefs } from "../utils/prefs";
 
 export interface AiToolContext {
@@ -60,6 +61,17 @@ export interface AiToolContext {
   getPlaylistCore: () => PlaylistCore;
   getDevicesCore: () => DevicesCore;
   getPodcastIndexConfig: () => { apiKey: string; apiSecret: string } | null;
+  /**
+   * The web session Rocksy is answering, when the chat arrived over the web
+   * server. Absent over Electron IPC.
+   *
+   * Only the `web_server_*` allowlist tools read it, and they must: every other
+   * tool is something any allowlisted user is entitled to do, but managing the
+   * allowlist is managing the gate itself. Without this, a non-owner who could
+   * not call `server:revokeIdentity` directly could ask Rocksy to do it for
+   * them, which is the same escalation with an extra step.
+   */
+  sessionId?: string;
 }
 
 export type AiToolKind = "read" | "write-safe" | "write-destructive";
@@ -213,7 +225,11 @@ const podcast_list_episodes: AiTool = {
 
 const device_list: AiTool = {
   name: "device_list",
-  description: "List all configured devices (iPods/DAPs) and their basic settings.",
+  description:
+    "List all configured devices (iPods/DAPs) and their basic settings. " +
+    "`transport` is 'local' for a player plugged into this machine and 'web' " +
+    "for one held open in a browser tab; `connected` says whether a web " +
+    "device's browser is attached right now.",
   parameters: { type: "object", properties: {} },
   kind: "read",
   summarize: () => "List devices",
@@ -224,6 +240,11 @@ const device_list: AiTool = {
       mountPath: d.profile.mountPath,
       model: d.profile.modelName,
       lastSyncDate: d.profile.lastSyncDate,
+      transport: d.profile.transport,
+      // Only meaningful for a web device: a local one's connection state is a
+      // question about the filesystem, and `device_check` answers it properly.
+      connected:
+        d.profile.transport === "web" ? isDeviceAttached(d.profile.id) : null,
       usbVendorId: d.profile.usbVendorId ?? null,
       usbProductId: d.profile.usbProductId ?? null,
       usbSerial: d.profile.usbSerial ?? null,
@@ -521,6 +542,394 @@ const ratings_set_tag_priority: AiTool = {
   },
 };
 
+/**
+ * The gate every `web_server_*` tool shares.
+ *
+ * Every other tool in this file is something any allowlisted user of the
+ * server is entitled to do. These are not: they manage *who is allowlisted*,
+ * and *what the outside world can reach* — the listener's bind address, port,
+ * TLS and on/off switch. Without the gate, a guest who cannot call
+ * `server:setConfig` or `server:revokeIdentity` directly could simply ask
+ * Rocksy to, which is the same escalation with an extra step and a friendlier
+ * interface. Rocksy is a second front door and needs the same lock.
+ *
+ * It is the *same function* `ipc/server.ts` calls, deliberately. A gate with
+ * two implementations has one that is weaker, which is the lesson of the
+ * duplicated conflict resolution in CLAUDE.md's debt table.
+ */
+/**
+ * The device guards the IPC handlers apply, for the tools that reach the same
+ * operations.
+ *
+ * `assistant:confirmAction` runs `getToolByName(action.tool).run(action.args,
+ * ctx)` on a `PendingAction` the *client* supplies, so a tool is a front door
+ * in its own right: the tier, the confirm dialog and the system prompt are all
+ * client-side or model-side and none of them is a gate. Anything a tool does
+ * that a channel refuses is therefore a way around that channel. These tools
+ * reconfigure, sync, eject and delete devices, which `ipc/devices.ts` and
+ * `ipc/sync.ts` gate on locality *and* ownership — so they must too.
+ *
+ * Returns the string to hand back to the model, or null to proceed.
+ */
+async function deviceGate(
+  ctx: AiToolContext,
+  deviceId: number,
+  kind: "admin" | "operate" = "admin"
+): Promise<string | null> {
+  const device = ctx.getDevicesCore().getDeviceById(deviceId);
+  if (!device) return null; // the tool's own "not found" message is better
+  const { deviceAdminBlock, deviceLocalityBlock } = await import(
+    "../../shared/device-locality"
+  );
+  const clientIsWeb = ctx.sessionId !== undefined;
+  const transport = device.profile.transport;
+  const reason =
+    kind === "admin"
+      ? deviceAdminBlock(transport, clientIsWeb)
+      : deviceLocalityBlock(transport, clientIsWeb);
+  if (reason) return reason;
+  const { deviceOwnerBlock } = await import("../ipc/common");
+  return deviceOwnerBlock(ctx.sessionId, deviceId);
+}
+
+async function ownerGate(
+  ctx: AiToolContext
+): Promise<{ error: string } | null> {
+  const { denyIfNotOwner } = await import("../../server/auth/sessions");
+  return denyIfNotOwner(ctx.sessionId);
+}
+
+/**
+ * Web server. Three tools rather than one, because "tell me about it", "change
+ * where it listens" and "turn it on" have genuinely different risk: starting a
+ * listener exposes the library to the network, so it gets a confirm gate, while
+ * reading the status does not.
+ */
+const web_server_status: AiTool = {
+  name: "web_server_status",
+  description:
+    "Report the web server's state: whether it is running, the URL it is reachable at, which sign-in providers are configured, how many accounts are on the allowlist, and the one-time owner claim token if nobody has claimed it yet. Use whenever the user asks about serving iPodRocks in a browser, syncing an iPod plugged into a different machine, or why they cannot sign in.",
+  parameters: { type: "object", properties: {}, required: [] },
+  kind: "read",
+  summarize: () => "Check the web server status",
+  async run(_args, ctx) {
+    const denied = await ownerGate(ctx);
+    if (denied) return denied;
+    const { getServerStatus } = await import("../../server");
+    const status = getServerStatus();
+    return {
+      ...status,
+      // The claim token is a live credential. Rocksy may tell the user it
+      // exists and where to find it, but printing it into a chat transcript
+      // that gets pasted around is a different thing from printing it to a
+      // log only the machine's owner can read.
+      claimToken: undefined,
+      ownerClaimPending: status.claimToken !== null,
+    };
+  },
+};
+
+const web_server_configure: AiTool = {
+  name: "web_server_configure",
+  description:
+    "Change where the web server listens: bind address, port, and the public URL that OAuth callbacks and the WebSocket origin check are built from. Does not start, stop or restart it — call web_server_set_enabled for that. Use when the user wants the server on a different port, reachable from the LAN (bind 0.0.0.0), or set up behind a tunnel or reverse proxy.",
+  parameters: {
+    type: "object",
+    properties: {
+      host: {
+        type: "string",
+        description:
+          "Bind address. 127.0.0.1 (the default) keeps it on this machine, which is what a Cloudflare Tunnel wants; 0.0.0.0 exposes it to the LAN.",
+      },
+      port: { type: "number", description: "TCP port, 1-65535." },
+      publicUrl: {
+        type: "string",
+        description:
+          "The externally visible origin, e.g. https://ipod.example.com. Required for any social sign-in.",
+      },
+    },
+    required: [],
+  },
+  // Writes a preference; the running listener is untouched until an explicit
+  // start/stop, so nothing is exposed by this call on its own.
+  kind: "write-safe",
+  summarize: (a) => {
+    const bits: string[] = [];
+    if (a.host !== undefined) bits.push(`bind ${String(a.host)}`);
+    if (a.port !== undefined) bits.push(`port ${String(a.port)}`);
+    if (a.publicUrl !== undefined) bits.push(`public URL ${String(a.publicUrl)}`);
+    return bits.length
+      ? `Set web server ${bits.join(", ")}`
+      : "Read the web server configuration";
+  },
+  async run(args, ctx) {
+    const denied = await ownerGate(ctx);
+    if (denied) return denied;
+    const { setWebServerPrefs, getWebServerPrefs } = await import("../utils/prefs");
+    const next: Record<string, unknown> = {};
+    if (typeof args.host === "string") next.host = args.host.trim();
+    if (typeof args.port === "number") {
+      if (!Number.isInteger(args.port) || args.port < 1 || args.port > 65535) {
+        return { error: "Port must be a whole number between 1 and 65535." };
+      }
+      next.port = args.port;
+    }
+    if (typeof args.publicUrl === "string") next.publicUrl = args.publicUrl.trim();
+    if (Object.keys(next).length === 0) return { prefs: getWebServerPrefs() };
+    setWebServerPrefs(next);
+    const { getServerStatus } = await import("../../server");
+    return {
+      ok: true,
+      prefs: getWebServerPrefs(),
+      restartRequired: getServerStatus().running,
+      message: getServerStatus().running
+        ? "Saved. The server is running with the old settings until it is stopped and started again."
+        : "Saved.",
+    };
+  },
+};
+
+const web_server_set_enabled: AiTool = {
+  name: "web_server_set_enabled",
+  description:
+    "Start or stop the web server. Starting it opens a listening socket and makes the library reachable over the network to anyone who can sign in. Use when the user asks to turn web/browser/remote access on or off.",
+  parameters: {
+    type: "object",
+    properties: {
+      enabled: { type: "boolean", description: "true to start, false to stop." },
+    },
+    required: ["enabled"],
+  },
+  // Destructive in the sense the tier means: it changes what the outside world
+  // can reach. A user should be asked before their library goes on a network.
+  kind: "write-destructive",
+  summarize: (a) => (a.enabled ? "Start the web server" : "Stop the web server"),
+  async run(args, ctx) {
+    const denied = await ownerGate(ctx);
+    if (denied) return denied;
+    const { ensureServerStarted, stopServerIfRunning } = await import("../../server");
+    const enabled = Boolean(args.enabled);
+    const status = enabled ? await ensureServerStarted() : await stopServerIfRunning();
+    if (enabled && !status.running) {
+      return { ok: false, error: status.lastError ?? "The server did not start." };
+    }
+    return {
+      ok: true,
+      running: status.running,
+      url: status.url,
+      ownerClaimPending: status.claimToken !== null,
+      message: enabled
+        ? `The web server is running at ${status.url}.${
+            status.claimToken
+              ? " Nobody has claimed it yet — the one-time claim token is in the server log, and in Settings under Web Server."
+              : ""
+          }`
+        : "The web server is stopped.",
+    };
+  },
+};
+
+const web_server_list_identities: AiTool = {
+  name: "web_server_list_identities",
+  description:
+    "List the accounts allowed to sign in to the web server — provider, username or subject, display name, and which one is the owner. Use when the user asks who can reach their server, why someone cannot sign in, or before adding or revoking access. Owner only.",
+  parameters: { type: "object", properties: {}, required: [] },
+  kind: "read",
+  summarize: () => "List who can sign in to the web server",
+  async run(_args, ctx) {
+    const denied = await ownerGate(ctx);
+    if (denied) return denied;
+    const { listIdentities } = await import("../../server/auth/identities");
+    const identities = listIdentities();
+    return {
+      identities,
+      count: identities.length,
+      note:
+        identities.length === 0
+          ? "Nobody has claimed this server yet. The first sign-in needs the one-time claim token from the server log."
+          : undefined,
+    };
+  },
+};
+
+const web_server_list_sessions: AiTool = {
+  name: "web_server_list_sessions",
+  description:
+    "List the browsers currently signed in to the web server: which account each belongs to and when it expires. Sessions with no account are visitors sitting on the login page. Use when the user asks who is connected right now, or suspects someone else is signed in. Owner only.",
+  parameters: { type: "object", properties: {}, required: [] },
+  kind: "read",
+  summarize: () => "List the web server's active sessions",
+  async run(_args, ctx) {
+    const denied = await ownerGate(ctx);
+    if (denied) return denied;
+    const { listServerSessions } = await import("../../server/auth/sessions");
+    const sessions = listServerSessions();
+    return {
+      sessions,
+      count: sessions.length,
+      signedIn: sessions.filter((s) => s.identityId !== null).length,
+      anonymous: sessions.filter((s) => s.identityId === null).length,
+    };
+  },
+};
+
+const web_server_allow_identity: AiTool = {
+  name: "web_server_allow_identity",
+  description:
+    "Add an account to the web server's allowlist so it can sign in. For provider sign-in (google/github/facebook) the subject is that provider's stable user id, not the email address — the person has to try signing in once and read it out of the refusal, or the owner has to look it up. For a local account, the subject is the username and a password of at least 12 characters is required. Use when the user wants to give someone access to their server. Owner only.",
+  parameters: {
+    type: "object",
+    properties: {
+      provider: {
+        type: "string",
+        enum: ["local", "google", "github", "facebook"],
+        description: "Which sign-in method this account uses.",
+      },
+      subject: {
+        type: "string",
+        description:
+          "The username for a local account, or the provider's stable user id for the others.",
+      },
+      display_name: { type: "string", description: "Optional label." },
+      email: { type: "string", description: "Optional, for display only." },
+      password: {
+        type: "string",
+        description:
+          "Required for provider=local, at least 12 characters. Never invent one — ask the user.",
+      },
+    },
+    required: ["provider", "subject"],
+  },
+  // Destructive in the tier's sense: it changes what the outside world can
+  // reach, exactly like `web_server_set_enabled`. Handing a stranger a library
+  // is not something to do without being asked twice.
+  kind: "write-destructive",
+  summarize: (a) =>
+    `Allow ${String(a.provider)} account "${String(a.subject)}" to sign in to the web server`,
+  async run(args, ctx) {
+    const denied = await ownerGate(ctx);
+    if (denied) return denied;
+
+    const provider = String(args.provider ?? "");
+    if (!["local", "google", "github", "facebook"].includes(provider)) {
+      return { error: `Unknown provider "${provider}".` };
+    }
+    const subject = String(args.subject ?? "").trim();
+    if (!subject) return { error: "A subject (username or provider user id) is required." };
+
+    const identities = await import("../../server/auth/identities");
+    if (provider === "local") {
+      const { validatePassword } = await import("../../server/auth/passwords");
+      const bad = validatePassword(args.password);
+      if (bad) return bad;
+      const identity = await identities.createLocalAccount(
+        subject,
+        String(args.password)
+      );
+      return { ok: true, identity, message: `${subject} can now sign in with that password.` };
+    }
+    // Never `isOwner`. Ownership is claimed once with the one-time token and
+    // there is deliberately no second way to grant it.
+    const identity = identities.addIdentity({
+      provider: provider as "google" | "github" | "facebook",
+      subject,
+      email: typeof args.email === "string" ? args.email : null,
+      displayName: typeof args.display_name === "string" ? args.display_name : null,
+    });
+    return {
+      ok: true,
+      identity,
+      message:
+        `${subject} is now allowed to sign in with ${provider}. If they still ` +
+        "get refused, the subject does not match what the provider sends — it " +
+        "is the provider's own user id, not the email address.",
+    };
+  },
+};
+
+const web_server_revoke_identity: AiTool = {
+  name: "web_server_revoke_identity",
+  description:
+    "Remove an account from the web server's allowlist and sign it out everywhere. Call web_server_list_identities first to get the id. The owner account cannot be removed — a server whose owner is gone has an allowlist nobody can edit. Use when the user wants to cut off someone's access. Owner only.",
+  parameters: {
+    type: "object",
+    properties: {
+      identity_id: {
+        type: "number",
+        description: "The id from web_server_list_identities.",
+      },
+    },
+    required: ["identity_id"],
+  },
+  kind: "write-destructive",
+  summarize: (a) => `Revoke web server access for identity #${String(a.identity_id)}`,
+  async run(args, ctx) {
+    const denied = await ownerGate(ctx);
+    if (denied) return denied;
+
+    const id = Number(args.identity_id);
+    if (!Number.isInteger(id)) return { error: "identity_id must be a whole number." };
+
+    const { removeIdentity } = await import("../../server/auth/identities");
+    const outcome = removeIdentity(id);
+    if ("error" in outcome) return outcome;
+
+    const { revokeSessionsForIdentity } = await import("../../server/auth/sessions");
+    const sessionsRevoked = revokeSessionsForIdentity(id);
+    return {
+      ok: true,
+      sessionsRevoked,
+      message: `Removed. ${sessionsRevoked} signed-in browser(s) were logged out.`,
+    };
+  },
+};
+
+const web_server_revoke_sessions: AiTool = {
+  name: "web_server_revoke_sessions",
+  description:
+    "Sign browsers out of the web server without touching the allowlist — the account can sign in again. Pass identity_id for one account, or all=true for everyone including the person asking. Use when the user wants to end a session on a lost laptop, or sign everything out after a scare. Owner only.",
+  parameters: {
+    type: "object",
+    properties: {
+      identity_id: {
+        type: "number",
+        description: "Sign out just this account. Get the id from web_server_list_identities.",
+      },
+      all: {
+        type: "boolean",
+        description:
+          "Sign out every session, including the user's own — they will have to sign in again.",
+      },
+    },
+    required: [],
+  },
+  kind: "write-destructive",
+  summarize: (a) =>
+    a.all === true
+      ? "Sign every browser out of the web server, including this one"
+      : `Sign identity #${String(a.identity_id)} out of the web server`,
+  async run(args, ctx) {
+    const denied = await ownerGate(ctx);
+    if (denied) return denied;
+
+    const sessions = await import("../../server/auth/sessions");
+    if (args.all === true) {
+      const revoked = sessions.revokeAllSessions();
+      return {
+        ok: true,
+        revoked,
+        message: `${revoked} session(s) ended. Everyone, including you, has to sign in again.`,
+      };
+    }
+    const id = Number(args.identity_id);
+    if (!Number.isInteger(id)) {
+      return { error: "Pass identity_id, or all: true to sign everyone out." };
+    }
+    const revoked = sessions.revokeSessionsForIdentity(id);
+    return { ok: true, revoked, message: `${revoked} session(s) ended for that account.` };
+  },
+};
+
 const playlist_create_genius: AiTool = {
   name: "playlist_create_genius",
   description: "Create a Genius playlist based on listening history (most played, favorites, hidden gems, etc.).",
@@ -628,6 +1037,8 @@ const device_check: AiTool = {
     if (!Number.isInteger(deviceId) || deviceId <= 0) throw new Error("Invalid device_id");
     const device = ctx.getDevicesCore().getDeviceById(deviceId);
     if (!device) throw new Error(`Device #${deviceId} not found`);
+    const blocked = await deviceGate(ctx, deviceId, "operate");
+    if (blocked) return { error: blocked };
     return { deviceId, name: device.profile.name, note: "Full check requires mounting the device — please use the Devices panel for a detailed sync analysis." };
   },
 };
@@ -652,11 +1063,13 @@ const device_read_runtime_data: AiTool = {
     if (!Number.isInteger(deviceId) || deviceId <= 0) throw new Error("Invalid device_id");
     const device = ctx.getDevicesCore().getDeviceById(deviceId);
     if (!device) throw new Error(`Device #${deviceId} not found`);
+    const blocked = await deviceGate(ctx, deviceId, "operate");
+    if (blocked) return { error: blocked };
 
-    const result = readAndIngestRuntimeData(
+    const result = await ingestRuntimeDataForDevice(
       ctx.db,
       deviceId,
-      device.mountPath,
+      device,
       device.profile.skipRuntimeData ?? false
     );
 
@@ -855,6 +1268,8 @@ const device_remove: AiTool = {
     if (!Number.isInteger(deviceId) || deviceId <= 0) throw new Error("Invalid device_id");
     const device = ctx.getDevicesCore().getDeviceById(deviceId);
     if (!device) throw new Error(`Device #${deviceId} not found`);
+    const blocked = await deviceGate(ctx, deviceId, "admin");
+    if (blocked) return { error: blocked };
     const name = device.profile.name;
     const ok = ctx.getDevicesCore().deleteDevice(deviceId);
     if (!ok) throw new Error(`Failed to remove device #${deviceId}`);
@@ -882,16 +1297,24 @@ const device_eject: AiTool = {
     if (!Number.isInteger(deviceId) || deviceId <= 0) throw new Error("Invalid device_id");
     const device = ctx.getDevicesCore().getDeviceById(deviceId);
     if (!device) throw new Error(`Device #${deviceId} not found`);
+    const blocked = await deviceGate(ctx, deviceId, "operate");
+    if (blocked) return { error: blocked };
     const { name, mountPath } = device.profile;
 
     if (!isEjectSupported()) {
       throw new Error("Ejecting from iPodRocks is not supported on this platform yet.");
     }
-    if (isSyncActive()) {
+    if (isSyncActive(deviceId)) {
       throw new Error("A sync is running. Wait for it to finish before ejecting.");
     }
     if (device.profile.devMode) {
       throw new Error(`'${name}' is a dev-mode device, so there is nothing to eject.`);
+    }
+    if (!device.fs.capabilities.eject) {
+      throw new Error(
+        `'${name}' is connected through a browser, so it has to be ejected from ` +
+          "the computer it is plugged into."
+      );
     }
     if (!isDeviceMountPathOnline(mountPath)) {
       throw new Error(`'${name}' is not mounted.`);
@@ -936,6 +1359,8 @@ const device_update_settings: AiTool = {
     if (!Number.isInteger(deviceId) || deviceId <= 0) throw new Error("Invalid device_id");
     const device = ctx.getDevicesCore().getDeviceById(deviceId);
     if (!device) throw new Error(`Device #${deviceId} not found`);
+    const blocked = await deviceGate(ctx, deviceId, "admin");
+    if (blocked) return { error: blocked };
 
     const updates: Record<string, unknown> = {};
     if (args.skip_album_artwork !== undefined) {
@@ -1016,6 +1441,8 @@ const device_set_usb_identity: AiTool = {
     if (!Number.isInteger(deviceId) || deviceId <= 0) throw new Error("Invalid device_id");
     const device = ctx.getDevicesCore().getDeviceById(deviceId);
     if (!device) throw new Error(`Device #${deviceId} not found`);
+    const blocked = await deviceGate(ctx, deviceId, "admin");
+    if (blocked) return { error: blocked };
 
     const clearing = !args.usb_vendor_id || !args.usb_product_id;
     const ok = ctx.getDevicesCore().updateDevice(deviceId, {
@@ -1071,6 +1498,8 @@ const device_set_sync_preferences: AiTool = {
     if (!Number.isInteger(deviceId) || deviceId <= 0) throw new Error("Invalid device_id");
     const device = ctx.getDevicesCore().getDeviceById(deviceId);
     if (!device) throw new Error(`Device #${deviceId} not found`);
+    const blocked = await deviceGate(ctx, deviceId, "admin");
+    if (blocked) return { error: blocked };
 
     if (
       args.preserve_folder_structure === undefined &&
@@ -1155,6 +1584,8 @@ const device_set_orphan_policy: AiTool = {
     if (!Number.isInteger(deviceId) || deviceId <= 0) throw new Error("Invalid device_id");
     const device = ctx.getDevicesCore().getDeviceById(deviceId);
     if (!device) throw new Error(`Device #${deviceId} not found`);
+    const blocked = await deviceGate(ctx, deviceId, "admin");
+    if (blocked) return { error: blocked };
 
     const policy = String(args.policy) as ExtraTrackPolicy;
     if (!["keep", "remove", "delete-all", "prompt"].includes(policy)) {
@@ -1211,6 +1642,8 @@ const device_sync: AiTool = {
     if (!Number.isInteger(deviceId) || deviceId <= 0) throw new Error("Invalid device_id");
     const device = ctx.getDevicesCore().getDeviceById(deviceId);
     if (!device) throw new Error(`Device #${deviceId} not found`);
+    const blocked = await deviceGate(ctx, deviceId, "operate");
+    if (blocked) return { error: blocked };
     const { BrowserWindow } = await import("electron");
     const win = BrowserWindow.getAllWindows()[0];
     if (win) {
@@ -1641,6 +2074,14 @@ export const AI_TOOLS: AiTool[] = [
   playlist_list_broken,
   playlist_repair,
   playlist_delete,
+  web_server_status,
+  web_server_configure,
+  web_server_set_enabled,
+  web_server_list_identities,
+  web_server_list_sessions,
+  web_server_allow_identity,
+  web_server_revoke_identity,
+  web_server_revoke_sessions,
 ];
 
 export function getToolByName(name: string): AiTool | undefined {

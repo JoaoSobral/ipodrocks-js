@@ -1,6 +1,6 @@
-import * as fsp from "fs/promises";
 import * as path from "path";
 import { Playlist, AlbumGrouping } from "../../shared/types";
+import type { DeviceFs } from "../devices/fs";
 import { PlaylistCore } from "../playlists/playlist-core";
 import { ProgressCallback } from "./sync-core";
 import { buildTagnaviConfig, TagnaviPlaylistInput } from "../rockbox/tagnavi-writer";
@@ -16,6 +16,8 @@ export interface M3uOptions {
 }
 
 export interface WritePlaylistsArgs {
+  /** The device these playlists land on. */
+  deviceFs: DeviceFs;
   playlistFolder: string;
   mountPath: string;
   playlistsToWrite: Playlist[];
@@ -33,12 +35,42 @@ export interface WritePlaylistsResult {
 const normalizeForCompare = (s: string) =>
   s.replace(/# Generated: .+/g, "# Generated: <date>");
 
+/**
+ * The filename stem a library playlist occupies on the device. The orphan walk
+ * below deletes by stem, so it has to be the same function that named the file.
+ */
+export function devicePlaylistStem(name: string): string {
+  return name.replace(/[/\\?*:"<>|]/g, "_").trim() || "Playlist";
+}
+
+/**
+ * Every `.m3u` under `playlistFolder` whose stem is not in `expectedStems`
+ * (lowercased). `device:check` reports them and the sync sweeps them, and they
+ * must agree on the answer, so there is one walk.
+ */
+export async function findOrphanPlaylistFiles(
+  deviceFs: DeviceFs,
+  playlistFolder: string,
+  expectedStems: Set<string>
+): Promise<string[]> {
+  const entries = await deviceFs.listTree(playlistFolder, {
+    includeDirectories: false,
+  });
+  return entries
+    .filter(
+      (entry) =>
+        path.extname(entry.name).toLowerCase() === ".m3u" &&
+        !expectedStems.has(path.parse(entry.name).name.toLowerCase())
+    )
+    .map((entry) => entry.path);
+}
+
 export async function writePlaylistsToDevice(
   args: WritePlaylistsArgs
 ): Promise<WritePlaylistsResult> {
-  const { playlistFolder, mountPath, playlistsToWrite, core, m3uOpts, useTagnavi, progressCallback } = args;
+  const { deviceFs, playlistFolder, mountPath, playlistsToWrite, core, m3uOpts, useTagnavi, progressCallback } = args;
 
-  await fsp.mkdir(playlistFolder, { recursive: true });
+  await deviceFs.mkdir(playlistFolder, { recursive: true });
 
   // First pass: determine which m3u playlists actually need to be (re)written
   // and which tagnavi entries should be included. Playlists that already match
@@ -55,11 +87,11 @@ export async function writePlaylistsToDevice(
     }
 
     const content = core.buildM3uContentForDevice(pl.id, m3uOpts);
-    const safeName = pl.name.replace(/[/\\?*:"<>|]/g, "_").trim() || "Playlist";
+    const safeName = devicePlaylistStem(pl.name);
     const outPath = path.join(playlistFolder, `${safeName}.m3u`);
     let existingRaw: string | null = null;
     try {
-      existingRaw = await fsp.readFile(outPath, "utf-8");
+      existingRaw = (await deviceFs.readFile(outPath)).toString("utf-8");
     } catch {
       // file doesn't exist yet
     }
@@ -78,7 +110,7 @@ export async function writePlaylistsToDevice(
   // Migration: tagnavi_custom.config was used by older iPodRocks versions but
   // the firmware's %include of it fails silently on some builds. We now own
   // tagnavi_user.config (which fully overrides tagnavi.config) instead.
-  await fsp.rm(legacyCustomPath, { force: true });
+  await deviceFs.rm(legacyCustomPath, { force: true });
 
   let tagnaviContent = "";
   let tagnaviNeedsWrite = false;
@@ -86,7 +118,7 @@ export async function writePlaylistsToDevice(
     tagnaviContent = buildTagnaviConfig(smartForTagnavi);
     let existing: string | null = null;
     try {
-      existing = await fsp.readFile(configPath, "utf-8");
+      existing = (await deviceFs.readFile(configPath)).toString("utf-8");
     } catch {
       // file doesn't exist yet
     }
@@ -104,7 +136,7 @@ export async function writePlaylistsToDevice(
   // Second pass: write what needs writing and emit one progress event per item.
   let playlistsWritten = 0;
   for (const { outPath, content } of m3uToWrite) {
-    await fsp.writeFile(outPath, content, "utf-8");
+    await deviceFs.writeFile(outPath, Buffer.from(content, "utf-8"));
     playlistsWritten += 1;
     progressCallback?.({
       event: "copy",
@@ -117,10 +149,10 @@ export async function writePlaylistsToDevice(
   let tagnaviCount = 0;
   if (useTagnavi) {
     if (smartForTagnavi.length === 0) {
-      await fsp.rm(configPath, { force: true });
+      await deviceFs.rm(configPath, { force: true });
     } else if (tagnaviNeedsWrite) {
-      await fsp.mkdir(rockboxDir, { recursive: true });
-      await fsp.writeFile(configPath, tagnaviContent, "utf-8");
+      await deviceFs.mkdir(rockboxDir, { recursive: true });
+      await deviceFs.writeFile(configPath, Buffer.from(tagnaviContent, "utf-8"));
       tagnaviCount = smartForTagnavi.length;
       for (const entry of smartForTagnavi) {
         progressCallback?.({
@@ -132,7 +164,7 @@ export async function writePlaylistsToDevice(
       }
     }
   } else {
-    await fsp.rm(configPath, { force: true });
+    await deviceFs.rm(configPath, { force: true });
   }
 
   if (playlistsWritten > 0 || tagnaviCount > 0) {

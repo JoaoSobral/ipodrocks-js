@@ -312,9 +312,30 @@ test("ticking a renamed-looking row still syncs the right tracks", async () => {
   // Tick the compilation by its displayed (bare) name...
   await window.click(`label:has-text("${ALBUM}") input[type="checkbox"]`);
   await window.click('button:has-text("Start Sync")');
-  await window.waitForSelector('text=/Completed|Success|completed/i', { timeout: 30_000 });
 
-  // ...and the underlying key still selected all three tracks.
+  // ...and wait for the progress modal's completion summary.
+  //
+  // This used to wait for `/Completed|Success|completed/i` — the "Success"
+  // badge on the Sync Results card, which 3a1c4bb removed when DeviceStatusCard
+  // replaced it. The string has not existed in the renderer since, so the wait
+  // could only ever time out and none of the assertions below ever ran.
+  //
+  // Which hid a real bug for as long as it hid them: this is the only e2e that
+  // drives a sync through the UI, and the modal was reporting "Nothing to sync
+  // — device up to date." over a sync that had just copied all three tracks.
+  // See the subscription effect in `SyncProgressModal.tsx`.
+  //
+  // The summary grid is the right marker because the modal renders it only for
+  // a sync that did something. A marker that also showed on the genuine no-op
+  // would pass against exactly the failure this test exists to catch.
+  await window.waitForSelector("text=Processed", { timeout: 30_000 });
+  await expect(window.getByText("Copied")).toBeVisible();
+  await expect(
+    window.getByText("Nothing to sync — device up to date.")
+  ).toHaveCount(0);
+
+  // The underlying key selected the album, disambiguated the way the row's
+  // title attribute shows it rather than the bare name the row displays.
   const prefs = await window.evaluate(
     async (id) =>
       (await (window as unknown as ApiWindow).api.invoke(
@@ -324,6 +345,18 @@ test("ticking a renamed-looking row still syncs the right tracks", async () => {
     deviceId
   );
   expect(prefs?.selections?.albums).toEqual([`${ALBUM} — ${ALBUM_ARTIST}`]);
+
+  // ...and all three tracks actually landed, which is what the test's name
+  // claims and what the timed-out wait meant nothing ever checked. The album
+  // folder's parent is the mirrored library folder, whose name is a temp
+  // directory, so the album folder is found rather than spelled out.
+  const albumDirs = fs
+    .readdirSync(path.join(deviceDir, "Music"), { withFileTypes: true })
+    .filter((e) => e.isDirectory())
+    .map((e) => path.join(deviceDir, "Music", e.name, ALBUM))
+    .filter((d) => fs.existsSync(d));
+  expect(albumDirs).toHaveLength(1);
+  expect(fs.readdirSync(albumDirs[0]).filter((f) => f.endsWith(".mp3"))).toHaveLength(3);
 });
 
 test("a library with no album-artist tags explains why the setting looks inert", async () => {

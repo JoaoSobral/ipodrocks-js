@@ -551,6 +551,13 @@ Tool usage rules (CRITICAL):
 - User says an album they just synced arrived on the player without its ratings, or that a sync reported "N rating(s) are waiting for the device's database" → nothing was lost. Rockbox only learns a file exists once its database has been updated, so there is no record to write a rating into on the sync that copies it. Tell them to run **Database → Update now** on the player (or restart it with Auto Update on) and sync again; iPodRocks re-sends those ratings by itself. Ratings that *were* written need a Rockbox restart to show on screen — the values are already saved. Before 2.3.3 those ratings were never sent at all, on any later sync (issue #138); that is fixed. Do NOT tell the user their ratings were dropped, and do NOT suggest re-rating anything by hand.
 - User wants to settle rating conflicts in bulk ("keep my library ratings", "the iPod's ratings are right", "resolve them all") → call \`ratings_resolve_conflicts\` with keep \`library\` or \`device\`. It asks them to confirm first, because it rewrites every conflicting rating at once and there is no undo. NEVER tell them they have to work through the conflicts one at a time — this tool and the "Keep Library for All" / "Use Device for All" buttons in the Rating Conflicts window both settle the whole queue.
 - User asks to make their file tags (Swinsian, Mp3tag, foobar2000, …) the source of truth for ratings, or to "reset ratings to match my library" / "wipe out the rating conflicts and just trust the tags" → call \`ratings_set_tag_priority\` with \`enabled: true\`, then tell them to run a library scan (or offer to via \`library_scan\`) for it to take effect. It also asks what the setting currently is — call it with no \`enabled\` argument to just read the value. Make clear this affects every future scan until turned back off with \`enabled: false\`, and that turning it on does nothing by itself until the next scan runs.
+- User asks about running iPodRocks in a browser, reaching their library from another machine, a "server mode", syncing an iPod plugged into a different computer, hosting it on a NAS, or putting it behind a Cloudflare Tunnel → call \`web_server_status\` first. It says whether the server is running, at what URL, which sign-in providers are set up, and whether anyone has claimed ownership yet. To change the port, bind address or public URL call \`web_server_configure\`; to actually start or stop it call \`web_server_set_enabled\`. Never tell them iPodRocks cannot do this.
+- When someone cannot sign in to the web server, the cause is almost always one of three things and \`web_server_status\` distinguishes them: nobody has claimed ownership yet (they need the one-time claim token, which is printed to the server log and shown in Settings → Web Server — never guess it or read it out of a file), their account is not on the allowlist (a successful Google/GitHub login is still refused; the owner has to add them), or no public HTTPS URL is configured, which is why social sign-in is unavailable and a local password account is the answer for a LAN install. For the second case call \`web_server_list_identities\` to see who is actually on the list.
+- User asks who can reach their server, who is allowed to sign in, or wants the allowlist read back ("who has access", "is my partner on the list", "why is X being refused") → call \`web_server_list_identities\`. User asks who is signed in *right now*, or is worried someone else is connected → call \`web_server_list_sessions\`. Never say iPodRocks cannot tell them.
+- User wants to give someone access to their server → call \`web_server_allow_identity\`. For a local password account, pass \`provider: "local"\`, the username as \`subject\`, and a password of at least 12 characters — **ask the user for the password, never invent one, and never echo a password back in your reply**. For Google/GitHub/Facebook the \`subject\` is that provider's own stable user id, NOT the email address, because an email can be changed; if they do not have it, tell them the person should attempt a sign-in once and that the owner can then find the subject in the server log. Adding someone puts a library on the internet for them, so this asks for confirmation first.
+- User wants to cut off someone's access → call \`web_server_list_identities\` first for the id, then \`web_server_revoke_identity\`, which removes the account and logs its browsers out. If they only want to end a session — a lost laptop, "sign me out everywhere" — use \`web_server_revoke_sessions\` instead, which leaves the account able to sign in again; \`all: true\` signs the user themselves out too, so say that before doing it. The owner account cannot be removed, by design: a server whose owner is gone has an allowlist nobody can edit.
+- All five of those are **owner-only**. If one comes back saying only the owner can manage sign-in, that is the answer — relay it and do not try another route to the same thing.
+- Never read a claim token, a password or a session id out into the chat. Say where the token is (the server log, and Settings → Web Server while the server is unclaimed) and let the user fetch it themselves.
 - iPodRocks no longer uses Rockbox's Playback Logging feature. If a user asks about enabling logging or the playback.log file, tell them it is not needed and point them at Settings → Playback Settings → Gather Runtime Data instead. Note that Rockbox only counts a play once a track has run 15 seconds.
 - User asks about their podcasts / subscriptions → call \`podcast_list_subscriptions\`.
 - User asks about their devices → call \`device_list\`.
@@ -563,6 +570,8 @@ Tool usage rules (CRITICAL):
 - User asks to identify a device by its USB port/hardware instead of its mount path, or says two devices keep being confused for each other (e.g. "both my iPods mount at /Volumes/IPOD", "bind this device to its USB id", "how do I tell my two nanos apart") → call \`usb_device_list\` and \`device_list\` first, then \`device_set_usb_identity\` with the vendor id, product id and serial of the right unit.
 - User asks to remove or clear a device's USB binding → call \`device_list\` first, then \`device_set_usb_identity\` with no vendor/product id. Warn them the device will then be matched by mount path alone, so another drive at the same path could be mistaken for it.
 - When a device with a USB identity shows as offline, remember it is only online when that exact USB unit is plugged in AND its mount path is a live volume. Suggest \`usb_device_list\` to check what is actually connected.
+- A device whose \`transport\` is \`web\` is plugged into the user's *own computer*, not this server, and is reachable only while the browser tab holding its folder is open. When \`connected\` is false, say exactly that: they should open iPodRocks in the browser where the device is plugged in and press "Connect this device". Do NOT tell them to check the cable, the mount path or \`usb_device_list\` — none of those apply, and its mount path is synthetic. You cannot connect it yourself: the browser only hands over a folder through a picker the user has to click.
+- Never offer to eject a web device. It is mounted on the user's machine, so they eject it there; \`device_eject\` will refuse it.
 - User asks to scan the library / "scan for new music" / "rescan" → call \`library_scan\`.
 - User asks about shadow libraries, or says one lost track of its files / re-encoded everything / "I moved my transcoded folder" / "my shadow library is empty but the files are there" / asks to rebuild one → call \`shadow_list\` first to get the id, then \`shadow_rebuild\`. Reassure them: a rebuild adopts files that are already correctly encoded instead of re-encoding them, so it is usually quick and only the missing or mismatched tracks are converted. It also checks the Musepack tags in the folder as it goes and repairs any still carrying the pre-2.3.2 cover-art defect.
 - If \`shadow_list\` shows \`codecConfigMissing: true\` for a shadow library, or \`shadow_rebuild\` fails saying it "can't be rebuilt" — its codec configuration is gone and rebuilding is not possible. Don't retry \`shadow_rebuild\`. Tell the user, then call \`shadow_delete\` with \`keepFiles: true\` (confirm with them first since it's destructive) and have them create a new shadow library with the same name and folder — the existing files are adopted automatically instead of re-encoded.
@@ -621,13 +630,14 @@ Format your replies with **Markdown** for readability:
 // ---------------------------------------------------------------------------
 
 export function loadAssistantHistory(
-  db: Database.Database
+  db: Database.Database,
+  subject: string | null = null
 ): Array<{ role: "user" | "assistant"; content: string }> {
   const rows = db
     .prepare(
-      "SELECT role, content FROM assistant_chat_history ORDER BY id ASC"
+      "SELECT role, content FROM assistant_chat_history WHERE identity_subject IS ? ORDER BY id ASC"
     )
-    .all() as Array<{ role: string; content: string }>;
+    .all(subject) as Array<{ role: string; content: string }>;
   return rows.map((r) => ({
     role: r.role as "user" | "assistant",
     content: r.content,
@@ -635,13 +645,14 @@ export function loadAssistantHistory(
 }
 
 export function loadNonPinnedHistory(
-  db: Database.Database
+  db: Database.Database,
+  subject: string | null = null
 ): Array<{ role: "user" | "assistant"; content: string }> {
   const rows = db
     .prepare(
-      "SELECT role, content FROM assistant_chat_history WHERE pinned = 0 ORDER BY id ASC"
+      "SELECT role, content FROM assistant_chat_history WHERE pinned = 0 AND identity_subject IS ? ORDER BY id ASC"
     )
-    .all() as Array<{ role: string; content: string }>;
+    .all(subject) as Array<{ role: string; content: string }>;
   return rows.map((r) => ({
     role: r.role as "user" | "assistant",
     content: r.content,
@@ -651,31 +662,38 @@ export function loadNonPinnedHistory(
 export function saveAssistantMessages(
   db: Database.Database,
   userContent: string,
-  assistantContent: string
+  assistantContent: string,
+  subject: string | null = null
 ): { userMsgId: number; assistantMsgId: number } {
   const insert = db.prepare(
-    "INSERT INTO assistant_chat_history (role, content) VALUES (?, ?)"
+    "INSERT INTO assistant_chat_history (role, content, identity_subject) VALUES (?, ?, ?)"
   );
+  // The trim is per identity too, or a chatty user would evict everyone else's
+  // history rather than their own.
   const trim = db.prepare(`
     DELETE FROM assistant_chat_history
-    WHERE pinned = 0 AND id NOT IN (
-      SELECT id FROM assistant_chat_history WHERE pinned = 0 ORDER BY id DESC LIMIT ?
+    WHERE pinned = 0 AND identity_subject IS ? AND id NOT IN (
+      SELECT id FROM assistant_chat_history
+      WHERE pinned = 0 AND identity_subject IS ? ORDER BY id DESC LIMIT ?
     )
   `);
   let userMsgId = 0;
   let assistantMsgId = 0;
   db.transaction(() => {
-    const ur = insert.run("user", userContent);
+    const ur = insert.run("user", userContent, subject);
     userMsgId = Number(ur.lastInsertRowid);
-    const ar = insert.run("assistant", assistantContent);
+    const ar = insert.run("assistant", assistantContent, subject);
     assistantMsgId = Number(ar.lastInsertRowid);
-    trim.run(MAX_ASSISTANT_HISTORY);
+    trim.run(subject, subject, MAX_ASSISTANT_HISTORY);
   })();
   return { userMsgId, assistantMsgId };
 }
 
-export function clearAssistantHistory(db: Database.Database): void {
-  db.prepare("DELETE FROM assistant_chat_history").run();
+export function clearAssistantHistory(
+  db: Database.Database,
+  subject: string | null = null
+): void {
+  db.prepare("DELETE FROM assistant_chat_history WHERE identity_subject IS ?").run(subject);
 }
 
 // ---------------------------------------------------------------------------
@@ -685,25 +703,27 @@ export function clearAssistantHistory(db: Database.Database): void {
 export function pinMessages(
   db: Database.Database,
   userMsgId: number,
-  assistantMsgId: number
+  assistantMsgId: number,
+  subject: string | null = null
 ): void {
   db.prepare(
-    "UPDATE assistant_chat_history SET pinned = 1 WHERE id IN (?, ?)"
-  ).run(userMsgId, assistantMsgId);
+    "UPDATE assistant_chat_history SET pinned = 1 WHERE id IN (?, ?) AND identity_subject IS ?"
+  ).run(userMsgId, assistantMsgId, subject);
 }
 
 export function unpinMessages(
   db: Database.Database,
-  userMsgId: number
+  userMsgId: number,
+  subject: string | null = null
 ): void {
   db.prepare(
-    "UPDATE assistant_chat_history SET pinned = 0 WHERE id = ?"
-  ).run(userMsgId);
+    "UPDATE assistant_chat_history SET pinned = 0 WHERE id = ? AND identity_subject IS ?"
+  ).run(userMsgId, subject);
   const next = db
     .prepare(
-      "SELECT id FROM assistant_chat_history WHERE id > ? AND role = 'assistant' AND pinned = 1 ORDER BY id ASC LIMIT 1"
+      "SELECT id FROM assistant_chat_history WHERE id > ? AND role = 'assistant' AND pinned = 1 AND identity_subject IS ? ORDER BY id ASC LIMIT 1"
     )
-    .get(userMsgId) as { id: number } | undefined;
+    .get(userMsgId, subject) as { id: number } | undefined;
   if (next) {
     db.prepare(
       "UPDATE assistant_chat_history SET pinned = 0 WHERE id = ?"
@@ -711,24 +731,28 @@ export function unpinMessages(
   }
 }
 
-export function getPinnedCount(db: Database.Database): number {
+export function getPinnedCount(
+  db: Database.Database,
+  subject: string | null = null
+): number {
   return (
     db
       .prepare(
-        "SELECT COUNT(*) as c FROM assistant_chat_history WHERE pinned = 1 AND role = 'user'"
+        "SELECT COUNT(*) as c FROM assistant_chat_history WHERE pinned = 1 AND role = 'user' AND identity_subject IS ?"
       )
-      .get() as { c: number }
+      .get(subject) as { c: number }
   ).c;
 }
 
 function buildPinnedMemoriesContext(
-  db: Database.Database
+  db: Database.Database,
+  subject: string | null = null
 ): { text: string; count: number } {
   const rows = db
     .prepare(
-      "SELECT id, role, content FROM assistant_chat_history WHERE pinned = 1 ORDER BY id ASC"
+      "SELECT id, role, content FROM assistant_chat_history WHERE pinned = 1 AND identity_subject IS ? ORDER BY id ASC"
     )
-    .all() as Array<{ id: number; role: string; content: string }>;
+    .all(subject) as Array<{ id: number; role: string; content: string }>;
   if (rows.length === 0) return { text: "No pinned memories yet.", count: 0 };
 
   const pairs: string[] = [];
@@ -1027,7 +1051,9 @@ export async function sendAssistantMessage(
   db: Database.Database,
   config: OpenRouterConfig,
   appPaths: AppPaths,
-  toolCtx: AiToolContext
+  toolCtx: AiToolContext,
+  /** Whose pinned memories to load. Null is the desktop app's own. */
+  subject: string | null = null
 ): Promise<AssistantResult> {
   // F9: Cache the expensive context queries with a 5-minute TTL
   const now = Date.now();
@@ -1056,7 +1082,7 @@ export async function sendAssistantMessage(
   const appPathsContext = buildAppPathsContext(db, appPaths);
   const activityContext = buildActivityContext(db);
 
-  const { text: pinnedText, count: pinnedCount } = buildPinnedMemoriesContext(db);
+  const { text: pinnedText, count: pinnedCount } = buildPinnedMemoriesContext(db, subject);
   const memoryInstructions = buildMemoryInstructions(pinnedText, pinnedCount);
 
   const systemMessages: OpenRouterMessage[] = [

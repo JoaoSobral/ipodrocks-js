@@ -1,0 +1,80 @@
+# iPodRocks headless server — a starting point, not a drop-in.
+#
+# Read docs/guide/server-deployment.md before running this. The two things that
+# are wrong for you by default:
+#
+#   1. `/music` is bound read-only. That is right for a pure sync server and
+#      wrong the moment you want a shadow library, which writes transcodes.
+#   2. There is no TLS and no tunnel in the `ipodrocks` service alone. Binding
+#      0.0.0.0 inside a container is fine; publishing that port to a LAN over
+#      plain HTTP is not, because the session cookie travels with every request.
+#      Use the `cloudflared` profile below, a reverse proxy, or IPODROCKS_TLS_*.
+
+services:
+  ipodrocks:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ipodrocks-server:local
+    restart: unless-stopped
+    # Published to loopback only: the tunnel and the healthcheck reach it, the
+    # LAN does not. Change to "8780:8780" only together with TLS.
+    ports:
+      - "127.0.0.1:8780:8780"
+    volumes:
+      - ipodrocks-data:/data
+      - ${IPODROCKS_MUSIC_DIR:-./music}:/music:ro
+    environment:
+      # Inside the container it must bind all interfaces or Docker cannot
+      # forward to it. The published-port line above is what limits exposure.
+      IPODROCKS_SERVER_HOST: 0.0.0.0
+      IPODROCKS_SERVER_PORT: 8780
+      IPODROCKS_DATA_DIR: /data
+
+      # The externally visible origin. OAuth callback URLs are built from it and
+      # it is the default allowed WebSocket origin; without it social sign-in is
+      # refused outright and a local password account is the only way in.
+      IPODROCKS_PUBLIC_URL: ${IPODROCKS_PUBLIC_URL:-}
+
+      # Sessions survive a restart only if this is stable. Unset means a random
+      # secret per boot, i.e. everyone is logged out on every `docker compose up`.
+      #   openssl rand -base64 48
+      IPODROCKS_SESSION_SECRET: ${IPODROCKS_SESSION_SECRET:?set IPODROCKS_SESSION_SECRET in .env}
+
+      # Only set this when something really is in front. The rate limiter keys on
+      # req.ip, and `trust proxy` left wide open lets a direct client forge
+      # X-Forwarded-For and walk past it. A cloudflared sidecar on the same
+      # compose network arrives from the bridge subnet.
+      IPODROCKS_TRUSTED_PROXIES: ${IPODROCKS_TRUSTED_PROXIES:-}
+
+      # OAuth client secrets are environment-only, deliberately: they belong to
+      # someone else's console and have no business in a file the app rewrites.
+      IPODROCKS_GOOGLE_CLIENT_ID: ${IPODROCKS_GOOGLE_CLIENT_ID:-}
+      IPODROCKS_GOOGLE_CLIENT_SECRET: ${IPODROCKS_GOOGLE_CLIENT_SECRET:-}
+      IPODROCKS_GITHUB_CLIENT_ID: ${IPODROCKS_GITHUB_CLIENT_ID:-}
+      IPODROCKS_GITHUB_CLIENT_SECRET: ${IPODROCKS_GITHUB_CLIENT_SECRET:-}
+
+      # Cloudflare Access, if you put the tunnel behind it. With these set, a
+      # request that reached the origin without a valid Access assertion is
+      # rejected even when it carries a good session cookie.
+      IPODROCKS_CF_ACCESS_TEAM_DOMAIN: ${IPODROCKS_CF_ACCESS_TEAM_DOMAIN:-}
+      IPODROCKS_CF_ACCESS_AUD: ${IPODROCKS_CF_ACCESS_AUD:-}
+
+  # `docker compose --profile tunnel up -d`
+  #
+  # A named tunnel, configured in the Cloudflare dashboard, pointed at
+  # http://ipodrocks:8780. Nothing is published to the internet by this compose
+  # file otherwise, which is the point: the origin stays on loopback and the
+  # tunnel dials out.
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    profiles: ["tunnel"]
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:?set CLOUDFLARE_TUNNEL_TOKEN in .env}
+    depends_on:
+      - ipodrocks
+
+volumes:
+  ipodrocks-data:

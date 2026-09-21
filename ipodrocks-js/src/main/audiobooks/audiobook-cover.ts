@@ -1,5 +1,6 @@
 import * as fs from "fs";
 import * as path from "path";
+import { safeFetch } from "../utils/safe-fetch";
 import { pipeline } from "stream/promises";
 import { Readable } from "stream";
 import type Database from "better-sqlite3";
@@ -44,7 +45,7 @@ export async function downloadCover(
   if (!remoteUrl) return null;
 
   try {
-    const res = await fetch(remoteUrl, {
+    const res = await safeFetch(remoteUrl, {
       headers: { "User-Agent": "iPodRocks/1.0" },
       signal: AbortSignal.timeout(15000),
     });
@@ -79,7 +80,8 @@ export async function downloadCoverFromUrl(
   if (!row) return null;
 
   try {
-    const res = await fetch(remoteUrl, {
+    // `remoteUrl` here is the raw argument to `audiobook:setCoverFromUrl`.
+    const res = await safeFetch(remoteUrl, {
       headers: { "User-Agent": "iPodRocks/1.0" },
       signal: AbortSignal.timeout(15000),
     });

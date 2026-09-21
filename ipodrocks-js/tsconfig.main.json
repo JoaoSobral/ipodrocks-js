@@ -9,5 +9,5 @@
     "sourceMap": true,
     "noEmit": false
   },
-  "include": ["src/main/**/*.ts", "src/shared/**/*.ts"]
+  "include": ["src/main/**/*.ts", "src/server/**/*.ts", "src/shared/**/*.ts"]
 }

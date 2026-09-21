@@ -1,9 +1,11 @@
 import type Database from "better-sqlite3";
 
 import { buildDevicePathResolver } from "./device-path-match";
+import type { DeviceFs } from "../devices/fs/device-fs";
 import {
-  detectRuntimeCapability,
-  readRuntimeIndex,
+  readRuntimeData,
+  readRuntimeDataOn,
+  type RockboxRuntimeSnapshot,
   type RockboxRuntimeEntry,
   type RuntimeDataState,
 } from "./tagcache-index";
@@ -70,30 +72,89 @@ function averageCompletion(entry: RockboxRuntimeEntry): number | null {
   return Math.max(0, Math.min(1, ratio));
 }
 
+const SKIPPED_STATE: RuntimeDataState = {
+  kind: "no-runtime-data",
+  message: "Runtime data import is turned off for this device.",
+};
+
 export function readAndIngestRuntimeData(
   db: Database.Database,
   deviceId: number,
   mountPath: string,
   skip: boolean
 ): RuntimeIngestResult {
-  if (skip) {
-    return emptyResult({
-      kind: "no-runtime-data",
-      message: "Runtime data import is turned off for this device.",
-    });
-  }
+  if (skip) return emptyResult(SKIPPED_STATE);
 
-  const state = detectRuntimeCapability(mountPath);
-  if (state.kind !== "ok") return emptyResult(state);
+  // One read of both `.tcd` files answers both questions: whether this device
+  // has anything to offer, and what it holds.
+  const { state, snapshot } = readRuntimeData(mountPath);
+  if (state.kind !== "ok" || !snapshot) return emptyResult(state);
+  return ingestRuntimeSnapshot(db, deviceId, snapshot, state);
+}
 
-  const snapshot = readRuntimeIndex(mountPath);
-  if (!snapshot) {
-    return emptyResult({
-      kind: "unreadable",
-      message: "Rockbox database could not be read.",
-    });
-  }
+/**
+ * {@link readAndIngestRuntimeData} for a device reached through a `DeviceFs`.
+ *
+ * Only the read differs. Everything after it — the resolver, the deltas, the
+ * upserts — is the same function, because it is all database work and none of
+ * it cares where the bytes came from.
+ */
+export async function readAndIngestRuntimeDataOn(
+  db: Database.Database,
+  deviceId: number,
+  deviceFs: DeviceFs,
+  mountPath: string,
+  skip: boolean
+): Promise<RuntimeIngestResult> {
+  if (skip) return emptyResult(SKIPPED_STATE);
 
+  const { state, snapshot } = await readRuntimeDataOn(deviceFs, mountPath);
+  if (state.kind !== "ok" || !snapshot) return emptyResult(state);
+  return ingestRuntimeSnapshot(db, deviceId, snapshot, state);
+}
+
+/**
+ * What this module needs of a device. `Device` satisfies it structurally, so
+ * nothing here has to import the class.
+ */
+export interface RuntimeDeviceSource {
+  fs: DeviceFs;
+  mountPath: string;
+  profile: { transport?: string };
+}
+
+/**
+ * The right runtime read for this device.
+ *
+ * A local device keeps the synchronous path — that is the code every rating
+ * regression suite drives, and having production call something else would
+ * leave the hazards they pin unpinned for the code that actually runs. A
+ * browser-held one has no choice.
+ */
+export async function ingestRuntimeDataForDevice(
+  db: Database.Database,
+  deviceId: number,
+  device: RuntimeDeviceSource,
+  skip: boolean
+): Promise<RuntimeIngestResult> {
+  return device.profile.transport === "web"
+    ? readAndIngestRuntimeDataOn(db, deviceId, device.fs, device.mountPath, skip)
+    : readAndIngestRuntimeData(db, deviceId, device.mountPath, skip);
+}
+
+/**
+ * Everything a runtime import does once the bytes are in hand.
+ *
+ * Synchronous and transport-blind on purpose: it is all SQLite, and keeping it
+ * out of the read means the local path and the browser-held one cannot drift
+ * in how they record a play.
+ */
+function ingestRuntimeSnapshot(
+  db: Database.Database,
+  deviceId: number,
+  snapshot: RockboxRuntimeSnapshot,
+  state: RuntimeDataState
+): RuntimeIngestResult {
   const resolver = buildDevicePathResolver(db, deviceId);
 
   // What the previous import saw, so this one can tell what moved.

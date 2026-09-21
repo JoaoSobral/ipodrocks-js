@@ -14,6 +14,7 @@ import * as os from "os";
 import * as path from "path";
 
 import { findOrphanedAlbumArt } from "../../main/sync/sync-core";
+import { localFs } from "../../main/devices/fs";
 import {
   installElectronMock,
   setupIpcSession,
@@ -37,7 +38,9 @@ vi.mock("../../main/sync/sync-executor", async (importOriginal) => {
   const actual = (await importOriginal()) as Record<string, unknown>;
   return {
     ...actual,
-    copyFileToDevice: vi.fn(async (src: string, dest: string) => {
+    // `deviceFs` is first and ignored here: this stub is the whole point of
+    // the mock — keep the copy in tmp.
+    copyFileToDevice: vi.fn(async (_deviceFs: unknown, src: string, dest: string) => {
       fs.mkdirSync(path.dirname(dest), { recursive: true });
       fs.copyFileSync(src, dest);
       return true;
@@ -72,7 +75,7 @@ describe("findOrphanedAlbumArt", () => {
     }
   });
 
-  it("flags a cover whose album folder no longer matches any library track", () => {
+  it("flags a cover whose album folder no longer matches any library track", async () => {
     const stalePath = path.join(workDir, "Artist", "OldAlbum", "cover.jpg");
     fs.mkdirSync(path.dirname(stalePath), { recursive: true });
     fs.writeFileSync(stalePath, "stale");
@@ -88,12 +91,12 @@ describe("findOrphanedAlbumArt", () => {
       },
     };
 
-    const orphans = findOrphanedAlbumArt(workDir, "music", libraryTracks);
+    const orphans = await findOrphanedAlbumArt(localFs(workDir), workDir, "music", libraryTracks);
 
     expect(orphans).toEqual([stalePath]);
   });
 
-  it("flags every cover once skipAlbumArtwork is on, even for a still-current album", () => {
+  it("flags every cover once skipAlbumArtwork is on, even for a still-current album", async () => {
     const currentPath = path.join(workDir, "Artist", "CurrentAlbum", "cover.jpg");
     fs.mkdirSync(path.dirname(currentPath), { recursive: true });
     fs.writeFileSync(currentPath, "current");
@@ -105,15 +108,19 @@ describe("findOrphanedAlbumArt", () => {
       },
     };
 
-    expect(findOrphanedAlbumArt(workDir, "music", libraryTracks)).toEqual([]);
     expect(
-      findOrphanedAlbumArt(workDir, "music", libraryTracks, { skipAlbumArtwork: true })
+      await findOrphanedAlbumArt(localFs(workDir), workDir, "music", libraryTracks)
+    ).toEqual([]);
+    expect(
+      await findOrphanedAlbumArt(localFs(workDir), workDir, "music", libraryTracks, {
+        skipAlbumArtwork: true,
+      })
     ).toEqual([currentPath]);
   });
 
-  it("returns nothing for a device folder that doesn't exist yet", () => {
+  it("returns nothing for a device folder that doesn't exist yet", async () => {
     const missing = path.join(workDir, "does-not-exist");
-    expect(findOrphanedAlbumArt(missing, "music", {})).toEqual([]);
+    expect(await findOrphanedAlbumArt(localFs(missing), missing, "music", {})).toEqual([]);
   });
 });
 

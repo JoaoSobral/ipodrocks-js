@@ -1,6 +1,6 @@
 # iPodRocks — Electron Edition
 
-**The smart sync manager for Rockbox and any mountable device.** Built with Electron, React, and TypeScript.
+**The smart sync manager for Rockbox and any mountable device — now from anywhere.** Built with Electron, React, and TypeScript.
 
 📖 **[Full documentation →](https://ipodrocks.dev)**
 
@@ -12,7 +12,19 @@
 
 ## ✨ Why iPodRocks?
 
-iPodRocks is a sync manager for [Rockbox devices](https://www.rockbox.org/) — and any mountable player. Multiple libraries, shadow transcoding, auto-downloading podcasts, free public-domain audiobooks, AI-powered playlists, harmonic mixing, and AI assistant Rocksy that knows your entire collection and can act on your behalf. All in one desktop app.
+iPodRocks is a sync manager for [Rockbox devices](https://www.rockbox.org/) — and any mountable player. Point it at a library you already keep and it handles the rest: transcoding, playlists, album art, podcasts, audiobooks, star ratings and play history, across as many players as you own.
+
+### 🌍 Your player no longer has to be plugged into the machine with your music
+
+This is the big one. Run iPodRocks as a **server** — on a NAS, a home server, an old desktop in a cupboard — then open it in a **browser from wherever you happen to be**. Plug your player into *that* laptop, point the browser at its folder, and sync it to the library sitting at home.
+
+No files copied to the laptop first. No syncing a subset onto a USB stick. No VPN gymnastics. Same app, same library, same database, same ratings and play history — reached over HTTPS, behind a login you control, and optionally through a Cloudflare Tunnel that opens no inbound port at all.
+
+It also runs **headless**: a plain daemon with no Electron, shipped with a `Dockerfile`, a `docker-compose.yml` and a systemd unit.
+
+### 🔌 …and everything works offline, with no account and no API key
+
+The whole feature set above needs nothing but the app: no sign-up, no subscription, no cloud. There are two **optional** AI extras — mood-based Savant playlists and a chat assistant called Rocksy — which need an OpenRouter key if you want them. Skip them and you lose nothing else.
 
 ### What is not!
 
@@ -50,7 +62,7 @@ If you really like iPodRocks and want to keep it caffeinated, you can buy me a c
 ### Sync
 <img src="https://github.com/JoaoSobral/ipodrocks-js/blob/main/ipodrocks-js/docs/screenshots/sync.png?raw=true" width="70%">
 
-### Rocksy — create playlists by chat
+### Rocksy (optional AI assistant)
 <img src="https://github.com/JoaoSobral/ipodrocks-js/blob/main/ipodrocks-js/docs/screenshots/assistant-chat.png?raw=true" width="70%">
 
 ### Light & Dark themes
@@ -66,12 +78,19 @@ If you really like iPodRocks and want to keep it caffeinated, you can buy me a c
 - Build once, sync many — no re-encoding on every sync
 
 ### Multiple Devices
-- **Add as many devices as you want** — iPods, Rockbox players, any FAT32/exFAT-mounted drive
+- **Add as many devices as you want** — any Rockbox-capable player or FAT32/exFAT-mounted drive: iPods, Sansa, iRiver, Cowon, Archos, a plain USB stick
 - Per-device codec configs (direct copy, MP3, AAC, Musepack, Opus, OGG)
 - Device check: compare what’s on disk vs library, spot orphans
 - **Per-device icons** — iPod Classic, Nano, and Mini get their own artwork; other devices each get a distinct generic Rockbox icon so cards are easy to tell apart at a glance
 - **Live connection indicator** — A prominent green/red dot on each device card shows whether the device is currently reachable
 - **Identify a device by its USB hardware** — Own two iPods that both mount at `/Volumes/IPOD`? Pick the player from a dropdown of connected USB devices and iPodRocks pins that device row to its vendor id, product id and serial number, so the wrong player can never inherit the right one's sync history and ratings. Recognized iPod models are named automatically. Leave it unset and nothing changes — matching stays on the mount path, exactly as before. Works on macOS, Windows and Linux with no extra software to install.
+
+### 🌍 Sync from anywhere — web server & remote devices
+- **The whole app in a browser** — Turn on **Settings → Web Server** and iPodRocks serves its interface over HTTP: same library, same database, same devices, sync, playlists, ratings and Rocksy. Not a companion view — it is the app.
+- **Your iPod does not have to be on the same machine as your library** — The server keeps the library, the database and the encoders; the *player* is plugged into whatever laptop you are sitting at. Your browser hands iPodRocks the player's folder and every file travels server → browser → device. Needs Chrome, Edge or another Chromium browser over HTTPS.
+- **Runs headless** — A standalone daemon with no Electron at all, so the machine holding your library needs no screen and no login session. Ships with a `Dockerfile`, a `docker-compose.yml` (with a `cloudflared` sidecar) and a systemd unit.
+- **Sign in with Google, GitHub, Facebook or a password** — and **signing in is not the same as being let in**: only accounts on an allowlist you control reach your library, however valid their Google account. The first person to arrive claims the server with a one-time token printed to its log.
+- **Built for Cloudflare Tunnel** — The recommended shape opens no inbound port at all. Cloudflare Access is verified at the origin, not merely trusted.
 
 ### Classic, Smart & Genius Playlists
 - **Classic playlists — hand-pick your own songs** — Tick songs straight from your library in a virtualized picker with search plus artist/album/genre filters. **Your selection persists across every filter change**, so you can build one playlist out of several different searches. Tick order is play order, up to 500 songs. Classic is also the only playlist type you can **edit** after creating — reopen the picker with your songs already ticked.
@@ -83,30 +102,6 @@ If you really like iPodRocks and want to keep it caffeinated, you can buy me a c
 > **One Rockbox setting to enable:** turn on **Settings → Playback Settings → Gather Runtime Data** on your device. Rockbox then records play counts, listening time, play order and ratings itself, and iPodRocks imports them on every sync. **Playback Logging is not used and does not need to be enabled** — turning both on gains you nothing. Note that Rockbox only counts a play once a track has run 15 seconds.
 - **Playlists as a library filter** — Filter the Library track list down to any playlist's members with a Playlist `<select>` in the filter row; full playlist management lives in the Playlists panel.
 - **Playlists self-heal on every scan** — Delete music from disk and your playlists follow: each library scan (and folder removal) drops songs that no longer exist, closes up the track numbering, and **re-resolves Smart playlists from their rules** so they also pick up newly scanned matches — track limit preserved. A scan that finds no tracks at all is skipped rather than emptying everything. Manual Repair/Rebuild and the sync gate's "Repair all & continue" remain for anything that goes wrong outside a scan.
-
-### Savant Playlists — AI-Powered
-- **Mood Chat** — Describe your vibe in plain English; get a tailored playlist
-- **AI-generated playlists** — Powered by OpenRouter (Claude, etc.)
-- **Rating-aware curation** — Candidate tracks sent to the LLM include their star rating; Savant is instructed to give extra weight to highly-rated tracks
-- Harmonic sequencing — Camelot wheel, key-aware ordering for smooth transitions
-
-### Harmonic Mixing
-- **Key & BPM detection** — from existing tags or automatic audio analysis
-- Camelot wheel compatibility for DJ-style flow
-- Optional backfill with genre-based sampling
-
-### Rocksy — AI assistant that acts, not just answers
-- **Real tool-calling agency** — Rocksy is backed by a tool-calling loop with 20+ structured tools across library, playlists, podcasts, audiobooks, and devices. Instead of just chatting, it fetches live data on demand and performs operations on your behalf — search and subscribe to a podcast, find and add a LibriVox audiobook, create a playlist, check a device, or repair a broken playlist, all from the chat
-- **Confirm gate for destructive actions** — When Rocksy proposes something destructive (deleting episodes, removing a folder, unsubscribing, deleting a playlist) it pauses and shows **Confirm / Cancel** buttons; nothing runs until you approve
-- **Chat** — Ask about your library, playlists, artists, and get recommendations
-- **Persistent memory** — The assistant remembers important things you tell it across sessions (up to 40 pinned memories). Say "always remember my name is Pedro" or "don't forget I love jazz" and it will carry that context every time you open the app
-- **Rolling conversation history** — Keeps the last 100 exchanges as hidden context so the assistant stays informed without cluttering your chat
-- **Create playlists by talking** — Ask the assistant to make a playlist in plain English: "Make me a rock playlist with 30 tracks", "Create a late night favorites playlist from my listening history", or name the songs directly — "make me a playlist with Heroes, Starman and Life on Mars" — and Rocksy looks each one up and builds a Classic playlist. It can also add to, remove from, or rename an existing Classic playlist
-- **Manage podcasts & audiobooks by talking** — "Subscribe to Syntax", "Add this RSS feed", "Find audiobooks by Jules Verne", "What audiobooks do I have?"
-- **Fix broken playlists** — Playlists now repair themselves on every library scan, but you can still ask "Which playlists have missing songs?" and Rocksy will check and fix anything left over
-- **Adjust device settings** — "Make my iPod's album art smaller" or "turn off artwork for my iPod" — Rocksy updates the device's artwork size or skip setting for you
-- **Smart memory management** — Up to 40 permanently pinned memories that survive the rolling history limit. Say "forget about that" or "actually my name is X" to update or remove memories
-- Markdown rendering, copy-paste friendly
 
 ### Auto Podcasts
 - **Search & subscribe** — Find any podcast by keyword using the free [Podcast Index](https://podcastindex.org/) API
@@ -129,8 +124,32 @@ If you really like iPodRocks and want to keep it caffeinated, you can buy me a c
 - **Albums grouped by album artist** — Compilations show up once, under "Various Artists", instead of once per contributing track artist, so the custom-sync album list stays usable. The same choice decides the on-device folder layout when you are not mirroring your library structure, so a 20-artist compilation lands in one folder rather than twenty. Switch to **Track artist** per device if you prefer the old grouping.
 - **Mirror library folder structure** — Reproduce your library's folder tree on the device 1:1, album folder names and all, instead of rebuilding paths from tags
 - FFmpeg conversion with metadata preserved
-- **Rockbox-compatible album art** — Generates a single baseline-JPEG `cover.jpg` per album folder, resized to a per-device maximum (default 300 px so iPods stay responsive), so artwork loads reliably on Rockbox. Uses folder art or embedded artwork as the source; no extra software required
+- **Rockbox-compatible album art** — Generates a single baseline-JPEG `cover.jpg` per album folder, resized to a per-device maximum (default 300 px, which keeps older players responsive), so artwork loads reliably on Rockbox. Uses folder art or embedded artwork as the source; no extra software required
 - Live progress feedback
+
+### Harmonic Mixing
+- **Key & BPM detection** — from existing tags or automatic audio analysis
+- Camelot wheel compatibility for DJ-style flow
+- Optional backfill with genre-based sampling
+
+### Optional: the AI extras
+
+**Nothing above needs these, and nothing below does either.** Both want an
+[OpenRouter](https://openrouter.ai/keys) API key, which you pay for and provide.
+Leave the key blank and the rest of iPodRocks is unaffected — every playlist
+type except Savant, every sync, every device feature works exactly the same.
+
+- **Savant playlists** — Describe a mood in plain English and get a playlist
+  back, sequenced harmonically and weighted toward your highly-rated tracks.
+  One more playlist type alongside Classic, Smart and Genius, which need no key
+  at all.
+- **Rocksy, the chat assistant** — A floating chat that can actually *do*
+  things rather than only answer: search the library, build and edit playlists,
+  subscribe to podcasts and audiobooks, check and sync devices, manage the web
+  server's allowlist. It runs a tool-calling loop over the same operations the
+  UI exposes, pauses for **Confirm / Cancel** before anything destructive, and
+  remembers what you tell it between sessions. Convenient; never required —
+  every one of those things has a button.
 
 ### More
 - **M3U8 export** — Playlists for any player
@@ -188,6 +207,89 @@ If `mpcenc` is not on your PATH, iPodRocks will prompt when you select Musepack.
 
 ---
 
+## Running the server
+
+iPodRocks can serve its whole interface to a browser, so your library can live
+on a machine you never sit at. There are two ways to run it, and they are the
+same server — the same handlers, the same database, the same sync engine.
+
+### From the desktop app
+
+**Settings → Web Server → Run the web server.** Set the bind address (`127.0.0.1`
+behind a tunnel, `0.0.0.0` for your LAN), the port, and — once you have a real
+address — the public URL. The window and a browser can use the library at the
+same time.
+
+### As a headless daemon
+
+No Electron, no screen, no login session. Everything is configured by
+environment variable, which is container-native and needs no flag parsing.
+
+```bash
+cd ipodrocks-js
+npm ci --ignore-scripts     # skips Electron's binary download; nothing else needs it
+npm run build
+
+IPODROCKS_DATA_DIR=/srv/ipodrocks IPODROCKS_SERVER_HOST=127.0.0.1 IPODROCKS_SERVER_PORT=8780 IPODROCKS_SESSION_SECRET="$(openssl rand -base64 48)" npm run server
+```
+
+With Docker:
+
+```bash
+cd ipodrocks-js
+docker build -t ipodrocks-server .
+docker run -d --name ipodrocks   -p 127.0.0.1:8780:8780   -v ipodrocks-data:/data   -v /srv/music:/music:ro   -e IPODROCKS_SESSION_SECRET="$(openssl rand -base64 48)"   ipodrocks-server
+```
+
+Or `docker compose up -d`, adding `--profile tunnel` for a `cloudflared`
+sidecar. A systemd unit is in `ipodrocks-js/deploy/`.
+
+### First run
+
+The server prints a **one-time claim token** to its log (`docker logs
+ipodrocks`, `journalctl -u ipodrocks-server`, or the Settings card). Open the
+server in a browser and sign in with it to become the owner. Every later login
+is checked against an allowlist only the owner can edit — a valid Google login
+by anyone else is refused.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `IPODROCKS_DATA_DIR` | platform user-data dir | Database, prefs, sessions. **Set this in a container.** |
+| `IPODROCKS_SERVER_HOST` / `_PORT` | `127.0.0.1` / `8780` | Where it listens. |
+| `IPODROCKS_PUBLIC_URL` | — | Externally visible origin. Required for any social sign-in. |
+| `IPODROCKS_SESSION_SECRET` | random per boot | Set it, or every restart logs everyone out. |
+| `IPODROCKS_TLS_CERT` / `_KEY` | — | Terminate TLS in the daemon itself. |
+| `IPODROCKS_TRUSTED_PROXIES` | none | Whose `X-Forwarded-*` to believe. A security setting. |
+| `IPODROCKS_<PROVIDER>_CLIENT_ID` / `_SECRET` | — | Google / GitHub / Facebook sign-in. |
+
+Full walkthrough, including setting up each sign-in provider end to end:
+**[Setting up the server, end to end](https://joaosobral.github.io/ipodrocks-js/guide/server-setup)**.
+Deployment reference (Docker, compose, systemd, Cloudflare):
+**[Deploying the Server](https://joaosobral.github.io/ipodrocks-js/guide/server-deployment)**.
+
+### Remote devices
+
+In a browser, **+ Add Remote Device** adds a device plugged into the machine you
+are sitting at rather than the server. There is no mount path to type and no USB
+list — both describe the server. You pick the folder with your own browser's
+picker, right in the form, and that tab holds the device for as long as it is
+open. Remote devices carry an orange **REMOTE** badge on their card.
+
+A device belongs to exactly one machine, and iPodRocks refuses to pretend
+otherwise. A server-attached device is listed in the browser but cannot be
+synced, checked, edited or removed from there — its mount path and folder layout
+are facts about a machine the browser cannot see. A remote device is listed in
+the desktop app but cannot be synced from there, though it *can* be removed,
+because somebody has to be able to tidy up a browser that is never coming back.
+Auto Podcasts is unavailable for a remote device: the schedule runs on the
+server, and a remote device is only connected while its tab is open.
+
+Remote devices need **Chrome, Edge or another Chromium browser on a desktop,
+over HTTPS** — Firefox and Safari do not implement the File System Access API,
+and no browser grants folder access on an insecure origin.
+
+---
+
 ## Quick Start
 
 1. **Add library folder** — Open **Library**, click **Add Folder**, and choose your music root folder (for example, `/home/user/Music`). iPodRocks scans all subfolders recursively for audio files. Important to have your audio with tags
@@ -210,7 +312,7 @@ If `mpcenc` is not on your PATH, iPodRocks will prompt when you select Musepack.
 
 - Add multiple devices with custom folder layouts
 - Configure codec per device (direct copy, MP3, AAC, Musepack, etc.)
-- Choose the generated album-art size per device (200–750 px; default 300 px keeps iPods responsive), or turn artwork off entirely
+- Choose the generated album-art size per device (200–750 px; default 300 px keeps older players responsive), or turn artwork off entirely
 - Use shadow libraries for devices that need pre-converted files
 - Check device status: synced tracks, orphan files, and sync history
 

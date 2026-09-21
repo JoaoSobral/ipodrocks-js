@@ -35,6 +35,7 @@ import type {
   FeedCandidate,
   PodcastFeedPreview,
 } from "@shared/types";
+import { isWebMode } from "./web-transport";
 
 export type {
   Track,
@@ -224,6 +225,15 @@ export async function fetchChangelogSection(
 }
 
 export async function openExternal(url: string): Promise<void> {
+  // A browser opens its own links. Round-tripping this to the host would ask
+  // the *server's* default browser to open the URL — on the server's screen,
+  // in the server owner's session — which the main process now refuses for
+  // exactly that reason. `noopener` because the opened page must not get a
+  // handle back to this one.
+  if (isWebMode()) {
+    window.open(url, "_blank", "noopener,noreferrer");
+    return;
+  }
   return window.api.invoke("app:openExternal", url) as Promise<void>;
 }
 
@@ -412,7 +422,15 @@ export function ejectDisabledReason(opts: {
   /** `null` while the connection ping is still in flight. */
   online: boolean | null | undefined;
   deviceName: string;
+  /** A device held in a browser: see below. */
+  transport?: "local" | "web";
 }): string | null {
+  // A web device is plugged into the *user's* machine, and `platform` here is
+  // the server's — the two are different computers, which is the whole point
+  // of web mode. Nothing this app runs can unmount it.
+  if (opts.transport === "web") {
+    return `'${opts.deviceName}' is connected through your browser. Eject it from your computer's own file manager when the sync has finished.`;
+  }
   if (opts.platform !== "darwin" && opts.platform !== "linux") {
     return "Ejecting from iPodRocks works on macOS and Linux only. On Windows, use Explorer's Safely Remove Hardware.";
   }
@@ -501,8 +519,55 @@ export async function clearContentHashes(): Promise<number> {
   return window.api.invoke("library:clearContentHashes") as Promise<number>;
 }
 
+/**
+ * A folder picker that does not need a screen on the host.
+ *
+ * Under Electron this is the native sheet, as it always was. On the headless
+ * server there is no screen, so `ServerFolderPicker` registers a fallback here
+ * that browses the *server's* filesystem in a modal. Doing it at this layer
+ * rather than in the three panels that call `pickFolder()` is the point: none
+ * of them had to learn that two kinds of picker exist.
+ *
+ * Note this is the *library folder* picker. The device picker is a different
+ * thing entirely — the browser's own `showDirectoryPicker()`, arriving in a
+ * later phase — because a device is plugged into the machine holding the
+ * browser, while a library lives on the machine running the scan.
+ */
+type FolderPickerFallback = () => Promise<string | null>;
+
+let folderPickerFallback: FolderPickerFallback | null = null;
+let hostHasNativeDialogs: boolean | null = null;
+
+export function setFolderPickerFallback(fn: FolderPickerFallback | null): void {
+  folderPickerFallback = fn;
+}
+
 export async function pickFolder(): Promise<string | null> {
-  return window.api.invoke("dialog:pickFolder") as Promise<string | null>;
+  // A browser never gets a native sheet, whatever the host can do. With the
+  // desktop app hosting the server the host *does* have dialogs, and asking it
+  // opened a Finder window on the server's machine while this page waited for
+  // somebody standing there to click it. The main process refuses that too —
+  // this is the short-circuit that keeps the round trip from happening at all.
+  if (isWebMode()) {
+    return folderPickerFallback ? folderPickerFallback() : null;
+  }
+  if (hostHasNativeDialogs === null) {
+    try {
+      hostHasNativeDialogs = await hasNativeDialogs();
+    } catch {
+      // An older host that does not answer the channel is an Electron one.
+      hostHasNativeDialogs = true;
+    }
+  }
+  if (!hostHasNativeDialogs && folderPickerFallback) {
+    return folderPickerFallback();
+  }
+  const result = (await window.api.invoke("dialog:pickFolder")) as
+    | string
+    | null
+    | { error: string };
+  if (result && typeof result === "object" && "error" in result) return null;
+  return result;
 }
 
 export async function getPlaylists(): Promise<Playlist[]> {
@@ -1075,4 +1140,113 @@ export async function audiobookSetCoverFromUrl(
   url: string
 ): Promise<import("@shared/types").AudiobookSubscription | null> {
   return window.api.invoke("audiobook:setCoverFromUrl", subId, url) as Promise<import("@shared/types").AudiobookSubscription | null>;
+}
+
+// ---------------------------------------------------------------------------
+// Web server + server-side folder browsing
+// ---------------------------------------------------------------------------
+
+export interface WebServerPrefs {
+  enabled?: boolean;
+  host?: string;
+  port?: number;
+  publicUrl?: string;
+  trustedProxies?: string[];
+  allowedOrigins?: string[];
+  tls?: { certPath: string; keyPath: string } | null;
+}
+
+export interface WebServerStatus {
+  running: boolean;
+  url: string | null;
+  port: number | null;
+  host: string | null;
+  /** Non-null only while nobody has claimed ownership of the server. */
+  claimToken: string | null;
+  identityCount: number;
+  providers: string[];
+  tls: boolean;
+  publicUrl: string | null;
+  lastError: string | null;
+  prefs: WebServerPrefs;
+}
+
+/**
+ * Every `server:*` channel is owner-only, so each of these can come back as
+ * `{ error }` for a signed-in guest. They are typed as a union rather than
+ * thrown, because the Web Server card's answer to "you are not the owner" is a
+ * sentence, not an error state — and a card that throws on mount would take
+ * the whole Settings modal with it.
+ */
+export type WebServerResult<T> = T | { error: string };
+
+export function isWebServerDenied<T>(
+  result: WebServerResult<T>
+): result is { error: string } {
+  return (
+    typeof result === "object" && result !== null && "error" in result
+  );
+}
+
+export async function getWebServerStatus(): Promise<
+  WebServerResult<WebServerStatus>
+> {
+  return window.api.invoke("server:getStatus") as Promise<
+    WebServerResult<WebServerStatus>
+  >;
+}
+
+export async function setWebServerConfig(
+  prefs: WebServerPrefs
+): Promise<WebServerResult<{ prefs: WebServerPrefs }>> {
+  return window.api.invoke("server:setConfig", prefs) as Promise<
+    WebServerResult<{ prefs: WebServerPrefs }>
+  >;
+}
+
+export async function startWebServer(): Promise<
+  WebServerResult<WebServerStatus>
+> {
+  return window.api.invoke("server:start") as Promise<
+    WebServerResult<WebServerStatus>
+  >;
+}
+
+export async function stopWebServer(): Promise<
+  WebServerResult<WebServerStatus>
+> {
+  return window.api.invoke("server:stop") as Promise<
+    WebServerResult<WebServerStatus>
+  >;
+}
+
+export interface DirectoryEntry {
+  name: string;
+  path: string;
+}
+
+export interface DirectoryListing {
+  path: string;
+  parent: string | null;
+  entries: DirectoryEntry[];
+  roots: DirectoryEntry[];
+  error?: string;
+}
+
+/** Whether this host can show a native folder sheet. False on the headless
+ *  server, where `pickFolder()` is answered by `listDirectory` instead. */
+export async function hasNativeDialogs(): Promise<boolean> {
+  const res = (await window.api.invoke("app:hasNativeDialogs")) as {
+    available?: boolean;
+  };
+  return res?.available === true;
+}
+
+/** Lists directories **on the server**. This is the library-folder picker, not
+ *  the device picker — a library genuinely lives on the machine running the
+ *  scan, which in web mode is not the machine running the browser. */
+export async function listServerDirectory(
+  path?: string | null
+): Promise<DirectoryListing> {
+  return window.api.invoke("app:listDirectory", path ?? null) as Promise<DirectoryListing>;
 }

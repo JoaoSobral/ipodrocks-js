@@ -1,4 +1,6 @@
-import { app, ipcMain } from "electron";
+import { handle as bridgeHandle } from "../host/bridge";
+import { subjectForSessionId } from "../../server/auth/sessions";
+import { getUserDataPath } from "../host";
 import { safe, getLibrary, getPlaylistCore, getDevicesCore } from "./common";
 import { checkRateLimit } from "../llm/openRouterClient";
 import {
@@ -23,20 +25,30 @@ import {
 } from "../assistant/assistantChat";
 import type { AiToolContext } from "../assistant/tools";
 
-function buildToolContext(db: import("better-sqlite3").Database): AiToolContext {
+/**
+ * `sessionId` is carried through so the `web_server_*` allowlist tools can ask
+ * who is chatting. It is undefined over Electron IPC, which those tools read as
+ * "the desktop window on the machine holding the database" — see `ownerGate()`
+ * in `assistant/tools.ts`. No other tool looks at it.
+ */
+function buildToolContext(
+  db: import("better-sqlite3").Database,
+  sessionId?: string
+): AiToolContext {
   return {
     db,
     getLibrary,
     getPlaylistCore,
     getDevicesCore,
     getPodcastIndexConfig,
+    sessionId,
   };
 }
 
 export function registerAssistantHandlers(): void {
-  ipcMain.handle(
+  bridgeHandle(
     "assistant:chat",
-    safe("assistant:chat", async (_event, userMessage: string) => {
+    safe("assistant:chat", async (event, userMessage: string) => {
       // F4: Rate limit LLM calls
       if (!checkRateLimit("assistant:chat"))
         return { error: "Rate limit exceeded. Please wait before sending another message." };
@@ -44,12 +56,16 @@ export function registerAssistantHandlers(): void {
       if (!config?.apiKey?.trim())
         return { error: "OpenRouter API key not configured" };
       const db = getLibrary().getConnection();
-      const recentHistory = loadNonPinnedHistory(db);
+      // Whose conversation this is. Null over Electron IPC, which has no
+      // identity and is the machine holding the database.
+      const subject =
+        event.sessionId === undefined ? null : subjectForSessionId(event.sessionId);
+      const recentHistory = loadNonPinnedHistory(db, subject);
       const fullHistory = [
         ...recentHistory,
         { role: "user" as const, content: userMessage },
       ];
-      const userData = app.getPath("userData");
+      const userData = getUserDataPath();
       const autoPodcastSettings = getAutoPodcastSettings();
       const appPaths: AppPaths = {
         userData,
@@ -57,8 +73,15 @@ export function registerAssistantHandlers(): void {
         autoPodcastEnabled: autoPodcastSettings.enabled,
         autoPodcastIntervalMin: autoPodcastSettings.refreshIntervalMinutes,
       };
-      const toolCtx = buildToolContext(db);
-      const result = await sendAssistantMessage(fullHistory, db, config, appPaths, toolCtx);
+      const toolCtx = buildToolContext(db, event.sessionId);
+      const result = await sendAssistantMessage(
+        fullHistory,
+        db,
+        config,
+        appPaths,
+        toolCtx,
+        subject
+      );
 
       const { reply, playlistCreated, pendingAction, pin, unpinIds, replaceId } = result;
 
@@ -66,14 +89,14 @@ export function registerAssistantHandlers(): void {
       // is shown in the renderer; the real reply is stored after confirmation).
       const replyToSave = reply || (pendingAction ? `[Pending: ${pendingAction.summary}]` : "");
 
-      const { userMsgId, assistantMsgId } = saveAssistantMessages(db, userMessage, replyToSave);
+      const { userMsgId, assistantMsgId } = saveAssistantMessages(db, userMessage, replyToSave, subject);
 
-      for (const uid of unpinIds ?? []) unpinMessages(db, uid);
-      if (replaceId) unpinMessages(db, replaceId);
+      for (const uid of unpinIds ?? []) unpinMessages(db, uid, subject);
+      if (replaceId) unpinMessages(db, replaceId, subject);
 
       if (pin || replaceId) {
-        if (replaceId || getPinnedCount(db) < MAX_PINNED_MEMORIES) {
-          pinMessages(db, userMsgId, assistantMsgId);
+        if (replaceId || getPinnedCount(db, subject) < MAX_PINNED_MEMORIES) {
+          pinMessages(db, userMsgId, assistantMsgId, subject);
         }
       }
 
@@ -81,13 +104,13 @@ export function registerAssistantHandlers(): void {
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "assistant:confirmAction",
-    safe("assistant:confirmAction", async (_event, action: PendingAction) => {
+    safe("assistant:confirmAction", async (event, action: PendingAction) => {
       if (!checkRateLimit("assistant:chat"))
         return { error: "Rate limit exceeded. Please wait before sending another message." };
       const db = getLibrary().getConnection();
-      const toolCtx = buildToolContext(db);
+      const toolCtx = buildToolContext(db, event.sessionId);
       const rawResult = await executeConfirmedAction(action, toolCtx);
       let resultText: string;
       try {
@@ -106,19 +129,25 @@ export function registerAssistantHandlers(): void {
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "assistant:history:load",
-    safe("assistant:history:load", async () => {
+    safe("assistant:history:load", async (event) => {
       const db = getLibrary().getConnection();
-      return loadAssistantHistory(db);
+      return loadAssistantHistory(
+        db,
+        event.sessionId === undefined ? null : subjectForSessionId(event.sessionId)
+      );
     })
   );
 
-  ipcMain.handle(
+  bridgeHandle(
     "assistant:history:clear",
-    safe("assistant:history:clear", async () => {
+    safe("assistant:history:clear", async (event) => {
       const db = getLibrary().getConnection();
-      clearAssistantHistory(db);
+      clearAssistantHistory(
+        db,
+        event.sessionId === undefined ? null : subjectForSessionId(event.sessionId)
+      );
     })
   );
 }

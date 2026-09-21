@@ -7,6 +7,7 @@ import { refreshUsbSnapshot } from "../devices/usb-devices";
 
 interface DeviceRow {
   id: number;
+  transport: string | null;
   mount_path: string;
   dev_mode: number;
   usb_vendor_id: string | null;
@@ -18,7 +19,7 @@ function getDeviceInfo(db: Database.Database, deviceId: number): DeviceRow | nul
   return (
     (db
       .prepare(
-        "SELECT id, mount_path, dev_mode, usb_vendor_id, usb_product_id, usb_serial FROM devices WHERE id = ?"
+        "SELECT id, transport, mount_path, dev_mode, usb_vendor_id, usb_product_id, usb_serial FROM devices WHERE id = ?"
       )
       .get(deviceId) as DeviceRow | undefined) ?? null
   );

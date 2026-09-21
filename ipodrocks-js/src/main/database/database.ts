@@ -1,5 +1,5 @@
 import Database from "better-sqlite3";
-import { app } from "electron";
+import { getUserDataPath } from "../host";
 import path from "path";
 import { SCHEMA_SQL } from "./schema";
 import { migrateNfcPaths } from "./nfc-path-migration";
@@ -10,7 +10,7 @@ export class AppDatabase {
 
   constructor(dbPath?: string) {
     this.dbPath =
-      dbPath ?? path.join(app.getPath("userData"), "ipodrock.db");
+      dbPath ?? path.join(getUserDataPath(), "ipodrock.db");
   }
 
   initialize(): void {
@@ -34,6 +34,9 @@ export class AppDatabase {
     this.migrateDeviceArtworkMaxDimension();
     this.migrateVbrEnabled();
     this.migrateDeviceUsbIdentity();
+    this.migrateDeviceTransport();
+    this.migrateDeviceWebOwner();
+    this.migrateAssistantHistoryIdentity();
     this.migrateShadowPausedStatus();
     this.migrateShadowTrackStat();
     this.migrateClassicPlaylists();
@@ -330,6 +333,109 @@ export class AppDatabase {
    * databases. Backfills with 0 (CBR / fixed-bitrate) so upgrades keep their
    * current encoding behavior; fresh installs default to 0 via SCHEMA_SQL.
    */
+  /**
+   * Add the `transport` column for existing databases.
+   *
+   * Backfilled with 'local', which is what every device predating web-server
+   * mode is. The index is created *here*, immediately after the ALTER TABLE,
+   * and deliberately not in SCHEMA_SQL — see the note on the column there, and
+   * the `SCHEMA_SQL` hazard in CLAUDE.md. A CHECK constraint cannot be added
+   * by ALTER TABLE either, so an upgraded database enforces the two values at
+   * the application layer (`normalizeTransport`) rather than in SQLite; a
+   * fresh install gets both.
+   */
+  private migrateDeviceTransport(): void {
+    if (!this.db) return;
+    try {
+      const rows = this.db
+        .prepare("PRAGMA table_info(devices)")
+        .all() as { name: string }[];
+      if (!new Set(rows.map((r) => r.name)).has("transport")) {
+        this.db
+          .prepare(
+            "ALTER TABLE devices ADD COLUMN transport TEXT NOT NULL DEFAULT 'local'"
+          )
+          .run();
+      }
+      this.db
+        .prepare(
+          "CREATE INDEX IF NOT EXISTS idx_devices_transport ON devices(transport)"
+        )
+        .run();
+    } catch (err) {
+      console.error("[db] migration failed (migrateDeviceTransport):", err);
+    }
+  }
+
+  /**
+   * Add `devices.web_owner_subject` for existing databases.
+   *
+   * Left NULL, which the attach check reads as "no recorded owner" and admits
+   * — a web device registered before this column existed has no identity
+   * stored anywhere, and refusing it would strand a player its owner can no
+   * longer connect. The first `device:add` from a browser after the upgrade
+   * stamps new ones.
+   *
+   * No index: the only read is by device id, which is already the primary key.
+   * (An index here would also have to be created in this method rather than in
+   * SCHEMA_SQL — see the hazard note on the column itself.)
+   */
+  private migrateDeviceWebOwner(): void {
+    if (!this.db) return;
+    try {
+      const rows = this.db
+        .prepare("PRAGMA table_info(devices)")
+        .all() as { name: string }[];
+      if (!new Set(rows.map((r) => r.name)).has("web_owner_subject")) {
+        this.db
+          .prepare("ALTER TABLE devices ADD COLUMN web_owner_subject TEXT")
+          .run();
+      }
+    } catch (err) {
+      console.error("[db] migration failed (migrateDeviceWebOwner):", err);
+    }
+  }
+
+  /**
+   * Scopes the assistant's stored conversation to the identity that had it.
+   *
+   * `assistant_chat_history` was one global table. On the desktop that is
+   * right — one machine, one user — but the same handlers serve every
+   * allowlisted web identity, so one person's prompts (and whatever they
+   * pasted into them) were readable by every other, and
+   * `assistant:history:clear` erased everybody's.
+   *
+   * Existing rows keep `identity_subject = NULL`, which is the desktop
+   * owner's own history. That is deliberate: the rows were written before
+   * anyone was distinguishable, and the machine holding the database is the
+   * one principal entitled to all of them.
+   *
+   * The index lives here and not in SCHEMA_SQL for the reason that file's own
+   * hazard note gives: SCHEMA_SQL runs before every migration, so an index
+   * over a column an ALTER TABLE has not added yet throws and takes the whole
+   * launch down for an upgrading user.
+   */
+  private migrateAssistantHistoryIdentity(): void {
+    if (!this.db) return;
+    try {
+      const rows = this.db
+        .prepare("PRAGMA table_info(assistant_chat_history)")
+        .all() as { name: string }[];
+      if (!new Set(rows.map((r) => r.name)).has("identity_subject")) {
+        this.db
+          .prepare("ALTER TABLE assistant_chat_history ADD COLUMN identity_subject TEXT")
+          .run();
+      }
+      this.db
+        .prepare(
+          "CREATE INDEX IF NOT EXISTS idx_assistant_history_identity ON assistant_chat_history(identity_subject, id)"
+        )
+        .run();
+    } catch (err) {
+      console.error("[db] migration failed (migrateAssistantHistoryIdentity):", err);
+    }
+  }
+
   private migrateVbrEnabled(): void {
     if (!this.db) return;
     for (const table of ["devices", "shadow_libraries"]) {
@@ -824,7 +930,7 @@ export class AppDatabase {
       const trackColNames = new Set(trackCols.map((r) => r.name));
 
       if (!trackColNames.has("rating")) {
-        this.db.prepare("ALTER TABLE tracks ADD COLUMN rating INTEGER").run();
+        this.db.prepare("ALTER TABLE tracks ADD COLUMN rating INTEGER CHECK(rating IS NULL OR (rating >= 0 AND rating <= 10))").run();
       }
       if (!trackColNames.has("rating_source_device_id")) {
         this.db.prepare("ALTER TABLE tracks ADD COLUMN rating_source_device_id INTEGER").run();

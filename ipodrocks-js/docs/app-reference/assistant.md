@@ -16,9 +16,20 @@ Rocksy is a floating chat that knows your library, playlists, and listening hist
 
 Rocksy's tools are grouped into three tiers by how risky they are:
 
-- **Read** *(run immediately)* — Look up data: search tracks, list albums / artists / genres, search and list podcasts and their episodes, search and list audiobooks, list devices, list connected USB devices.
-- **Write-safe** *(run immediately)* — Non-destructive changes: create Classic, Smart, and Genius playlists, repair a broken playlist, subscribe to a podcast (by search **or by URL**), subscribe to a LibriVox audiobook, refresh an audiobook cover.
-- **Write-destructive** *(ask before running)* — Anything that deletes, syncs, scans, or changes folders: delete a playlist, replace a Classic playlist's tracks, download or delete podcast episodes, unsubscribe from an audiobook, add or remove library folders, scan the library, check or sync a device, change a device's USB identity. Rocksy pauses and shows **Confirm / Cancel** buttons before these run.
+- **Read** *(run immediately)* — Look up data: search tracks, list albums / artists / genres, search and list podcasts and their episodes, search and list audiobooks, list devices, list connected USB devices, read the web server's status and who may sign in to it.
+- **Write-safe** *(run immediately)* — Non-destructive changes: create Classic, Smart, and Genius playlists, repair a broken playlist, subscribe to a podcast (by search **or by URL**), subscribe to a LibriVox audiobook, refresh an audiobook cover, change where the web server listens.
+- **Write-destructive** *(ask before running)* — Anything that deletes, syncs, scans, changes folders, **or changes what the outside world can reach**: delete a playlist, replace a Classic playlist's tracks, download or delete podcast episodes, unsubscribe from an audiobook, add or remove library folders, scan the library, check or sync a device, change a device's USB identity, start or stop the web server, and grant or revoke someone's access to it. Rocksy pauses and shows **Confirm / Cancel** buttons before these run.
+
+### The web server is the one place Rocksy answers to someone else
+
+When you are using iPodRocks in a browser, the tools that manage **who may sign
+in** are owner-only, and Rocksy checks that against the account you are signed in
+as — not against the fact that you are talking to it. Ask as anyone but the
+owner and it says so and stops. Everything else is open to any allowed account,
+by design: an allowlisted person is a full user of the app.
+
+Rocksy will also never read a claim token, a password or a session id into the
+chat. It tells you where to find them instead.
 
 ### Examples
 
@@ -28,7 +39,11 @@ Rocksy's tools are grouped into three tiers by how risky they are:
 - "Subscribe to this podcast: `https://…/feed.xml`" → adds it by URL
 - "Find audiobooks by Jules Verne and subscribe to one" → searches and subscribes via LibriVox
 - "Which playlists have missing songs? Repair them." → lists broken playlists, then repairs
-- "Sync my iPod" → asks you to confirm, then runs the sync
+- "Sync my player" → asks you to confirm, then runs the sync
+- "Who can sign in to my server?" → lists the allowlist
+- "Is anyone connected right now?" → lists the live sessions
+- "Give my partner an account on the server" → asks you to confirm, then adds it
+- "Sign every browser out" → asks you to confirm, then ends every session including yours
 
 ## How it works
 

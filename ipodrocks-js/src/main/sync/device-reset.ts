@@ -11,8 +11,6 @@
  * and copying nothing back — an empty device and a "0 synced" report.
  */
 
-import fs from "fs";
-import fsp from "fs/promises";
 import path from "path";
 import type Database from "better-sqlite3";
 
@@ -87,6 +85,7 @@ export async function resetDeviceContent(
 ): Promise<DeviceResetResult> {
   const { progressCallback, cancelSignal } = options;
   const plan = resolveResettableFolders(device);
+  const deviceFs = device.fs;
 
   for (const refusal of plan.refused) {
     progressCallback?.({
@@ -99,10 +98,10 @@ export async function resetDeviceContent(
   for (const dir of plan.reset) {
     if (cancelSignal?.aborted) break;
     try {
-      if (fs.existsSync(dir)) {
-        await fsp.rm(dir, { recursive: true, force: true });
+      if (await deviceFs.exists(dir)) {
+        await deviceFs.rm(dir, { recursive: true, force: true });
       }
-      await fsp.mkdir(dir, { recursive: true });
+      await deviceFs.mkdir(dir, { recursive: true });
       done.push(dir);
       progressCallback?.({
         event: "log",

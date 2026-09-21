@@ -1,5 +1,6 @@
 import * as fs from "fs";
 import * as path from "path";
+import { isDeviceAttached } from "./fs/device-transport";
 import { getUsbSnapshot, usbDeviceMatches } from "./usb-devices";
 
 /**
@@ -40,6 +41,13 @@ export function isDeviceMountPathOnline(mountPath: string): boolean {
  */
 export interface DeviceOnlineInput {
   mountPath: string;
+  /**
+   * A web device is connected exactly while a browser tab holds its directory
+   * handle — its mount path is synthetic and exists on no filesystem, so every
+   * check below would report it permanently offline.
+   */
+  transport?: string | null;
+  id?: number | null;
   devMode?: boolean | number | null;
   usbVendorId?: string | null;
   usbProductId?: string | null;
@@ -48,6 +56,8 @@ export interface DeviceOnlineInput {
 
 /** Snake_case device row, as selected directly from the `devices` table. */
 export interface DeviceOnlineRow {
+  id?: number | null;
+  transport?: string | null;
   mount_path?: string | null;
   dev_mode?: number | null;
   usb_vendor_id?: string | null;
@@ -57,6 +67,8 @@ export interface DeviceOnlineRow {
 
 export function deviceRowToOnlineInput(row: DeviceOnlineRow): DeviceOnlineInput {
   return {
+    id: row.id,
+    transport: row.transport,
     mountPath: row.mount_path ?? "",
     devMode: row.dev_mode,
     usbVendorId: row.usb_vendor_id,
@@ -84,6 +96,11 @@ export function deviceRowToOnlineInput(row: DeviceOnlineRow): DeviceOnlineInput 
  * then resolve any number of devices against the cached snapshot.
  */
 export function isDeviceOnline(device: DeviceOnlineInput): boolean {
+  // Asked before `devMode`, because a web device's "mount" is a synthetic path
+  // that no `statSync` will ever find and no USB enumeration will ever list.
+  if (device.transport === "web") {
+    return device.id != null && isDeviceAttached(device.id);
+  }
   if (device.devMode) return true;
 
   const mounted = isDeviceMountPathOnline(device.mountPath);

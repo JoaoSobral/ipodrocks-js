@@ -19,6 +19,7 @@ installElectronMock();
 
 import { getFfmpegPath } from "../../main/utils/ffmpeg-path";
 import { copyAlbumArtworkToDevice } from "../../main/sync/sync-core";
+import { localFs } from "../../main/devices/fs";
 import type { SyncProgressEventName } from "../../../src/shared/types";
 
 interface Event {
@@ -82,6 +83,7 @@ describe.skipIf(!canRun)("artwork progress accounting", () => {
 
     const events: Event[] = [];
     const result = await copyAlbumArtworkToDevice(
+      localFs(deviceDir),
       deviceDir,
       "music",
       tracks,
@@ -110,14 +112,14 @@ describe.skipIf(!canRun)("artwork progress accounting", () => {
 
     const first: Event[] = [];
     await copyAlbumArtworkToDevice(
-      deviceDir, "music", tracks,
+      localFs(deviceDir), deviceDir, "music", tracks,
       { progressCallback: (e) => first.push(e as Event), maxDim: 300 }
     );
     expect(first.filter((e) => e.event === "total_add")).toHaveLength(1);
 
     const second: Event[] = [];
     const result = await copyAlbumArtworkToDevice(
-      deviceDir, "music", tracks,
+      localFs(deviceDir), deviceDir, "music", tracks,
       { progressCallback: (e) => second.push(e as Event), maxDim: 300 }
     );
 

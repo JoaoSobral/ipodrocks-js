@@ -39,9 +39,16 @@ shows a window is useless to a user, so it must stay opt-in.
 Every new user-facing action or feature **must** have a corresponding tool in `src/main/assistant/tools.ts` so Rocksy can perform it on the user's behalf. Tool tiers:
 - `read` — safe reads, run inline
 - `write-safe` — non-destructive mutations, run inline
-- `write-destructive` — deletions, syncs, scans, folder changes; always require a confirm gate
+- `write-destructive` — deletions, syncs, scans, folder changes, **and anything that changes what the outside world can reach** (`web_server_set_enabled`, `web_server_allow_identity`); always require a confirm gate
 
 Also update the system prompt rules in `assistantChat.ts` (`ASSISTANT_SYSTEM_PROMPT`) with an explicit directive so Rocksy calls the new tool instead of saying it can't do something.
+
+**A tool that manages the allowlist is owner-gated, and the tier does not cover
+that.** `AiToolContext.sessionId` carries who is asking (undefined over Electron
+IPC — the desktop window on the machine holding the database); the five
+`web_server_*` allowlist tools call `denyIfNotOwner()` before anything else. See
+the hazard below. Every *other* tool is deliberately open to any allowlisted
+user: they are a full user of the app by design.
 
 ## Known Technical Debt (from simplify/security review, 2026-04-21)
 
@@ -59,6 +66,18 @@ These are confirmed reuse/efficiency issues found during `src/main/` review. Add
 | Reuse | `ipc/ratings.ts:135` + `assistant/tools.ts:440` | Conflict resolution implemented twice; the assistant copy has no `manual` branch and no test coverage |
 | Trap | `database.ts` — `migrateContentTypeAudiobook()` | Rebuilds `tracks` from an **explicit column list** that predates the rating columns. Harmless in production (sentinel-gated, and a database old enough to run it has no ratings) but it silently drops any later column, so a test fixture built from bare `SCHEMA_SQL` — no sentinel — loses every rating before the migration under test is reached. Build such fixtures by running `initialize()` once and then stripping the one column back out (see `regressions/rating-version-baseline.test.ts`) |
 
+### From the PR #140 review (2026-09-21)
+
+Everything found in that review was fixed in the same PR except the rows below,
+which are real and deliberately deferred.
+
+| Area | File | Issue |
+|---|---|---|
+| Efficiency | `rockbox/tagcache-index.ts` — `writeRatingOn()` | One `deviceFs.patch()` per rating, and on a browser-held device `createWritable({keepExistingData:true})` rewrites the whole file through a `.crswap` sibling. Propagating 500 ratings is 500 full copies of a multi-megabyte `database_idx.tcd` plus four RPCs each. Batching needs a plan-then-patch shape across `planRatingEdits`/`propagateRatingsToDeviceOn` |
+| Containment | `player/media-path.ts` — `isServableMediaPath()` | Its middle arm is an extension test with no containment, so the *only* thing keeping it honest is that nothing mints a token from client input any more — see the hazard above. Bounding it by the library roots, the shadow roots and the audiobooks root would make it a gate in its own right instead of a second opinion |
+| Enumeration | `ipc/app.ts` — `app:listDirectory` | Every allowlisted user can walk the server's home directory and mount roots. Deliberate — it is the web folder picker, and library folders genuinely live on the server, gated by the same `validateFolderPath()` as `library:addFolder` — but worth knowing it is a listing oracle for anyone admitted |
+| Verification | `server/auth/passport-setup.ts` — `state: true` | The OAuth anti-CSRF nonce is set on all three strategies, and no automated test can reach it: the e2e daemon has no provider configured. Manual-verification, the way `showDirectoryPicker()` and `mpcenc` already are |
+
 ### From the PR #116 review (2026-08-22)
 
 All five items found in that review were fixed in the same PR. Kept here as the
@@ -73,6 +92,98 @@ reasoning behind the current shape of the code:
 | Dead param | `devices/usb-devices.ts` | `refreshUsbSnapshot()` no longer takes `force`. The one caller that must bypass the cache (`device:listUsb`) calls `listUsbDevices()` directly, which a `force` flag could not have achieved anyway — it would still return an in-flight pre-plug enumeration. |
 
 > Note: `src/main/ipc.ts` was split into per-domain modules under `src/main/ipc/` (one `registerXHandlers()` per channel prefix, shared helpers in `ipc/common.ts`). Add new handlers to the matching domain module.
+
+## Security audit, 2026-09-21 — the invariants the fixes restored
+
+A full source audit of the web-server surface. Everything below was
+demonstrated against the built `dist/`, fixed, and pinned in
+`src/__tests__/regressions/security-audit-hardening.test.ts` and
+`regressions/login-lockout-bypasses.test.ts`. The rules, not the bugs, are the
+part worth keeping.
+
+- **A media capability may only be minted for a path the *server* derived.**
+  `media-route.ts` states this as its own precondition, and `player:prepare`
+  was fixed for it once — but `encodePathToUrl()` had a *second* producer.
+  `audiobook:subscribe` stored the client's `imageUrl` verbatim and
+  `rowToSub()` minted a token for any absolute value, with no `sessionId`, so
+  it was honoured for every other logged-in session. `localPathToMediaUrl()`
+  now refuses a path outside `getAudiobooksRoot()` and `subscribe()` refuses an
+  absolute `imageUrl`. **Check every caller of `encodePathToUrl()` before
+  adding one** — the uncontained middle arm of `isServableMediaPath()` means
+  the mint site *is* the containment.
+- **`librivox_id` is a path component, and `INTEGER` affinity does not coerce
+  it.** SQLite stores a non-integer literal as TEXT, so `"../../.."` came back
+  a string, `path.join` resolved it out of the audiobooks root and
+  `audiobook:unsubscribe` `rmSync`'d it recursively. `assertLibrivoxId()` in
+  `audiobooks/audiobook-storage.ts` is the single choke point; a column type is
+  not validation.
+- **A rate-limit bucket and the lookup it protects must be keyed on one
+  value.** The account bucket was chosen with `typeof username === "string"`
+  while the account was resolved with `String(username)`, so `["owner"]` named
+  a real account and created no bucket for it. And **reserve, don't
+  check-then-act**: `checkRateLimit()` + a later `recordFailure()` sat either
+  side of an `await` on scrypt, so a concurrent burst all passed. Both login
+  paths now reject a non-string username and call `reserveAttempt()`.
+- **Locality is not ownership.** `deviceLocalityBlock`/`deviceAdminBlock` ask
+  "is this player on my machine", which *every* allowlisted identity satisfies
+  for *every* web device. `web_owner_subject` was compared only on the
+  `device-attach` handshake, so any account could name another's device id and
+  reach `deviceFs.rm(recursive)` in their folder. `blockWrongDeviceOwner()` /
+  `deviceOwnerBlock()` (`ipc/common.ts`) now gate `sync:start`,
+  `device:update`, `device:remove`, `device:check`, `device:eject` and
+  `device:readRuntimeData`. A **null owner still admits** — that is a
+  pre-column device, same rule as attach.
+- **In a browser, `device:add` always creates a *remote* device.** `transport`
+  decides which filesystem every later call uses; a web client registering
+  `transport: "local"` with its own mount path is how a host volume reached
+  `device:eject`.
+- **Every `getHostDialogs()` call site needs `blockWebClientDialog()`.**
+  `dialog:pickFolder` and `app:openExternal` always refused a web client;
+  `playlist:export` and `podcast:browseDownloadDir` reached the same sink with
+  no check, which on the desktop-hosted server puts a modal on the owner's
+  screen with an attacker-chosen filename. There are exactly three call sites —
+  keep it that way.
+- **An assistant tool is a front door, not a convenience.**
+  `assistant:confirmAction` runs `getToolByName(action.tool).run(args, ctx)` on
+  a client-supplied object, so the tier, the confirm dialog and the system
+  prompt are all advisory. `deviceGate()` in `assistant/tools.ts` now applies
+  the same locality+ownership checks the channels do. **Any new tool that
+  reaches a gated operation must re-apply that gate inside `run()`.**
+- **Assistant history is per identity.** `assistant_chat_history` gained
+  `identity_subject`; every read, trim, pin and clear is scoped by
+  `identity_subject IS ?` (null-safe, and NULL is the desktop app's own).
+  Before this, one web user read every other's prompts and
+  `assistant:history:clear` erased everybody's. The column is in `SCHEMA_SQL`
+  and **its index is created only in `migrateAssistantHistoryIdentity()`** —
+  see the `SCHEMA_SQL` hazard below.
+- **A URL a client chose goes through `utils/safe-fetch.ts`.** Feed discovery,
+  feed preview, `audiobook:setCoverFromUrl` and both downloaders fetched
+  anything, followed redirects unrevalidated, and the preview *reflected the
+  body back* — an internal-network read primitive from the daemon's position.
+  `safeFetch()` allows only http(s), refuses loopback/RFC1918/link-local/ULA,
+  and **re-checks every redirect hop**, which is the half that is easy to
+  forget. `IPODROCKS_ALLOW_PRIVATE_FETCH=1` (or `setPrivateFetchAllowed()`) is
+  the opt-in for someone whose feed really is on their LAN; tests that use a
+  loopback fixture set it explicitly.
+- **Clamp a device-supplied rating at the parse boundary.**
+  `decodeSnapshotFrom()` copied the raw int32 from the `.tcd` record, which on
+  a fresh schema tripped the CHECK and rolled back the *whole* sync's rating
+  merge (logged "non-fatal"), and on a database upgraded by `migrateRatings()`
+  — which omitted the CHECK — became the canonical rating that `writeRating()`
+  then refused forever. `sanitizeDeviceRating()` reads out-of-range as unrated;
+  `migrateRatings()` now declares the same CHECK a fresh install does.
+- **`ipodrocks-server.db` is the authentication store and is now `0600`.** It
+  holds the session signing secret, every live sid and every password hash;
+  only `secret.key` was ever chmodded. `deploy/ipodrocks-server.service` also
+  sets `UMask=0077` and `StateDirectoryMode=0700`.
+
+Two things were **looked at and deliberately left alone**: `shadow:create`
+accepting any folder and `shadow:pruneOrphans` deleting anything prunable under
+it is the intended contract (a shadow library owns its root) — but note those
+two channels are **not owner-gated**, so on the web server a non-owner can aim
+them at a library folder. And `isServableMediaPath()`'s middle arm is still an
+uncontained extension test, which is why the mint-site rule above is
+load-bearing.
 
 ## Hazard: an index in `SCHEMA_SQL` over a column added by a migration
 
@@ -573,6 +684,667 @@ everything".
 Pinned in `src/__tests__/regressions/delete-all-path-guard.test.ts`,
 `src/__tests__/behaviors/orphan-reset-policy.test.ts` and
 `tests/e2e/orphan-reset-policy.test.ts`.
+
+## Hazard: the device filesystem is `DeviceFs`, and a missed one is silent
+
+Every byte a player receives, and every listing read back off it, goes through
+`DeviceFs` (`src/main/devices/fs/`). `NodeDeviceFs` is `fs` and nothing more and
+is what the desktop uses; web-server mode tunnels the same calls out to the
+browser holding the folder. `device.fs` is the only instance a sync should ever
+use — it belongs to the device, because "which filesystem is this path on" is a
+fact about the device and nothing else.
+
+- **Paths crossing this interface are absolute and in the host's own flavour.**
+  They are built exactly as they always were (`path.join(device.mountPath, …)`),
+  and a remote implementation converts to device-relative POSIX at the RPC
+  boundary where `toMountRelative` already does that job. Forcing POSIX on this
+  side would mean threading a path flavour through six containment guards —
+  `containUnderFolder`, `resolveResettableFolders`, `toMountRelative`,
+  `computeShadowAlbumRelPath`, `findOrphanedAlbumArt` and `sanitizeMountPath` —
+  and missing one collapses every destination to `folder/basename`: the whole
+  library flattens into `Music/` and the next sync sees every track as missing.
+- **A web device's synthetic root is a perfectly ordinary local path**
+  (`/ipodrocks-web/<id>`, `C:\ipodrocks-web\<id>`), so a call that missed its
+  `DeviceFs` would quietly build that tree on the *server's* disk and report a
+  successful sync for a player that got nothing. `NodeDeviceFs` throws on any
+  path under that prefix for exactly this reason. Do not relax it.
+- **The library side is not a `DeviceFs`.** Source files, the scan cache and
+  every temp file an encoder writes stay on plain `fs`; they are on the machine
+  running the sync whatever the device is. `findOnDisk` is library-side only and
+  stays synchronous. Nothing in `tagging/` is fs-injectable: the APEv2 writer,
+  the Musepack `RG` stream-header patch and the M4A `----` append all work on a
+  server-local temp file, and `placeConvertedFile()` is the single step that
+  puts the finished bytes on the destination.
+- **`generateRockboxCover()` takes its target fs as a required first
+  parameter, with no default.** It writes for a device *and* for a shadow-library
+  root, the two destinations are both just absolute paths, and getting them the
+  wrong way round is silent — `cover.jpg` is in `SHADOW_ARTWORK_NAMES`, so the
+  shadow prune would then delete whichever copy landed in the wrong tree.
+  `copyToDevice`/`copyFileToDevice` take theirs first for the same reason.
+- **`cleanEmptyDirectories()` stays synchronous and local; the device gets
+  `cleanEmptyDirectoriesOn()`.** Its second caller is `deleteShadowLibrary()`,
+  which is synchronous all the way up through `shadow:delete` and Rocksy's
+  `shadow_delete`; making it async to serve the device would infect all of that
+  to save fifteen duplicated lines.
+- **`listTree()` exists so a walk is one call, not a readdir-plus-stat storm.**
+  `Device.getTracks`, `getContentStats`, `findOrphanedAlbumArt` and
+  `findOrphanPlaylistFiles` all go through it. An `mtimeMs` of `undefined` is
+  its marker for a stat that failed, and is *not* the same as `0` —
+  `compareLibraries` reads the two differently.
+
+**The Rockbox runtime read and rating write keep a local `fs` path as well as a
+`DeviceFs` one** (`rockbox/tagcache-index.ts`, `sync/rating-propagate.ts`), and
+that is deliberate rather than leftover — see "The rating engine has two
+implementations now" below.
+
+Pinned in `src/__tests__/regressions/device-fs-boundary.test.ts`.
+
+## Hazard: a handler that takes a path from the client mints capabilities with it
+
+`player:prepare` took the whole `Track` the renderer was holding and used
+`track.path` from it. Harmless while the only client was a trusted Electron
+renderer on the user's own machine; over the web server that string is remote
+input reaching two sinks that do as they are told.
+
+- **`encodePathToUrl()` mints a signed `/api/media/:token` for it.**
+  `media-route.ts` re-checks with `isServableMediaPath()`, and that function's
+  middle arm is `isAudioFilePath(resolved)` — **an extension test with no
+  containment at all**, because the library genuinely lives wherever the user
+  pointed it. So any file on the server ending `.mp3`, `.flac`, `.m4a`… was
+  readable by anyone on the allowlist, and probeable for existence everywhere
+  else. The route's own comment states the precondition this broke: "the token
+  alone would be enough only for as long as nobody ever mints one from a path
+  that came in over IPC."
+- **`ffmpeg -i <path>` on the transcode branch**, which an attacker selects for
+  free with `forceTranscode: true`. ffmpeg resolves a top-level `-i` as a *URL*
+  with no protocol allowlist — `http:`, `tcp:`, `concat:`, `data:` — so that
+  argument was server-side request forgery from the daemon's network position.
+
+**`ipc/player.ts` now takes the track id and reads `path` and `codec` off the
+row** (joined through `codecs`, like `LibraryCore.getTracks()`), and
+`prepareTrack` takes `PlayableSource = Pick<Track, "path" | "codec">` so the
+narrowing is visible at the type level. The rest of the `Track` a client sends
+is display data the player never used.
+
+The general rule, because this is not the only handler shaped like it:
+**anything that mints a capability — a media token, a device-io token, an
+encoder argument — takes an id and resolves it server-side.** Check the other
+callers of `encodePathToUrl()` before adding one: today they are this handler,
+the transcode's own temp file, and the audiobook cover path, and the last two
+are server-derived. Pinned in `tests/e2e/web-media.test.ts`, including the
+control that a path smuggled in beside a *valid* id is ignored rather than
+honoured.
+
+## Hazard: a browser-held device is a second implementation of the device
+
+`transport: "local" | "web"` on a device row decides which `DeviceFs` it gets.
+A web device's files live in a folder someone picked in their own browser, and
+its `mountPath` is a **synthetic host-flavoured root** — `/ipodrocks-web/<id>`
+on POSIX, `C:\ipodrocks-web\<id>` on Windows — that exists on no filesystem.
+
+- **`transport` is set once, by `addDevice`, and is deliberately absent from
+  `ALLOWED_UPDATE_FIELDS`.** A `device:update` that flipped it would point an
+  in-flight sync at the wrong filesystem: a remote user's library written into
+  `/ipodrocks-web/<id>` on the server, or a browser asked for a folder that is
+  really a local mount. The column is in `SCHEMA_SQL`; its index is created
+  only inside `migrateDeviceTransport()` (the `SCHEMA_SQL` hazard above).
+- **The root stays host-flavoured, and only the RPC boundary converts to
+  relative POSIX.** Forcing POSIX server-side means threading a path flavour
+  through six containment guards, and `containUnderFolder` falling through does
+  not error — it returns `folder/basename`, so the whole library flattens into
+  `Music/`, the matcher goes ambiguous across thousands of keys and the next
+  sync sees every track as missing. Pinned on a simulated win32 host in
+  `regressions/device-fs-boundary.test.ts`.
+- **A web device with no browser attached gets `DetachedDeviceFs`, which
+  throws.** Answering "not found" would be far worse than an error: a mirror
+  sync reads an empty device as "every track is missing" and starts copying the
+  library, and an orphan sweep reads it as "nothing here to keep".
+- **`isDeviceOnline` asks the attachment table, not the filesystem.** A web
+  device is connected exactly while a tab holds its handle. This is also what
+  gates the podcast scheduler away from a device whose browser is closed.
+- **`device:listUsb` returns an empty snapshot to a web client.** The
+  enumeration is of the *server's* USB bus: nonsense as UX, and an information
+  leak about the host.
+- **A second attach of the same device detaches the first.** That is the
+  per-device mutex — two tabs holding one iPod would otherwise interleave
+  rating patches into a file with no checksum.
+- **But a cross-account attach is *refused*, not granted**, or that mutex is a
+  takeover primitive rather than a safety property. "The row says
+  `transport = 'web'`" is satisfied by every allowlisted identity for every
+  web device, so on its own it let a second account announce someone else's
+  device id, evict them, and have every later `RemoteDeviceFs` call plus every
+  one-shot `/api/device-io` token addressed to *their* browser: the library
+  files the sync meant for the real player, and a folder of their choosing
+  answering as the device — including the Rockbox index whose ratings
+  `ingestDeviceRatings()` merges into the shared library.
+  `devices.web_owner_subject` records `"<provider>:<subject>"`, **stamped by
+  the `device:add` handler from `event.sessionId`, never from the request
+  body**, and is absent from `ALLOWED_UPDATE_FIELDS` for the same reason
+  `transport` is — a `device:update` that could write it would be the takeover
+  by a shorter route. A **null** owner admits: that is a device registered
+  before the column existed, and inventing an owner for one would strand a
+  player nobody can reconnect. Pinned in
+  `tests/e2e/web-device-ownership.test.ts`, whose load-bearing assertion is
+  not the refusal but that **the incumbent still holds the device afterwards**
+  — an "evict, then refuse" passes the first and fails the user.
+- **A device RPC is addressed to the socket that attached, not to the
+  session.** `sendRawToSession()` picks whichever of a session's sockets is
+  open first, and a session is a *login*, not a tab: two tabs of one browser
+  share one express session and land in one `sockets` set, while only one of
+  them holds the directory handle. So the request had a coin-flip chance of
+  reaching the tab that answers `EDEVICEDETACHED`, and the sync failed with
+  nothing anywhere naming a second tab as the reason. `Attachment.socket`
+  holds it, `sendRawToSocket()` uses it, and the detach, the result match and
+  the attach verdicts are all scoped the same way — closing one of two tabs
+  must not take the other tab's device down with it.
+
+### The three things the File System Access API does not do
+
+- **It has no NFC/NFD forgiveness.** `getDirectoryHandle("Album")` matches one
+  exact name; macOS and Windows resolve either form for you and this does not.
+  Ask in NFC for a folder stored as NFD and the sync **creates a second
+  folder** — and from then on the device holds two for one album, at which point
+  `buildDevicePathResolver`'s ambiguity guard plants its `-1` marker and every
+  runtime record and rating for that album silently stops matching. That is
+  issue #117 arrived at from a new direction. `RemoteDeviceFs` therefore
+  implements `findOnDisk` semantics itself: enumerate, NFC-fold, match, and pass
+  the name back through **exactly as the browser spelled it**. Folding on the
+  way out would put the server's idea of the name into `device_synced_tracks`
+  and the matcher would look for a path the device does not have.
+- **It cannot set an mtime.** `capabilities.setMtime` is false and
+  `copyFileToDevice` skips the stamp; the comparison in `name-size-sync.ts`
+  falls back to its size-first path, which it already tries first whenever a
+  size is known. `RemoteDeviceFs.setMtime()` **throws** rather than no-opping,
+  so a future caller that forgets the capability check finds out immediately
+  instead of shipping a sync that re-copies the library every run.
+- **`createWritable()` rewrites the file wholesale** through a `<name>.crswap`
+  sibling rather than patching in place. So `patch()` passes
+  `keepExistingData: true` — without it everything outside the written ranges is
+  lost, which on the checksum-less Rockbox index is unrecoverable — and the
+  index backup matters *more* here, not less. A tab dying mid-write also leaves
+  `.crswap` junk on the device: `Device.getTracks` filters on `AUDIO_EXTENSIONS`
+  so it never sees them, but Rockbox will.
+
+### Hazard: the browser's clock is not the server's
+
+`RemoteDeviceFs` measures `clientNow - serverNow` when the browser attaches and
+shifts **every** mtime the device reports into server time. The sync's test for
+a lossy transcode is `libMtime <= devMtime + 2500ms`, so a laptop whose clock is
+more than 2.5 seconds out re-copies the entire library on every single run —
+with no error anywhere and nothing in the log to say why. `stat` and `listTree`
+must both apply it; one without the other is worse than neither. Pinned in
+`regressions/web-clock-skew.test.ts`, which includes the control showing the
+uncorrected reading failing the same comparison.
+
+### The rating engine has two implementations now, on purpose
+
+`tagcache-index.ts` and `rating-propagate.ts` keep their synchronous local
+functions *and* gain `…On(deviceFs)` twins, chosen by
+`ingestRuntimeDataForDevice()` / `propagateRatingsForDevice()`. The local path
+is unchanged because it is the code every rating regression suite drives —
+having production call something else would leave the hazards those suites pin
+unpinned for the code that actually runs. Everything below the two file reads
+is shared pure code (`decodeSnapshotFrom`, `classifyIndexRead`,
+`classifySnapshot`, `planRatingProbe`, `planRatingEdits`), so the duplication is
+the I/O and nothing else. **A change to how a rating is decided belongs in the
+shared half**; if you find yourself editing the same logic twice, it is in the
+wrong place.
+
+`backedUp` in `tagcache-index.ts` is now scoped per *sync run*
+(`beginIndexBackupRun`), not per process. It used to mean "once per session",
+which in a daemon running for weeks silently meant "once ever" — the only
+backup anyone had was from the first sync after boot. On a browser-held device
+it was worse still: the player can be unplugged, rebuilt and reconnected without
+the server process noticing. Found by `tests/e2e/web-device-ratings.test.ts`,
+which is also what pins it.
+
+Coverage: `regressions/device-fs-parity.test.ts` (Node and Remote answer
+identically, over the *real* browser dispatcher),
+`regressions/web-clock-skew.test.ts`, `tests/e2e/web-device-sync.test.ts` and
+`tests/e2e/web-device-ratings.test.ts`. The last two attach an **OPFS**
+directory — a real `FileSystemDirectoryHandle` with the identical interface — so
+every line of the File System Access path runs with no picker. Only
+`showDirectoryPicker()` itself is manual-verification, the way the `mpcenc` skip
+already is.
+
+## Hazard: a player is on one machine, and the UI is not the guard
+
+Web mode puts the library on the server and the *player* in a browser tab. A
+device's `transport` is therefore not a preference but a fact about which
+machine the thing is plugged into, and each client can drive exactly one kind:
+a `web` ("remote") player exists only while a tab holds its directory handle, a
+`local` one is on the sync engine's own host.
+
+Both mismatches used to be expensive. A web client reaching a server-attached
+device ran a whole sync against the wrong filesystem; the desktop window
+reaching a browser-held one died inside `DetachedDeviceFs` part-way through,
+with an error naming the filesystem rather than the reason.
+
+- **`deviceLocalityBlock()` (`src/shared/device-locality.ts`) is the one copy**,
+  in `src/shared/` because both sides need the same answer. The renderer greys
+  the control out; `blockWrongLocality()` in `ipc/common.ts` refuses the call.
+  A disabled button is a courtesy — `sync:start` and `device:check` are the
+  guard.
+- **`ctx.sessionId` is the whole discriminator.** The web transport sets it,
+  Electron IPC does not, so "which client is this" comes from the transport that
+  carried the call and never from anything the client can claim.
+- **A missing `transport` reads as `local`.** Every row written before the
+  column existed. Reading it as remote would lock the desktop app out of its own
+  devices on upgrade. Pinned.
+- **Listed, not hidden.** A device from the wrong side stays in both lists with
+  a line saying why the rest is off. A device that vanishes from the picker
+  reads as "iPodRocks lost my iPod".
+- **`deviceAdminBlock()` is narrower than the locality rule, and asymmetric on
+  purpose.** The desktop app may still *remove* a remote device — somebody has
+  to be able to tidy up a browser that is never coming back, and refusing
+  strands the row forever. A browser may not edit or remove a server-attached
+  one at all: its mount path, USB identity and folder layout are facts about a
+  machine the browser cannot see and could never verify. Enforced at
+  `device:update` / `device:remove` by `blockWrongAdmin()`. Collapsing the two
+  rules into one breaks whichever half you pick.
+- **In a browser the Add form has no USB dropdown**, and hiding it beats
+  disabling it: that list enumerates the *server's* USB bus, so it rendered as
+  an always-empty select above a red "Could not read USB devices on this
+  system" — true, and entirely beside the point.
+- **The remote device's folder is picked in the Add form**, before the device
+  exists, and attached in `handleSaveDevice()` once there is an id to store the
+  handle under. `pickDeviceFolder()` must be called straight out of the click:
+  Chrome refuses a picker outside a user gesture, and the refusal is
+  indistinguishable from the user cancelling.
+- **Auto Podcasts is refused on a remote device** (`autoPodcastBlock()`), and
+  `getAutoPodcastDeviceIds()` excludes them in SQL. The scheduler is a timer in
+  the server process: aimed at a remote device it either does nothing or pushes
+  gigabytes through a browser nobody is watching. Turning the flag *off* is
+  never refused — a device that should not have had it must be able to give it
+  up.
+- **`app:openExternal` is refused to a web client, like `dialog:pickFolder`.**
+  `shell.openExternal()` opens a URL in the *host's* default browser, in the
+  host's own session — so with the desktop app hosting the server, an
+  allowlisted guest could aim the owner's browser at services on its loopback
+  and LAN that the guest cannot otherwise reach, and pop windows on somebody
+  else's desktop at will. The scheme allowlist in `external-url.ts` does not
+  help: `http:` is exactly the dangerous one. `openExternal()` in the
+  renderer's `api.ts` short-circuits to `window.open(url, "_blank",
+  "noopener,noreferrer")` in web mode, so the round trip never happens; the
+  handler is the guard. Under the headless daemon `NodeShell.openExternal` is
+  already a no-op, so this only ever bit the desktop-hosted deployment —
+  which is the supported one.
+- **In a browser, `+ Add Device` always adds a remote device.** There is no
+  mount path and no Browse button, because `pickFolder()` browses the *server's*
+  filesystem: offering it here is what sent a user hunting for their iPod on the
+  server's disk.
+- **`isWebMode()` must survive bootstrap, and every locality decision rides on
+  it.** It was written as `window.api === undefined` — a correct *bootstrap*
+  question, which is where `main.tsx` asks it, and false everywhere afterwards
+  because `installWebTransport()` **installs** `window.api`. Every other caller
+  runs after React mounts, so the entire browser UI believed it was Electron:
+  the Devices panel offered a server mount path, labelled itself "Add Device",
+  and skipped re-opening folders the browser had already been granted (a Phase 4
+  bug nobody had noticed). It now answers from `activeTransport`, which is the
+  same fact with no second copy. **A handler test cannot see any of this** —
+  every guard was correct and every one of them was being consulted with the
+  wrong client. Pinned in `regressions/web-mode-detection.test.ts` and, at the
+  level that actually failed, `tests/e2e/web-add-device-form.test.ts`.
+- **Browser support is feature-detected, never sniffed.**
+  `supportsDirectoryPicker()` tests for `showDirectoryPicker`. A UA allowlist
+  would have to name Chrome, Edge, Brave, Vivaldi, Arc, Opera and whatever ships
+  next, while still admitting a Firefox fork that spoofs Chrome — and Firefox
+  forks (Zen, LibreWolf, Floorp) are exactly the case that turned up in the
+  field. The Add Device form says so before the form is filled in, not at the
+  picker.
+
+Pinned in `src/__tests__/regressions/device-locality.test.ts` (both directions,
+including the Electron one the web project structurally cannot reach) and
+`tests/e2e/web-device-locality.test.ts` (over a real daemon, with a control
+showing the refusal is not blanket). The *rendered* half —  labels, the absent
+mount path, the disabled controls — is `tests/e2e/web-add-device-form.test.ts`,
+which exists because three rounds of correct handler fixes never touched the
+thing the user was actually looking at.
+
+## Hazard: one global is one client
+
+`ipc/sync.ts` keys its abort controllers by device (`activeSyncAborts:
+Map<deviceId, AbortController>`) because a single module-level controller is
+correct for exactly one window and one player: a second `sync:start` overwrote
+the first's, a cancel then stopped the wrong sync, and `isSyncActive()` — which
+`device:eject` uses to refuse unmounting under a running copy — answered about
+whichever sync started last. `sync:cancel` takes an optional device id; without
+one it cancels every running sync, which is what the renderer has always meant.
+Pinned in `src/__tests__/behaviors/device-sync.test.ts`.
+
+The same shape is still unfixed elsewhere and each one is a bug the moment a
+second client exists: `tagcache-index.ts`'s `backedUp`, `ipc/savant.ts`'s
+session maps (keyed on a **client-supplied** id, so one user can pass another's),
+`usb-devices.ts` (would report the *server's* USB devices to a remote client),
+`podcast-scheduler.ts`'s timers (would auto-sync to a web device whose browser
+is closed) and `openRouterClient`'s rate-limit map.
+
+## Hazard: a sandboxed preload cannot `require` one of our own files
+
+`BrowserWindow` runs with `sandbox: true`. A sandboxed preload's `require` is a
+polyfill that resolves a short allowlist of Electron and Node built-ins and
+**nothing else** — a relative import of our own source throws at load time.
+
+So the moment `preload.ts` imported `src/shared/ipc-channels.ts` (which exists so
+the channel allowlist has exactly one copy, shared with the web server's
+`/api/invoke` gate), the preload died, `contextBridge.exposeInMainWorld` never
+ran, and `window.api` was undefined in every renderer. The visible symptom names
+neither the preload nor the import: the renderer's bootstrap falls through to
+`isWebMode()`, tries the HTTP transport against a `file://` origin, and the
+window renders **"iPodRocks could not start — Failed to fetch"**. Every UI e2e
+test failed at once; `smoke.test.ts` did not, which is worth knowing.
+
+- **`scripts/bundle-preload.js` (esbuild) produces what Electron loads.** It runs
+  after `tsc` in `build` and in parallel with it under `dev:main`.
+- **It emits `preload.bundle.js`, not `preload.js`.** `tsc` also emits a
+  `preload.js` from the same source; two tools writing one path makes the winner
+  depend on their order, which under `--watch` is a coin flip. The separate name
+  keeps tsc typechecking the file — its output is simply unused — and leaves one
+  writer for the file `src/main/index.ts` points at.
+- **`electron` stays `external`**; that one the sandbox polyfill does resolve.
+- Anything else the preload ever imports is inlined for free. Do not "simplify"
+  this back to a plain `tsc` output, and do not fix a future version of this
+  failure by relaxing `sandbox`.
+
+## Hazard: `playwright.config.ts` is re-imported inside every worker
+
+The `web` Playwright project boots the real daemon against a scratch
+`IPODROCKS_DATA_DIR`, which the config wipes so each run starts from an
+unclaimed server. Playwright re-imports the config module **in every worker
+process**, so an unguarded `fs.rmSync` there deletes the data directory out from
+under the running daemon mid-run. It surfaced as `SqliteError: unable to open
+database file` thrown from the test harness — nowhere near its cause.
+
+The wipe is guarded on `process.env.TEST_WORKER_INDEX === undefined`, which is
+set only in workers. Any other one-time side effect added to that file needs the
+same guard, or a `globalSetup`.
+
+## Hazard: a rendered e2e spec meets every modal the app raises by itself
+
+`tests/e2e/web-add-device-form.test.ts` timed out on CI and passed everywhere a
+developer ran it. The click it was waiting on was on a perfectly visible,
+enabled, stable button — behind `MpcUnavailableModal`'s backdrop.
+
+`DevicePanel` raises that modal on its own the moment the codec configs and the
+mpcenc probe have both answered and the "don't remind me" preference reads
+false. A CI runner has no `musepack-tools`, so the modal is always up there; a
+Mac with Homebrew's `musepack` never sees it. `Modal` renders a
+`fixed inset-0 z-50` backdrop, which swallows every click on the panel behind
+it, and the spec is `mode: "serial"` — so the first click failing took the
+whole file with it and the run read "1 failed, 5 skipped" with nothing naming a
+modal.
+
+- **Turn the preference off, do not dismiss the modal.** The modal arrives
+  after two independent IPC round trips, so "close it if it is there" races it.
+  `setMpcReminderDisabled()` in `web-harness.ts` is the deterministic lever, and
+  it returns the previous value so an `afterAll` can put it back — the `web`
+  project runs every spec against one long-lived daemon.
+- **This generalizes.** Any spec that *renders* a panel rather than driving
+  `/api/invoke` inherits whatever that panel decides to pop: the scan-progress
+  modal while a shared-daemon scan is still running, the update-available
+  modal, a rating-conflicts prompt. A handler test cannot see any of it.
+- The product behaviour is correct and was not changed. In web mode the mpcenc
+  probe is the *server's*, which is the right answer — shadow libraries are
+  built there.
+
+## The web server (`src/server/`)
+
+Phase 2 of the web-server plan. The server owns no application logic: it looks
+handlers up in `host/bridge.ts`, the same registry `attachElectronTransport()`
+attaches to, so the desktop window and a remote browser run against one set of
+handlers and one database. Adding an IPC domain gives the web the same channels
+for free — provided its prefix is in `src/shared/ipc-channels.ts`.
+
+- **`ALLOWED_CHANNEL_PREFIXES` is shared by the preload and `/api/invoke`.** One
+  list, in `src/shared/`, because a second copy drifts the first time a domain is
+  added and the symptom is "works on the desktop, 403s over the web".
+- **`PUSH_CHANNELS` is a closed set**, unlike Electron IPC where `ipcRenderer.on`
+  accepts anything. A server fans frames out to *sessions*, so a client must not
+  be able to name a channel and receive another user's frames.
+- **OAuth identifies; `authorizeIdentity()` admits.** A successful Google login
+  is not authorization — the allowlist is, and the first identity binds against a
+  one-time claim token printed to the server log. Identities are matched on the
+  provider's `subject`, never the email, which users can change. Pinned in
+  `src/__tests__/regressions/web-identity-allowlist.test.ts`.
+- **The session cookie is `SameSite=Lax`, not `Strict`.** Strict withholds the
+  cookie on the cross-site navigation the provider performs on its way back to
+  `/api/auth/<provider>/callback`, so every social login fails.
+- **`trust proxy` is set only to configured addresses.** Left at `true`, a direct
+  client forges `X-Forwarded-For` and walks past the rate limiter, which keys on
+  `req.ip`. The limiter's two buckets have different ceilings on purpose: ten per
+  account, sixty per address, because everyone in a household shares an address
+  and behind an unconfigured proxy *every* request does.
+- **An absent `Origin` on the WebSocket upgrade is refused**, not read as
+  same-origin. Browsers always send one; accepting its absence is the usual way
+  CSWSH protection is lost.
+- **Media URLs are HMAC-signed tokens, checked *and* re-validated against
+  `isServableMediaPath()`** — the same function the `media://` handler calls. The
+  signature stops a forged URL; the path check stops a genuine token from ever
+  having been mintable for something that is not media. A token minted for a
+  session is honoured only for that session, because `getPlayerTempDir()` is one
+  directory for the whole server.
+- **`player-source.ts` keys in-flight transcodes by session.** They were two
+  module-level variables: correct for one window, and "the second person to press
+  play kills the first person's ffmpeg" for a server.
+- **The served `index.html` gets the CSP as a header and a `<base href="/">`.**
+  The baked-in `<meta>` policy names the `media:` scheme and has no
+  `connect-src`, so it cannot be reused; and Vite's `base: "./"` (which the
+  desktop `file://` load needs) makes every asset reference relative, which the
+  SPA fallback would break on any path but `/`.
+- **The Node host's `userData()` creates its directory.** Electron's
+  `app.getPath("userData")` does, and `database.ts` and `prefs.ts` have always
+  relied on it; without it a daemon pointed at a fresh `IPODROCKS_DATA_DIR` died
+  in `registerIpcHandlers()`.
+- **`pickFolder()` gains a fallback at the api layer, not in the panels.** On a
+  host with no native dialogs it opens `ServerFolderPicker`, which browses the
+  *server's* filesystem through `app:listDirectory` (gated by the same
+  `validateFolderPath()` as `library:addFolder`). The three existing call sites
+  are unchanged — that is the test. It is **not** the device picker, which is the
+  browser's own `showDirectoryPicker()` in Phase 4 and answers the opposite
+  question.
+- Deployment shape (port, bind, public URL, proxies, TLS) lives in prefs so the
+  Settings card can write it. **Third-party OAuth client secrets are
+  environment-only**, deliberately: they do not belong in a file the app
+  rewrites, and an `_enc*` blob written by Electron's `safeStorage` is
+  unreadable to the daemon anyway.
+
+E2E lives in `tests/e2e/web-{auth,parity,media,identities}.test.ts`, run by the
+`web` Playwright project (the `electron` project is unchanged and still launches
+the app per test). The web project needs a Chromium download — `npx playwright
+install chromium` — which the Electron-only suite never did. **CI has to do it
+too**: `.github/workflows/ci.yml` ran `playwright install-deps`, which installs
+the OS libraries a browser needs and *no browser*, so every `web` spec failed
+with "Executable doesn't exist at …/chrome-headless-shell" while the `electron`
+project — which launches the app's own bundled Electron — passed beside them.
+The step is `playwright install --with-deps chromium`, which does both jobs so
+the two cannot drift apart again. **Every spec runs
+against one long-lived daemon**, so a spec that changes server state (an added
+account, a revoked session) has to put it back.
+
+## The two coarse guards in front of `/api` (from the PR #140 CodeQL review)
+
+CodeQL raised `js/missing-token-validation` against the session cookie and
+eleven `js/missing-rate-limiting` alerts against every route that does work.
+Neither was a hole on its own — `SameSite=Lax` withholds the cookie from a
+cross-site POST, and every flagged route sits behind `requireAuth` — but
+"the cookie policy happens to save us" is not a guard anyone can point at, and
+a counter that only counts *failed logins* says nothing about a client asking
+for legitimate things as fast as it can. Both are now explicit.
+
+- **`origin-guard.ts` refuses a state-changing `/api` request whose origin we
+  do not serve**, mounted on `/api` before any route so nothing added later can
+  be forgotten. `originAllowed()` is the same function the WebSocket upgrade
+  has always used and `allowedOriginsFor(config)` is computed once and handed
+  to both, so the two cannot disagree about what this server is called.
+  - **Safe methods are exempt, and that is load-bearing.**
+    `GET /api/auth/<provider>/callback` is a top-level navigation the provider
+    performs; it is cross-site by construction and guarding it breaks every
+    social login.
+  - **An absent `Origin` is admitted here and refused on the WebSocket.** CSRF
+    needs a browser and a browser always sends `Origin` on a POST, so a request
+    without one is not a forgery — it is `curl`, a script, or the e2e harness.
+    The WebSocket can afford the stricter rule because its only real client
+    *is* a browser.
+  - `Sec-Fetch-Site` is believed first when present: a page cannot set it.
+    `same-site` is refused along with `cross-site` — a sibling subdomain is not
+    us, and on a LAN install it is quite possibly somebody else's box.
+- **`rate-limits.ts` is a flood ceiling, not the brute-force protection.** That
+  is still `auth/rate-limit.ts`, whose two SQLite buckets survive a restart and
+  lock out for fifteen minutes. The two are complementary; neither replaces the
+  other. `/api/auth` gets 600 per fifteen minutes (a household shares one
+  address behind NAT), `/api/auth/identities` 120, `/api/invoke` and
+  `/api/media` 2000 per *minute* — a panel load fires dozens of channels and a
+  seek fires a Range request per jump.
+- **`/api/device-io` is deliberately unlimited**, and
+  `deviceIoIsDeliberatelyUnlimited` exists so a reader finds the reasoning
+  instead of an oversight: a sync is one request per file, so copying a
+  twenty-thousand-track library is tens of thousands of requests as fast as the
+  wire allows. Any ceiling low enough to be protection stops a library copying.
+  CodeQL's four alerts on it are false positives and should be dismissed as
+  such.
+
+Pinned in `src/__tests__/regressions/request-guards.test.ts` (the origin matrix,
+which is mostly header combinations no browser will produce to order, plus the
+limiter actually answering 429) and `tests/e2e/web-request-guards.test.ts` (both
+guards mounted, over a real daemon — including the control that `/api/device-io`
+carries no `RateLimit` header while `/api/invoke` does).
+
+## Hazard: `/api/invoke` checks authentication, not authorization
+
+Every `server:*`, `library:*`, `device:*` … channel reaching a web client goes
+through one gate: `handleInvoke()` refuses a request with no authenticated
+subject and forwards everything else. That is correct for the whole IPC surface
+*except the allowlist itself* — anyone the owner has admitted is a full user of
+the app by design, but a non-owner who could call `server:revokeIdentity` could
+remove the owner's ability to remove **them**. The HTTP routes for the same
+operations (`/api/auth/identities`) have always been `requireOwner`; the IPC
+channels had to match or adding them would have been a privilege escalation
+dressed as a convenience.
+
+- **`denyIfNotOwner(sessionId)` in `server/auth/sessions.ts` is the only copy.**
+  `ipc/server.ts`'s `requireOwner()` is a one-line wrapper and
+  `assistant/tools.ts`'s `ownerGate()` is another. Two implementations of a gate
+  means one of them is weaker — which is exactly what the debt table below says
+  about the duplicated rating-conflict resolution.
+- **`sessionId === undefined` means Electron IPC** and is admitted. There is no
+  identity to check and nothing a gate could protect: that caller can edit the
+  database file directly.
+- **Rocksy is a second front door and needs the same gate.** A tool runs in the
+  main process with no HTTP request near it, so `AiToolContext.sessionId` —
+  threaded from `ipc/assistant.ts`'s handler context — is the only thing that
+  carries "who is asking" that far. Wire it and forget to read it and a
+  non-owner simply asks Rocksy to do what the channel refused.
+- **The four `server:*` control channels are gated too, and that is wider than
+  "the allowlist".** `server:getStatus`, `server:setConfig`, `server:start` and
+  `server:stop` were not, and they are strictly worse than the allowlist ones:
+  `setConfig` writes `host`, `port`, `publicUrl`, `allowedOrigins`,
+  `trustedProxies` and `tls` to prefs, and `stop` + `start` is a restart that
+  re-reads every one of them. A guest could move the listener from loopback
+  onto `0.0.0.0`, clear the TLS pair — which also clears the session cookie's
+  `Secure` flag, since `http.ts` derives it from `config.tls`/`publicUrl`, so
+  the owner's cookie then crosses the LAN in the clear — and set
+  `trustedProxies` so the rate limiter believes any `X-Forwarded-For`. That is
+  this file's own highest tool tier, "anything that changes what the outside
+  world can reach", reached through a channel instead of a tool. The prefs
+  persist, so the exposure survives restarts. The Web Server card renders the
+  refusal as a sentence rather than crashing on the absent `prefs`.
+- **Rocksy's `web_server_status`, `web_server_configure` and
+  `web_server_set_enabled` call `ownerGate()` as well.** They did not; only the
+  five allowlist tools did. A guest who cannot call `server:setConfig` could
+  simply ask Rocksy to, which is the same escalation with a friendlier
+  interface. Note that the confirm gate is **not** what protects these:
+  `assistant:confirmAction` runs `getToolByName(action.tool).run(action.args,
+  ctx)` on a `PendingAction` the *client* supplies, so a client can reach any
+  tool directly without the LLM. That is acceptable only because every gate
+  lives inside `run()`, reading `ctx.sessionId`. **A gate enforced by the
+  confirm UI, the tool tier, or the system prompt is not enforced at all.**
+- **Ownership is granted exactly once**, by the one-time claim token in
+  `authorizeIdentity()`. Neither `server:allowIdentity` nor
+  `web_server_allow_identity` has an `isOwner` parameter, and passing one anyway
+  does nothing. A second route to ownership makes the claim token pointless.
+- **The owner cannot be removed** (`removeIdentity()`), because a server with no
+  owner has an allowlist nobody can edit — including to put an owner back.
+- **A session id never leaves the server.** `listServerSessions()` returns a
+  truncated SHA-256 instead, and revocation is by *identity*, which is also the
+  unit an owner thinks in. An unparseable session row is listed as anonymous
+  rather than dropped: "there is a login here I cannot explain" is precisely
+  what an owner needs to see.
+
+Pinned in `src/__tests__/regressions/web-owner-gate.test.ts` (the gate and all
+five tools, including the mutation where the gate is removed) and
+`tests/e2e/web-identities.test.ts` (the channels over a real daemon, with a
+signed-in non-owner as the attacker and an ordinary channel as the control).
+
+## Decision: the daemon's container does **not** rebuild `better-sqlite3`
+
+The web-server plan budgeted a whole Phase 5 bullet for an ABI split — the repo
+builds native modules for Electron (`postinstall` runs
+`electron-builder install-app-deps`, and `npm test` runs vitest under
+`ELECTRON_RUN_AS_NODE=1 electron`), so a daemon under plain Node was expected to
+need its own build, and a dev machine was expected to be breakable by rebuilding
+the other way.
+
+**That is no longer true and the Dockerfile must not be "fixed" to do it.**
+`better-sqlite3` 13 is a **Node-API** addon (`node-addon-api` ^8,
+`gypfile: false`) shipping per-platform prebuilds inside the npm tarball. The
+same `prebuilds/<platform>-<arch>.node` loads under Node 22, Node 24 and
+Electron 43; `node_modules/better-sqlite3/build/Release/` holds no binary at all
+in this checkout, which is the quickest way to confirm it. It is also the only
+native dependency in `dependencies`.
+
+- `--ignore-scripts` in the Dockerfile is about **Electron's ~100 MB binary
+  download**, not the ABI. The prebuild ships in the tarball and needs no
+  install script.
+- The `deps` stage asserts the module loads (`new Database(':memory:')`) rather
+  than assuming it. If a future dependency does need a real build step, that
+  line fails the image build instead of the first request in production.
+- Reintroducing `npm rebuild better-sqlite3 --build-from-source` costs a
+  compiler toolchain in the image and buys a byte-identical outcome.
+- **Re-verify before trusting this** if `better-sqlite3` is ever pinned back
+  below 13, or a second native dependency appears.
+
+`mpcenc` is the thing a container genuinely does not get for free — nothing
+bundles it, unlike ffmpeg, which `getFfmpegPath()` falls back to
+`@ffmpeg-installer/ffmpeg` for whenever `isPackaged()` is false. The image
+installs Debian's `musepack-tools`; `daemon.ts` reports both encoders at startup
+so a missing one reads as a missing package rather than a broken app.
+
+## Hazard: the host adapter must never auto-detect its way to the real user data
+
+`src/main/host/` is the electron-free boundary: `app.getPath`, `safeStorage`,
+`shell`, `dialog` and `ipcMain` are all reached through a registered
+`HostAdapter` so the same `src/main/` code can run under Electron or as the
+headless web server. Only `host/electron-host.ts` and `host/electron-bridge.ts`
+import `electron`, and only `src/main/index.ts` imports those.
+
+`getHost()` falls back to `detectHost()` when nothing registered one, and
+`detectHost()` probes with a **CommonJS `require("electron")`**. It has to —
+a static `import` would make the daemon's bundle unloadable under plain Node,
+where the `electron` package is a path string at best and absent at worst.
+
+**But vitest's `vi.mock("electron")` cannot intercept a `require`.** So under
+test the probe fails, the Node host is selected, and its `userData()` resolves
+the *real* application-support directory. This shipped for exactly one test run
+and wrote 9 devices, 46 library folders and 96 tracks into the developer's own
+`ipodrock.db` — silently, since every insert succeeded. It surfaced only when a
+later test reported that its fixture device already existed.
+
+Three guards, and all three must stay:
+
+- **`src/__tests__/setup.ts` sets `IPODROCKS_DATA_DIR` to a fresh temp dir** for
+  the whole run, before any test module loads.
+- **`detectHost()` throws under `VITEST` when `IPODROCKS_DATA_DIR` is unset**
+  rather than falling back. Loud beats silent: the fallback's failure mode is
+  data loss in a directory no test ever intended to touch.
+- **`harness/ipc-harness.ts` registers a host of its own** in `setupIpcSession`,
+  on the module graph `vi.resetModules()` just built and *before* importing
+  `src/main/ipc` — the database path is read the first time a handler touches
+  the library. Its paths mirror the `app.getPath` mock (`${appPathRoot}/${name}`).
+
+Anything that adds a new host facility inherits this: give the Node
+implementation a real directory only via `IPODROCKS_DATA_DIR`, never a
+hardcoded home-relative default reachable without it. Pinned in
+`src/__tests__/regressions/host-adapter.test.ts`.
 
 ## Hazard: `foreign_keys = OFF` during track deletion
 
