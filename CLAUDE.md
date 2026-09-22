@@ -1200,14 +1200,23 @@ for legitimate things as fast as it can. Both are now explicit.
   instead of an oversight: a sync is one request per file, so copying a
   twenty-thousand-track library is tens of thousands of requests as fast as the
   wire allows. Any ceiling low enough to be protection stops a library copying.
-  CodeQL's four alerts on it are false positives and should be dismissed as
-  such.
+  CodeQL's four alerts on it are false positives and were dismissed as such on
+  2026-09-22 (alerts #21-#24), with that reasoning recorded on each. A rescan
+  that raises them again is the same finding, not a new one.
 
 Pinned in `src/__tests__/regressions/request-guards.test.ts` (the origin matrix,
 which is mostly header combinations no browser will produce to order, plus the
 limiter actually answering 429) and `tests/e2e/web-request-guards.test.ts` (both
 guards mounted, over a real daemon — including the control that `/api/device-io`
 carries no `RateLimit` header while `/api/invoke` does).
+
+CodeQL does not recognize either guard — it looks for `csurf`-shaped token
+middleware and for an `express-rate-limit` handler on the route itself — so
+`js/missing-token-validation` against the session cookie (alert #12) is
+dismissed as a false positive too. **Neither dismissal is a licence to drop the
+guard it names.** If `requireSameOrigin` ever stops being mounted ahead of every
+`/api` route, or the cookie ever loses `SameSite=Lax`, the alert becomes true
+and nothing will re-raise it.
 
 ## Hazard: `/api/invoke` checks authentication, not authorization
 
