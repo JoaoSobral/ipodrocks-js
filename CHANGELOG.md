@@ -6,13 +6,10 @@
 
 **Your player no longer has to be plugged into the machine that holds your music.**
 
-Run iPodRocks as a server — on a NAS, a home server, an old desktop in a
-cupboard — and open it in a browser from wherever you happen to be. Plug your
+Run iPodRocks as a server on a NAS, a home server, an old desktop in a
+cupboard, and open it in a browser from wherever you happen to be. Plug your
 player into *that* laptop, point the browser at its folder, and sync it to the
 library at home.
-
-Nothing is copied to the laptop in between. Same app, same library, same
-database, same ratings and play history. Just reached over the network.
 
 ```
   the machine with your music            the machine you are sitting at
@@ -21,7 +18,7 @@ database, same ratings and play history. Just reached over the network.
   the sync engine             ◀──WS────   holds the device
 ```
 
-That is the release. Everything below is what it took to make it work properly.
+
 
 ### The whole app, in a browser
 
@@ -53,7 +50,7 @@ needs no screen and no login session. Ships with a `Dockerfile`, a
 `docker-compose.yml` with a `cloudflared` sidecar, a systemd unit, and a
 deployment guide that walks the whole thing end to end.
 
-### Signing in is not the same as being let in
+### Signing in
 
 Sign in with Google, GitHub, Facebook or a plain password account — but a valid
 Google login gets you nowhere on its own. Only accounts on an allowlist you
