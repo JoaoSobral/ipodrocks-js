@@ -54,6 +54,7 @@ import {
 } from "../playlists/genius-engine";
 import { ingestRuntimeDataForDevice } from "../rockbox/runtime-ingest";
 import { getRatingPrefs, setRatingPrefs } from "../utils/prefs";
+import type { HandlerSender } from "../host/bridge";
 
 export interface AiToolContext {
   db: Database.Database;
@@ -69,9 +70,18 @@ export interface AiToolContext {
    * tool is something any allowlisted user is entitled to do, but managing the
    * allowlist is managing the gate itself. Without this, a non-owner who could
    * not call `server:revokeIdentity` directly could ask Rocksy to do it for
-   * them, which is the same escalation with an extra step.
+   * them, which is the same escalation with an extra step. The device tools
+   * (`deviceGate()`), `usb_device_list` and `ratings_set_tag_priority` read it
+   * too, for the same reason.
    */
   sessionId?: string;
+  /**
+   * The transport of whoever asked: the Electron window, or the web session's
+   * socket fan-out. The trigger tools push their renderer event here. It is
+   * optional only so tests can build a bare context; a web caller without one
+   * is refused rather than routed to the desktop window — see `pushToCaller()`.
+   */
+  sender?: HandlerSender;
 }
 
 export type AiToolKind = "read" | "write-safe" | "write-destructive";
@@ -526,10 +536,16 @@ const ratings_set_tag_priority: AiTool = {
     a.enabled === undefined
       ? "Check whether library tags always win"
       : `Turn "library tags always win" ${a.enabled ? "on" : "off"}`,
-  async run(args, _ctx) {
+  async run(args, ctx) {
     if (args.enabled === undefined) {
       return { tagRatingAlwaysWins: getRatingPrefs().tagRatingAlwaysWins ?? false };
     }
+    // A server-wide pref, owner-gated on `settings:setRatingPrefs` — and with
+    // it on, the next scan overwrites every rating in the scanned folders.
+    // Reading it stays open, as the channel's getter does.
+    const { OWNER_ONLY_SETTINGS_MESSAGE } = await import("../../server/auth/sessions");
+    const denied = await ownerGate(ctx, OWNER_ONLY_SETTINGS_MESSAGE);
+    if (denied) return denied;
     const enabled = Boolean(args.enabled);
     setRatingPrefs({ tagRatingAlwaysWins: enabled });
     return {
@@ -593,10 +609,46 @@ async function deviceGate(
 }
 
 async function ownerGate(
-  ctx: AiToolContext
+  ctx: AiToolContext,
+  message?: string
 ): Promise<{ error: string } | null> {
   const { denyIfNotOwner } = await import("../../server/auth/sessions");
-  return denyIfNotOwner(ctx.sessionId);
+  return denyIfNotOwner(ctx.sessionId, message);
+}
+
+/**
+ * Delivers a trigger tool's renderer event to **the caller's own client**.
+ *
+ * These tools act by asking a renderer to do the work (open a panel, start a
+ * scan) and used to send to `BrowserWindow.getAllWindows()[0]` — which, with the
+ * desktop app hosting the web server, is the *owner's* window. So a guest's
+ * `assistant:confirmAction` navigated the owner's screen and started full
+ * scans and rebuilds there, under modal progress dialogs: the same class of
+ * effect `blockWebClientDialog()` exists to prevent.
+ *
+ * Now the event goes to `ctx.sender`, the transport the call arrived on, and
+ * the work runs through that client's own channels and whatever gates they
+ * apply. A web caller with no live sender is refused; the desktop-window
+ * fallback is reachable only by Electron IPC (`sessionId === undefined`).
+ *
+ * Returns an error string for the model, or null once delivered.
+ */
+async function pushToCaller(
+  ctx: AiToolContext,
+  channel: string,
+  ...args: unknown[]
+): Promise<string | null> {
+  if (ctx.sender && !ctx.sender.isDestroyed()) {
+    ctx.sender.send(channel, ...args);
+    return null;
+  }
+  if (ctx.sessionId !== undefined) {
+    return "Couldn't reach your browser window to start that — reload the page and try again.";
+  }
+  const { BrowserWindow } = await import("electron");
+  const win = BrowserWindow.getAllWindows()[0];
+  win?.webContents.send(channel, ...args);
+  return null;
 }
 
 /**
@@ -1392,7 +1444,18 @@ const usb_device_list: AiTool = {
   parameters: { type: "object", properties: {} },
   kind: "read",
   summarize: () => "List connected USB devices",
-  async run() {
+  async run(_args, ctx) {
+    // Mirrors `device:listUsb`: the enumeration is of the *server's* USB bus —
+    // keyboards, security keys, the owner's player and its serial — and a web
+    // client is shown none of it. The gate lives here because
+    // `assistant:confirmAction` reaches `run()` directly.
+    if (ctx.sessionId !== undefined) {
+      return {
+        available: false,
+        note: "USB devices can only be listed from the desktop app on the machine they are plugged into. In a browser, add the player as a remote device instead.",
+        devices: [],
+      };
+    }
     const snapshot = await listUsbDevices();
     if (!snapshot.available) {
       return {
@@ -1644,11 +1707,8 @@ const device_sync: AiTool = {
     if (!device) throw new Error(`Device #${deviceId} not found`);
     const blocked = await deviceGate(ctx, deviceId, "operate");
     if (blocked) return { error: blocked };
-    const { BrowserWindow } = await import("electron");
-    const win = BrowserWindow.getAllWindows()[0];
-    if (win) {
-      win.webContents.send("assistant:triggerSync", { deviceId });
-    }
+    const unreachable = await pushToCaller(ctx, "assistant:triggerSync", { deviceId });
+    if (unreachable) return { error: unreachable };
     return { ok: true, deviceName: device.profile.name, message: "Sync triggered — I've navigated to the Sync panel and selected your device. Press Start Sync when you're ready." };
   },
 };
@@ -1659,12 +1719,11 @@ const library_scan: AiTool = {
   parameters: { type: "object", properties: {} },
   kind: "write-destructive",
   summarize: () => "Scan library folders for new and changed files",
-  async run(_args, _ctx) {
-    const { BrowserWindow } = await import("electron");
-    const win = BrowserWindow.getAllWindows()[0];
-    if (win) {
-      win.webContents.send("assistant:triggerLibraryScan");
-    }
+  async run(_args, ctx) {
+    // Takes no arguments: the caller's own Library panel scans the folders it
+    // lists, through `library:scan` and its `validateFolderPath()`.
+    const unreachable = await pushToCaller(ctx, "assistant:triggerLibraryScan");
+    if (unreachable) return { error: unreachable };
     return { ok: true, message: "Library scan triggered — I've navigated to the Library panel and started the scan." };
   },
 };
@@ -1717,7 +1776,7 @@ const shadow_rebuild: AiTool = {
     `Rebuild shadow library #${(args as { shadowLibraryId?: number }).shadowLibraryId}`,
   async run(args, ctx) {
     const { shadowLibraryId } = args as { shadowLibraryId?: number };
-    if (typeof shadowLibraryId !== "number") {
+    if (!Number.isInteger(shadowLibraryId) || (shadowLibraryId as number) <= 0) {
       return { ok: false, error: "shadowLibraryId is required" };
     }
     const lib = ctx.getLibrary().getShadowLibraries().find((l) => l.id === shadowLibraryId);
@@ -1729,11 +1788,12 @@ const shadow_rebuild: AiTool = {
       };
     }
 
-    const { BrowserWindow } = await import("electron");
-    const win = BrowserWindow.getAllWindows()[0];
-    if (win) {
-      win.webContents.send("assistant:triggerShadowRebuild", { shadowLibraryId });
-    }
+    // The caller's own renderer runs the rebuild through `shadow:rebuild`, so
+    // whatever that channel gates, this does too.
+    const unreachable = await pushToCaller(ctx, "assistant:triggerShadowRebuild", {
+      shadowLibraryId,
+    });
+    if (unreachable) return { ok: false, error: unreachable };
     return {
       ok: true,
       shadowLibraryName: lib.name,
@@ -1760,6 +1820,11 @@ const shadow_prune_orphans: AiTool = {
   summarize: (args) =>
     `Prune orphaned files from shadow library #${(args as { shadowLibraryId?: number }).shadowLibraryId}`,
   async run(args, ctx) {
+    // Same gate as `shadow:pruneOrphans`: the prune deletes files on the
+    // server's disk, so over the web it is the owner's alone.
+    if (await ownerGate(ctx)) {
+      return { ok: false, error: "Only the server's owner can prune shadow libraries." };
+    }
     const { shadowLibraryId } = args as { shadowLibraryId?: number };
     if (typeof shadowLibraryId !== "number") {
       return { ok: false, error: "shadowLibraryId is required" };
@@ -1828,6 +1893,10 @@ const shadow_delete: AiTool = {
     return `Delete shadow library #${a.shadowLibraryId}${a.keepFiles ? " (keeping its files on disk)" : " and its files"}`;
   },
   async run(args, ctx) {
+    // Same gate as `shadow:delete`.
+    if (await ownerGate(ctx)) {
+      return { ok: false, error: "Only the server's owner can delete shadow libraries." };
+    }
     const { shadowLibraryId, keepFiles } = args as {
       shadowLibraryId?: number;
       keepFiles?: boolean;

@@ -16,9 +16,24 @@ import {
   type SavantPlaylistChatState,
 } from "../savant/savantPlaylistChat";
 import { logActivity } from "../activity/activity-logger";
+import { denyIfNotOwner } from "../../server/auth/sessions";
 import type { SavantIntent, BackfillProgress } from "../../shared/types";
 
-let activeBackfillAbort: AbortController | null = null;
+/**
+ * The one backfill that may be running, server-wide.
+ *
+ * This was a bare `AbortController` overwritten by every call: a second run
+ * silently orphaned the first (nothing could cancel it any more), and the
+ * first run to finish nulled the slot out from under the newest. Each run is
+ * an hours-long, library-wide CPU job, so a second call is refused rather than
+ * queued, and `finally` clears the slot only if it still holds *this* run.
+ */
+let activeBackfill: { abort: AbortController } | null = null;
+
+export const BACKFILL_ALREADY_RUNNING =
+  "A harmonic analysis is already running. Wait for it to finish or cancel it first.";
+export const OWNER_ONLY_BACKFILL_MESSAGE =
+  "Only the server's owner can run or cancel harmonic analysis.";
 
 const SESSION_TTL_MS = 30 * 60 * 1000; // 30 minutes
 const SESSION_CAP = 20; // F6: reduced from 50 — single-user desktop app
@@ -122,19 +137,29 @@ export function registerSavantHandlers(): void {
   bridgeHandle(
     "savant:backfillFeatures",
     safe("savant:backfillFeatures", async (event, opts?: { percent?: number }) => {
-      activeBackfillAbort = new AbortController();
-      const signal = activeBackfillAbort.signal;
+      // Library-wide and CPU-bound: one user's run is every user's wait. The
+      // owner decides when that happens; everyone else is refused here, and
+      // `sessionId === undefined` (the desktop window) is the owner by
+      // definition.
+      const denied = denyIfNotOwner(event.sessionId, OWNER_ONLY_BACKFILL_MESSAGE);
+      if (denied) return denied;
+      if (activeBackfill) return { error: BACKFILL_ALREADY_RUNNING };
+      const run = { abort: new AbortController() };
+      activeBackfill = run;
+      const signal = run.abort.signal;
 
-      const lib = getLibrary();
-      const db = lib.getConnection();
-      const scanner = new LibraryScanner(db);
-      const harmonic = getHarmonicPrefs();
-
-      const sendProgress = (p: BackfillProgress) => {
-        event.sender.send("savant:backfillProgress", p);
-      };
-
+      // Everything after taking the slot is inside the try, so nothing that
+      // throws can leave it held for good.
       try {
+        const lib = getLibrary();
+        const db = lib.getConnection();
+        const scanner = new LibraryScanner(db);
+        const harmonic = getHarmonicPrefs();
+
+        const sendProgress = (p: BackfillProgress) => {
+          event.sender.send("savant:backfillProgress", p);
+        };
+
         if (harmonic.analyzeWithEssentia) {
           const percent = Math.min(
             100,
@@ -167,18 +192,21 @@ export function registerSavantHandlers(): void {
         const cancelled = signal.aborted;
         return { processed, cancelled };
       } finally {
-        activeBackfillAbort = null;
+        if (activeBackfill === run) activeBackfill = null;
       }
     })
   );
 
   bridgeHandle(
     "savant:backfillCancel",
-    safe("savant:backfillCancel", async () => {
-      if (activeBackfillAbort) {
-        activeBackfillAbort.abort();
-        activeBackfillAbort = null;
-      }
+    safe("savant:backfillCancel", async (event) => {
+      const denied = denyIfNotOwner(event.sessionId, OWNER_ONLY_BACKFILL_MESSAGE);
+      if (denied) return denied;
+      // The slot is left for the run's own `finally` to clear: clearing it
+      // here would admit a second run while the first is still winding down
+      // its in-flight track.
+      activeBackfill?.abort.abort();
+      return undefined;
     })
   );
 

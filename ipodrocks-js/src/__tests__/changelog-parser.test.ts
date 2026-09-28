@@ -2,7 +2,7 @@
  * @vitest-environment node
  */
 import { describe, it, expect } from "vitest";
-import { extractChangelogSection } from "../main/utils/changelog-parser";
+import { extractChangelogSection, isChangelogVersion } from "../main/utils/changelog-parser";
 
 const FIXTURE = `# Changelog
 
@@ -72,5 +72,33 @@ describe("extractChangelogSection", () => {
     const section = extractChangelogSection(partial, "1.3.5");
     expect(section).toContain("new content");
     expect(section).not.toContain("old content");
+  });
+
+  it("treats the version as text, never as regex syntax (ReDoS)", () => {
+    // The old escaper was inert, so this became `^## \[x\]|(.+)+y\](.*)$` and
+    // backtracked for ever on a long line — on the daemon's one event loop.
+    const longLine = "a".repeat(5000);
+    const md = `${FIXTURE}\n${longLine}\n`;
+    const t0 = Date.now();
+    expect(extractChangelogSection(md, "x]|(.+)+y")).toBeNull();
+    expect(extractChangelogSection(md, "(.+)+y")).toBeNull();
+    expect(Date.now() - t0).toBeLessThan(500);
+    // `.` is literal: 1x3x5 must not match the 1.3.5 heading.
+    expect(extractChangelogSection(FIXTURE, "1x3x5")).toBeNull();
+  });
+});
+
+describe("isChangelogVersion", () => {
+  it("admits release-shaped versions", () => {
+    for (const v of ["1.3.5", "v3.0.0", "1.1.3.1", "2.3.0-beta", "2.3.0-beta.1", "3"]) {
+      expect(isChangelogVersion(v)).toBe(true);
+    }
+  });
+
+  it("refuses anything else before the changelog is touched", () => {
+    for (const v of ["", "x]|(.+)+y", "1.3.5]", "1..3", "1.2.3.4.5", " 1.2", "1.2-", null, 3, {}]) {
+      expect(isChangelogVersion(v)).toBe(false);
+    }
+    expect(isChangelogVersion("1." + "1".repeat(80))).toBe(false);
   });
 });

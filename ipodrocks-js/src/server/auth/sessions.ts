@@ -113,6 +113,50 @@ export function subjectForSessionId(sessionId: string): string | null {
 }
 
 /**
+ * Thrown by {@link callerSubject} for a web caller nobody can name. A class of
+ * its own so a test can tell it apart from any other failure in a handler.
+ */
+export class UnresolvedCallerError extends Error {
+  constructor() {
+    super("Your session could not be verified. Sign in again.");
+    this.name = "UnresolvedCallerError";
+  }
+}
+
+/**
+ * Whose data a call is scoped to: the web caller's `"<provider>:<subject>"`, or
+ * `null` for Electron IPC — and **never** `null` for a web caller.
+ *
+ * `null` is the desktop window's own partition (`identity_subject IS NULL` in
+ * `assistant_chat_history`, a pre-column device in `web_owner_subject`), so a
+ * web caller that resolved to it would be upgraded to the owner's scope. That
+ * is exactly what `subjectForSessionId()` returns for a row that was destroyed
+ * or expired *after* the request authenticated — and `/api/invoke` reads the
+ * body only after `requireAuth`, so a guest trickling a body while a second
+ * connection logs the same cookie out controls that gap for as long as they
+ * like. Hence the two halves:
+ *
+ * - `ctx.subject` is what `/api/invoke` authenticated the request as, carried
+ *   in `HandlerContext`. Preferring it means the handler and the gate cannot
+ *   disagree about who is asking, however the session row changes meanwhile.
+ * - With no carried subject (a caller that holds only a session id), the live
+ *   row is read, and an unresolvable one **throws** rather than returning the
+ *   desktop sentinel. `safe()` turns that into `{ error }`.
+ *
+ * Use this — not `subjectForSessionId()` — anywhere `null` means "the desktop".
+ */
+export function callerSubject(ctx: {
+  readonly sessionId?: string;
+  readonly subject?: string;
+}): string | null {
+  if (ctx.sessionId === undefined) return null;
+  if (typeof ctx.subject === "string" && ctx.subject.length > 0) return ctx.subject;
+  const live = subjectForSessionId(ctx.sessionId);
+  if (live === null) throw new UnresolvedCallerError();
+  return live;
+}
+
+/**
  * Destroys the sessions belonging to one identity. Returns how many.
  *
  * Scoped by identity rather than by session id on purpose — see the note at the
@@ -168,12 +212,18 @@ export function revokeAllSessions(): number {
  * went missing. A gate with two implementations has one that is weaker.
  */
 export function denyIfNotOwner(
-  sessionId: string | undefined
+  sessionId: string | undefined,
+  message = "Only the server's owner can manage who may sign in."
 ): { error: string } | null {
   if (sessionId === undefined) return null;
   const identity = identityForSessionId(sessionId);
   if (!identity?.isOwner) {
-    return { error: "Only the server's owner can manage who may sign in." };
+    return { error: message };
   }
   return null;
 }
+
+/** The refusal the server-wide `settings:*` setters (and the Rocksy tools that
+ *  mirror them) give a non-owner. One string so the renderer can show it. */
+export const OWNER_ONLY_SETTINGS_MESSAGE =
+  "Only the server's owner can change this setting.";

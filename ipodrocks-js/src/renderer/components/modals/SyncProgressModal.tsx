@@ -355,7 +355,7 @@ export function SyncProgressModal({
 
   const handleCancel = async () => {
     try {
-      await cancelSync();
+      await cancelSync(syncOptions.deviceId);
       setCancelled(true);
       setFinished(true);
     } catch {

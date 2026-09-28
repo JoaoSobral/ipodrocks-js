@@ -9,6 +9,7 @@ import { deviceFsForMountPath, type DeviceFs } from "../devices/fs";
 import type { SyncProgressPayload } from "../sync/sync-core";
 import { isDeviceOnline, deviceRowToOnlineInput } from "../devices/device-online";
 import { refreshUsbSnapshot } from "../devices/usb-devices";
+import { isAudiobookCoverPath } from "../player/media-path";
 
 type ProgressCallback = (event: SyncProgressPayload) => void;
 
@@ -64,7 +65,9 @@ export async function syncAutoAudiobooksToDevice(
   deviceId: number,
   selection: AutoAudiobookSyncSelection,
   progressCallback?: ProgressCallback,
-  deviceFs?: DeviceFs
+  deviceFs?: DeviceFs,
+  /** The sync's own signal: a cancel must stop a chapter download too. */
+  signal?: AbortSignal
 ): Promise<{ synced: number; errors: number }> {
   const device = db
     .prepare(
@@ -148,14 +151,23 @@ export async function syncAutoAudiobooksToDevice(
       });
     }
 
-    // Queue cover image for this book (raw local path, not the media:// URL)
+    // Queue cover image for this book (raw local path, not the media:// URL).
+    //
+    // **Only a cover this app downloaded.** `image_url` may also hold whatever
+    // a client sent to `audiobook:subscribe`, and this is a second sink for it
+    // beside the media token: `copyFromLocal()` on a browser-held device
+    // streams the server file to that browser. A relative `../data/...` used
+    // to pass `fs.existsSync` against the daemon's cwd and land the session
+    // database on a guest's player. Absolute, and contained in the audiobooks
+    // root after `realpath` — the same predicate the media route applies.
     const subRow = db
       .prepare("SELECT image_url FROM audiobook_subscriptions WHERE id = ?")
       .get(sub.id) as { image_url: string | null } | undefined;
-    if (subRow?.image_url && fs.existsSync(subRow.image_url)) {
-      const coverExt = path.extname(subRow.image_url) || ".jpg";
+    const coverPath = subRow?.image_url ?? null;
+    if (coverPath && path.isAbsolute(coverPath) && isAudiobookCoverPath(coverPath)) {
+      const coverExt = path.extname(coverPath) || ".jpg";
       coversToSync.push({
-        localPath: subRow.image_url,
+        localPath: coverPath,
         destAbsolute: path.join(device.mount_path, audiobookFolder, bookDir, `cover${coverExt}`),
       });
     }
@@ -176,6 +188,7 @@ export async function syncAutoAudiobooksToDevice(
   let errors = 0;
 
   for (const ch of toSync) {
+    if (signal?.aborted) break;
     try {
       // Check already-synced idempotency
       const syncedRow = db
@@ -202,7 +215,7 @@ export async function syncAutoAudiobooksToDevice(
       // Download-on-sync: fetch if not ready
       let localPath = ch.localPath;
       if (!localPath || !fs.existsSync(localPath) || ch.downloadState !== "ready") {
-        const dlResult = await downloadChapter(db, ch.chapterId);
+        const dlResult = await downloadChapter(db, ch.chapterId, signal);
         if ("error" in dlResult) {
           throw new Error(dlResult.error);
         }

@@ -35,7 +35,7 @@ import {
 import { logActivity } from "../activity/activity-logger";
 import { invalidateAssistantCache } from "../assistant/assistantChat";
 import type { AddDeviceConfig } from "../../shared/types";
-import { subjectForSessionId } from "../../server/auth/sessions";
+import { callerSubject } from "../../server/auth/sessions";
 
 export function registerDeviceHandlers(): void {
   bridgeHandle(
@@ -70,9 +70,11 @@ export function registerDeviceHandlers(): void {
         ...config,
         transport: isWebClient ? "web" : config.transport,
         mountPath: isWebClient ? undefined : config.mountPath,
-        webOwnerSubject: isWebClient
-          ? subjectForSessionId(event.sessionId as string)
-          : null,
+        // `callerSubject()`, not `subjectForSessionId()`: a null here is a
+        // *pre-column* device, which admits every account — so a web caller
+        // whose session row vanished mid-request must be refused, not
+        // registered as ownerless.
+        webOwnerSubject: callerSubject(event),
       });
       logActivity(
         getLibrary().getConnection(),

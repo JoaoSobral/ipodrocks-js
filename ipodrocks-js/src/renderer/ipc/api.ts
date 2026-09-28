@@ -281,15 +281,21 @@ export async function rebuildShadowLibrary(id: number): Promise<unknown> {
 export async function pruneShadowOrphans(
   id: number
 ): Promise<{ deleted: number; bytesFreed: number; scanned: number }> {
-  return window.api.invoke("shadow:pruneOrphans", id) as Promise<{
-    deleted: number;
-    bytesFreed: number;
-    scanned: number;
-  }>;
+  const result = (await window.api.invoke("shadow:pruneOrphans", id)) as
+    | { deleted: number; bytesFreed: number; scanned: number }
+    | { error: string };
+  // A refusal (not the owner, or a root that overlaps the library) comes back
+  // as data; the caller's catch is what shows it.
+  if ("error" in result) throw new Error(result.error);
+  return result;
 }
 
-export async function cancelShadowBuild(): Promise<{ cancelled: boolean }> {
-  return window.api.invoke("shadow:cancelBuild") as Promise<{
+/** Stop the build of `id`, or every running build when no id is given. */
+export async function cancelShadowBuild(id?: number): Promise<{ cancelled: boolean }> {
+  return window.api.invoke(
+    "shadow:cancelBuild",
+    ...(id === undefined ? [] : [id])
+  ) as Promise<{
     cancelled: boolean;
   }>;
 }
@@ -494,8 +500,12 @@ export async function startSync(
   }>;
 }
 
-export async function cancelSync(): Promise<void> {
-  await window.api.invoke("sync:cancel");
+/** Cancels the sync on `deviceId`. Pass it: over the web server the bare form
+ *  cancels only this login's own syncs, but naming the device says exactly
+ *  which one the user pressed Cancel on. */
+export async function cancelSync(deviceId?: number): Promise<void> {
+  if (deviceId === undefined) await window.api.invoke("sync:cancel");
+  else await window.api.invoke("sync:cancel", deviceId);
 }
 
 export async function getDeviceSyncPreferences(
@@ -712,10 +722,15 @@ export async function checkSavantKeyData(): Promise<SavantKeyData> {
 export async function backfillSavantFeatures(opts?: {
   percent?: number;
 }): Promise<{ processed: number; cancelled?: boolean }> {
-  return window.api.invoke("savant:backfillFeatures", opts) as Promise<{
-    processed: number;
-    cancelled?: boolean;
-  }>;
+  const result = (await window.api.invoke("savant:backfillFeatures", opts)) as
+    | { processed: number; cancelled?: boolean }
+    | { error: string };
+  // A refusal (another run in progress, or not the owner) must read as an
+  // error in the progress modal, not as a finished run that did nothing.
+  if (result && typeof result === "object" && "error" in result) {
+    throw new Error(result.error);
+  }
+  return result;
 }
 
 export async function cancelBackfill(): Promise<void> {
@@ -849,11 +864,15 @@ export async function getOpenRouterConfig(): Promise<OpenRouterConfig | null> {
   >;
 }
 
+/** Resolves to `{ error }` when the server refuses — the `settings:*` setters
+ *  are owner-only over the web, since they write server-wide prefs. */
+export type SettingsWriteResult = void | { error: string };
+
 export async function setOpenRouterConfig(
   config: OpenRouterConfig | null
-): Promise<void> {
+): Promise<SettingsWriteResult> {
   return window.api.invoke("settings:setOpenRouterConfig", config) as Promise<
-    void
+    SettingsWriteResult
   >;
 }
 
@@ -881,8 +900,8 @@ export async function getHarmonicPrefs(): Promise<HarmonicPrefs> {
   return window.api.invoke("settings:getHarmonicPrefs") as Promise<HarmonicPrefs>;
 }
 
-export async function setHarmonicPrefs(prefs: HarmonicPrefs): Promise<void> {
-  return window.api.invoke("settings:setHarmonicPrefs", prefs) as Promise<void>;
+export async function setHarmonicPrefs(prefs: HarmonicPrefs): Promise<SettingsWriteResult> {
+  return window.api.invoke("settings:setHarmonicPrefs", prefs) as Promise<SettingsWriteResult>;
 }
 
 export interface RatingPrefs {
@@ -893,8 +912,8 @@ export async function getRatingPrefs(): Promise<RatingPrefs> {
   return window.api.invoke("settings:getRatingPrefs") as Promise<RatingPrefs>;
 }
 
-export async function setRatingPrefs(prefs: RatingPrefs): Promise<void> {
-  return window.api.invoke("settings:setRatingPrefs", prefs) as Promise<void>;
+export async function setRatingPrefs(prefs: RatingPrefs): Promise<SettingsWriteResult> {
+  return window.api.invoke("settings:setRatingPrefs", prefs) as Promise<SettingsWriteResult>;
 }
 
 // ---------------------------------------------------------------------------

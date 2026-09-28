@@ -109,6 +109,12 @@ export function buildCsp(): string {
     "script-src 'self'",
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
     "font-src 'self' https://fonts.gstatic.com",
+    // `https:` stays, deliberately: podcast artwork (`AutoPodcastsPanel`,
+    // `PodcastSearchModal`, `PodcastEpisodeModal`) and the audiobook cover
+    // picker's thumbnails are rendered straight from whatever host the feed or
+    // Google Books / Open Library names, so there is no finite list. The CSP is
+    // therefore *not* a second line of defence against an image beacon; the
+    // guard is `MarkdownContent`, which never renders an `<img>` at all.
     "img-src 'self' data: https:",
     "media-src 'self' blob:",
     // Same-origin XHR/fetch and the WebSocket. `'self'` does not cover ws(s):,

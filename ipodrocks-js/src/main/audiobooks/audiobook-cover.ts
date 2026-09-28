@@ -6,6 +6,13 @@ import { Readable } from "stream";
 import type Database from "better-sqlite3";
 import { ensureChapterDir, getCoverPath } from "./audiobook-storage";
 import { resolveCoverUrl } from "./cover-client";
+import { byteCapTransform } from "../utils/capped-stream";
+
+/**
+ * A cover is a picture, and the URL is often the client's own
+ * (`audiobook:setCoverFromUrl`). The 15 s timeout bounds time, not size.
+ */
+const MAX_COVER_BYTES = 20 * 1024 * 1024;
 
 interface SubRow {
   id: number;
@@ -58,7 +65,11 @@ export async function downloadCover(
     ensureChapterDir(row.librivox_id);
     const tmpPath = localPath + ".tmp";
     const dest = fs.createWriteStream(tmpPath);
-    await pipeline(Readable.fromWeb(res.body as Parameters<typeof Readable.fromWeb>[0]), dest);
+    await pipeline(
+      Readable.fromWeb(res.body as Parameters<typeof Readable.fromWeb>[0]),
+      byteCapTransform(MAX_COVER_BYTES),
+      dest
+    );
     fs.renameSync(tmpPath, localPath);
 
     db.prepare("UPDATE audiobook_subscriptions SET image_url = ? WHERE id = ?").run(localPath, subId);
@@ -94,7 +105,11 @@ export async function downloadCoverFromUrl(
     ensureChapterDir(row.librivox_id);
     const tmpPath = localPath + ".tmp";
     const dest = fs.createWriteStream(tmpPath);
-    await pipeline(Readable.fromWeb(res.body as Parameters<typeof Readable.fromWeb>[0]), dest);
+    await pipeline(
+      Readable.fromWeb(res.body as Parameters<typeof Readable.fromWeb>[0]),
+      byteCapTransform(MAX_COVER_BYTES),
+      dest
+    );
     fs.renameSync(tmpPath, localPath);
 
     db.prepare("UPDATE audiobook_subscriptions SET image_url = ? WHERE id = ?").run(localPath, subId);

@@ -5,6 +5,7 @@ import * as path from "path";
 import { parseFile } from "music-metadata";
 import { getEncoderEnv } from "../utils/encoder-env";
 import { getFfmpegPath } from "../utils/ffmpeg-path";
+import { ffmpegInputArgs } from "../utils/ffmpeg-input";
 import { isMpcFile } from "../utils/audio-extensions";
 import type { DeviceFs } from "../devices/fs";
 import { readApeTags } from "../tagging/reader";
@@ -183,7 +184,7 @@ function buildFfmpegCommand(
   const codec = settings.codec ?? "mp3";
   const bitrate = settings.bitrate ?? 256;
 
-  const cmd = [getFfmpegPath(), "-y", "-i", src];
+  const cmd = [getFfmpegPath(), "-y", ...ffmpegInputArgs(src)];
 
   if (settings.vbr && VBR_CAPABLE_CODECS.has(codec)) {
     cmd.push(...vbrCodecArgs(codec, bitrate));
@@ -224,7 +225,7 @@ function buildProfileCommand(
     default: ["-c:a", "mp3", "-b:a", "256k"],
   };
 
-  const cmd = [getFfmpegPath(), "-y", "-i", src];
+  const cmd = [getFfmpegPath(), "-y", ...ffmpegInputArgs(src)];
   cmd.push(...(profiles[profile] ?? profiles["default"]));
   cmd.push(
     "-map", "0:a",
@@ -531,7 +532,7 @@ async function convertMusepack(
 
   try {
     const ffmpegCmd = [
-      getFfmpegPath(), "-y", "-i", src,
+      getFfmpegPath(), "-y", ...ffmpegInputArgs(src),
       "-f", "wav", "-acodec", "pcm_s16le",
       "-ar", "44100", "-ac", "2",
       tmpWav,
@@ -701,7 +702,10 @@ function probeTagsViaFfprobe(srcPath: string): Record<string, string> | null {
   try {
     const result = spawnSync(
       "ffprobe",
-      ["-v", "quiet", "-print_format", "json", "-show_format", "-show_streams", srcPath],
+      [
+        "-v", "quiet", "-print_format", "json", "-show_format", "-show_streams",
+        ...ffmpegInputArgs(srcPath),
+      ],
       { encoding: "utf8", timeout: 5000, env: getEncoderEnv() }
     );
     if (result.status !== 0 || !result.stdout) return null;
@@ -716,6 +720,40 @@ function probeTagsViaFfprobe(srcPath: string): Record<string, string> | null {
   }
 }
 
+/** Longer than any line ffmpeg's `av_log` formats (1 KiB), with room to spare. */
+const MAX_TAG_DUMP_LINE = 4096;
+const TAG_KEY_CHARS = /^[A-Za-z0-9_\-. ]+$/;
+
+/**
+ * Parse the `Metadata:` block of an `ffmpeg -i` dump. Pure, and **linear in
+ * its input** — keep it that way.
+ *
+ * This used to be `/^ {4,}([A-Za-z0-9_\-. ]+?)\s*:\s*(.+)$/` per line. Three
+ * of its sub-patterns can each consume the same run of spaces, so a line of n
+ * spaces that never reaches a `:` backtracks through every split of them —
+ * about n³/6 steps. Tag keys and values come straight from the source file,
+ * a Vorbis comment key may be a thousand spaces and a `!`, and this runs on
+ * the main thread: one crafted track stalled every user of the daemon for
+ * minutes, on every transcode of it. The key's character class is now tested
+ * only after `indexOf` has isolated it, where it has nothing to backtrack into.
+ */
+export function parseFfmpegTagDump(out: string): Record<string, string> {
+  const tags: Record<string, string> = {};
+  for (const raw of out.split("\n")) {
+    // Metadata lines are indented under a "Metadata:" header and padded to a
+    // colon; "Duration:" and "Stream #0:0" sit at a shallower indent.
+    const line = raw.endsWith("\r") ? raw.slice(0, -1) : raw;
+    if (line.length > MAX_TAG_DUMP_LINE || !line.startsWith("    ")) continue;
+    const colon = line.indexOf(":");
+    if (colon < 0 || colon === line.length - 1) continue;
+    const key = line.slice(0, colon).trim();
+    if (key === "" || !TAG_KEY_CHARS.test(key) || key.startsWith("Stream")) continue;
+    const value = line.slice(colon + 1).trim();
+    if (!(key in tags)) tags[key] = value;
+  }
+  return tags;
+}
+
 /**
  * The same, scraped from `ffmpeg -i`. Less precise than ffprobe's JSON, but
  * **ffmpeg is the binary this app ships** — only it is guaranteed to be there.
@@ -725,25 +763,21 @@ function probeTagsViaFfprobe(srcPath: string): Record<string, string> | null {
 function probeTagsViaFfmpeg(srcPath: string): Record<string, string> | null {
   try {
     // `-i` with no output is an error exit by design; the metadata still goes
-    // to stderr, which is what we are here for.
-    const result = spawnSync(getFfmpegPath(), ["-i", srcPath], {
-      encoding: "utf8",
-      timeout: 5000,
-      env: getEncoderEnv(),
-    });
+    // to stderr, which is what we are here for. The output is capped
+    // explicitly: a file with thousands of tags must not buy an unbounded read.
+    const result = spawnSync(
+      getFfmpegPath(),
+      ["-nostdin", "-hide_banner", ...ffmpegInputArgs(srcPath)],
+      {
+        encoding: "utf8",
+        timeout: 5000,
+        maxBuffer: 1024 * 1024,
+        env: getEncoderEnv(),
+      }
+    );
     const out = `${result.stdout ?? ""}${result.stderr ?? ""}`;
     if (!out) return null;
-
-    const tags: Record<string, string> = {};
-    for (const line of out.split(/\r?\n/)) {
-      // Metadata lines are indented under a "Metadata:" header and padded to a
-      // colon; "Duration:" and "Stream #0:0" sit at a shallower indent.
-      const m = line.match(/^ {4,}([A-Za-z0-9_\-. ]+?)\s*:\s*(.+)$/);
-      if (!m) continue;
-      const key = m[1].trim();
-      if (key === "" || key.startsWith("Stream")) continue;
-      if (!(key in tags)) tags[key] = m[2].trim();
-    }
+    const tags = parseFfmpegTagDump(out);
     return Object.keys(tags).length > 0 ? tags : null;
   } catch {
     return null;

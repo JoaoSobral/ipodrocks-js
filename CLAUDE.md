@@ -177,13 +177,110 @@ part worth keeping.
   only `secret.key` was ever chmodded. `deploy/ipodrocks-server.service` also
   sets `UMask=0077` and `StateDirectoryMode=0700`.
 
-Two things were **looked at and deliberately left alone**: `shadow:create`
-accepting any folder and `shadow:pruneOrphans` deleting anything prunable under
-it is the intended contract (a shadow library owns its root) — but note those
-two channels are **not owner-gated**, so on the web server a non-owner can aim
-them at a library folder. And `isServableMediaPath()`'s middle arm is still an
-uncontained extension test, which is why the mint-site rule above is
-load-bearing.
+One thing was **looked at and deliberately left alone**:
+`isServableMediaPath()`'s middle arm is still an uncontained extension test,
+which is why the mint-site rule above is load-bearing. (The other one — "a
+shadow library owns whatever root it is given" — did not survive the
+2026-09-28 audit below: a guest aimed the prune at the owner's library folder.)
+
+## Security audit, 2026-09-28 — the rules the fixes added
+
+A second audit of the web surface (28 findings, all fixed on
+`security/findings-2026-09-28`). As before, the rules are what to keep.
+
+**Owner-only over the web** (`denyIfNotOwner`, and the Rocksy twin re-applies
+it inside `run()`): every `settings:*` setter and `testOpenRouter` (the
+OpenRouter getter returns a redacted shape to a guest); `podcast:setSettings`
+(download root, Podcast Index keys, scheduler — a no-op save passes quietly
+because the Settings card saves every section at once); `shadow:create`,
+`shadow:delete`, `shadow:pruneOrphans`; `savant:backfillFeatures` and its
+cancel. Anything that *stops* a running job — `sync:cancel`,
+`shadow:cancelBuild`, `scan:cancel` — records who started it: a guest stops
+only its own, and a bare "cancel all" from a guest means all of *theirs*.
+
+- **`null` is the desktop's identity and a web request must never produce
+  it.** Scope per-identity data with `callerSubject(ctx)`
+  (`server/auth/sessions.ts`), which throws for a web caller it cannot
+  resolve. The session row can vanish between `requireAuth` and the handler
+  (the body is read in between); `HandlerContext.subject` carries what the
+  route authenticated.
+- **A tool that pushes a renderer event sends to `ctx.sender`**, never
+  `BrowserWindow.getAllWindows()` — on the desktop-hosted server that is the
+  owner's screen. A read-tier tool whose channel gives a web client an empty
+  answer (`usb_device_list` / `device:listUsb`) must give the same.
+- **A shadow root must own nothing else** (`library/shadow-root-guard.ts`):
+  not a library folder or anything above/inside one, not another shadow root,
+  userData, the podcast or audiobook roots, nor an allowlisted root itself
+  (`$HOME`, `/Volumes`). Realpath'd, case-folded on darwin/win32, and
+  re-checked before every destructive operation because pre-fix rows exist —
+  an overlapping row can still be deleted, but its files are never touched.
+  Listing does no filesystem work: `totalBytes` is `SUM(shadow_tracks.file_size)`.
+- **Long jobs hold a slot**: shadow builds per library id with
+  `MAX_CONCURRENT_SHADOW_BUILDS`, one library scan, one backfill. A finished
+  job releases the slot only if it still holds *its own* controller.
+- **The device row is client-writable, so never join its `mount_path` onto
+  `fs`.** A web device's root is re-derived with `webDeviceRoot(id)`
+  (`updateDevice()` forces it back on every write), device-side deletes go
+  through the device's `DeviceFs`, content folders pass
+  `sanitizeContentFolder()`, and stored device-relative paths go through
+  `containPodcastDevicePath()`. `device:update` cannot switch Auto Podcasts on
+  for a remote device.
+- **Ids that become path components are asserted where the path is built**:
+  `assertPodcastFeedId()` (negative = RSS, legitimate) alongside
+  `assertLibrivoxId()`. A client-written column is never read back as a local
+  file path — an audiobook cover is an http(s) URL or null, and is copied to a
+  device only when it realpaths under `getAudiobooksRoot()`.
+- **`safeFetch` connects to the address it checked.** It is `node:http(s)`
+  with a pinned `lookup`, not global `fetch()` — switching back reintroduces
+  DNS rebinding, and a test stubbing global `fetch` does not intercept it. IPs
+  are judged by parsed value (`[::ffff:7f00:1]` is 127.0.0.1); anything outside
+  `2000::/3` is refused. Every socket has an idle timeout.
+- **Remote bodies are capped in decoded bytes before anything parses them**
+  (`readBodyCapped()`, never `res.text()`); feed XML decodes only the five
+  predefined entities. Downloads of feed-controlled URLs go through
+  `downloadWatchdog()` (throughput window + overall deadline + the caller's
+  signal). An enclosure's *bytes* decide what it is (`utils/audio-sniff.ts`),
+  and its on-disk extension comes from that table, never the URL.
+- **Never hand ffmpeg/ffprobe a bare `-i`**: splice in `ffmpegInputArgs()`
+  (`utils/ffmpeg-input.ts` — `-protocol_whitelist file` plus a demuxer
+  whitelist with no `hls`/`concat`/`image2`), because ffmpeg picks its demuxer
+  from content and a playlist opens other files. A spawned ffmpeg never has an
+  unread pipe (`runQuietFfmpeg()` or `runLoggedSubprocess`) and always has a
+  kill timeout. Essentia's WASM runs only in `harmonic/essentia-worker.ts`;
+  `features_scanned = 2` marks a track Essentia failed on so it is not
+  re-sampled.
+- **No backtracking-ambiguous regex over untrusted input, and never a RegExp
+  built from request input.** Scan forward by hand (`findLinkTags`,
+  `parseFfmpegTagDump`) or compare strings (`extractChangelogSection`).
+- **Nothing a WebSocket client sends may throw out of the listener** —
+  `handleSocketFrame()` drops non-objects and contains handler throws; there
+  is no `uncaughtException` handler to catch it.
+- **A rate-limit bucket is keyed on something per caller.** The OAuth callback
+  counts against the caller's address only; a provider-wide constant at the
+  per-account ceiling was a global lockout switch.
+- **Validate the allowlist before touching the filesystem.**
+  `validateFolderPath()` answers everything outside the roots with the same
+  "does not exist" as a missing path; the assistant helper delegates to it.
+- **Anything reaching `setInterval` is validated where written and where
+  used** — Node runs a NaN or >2^31 ms delay every 1 ms, and prefs persist.
+- **Model output never renders elements that fetch on their own**:
+  `MarkdownContent` renders `img` as inert text. `img-src https:` stays in the
+  CSP for remote podcast/cover art, so it is not a backstop.
+
+Known, not fixed: the ReplayGain tag probe is still a bounded `spawnSync` on
+the main thread (linear parse, 5 s, 1 MiB); `shadow:rebuild`/`resumeBuild`
+stay open to guests (bounded by the slot cap and the root guard); a device
+mount path is not in the shadow-root protected list; the image CSP cannot be
+tightened without an image proxy.
+
+Pinned across `src/__tests__/regressions/`: `ssrf-safe-fetch`,
+`feed-download-hardening`, `podcast-device-state-hardening`,
+`podcast-settings-scheduler`, `web-caller-scope`, `web-guest-assistant-tools`,
+`shadow-root-and-build-slots`, `audiobook-cover-containment`,
+`ws-frame-containment`, `oauth-callback-lockout`, `sync-cancel-scope`,
+`folder-path-oracle`, `markdown-no-image-beacon`, `ffmpeg-untrusted-input`,
+`ffmpeg-bounded-children`, `savant-backfill-single-run`; e2e
+`web-guest-settings`, `web-podcast-guest`, `web-sync-cancel`.
 
 ## Hazard: an index in `SCHEMA_SQL` over a column added by a migration
 

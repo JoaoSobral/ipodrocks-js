@@ -1,6 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { classifyInput } from "../main/podcasts/podcast-feed-import";
 import { stableRssFeedId } from "../main/podcasts/podcast-subscriptions";
+import { safeFetch } from "../main/utils/safe-fetch";
+
+// `safeFetch` no longer goes through the global `fetch` (it pins the socket to
+// the vetted address with node:http), so the network is stubbed at its door.
+vi.mock("../main/utils/safe-fetch", () => ({ safeFetch: vi.fn() }));
 
 // ---- classifyInput ----
 
@@ -113,17 +118,15 @@ const FEED_NO_ARTWORK = `<?xml version="1.0"?>
 
 describe("fetchAndParseFeed", () => {
   beforeEach(() => {
-    vi.stubGlobal("fetch", vi.fn());
+    vi.mocked(safeFetch).mockReset();
   });
 
   function mockFetch(body: string, contentType = "application/rss+xml") {
-    vi.mocked(fetch).mockResolvedValue({
-      ok: true,
-      status: 200,
-      url: "https://example.com/feed.xml",
-      headers: { get: () => contentType },
-      text: async () => body,
-    } as unknown as Response);
+    vi.mocked(safeFetch).mockImplementation(async () => {
+      const res = new Response(body, { status: 200, headers: { "content-type": contentType } });
+      Object.defineProperty(res, "url", { value: "https://example.com/feed.xml" });
+      return res;
+    });
   }
 
   it("parses title, author, description, and imageUrl", async () => {
@@ -170,7 +173,7 @@ describe("fetchAndParseFeed", () => {
   });
 
   it("throws when fetch fails (HTTP error)", async () => {
-    vi.mocked(fetch).mockResolvedValue({
+    vi.mocked(safeFetch).mockResolvedValue({
       ok: false,
       status: 404,
       url: "https://example.com/feed.xml",

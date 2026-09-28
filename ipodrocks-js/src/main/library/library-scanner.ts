@@ -68,6 +68,16 @@ interface TrackUpsertData {
 }
 
 /**
+ * `tracks.features_scanned` value for "Essentia analysis was attempted and
+ * failed or timed out". `1` already means "tag backfill attempted", which says
+ * nothing about Essentia (a track with no key tag is exactly what Essentia is
+ * for), so the Essentia sample needs its own marker to stop re-selecting a file
+ * that can never succeed. `backfillFeatures()` selects `= 0` and so skips it
+ * as well, exactly as it skipped the `1` this used to write.
+ */
+const ESSENTIA_FAILED = 2;
+
+/**
  * Scans a folder tree for audio files, extracts metadata, and upserts tracks
  * into the database. Supports hash-based change detection, cancellation via
  * AbortSignal, and progress reporting through a callback.
@@ -948,7 +958,8 @@ export class LibraryScanner {
         `SELECT t.id, t.path, COALESCE(t.genre_id, 0) as genre_id
          FROM tracks t
          WHERE t.content_type = 'music'
-           AND t.camelot IS NULL`
+           AND t.camelot IS NULL
+           AND COALESCE(t.features_scanned, 0) != ${ESSENTIA_FAILED}`
       )
       .all() as Array<{ id: number; path: string; genre_id: number }>;
 
@@ -1013,8 +1024,11 @@ export class LibraryScanner {
     ).c;
     if (totalMusic === 0) return 0;
 
-    const { analyzeAudioWithEssentia } = await import(
+    const { analyzeAudioWithEssentia, EssentiaUnavailableError } = await import(
       "../harmonic/essentia-analyzer"
+    );
+    const markFailed = this.db.prepare(
+      `UPDATE tracks SET features_scanned = ${ESSENTIA_FAILED} WHERE id = ?`
     );
     const sampled = this.sampleTracksByGenre(totalMusic, percent);
     const total = sampled.length;
@@ -1041,7 +1055,7 @@ export class LibraryScanner {
         status: "analyzing",
       });
       try {
-        const features = await analyzeAudioWithEssentia(row.path);
+        const features = await analyzeAudioWithEssentia(row.path, { signal });
         if (features) {
           this.updateTrackFeaturesStmt.run(
             features.key,
@@ -1051,15 +1065,28 @@ export class LibraryScanner {
           );
           processed++;
           ok = !!features.camelot;
-        } else {
-          this.db
-            .prepare("UPDATE tracks SET features_scanned = 1 WHERE id = ?")
-            .run(row.id);
+        } else if (!signal?.aborted) {
+          // Undecodable, too short, or over its time limit. Marked so the next
+          // run's sample skips it: sampling is by `camelot IS NULL`, so a file
+          // that wedges or times out would otherwise be picked again, every
+          // run. A cancelled track is not marked — it simply was not reached.
+          markFailed.run(row.id);
         }
-      } catch {
-        this.db
-          .prepare("UPDATE tracks SET features_scanned = 1 WHERE id = ?")
-          .run(row.id);
+      } catch (err) {
+        if (err instanceof EssentiaUnavailableError) {
+          // Nothing about this track — Essentia cannot run here at all.
+          // Stop rather than mark every remaining track as a failure.
+          console.warn(`[essentia] ${err.message}; stopping the backfill.`);
+          progressCallback?.({
+            path: row.path,
+            processed: i,
+            total,
+            success: false,
+            status: "error",
+          });
+          break;
+        }
+        markFailed.run(row.id);
       }
       progressCallback?.({
         path: row.path,

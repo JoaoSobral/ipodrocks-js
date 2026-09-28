@@ -8,6 +8,7 @@ import type { SyncProgressPayload } from "../sync/sync-core";
 import { isDeviceOnline, deviceRowToOnlineInput } from "../devices/device-online";
 import { refreshUsbSnapshot } from "../devices/usb-devices";
 import { ensureShowCoverArt } from "./podcast-cover-extractor";
+import { containPodcastDevicePath } from "./podcast-storage";
 
 type ProgressCallback = (event: SyncProgressPayload) => void;
 
@@ -95,14 +96,26 @@ export async function syncPodcastsToDevice(
       const datePrefix = buildDatePrefix(ep.publishedAt);
       const filename = `${datePrefix}${sanitizeDevicePathComponent(ep.title)}${ext}`;
       const destRelative = path.join(device.podcast_folder ?? "Podcasts", showDir, filename);
-      const destAbsolute = path.join(device.mount_path, destRelative);
+      // Contained, not joined: `podcast_folder` is a profile field and the
+      // titles are the feed author's. A path that leaves the podcast folder is
+      // neither written nor recorded, so nothing can later delete through it.
+      const destAbsolute = containPodcastDevicePath(device.mount_path, device.podcast_folder, destRelative);
+      if (!destAbsolute) {
+        console.warn(`[podcasts] refusing device path outside the podcast folder: ${destRelative}`);
+        continue;
+      }
 
       const syncedRow = db
         .prepare("SELECT device_relative_path FROM device_podcast_synced WHERE device_id = ? AND episode_id = ?")
         .get(deviceId, ep.id) as { device_relative_path: string } | undefined;
       if (syncedRow) {
-        const storedAbsolute = path.join(device.mount_path, syncedRow.device_relative_path);
+        const storedAbsolute = containPodcastDevicePath(
+          device.mount_path,
+          device.podcast_folder,
+          syncedRow.device_relative_path
+        );
         if (
+          storedAbsolute &&
           syncedRow.device_relative_path === destRelative &&
           (await target.exists(storedAbsolute))
         ) {
@@ -112,6 +125,7 @@ export async function syncPodcastsToDevice(
         // Drop the stale row and remove the old file so the episode re-syncs under the current name.
         db.prepare("DELETE FROM device_podcast_synced WHERE device_id = ? AND episode_id = ?").run(deviceId, ep.id);
         if (
+          storedAbsolute &&
           syncedRow.device_relative_path !== destRelative &&
           (await target.exists(storedAbsolute))
         ) {

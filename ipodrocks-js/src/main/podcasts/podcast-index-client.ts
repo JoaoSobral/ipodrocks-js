@@ -74,7 +74,21 @@ export async function getEpisodes(
   apiKey: string,
   apiSecret: string
 ): Promise<PodcastIndexEpisode[]> {
-  const url = `${BASE_URL}/episodes/byfeedid?id=${feedId}&max=${max}&fulltext=false`;
+  // `feedId` is read back from `podcast_subscriptions.feed_id`, which INTEGER
+  // affinity does not coerce: a row written before `assertPodcastFeedId()`
+  // existed can hold any string, and interpolated raw it injects query
+  // parameters (`1&max=1000`) into this request. Refuse rather than encode —
+  // an id that is not an integer names no feed.
+  if (!Number.isSafeInteger(feedId) || feedId <= 0) {
+    throw new Error(`invalid Podcast Index feed id: ${String(feedId)}`);
+  }
+  const safeMax = Number.isSafeInteger(max) && max > 0 ? Math.min(max, 1000) : 50;
+  const params = new URLSearchParams({
+    id: String(feedId),
+    max: String(safeMax),
+    fulltext: "false",
+  });
+  const url = `${BASE_URL}/episodes/byfeedid?${params.toString()}`;
   const res = await fetch(url, { headers: buildHeaders(apiKey, apiSecret) });
 
   if (!res.ok) {
