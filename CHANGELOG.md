@@ -1,5 +1,31 @@
 # Changelog
 
+## [3.0.1] — 2026-09
+
+### 🔒 Security hardening for the web server
+
+A second security audit of web-server mode, with 28 findings fixed (#141).
+
+- **Guests can no longer change the server.** Settings (including the
+  OpenRouter key), podcast settings and download folder, creating, deleting
+  and pruning shadow libraries, and the harmonic backfill are now owner-only.
+  Cancelling a sync, scan or shadow build only stops what you started.
+- **No reaching outside the library.** Shadow libraries can't be pointed at a
+  library folder or `$HOME`, a web device's folder can't be redirected at the
+  server's disk, podcast and audiobook ids and covers are validated, and ffmpeg
+  can only open the file it was given.
+- **Tighter outbound fetching.** Private-network addresses written in hex IPv6
+  form are refused, and each connection goes to the address that was checked,
+  which closes DNS rebinding. Feed sizes are capped, downloads time out, and
+  enclosures must actually be audio.
+- **Nothing a guest sends can stall or crash the server.** Slow regexes are
+  rewritten, ffmpeg can no longer hang, Essentia analysis runs off the main
+  thread, long jobs run one at a time, and a malformed WebSocket frame is
+  ignored.
+- **Other fixes.** One client can no longer lock everyone out of social login,
+  the assistant's history can't be read through a logout race, and images in
+  chat replies no longer load from outside hosts.
+
 ## [3.0.0] — 2026-09
 
 ### 🌍 Sync from anywhere
