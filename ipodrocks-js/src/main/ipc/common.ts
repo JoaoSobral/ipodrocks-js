@@ -1,10 +1,9 @@
 import * as fs from "fs";
-import * as os from "os";
 import * as path from "path";
 import type { HandlerContext } from "../host/bridge";
 import type { DeviceTransport } from "../../shared/types";
 import { deviceAdminBlock, deviceLocalityBlock } from "../../shared/device-locality";
-import { pathMatchesAllowedPrefix } from "../path-allowlist";
+import { getAllowedPathPrefixes, pathMatchesAllowedPrefix } from "../path-allowlist";
 import { subjectForSessionId } from "../../server/auth/sessions";
 import { Library } from "../library/library";
 import { DevicesCore } from "../devices/devices-core";
@@ -80,57 +79,52 @@ export function safe(channel: string, fn: Handler): Handler {
 // Library folder path validation
 // ---------------------------------------------------------------------------
 
-/**
- * Allowed root prefixes for library folder paths.
- * Includes home dir (all platforms) plus platform-specific external drive roots.
- */
-function getAllowedPathPrefixes(): string[] {
-  const prefixes = [os.homedir()];
-  if (process.platform === "darwin") {
-    prefixes.push("/Volumes");
-  } else if (process.platform === "linux") {
-    prefixes.push("/media", "/mnt", "/run/media");
-  } else if (process.platform === "win32") {
-    // Allow all drive letters on Windows (C:\, D:\, etc.)
-    for (let c = 65; c <= 90; c++) {
-      prefixes.push(`${String.fromCharCode(c)}:\\`);
-    }
-  }
-  return prefixes;
+
+/** The one answer for "you may not know anything about this path". */
+export const FOLDER_PATH_UNAVAILABLE = "Path does not exist or is not accessible";
+
+function isUnderAllowedRoot(p: string): boolean {
+  return getAllowedPathPrefixes().some((prefix) =>
+    pathMatchesAllowedPrefix(p, prefix, process.platform)
+  );
 }
 
-/** Validates a folder path for library operations. Returns resolved path or error. */
+/**
+ * Validates a folder path for library operations. Returns resolved path or error.
+ *
+ * **The allowlist is decided before the filesystem is asked anything.** This
+ * used to `stat` first, so a web client got "not a directory", "does not
+ * exist" or "outside allowed directories" for any path on the server — an
+ * existence-and-type oracle for `/etc/ipodrocks/server.env`, the server
+ * database, other users' home directories, and everything else outside the
+ * roots it is allowed to browse. Now a path that is outside the roots —
+ * lexically, or once its symlinks are resolved — gets exactly the answer a
+ * nonexistent one does, and the lexical refusal touches no disk at all. Only
+ * a path already known to be inside a root may learn it is "not a directory".
+ */
 export function validateFolderPath(rawPath: string): { path: string } | { error: string } {
-  if (!rawPath || typeof rawPath !== "string") {
+  if (!rawPath || typeof rawPath !== "string" || rawPath.includes("\0")) {
     return { error: "Invalid path" };
   }
   const resolved = path.resolve(rawPath.trim());
+  if (!isUnderAllowedRoot(resolved)) return { error: FOLDER_PATH_UNAVAILABLE };
 
-  // Verify the path exists and is a directory before resolving symlinks
-  try {
-    const stat = fs.statSync(resolved);
-    if (!stat.isDirectory()) {
-      return { error: "Path is not a directory" };
-    }
-  } catch {
-    return { error: "Path does not exist or is not accessible" };
-  }
-
-  // Resolve symlinks to get the real path and validate against allowed prefixes
+  // Resolve symlinks and validate the real path too (F2): a link inside the
+  // home directory pointing at `/etc` is still `/etc`.
   let realPath: string;
   try {
     realPath = fs.realpathSync(resolved);
   } catch {
-    return { error: "Path does not exist or is not accessible" };
+    return { error: FOLDER_PATH_UNAVAILABLE };
   }
+  if (!isUnderAllowedRoot(realPath)) return { error: FOLDER_PATH_UNAVAILABLE };
 
-  // Verify the real (symlink-resolved) path falls under an allowed root prefix (F2)
-  const allowed = getAllowedPathPrefixes();
-  const isAllowed = allowed.some((prefix) =>
-    pathMatchesAllowedPrefix(realPath, prefix, process.platform)
-  );
-  if (!isAllowed) {
-    return { error: "Path is outside allowed directories" };
+  try {
+    if (!fs.statSync(realPath).isDirectory()) {
+      return { error: "Path is not a directory" };
+    }
+  } catch {
+    return { error: FOLDER_PATH_UNAVAILABLE };
   }
 
   return { path: realPath };

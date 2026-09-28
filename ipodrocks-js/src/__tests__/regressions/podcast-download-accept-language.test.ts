@@ -44,6 +44,16 @@ let _testUserData = "";
 
 import { downloadEpisode } from "@main/podcasts/podcast-downloader";
 
+/**
+ * The episode body. Downloads are content-sniffed now (a non-audio payload is
+ * refused before anything can parse it — see utils/audio-sniff.ts), so this
+ * starts with a real MPEG-1 Layer III frame header rather than text.
+ */
+const FAKE_EPISODE_AUDIO = Buffer.concat([
+  Buffer.from([0xff, 0xfb, 0x90, 0x64]),
+  Buffer.from("FAKE-EPISODE-AUDIO"),
+]);
+
 /** A Captivate-like server: 404 unless a concrete Accept-Language is sent.
  * `delayMs` lets a test hold the response open so two requests overlap. */
 function makeAdInsertionServer(
@@ -61,7 +71,7 @@ function makeAdInsertionServer(
       }
       const send = () => {
         res.writeHead(200, { "Content-Type": "audio/mpeg" });
-        res.end(Buffer.from("ID3-FAKE-EPISODE-AUDIO"));
+        res.end(FAKE_EPISODE_AUDIO);
       };
       if (delayMs > 0) setTimeout(send, delayMs);
       else send();
@@ -125,7 +135,7 @@ describe.skipIf(!canRunDbTests)("podcast download — Accept-Language regression
     expect(row.download_state).toBe("ready");
     expect(row.download_error).toBeNull();
     expect(fs.existsSync(row.local_path)).toBe(true);
-    expect(fs.readFileSync(row.local_path).toString()).toBe("ID3-FAKE-EPISODE-AUDIO");
+    expect(fs.readFileSync(row.local_path).equals(FAKE_EPISODE_AUDIO)).toBe(true);
     expect(row.file_size).toBeGreaterThan(0);
   });
 

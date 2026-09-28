@@ -100,6 +100,17 @@ export function listSubscriptions(db: Database.Database): AudiobookSubscription[
   return rows.map(rowToSub);
 }
 
+/** A client-supplied cover is kept only if it is an http(s) URL. */
+export function remoteCoverUrlOrNull(value: unknown): string | null {
+  if (typeof value !== "string" || value.length > 2048) return null;
+  try {
+    const u = new URL(value);
+    return u.protocol === "http:" || u.protocol === "https:" ? value : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function subscribe(
   db: Database.Database,
   result: LibrivoxSearchResult,
@@ -107,13 +118,13 @@ export async function subscribe(
 ): Promise<AudiobookSubscription> {
   // `result` is the request body; its TypeScript type is erased at runtime.
   // The id becomes a directory name (see assertLibrivoxId), and a cover the
-  // caller supplies is always a remote URL -- never a path on this machine,
-  // which `rowToSub` would otherwise turn into a media capability.
+  // caller supplies is always a remote URL -- never a path on this machine.
+  // `image_url` is read back as a *local file* by `rowToSub` (a media
+  // capability) and by the device sync (a file copied onto the player), so
+  // refusing only an absolute path was not enough: `../data/ipodrocks-server.db`
+  // resolved against the daemon's cwd and was copied to the guest's own device.
   const librivoxId = assertLibrivoxId(result.librivoxId);
-  const clientImageUrl =
-    typeof result.imageUrl === "string" && !path.isAbsolute(result.imageUrl)
-      ? result.imageUrl
-      : null;
+  const clientImageUrl = remoteCoverUrlOrNull(result.imageUrl);
 
   const existing = db
     .prepare("SELECT * FROM audiobook_subscriptions WHERE librivox_id = ?")

@@ -23,7 +23,7 @@ import {
   shouldAutoCheck,
   checkRateLimit,
 } from "../utils/update-checker";
-import { extractChangelogSection } from "../utils/changelog-parser";
+import { extractChangelogSection, isChangelogVersion } from "../utils/changelog-parser";
 
 export function registerAppHandlers(): void {
   bridgeHandle(
@@ -96,8 +96,10 @@ export function registerAppHandlers(): void {
   bridgeHandle(
     "app:fetchChangelogSection",
     safe("app:fetchChangelogSection", async (_event, opts: { version: string }) => {
-      const version = (opts?.version ?? "").trim();
-      if (!version) return { markdown: null, error: "version" };
+      const version = typeof opts?.version === "string" ? opts.version.trim() : "";
+      // Reached by any web client, so only a short release-shaped string gets
+      // as far as the changelog. See `extractChangelogSection()`.
+      if (!isChangelogVersion(version)) return { markdown: null, error: "version" };
       const text = await fetchChangelogMarkdown();
       if (text === null) return { markdown: null, error: "network" };
       const section = extractChangelogSection(text, version);

@@ -17,6 +17,7 @@ import {
 } from "../sync/sync-core";
 import { findOnDisk, normalizePath } from "../utils/normalize-path";
 import { decidePrune, type ShadowFileEntry } from "./shadow-prune";
+import { collectProtectedRoots, findShadowRootConflict } from "./shadow-root-guard";
 import { MetadataExtractor } from "./metadata-extractor";
 import {
   audioMatchesCodecConfig,
@@ -100,40 +101,6 @@ function deepestFirst(dirs: Set<string>): string[] {
  */
 function keepClimbing(err: unknown): boolean {
   return (err as NodeJS.ErrnoException)?.code === "ENOENT";
-}
-
-function computeDirectorySize(root: string): number {
-  try {
-    const st = fs.statSync(root);
-    if (!st.isDirectory()) return st.size;
-  } catch {
-    return 0;
-  }
-
-  let total = 0;
-  const stack: string[] = [root];
-
-  while (stack.length > 0) {
-    const dir = stack.pop() as string;
-    let entries: string[];
-    try {
-      entries = fs.readdirSync(dir);
-    } catch {
-      continue;
-    }
-    for (const entry of entries) {
-      const full = path.join(dir, entry);
-      try {
-        const s = fs.statSync(full);
-        if (s.isDirectory()) stack.push(full);
-        else total += s.size;
-      } catch {
-        // best effort: ignore inaccessible files
-      }
-    }
-  }
-
-  return total;
 }
 
 interface ShadowLibraryRow {
@@ -228,9 +195,12 @@ export class ShadowLibraryManager {
              sl.vbr_enabled, sl.created_at, cc.name as codec_config_name,
              c.name as codec_name,
              cc.bitrate_value, cc.quality_value, cc.bits_per_sample,
+             -- The size of what this library wrote, as recorded when it was
+             -- written or verified. It used to be a synchronous, symlink-
+             -- following walk of the whole root on every listing, which on a
+             -- root the client chose could block the event loop indefinitely.
              COALESCE((
-               SELECT SUM(t.file_size) FROM shadow_tracks st
-               JOIN tracks t ON st.source_track_id = t.id
+               SELECT SUM(st.file_size) FROM shadow_tracks st
                WHERE st.shadow_library_id = sl.id AND st.status = 'synced'
              ), 0) as total_bytes,
              (SELECT COUNT(*) FROM shadow_tracks st
@@ -326,6 +296,37 @@ export class ShadowLibraryManager {
   // CRUD
   // ------------------------------------------------------------------
 
+  /**
+   * Why `root` may not be a shadow library root, or null. See
+   * `shadow-root-guard.ts`: the root must hold nothing of the user's but this
+   * library's own output. `excludeId` is the library being checked, so it is
+   * not compared against itself.
+   */
+  rootConflict(root: string, excludeId?: number): string | null {
+    return findShadowRootConflict(root, collectProtectedRoots(this.db, excludeId));
+  }
+
+  /**
+   * {@link rootConflict} for an existing row. Asked again before every
+   * destructive operation, not just at create: a row written before the check
+   * existed — or while a library folder was added under it later — must not be
+   * built, pruned or file-deleted either.
+   */
+  rootConflictFor(id: number): string | null {
+    const row = this.stmtGetLibPathAndCodec.get(id) as { path: string } | undefined;
+    if (!row) return null;
+    return this.rootConflict(row.path, id);
+  }
+
+  /** Ids of every library whose root fails {@link rootConflictFor}. */
+  private _unsafeRootIds(libs: ShadowLibrary[]): Set<number> {
+    const unsafe = new Set<number>();
+    for (const l of libs) {
+      if (this.rootConflict(l.path, l.id)) unsafe.add(l.id);
+    }
+    return unsafe;
+  }
+
   getShadowLibraries(): ShadowLibrary[] {
     const rows = this.stmtGetAll.all() as ShadowLibraryRow[];
     return rows.map(this._rowToShadowLibrary);
@@ -383,6 +384,8 @@ export class ShadowLibraryManager {
     if (!libPath?.trim()) throw new Error("Shadow library path is required");
 
     const resolvedPath = path.resolve(libPath);
+    const conflict = this.rootConflict(resolvedPath);
+    if (conflict) throw new Error(conflict);
     fs.mkdirSync(resolvedPath, { recursive: true });
 
     const info = this.stmtInsert.run(
@@ -397,6 +400,18 @@ export class ShadowLibraryManager {
   deleteShadowLibrary(id: number, removeFiles = true): boolean {
     const lib = this.getShadowLibraryById(id);
     if (!lib) return false;
+
+    // A root that overlaps the user's own data keeps its files whatever was
+    // asked: its `shadow_path`s can be library originals (a root equal to a
+    // library folder with a same-extension codec writes onto the source), and
+    // `cleanEmptyDirectories` would sweep the owner's folders. The row still
+    // goes — that is the part the owner needs to get rid of a bad library.
+    if (removeFiles && this.rootConflictFor(id)) {
+      console.warn(
+        `[shadow] "${lib.name}" overlaps protected data; deleting its entry but leaving every file on disk`
+      );
+      removeFiles = false;
+    }
 
     if (removeFiles) {
       const tracks = this.stmtGetShadowTracksByLib.all(id) as ShadowTrackRow[];
@@ -444,8 +459,8 @@ export class ShadowLibraryManager {
     const result = emptyReconcileResult();
     const total = allTracks.length;
 
-    // Read the three columns this needs directly: getShadowLibraryById walks
-    // the whole shadow folder synchronously to compute a size we never use.
+    // Read the three columns this needs directly rather than the full joined
+    // listing row.
     const lib = this.stmtGetLibPathAndCodec.get(shadowLibId) as
       | { path: string; codec_config_id: number; vbr_enabled: number }
       | undefined;
@@ -703,6 +718,8 @@ export class ShadowLibraryManager {
   ): Promise<void> {
     const lib = this.getShadowLibraryById(shadowLibId);
     if (!lib) throw new Error(`Shadow library ${shadowLibId} not found`);
+    const rootConflict = this.rootConflictFor(shadowLibId);
+    if (rootConflict) throw new Error(rootConflict);
 
     const codecConfig = this.stmtGetCodecConfig.get(
       lib.codecConfigId
@@ -978,9 +995,13 @@ export class ShadowLibraryManager {
     libraryFolderPaths: Map<number, string>,
     signal?: AbortSignal
   ): Promise<void> {
-    const libs = this.getShadowLibraries().filter(
+    const ready = this.getShadowLibraries().filter(
       (l) => l.status === "ready"
     );
+    // Never transcode into a root that overlaps the user's own data — a
+    // same-extension codec there writes over the original.
+    const unsafe = this._unsafeRootIds(ready);
+    const libs = ready.filter((l) => !unsafe.has(l.id));
     if (libs.length === 0 || trackPaths.length === 0) return;
 
     const tracksToPropagate: Track[] = [];
@@ -1053,6 +1074,10 @@ export class ShadowLibraryManager {
   propagateRemovedByIds(trackIds: number[]): void {
     if (trackIds.length === 0) return;
     const libs = this.getShadowLibraries();
+    // In a root that overlaps the library, a removed track's `shadow_path` can
+    // be a *different* original (song.flac's MP3 "shadow" adopted from the
+    // song.mp3 beside it). Drop the row, keep the file.
+    const unsafe = this._unsafeRootIds(libs);
 
     for (const lib of libs) {
       for (const trackId of trackIds) {
@@ -1063,7 +1088,7 @@ export class ShadowLibraryManager {
         if (!st) continue;
 
         try {
-          if (st.shadow_path && fs.existsSync(st.shadow_path)) {
+          if (!unsafe.has(lib.id) && st.shadow_path && fs.existsSync(st.shadow_path)) {
             fs.unlinkSync(st.shadow_path);
           }
         } catch { /* best effort */ }
@@ -1090,7 +1115,11 @@ export class ShadowLibraryManager {
   deleteOrphanedShadowFiles(shadowPaths: string[]): number {
     if (shadowPaths.length === 0) return 0;
 
-    const roots = this.getShadowLibraries().map((l) => path.resolve(l.path));
+    const all = this.getShadowLibraries();
+    const unsafe = this._unsafeRootIds(all);
+    const roots = all
+      .filter((l) => !unsafe.has(l.id))
+      .map((l) => path.resolve(l.path));
     if (roots.length === 0) return 0;
 
     /** Directories a deletion emptied, grouped by the root they belong to. */
@@ -1152,6 +1181,13 @@ export class ShadowLibraryManager {
   }> {
     const lib = this.getShadowLibraryById(shadowLibId);
     if (!lib) throw new Error(`Shadow library #${shadowLibId} not found`);
+    // The prune deletes every audio file under the root it cannot account for.
+    // That is only a cleanup when the root holds nothing but this library's
+    // output; aimed at a library folder it is "delete every original".
+    const rootConflict = this.rootConflictFor(shadowLibId);
+    if (rootConflict) {
+      throw new Error(`"${lib.name}" cannot be pruned: ${rootConflict}`);
+    }
     if (lib.codecConfigMissing) {
       throw new Error(
         `"${lib.name}" is missing its codec configuration — delete and recreate it instead of pruning.`
@@ -1397,7 +1433,6 @@ export class ShadowLibraryManager {
   }
 
   private _rowToShadowLibrary(row: ShadowLibraryRow): ShadowLibrary {
-    const totalBytes = computeDirectorySize(row.path);
     return {
       id: row.id,
       name: row.name,
@@ -1408,7 +1443,7 @@ export class ShadowLibraryManager {
       codecBitrateValue: row.bitrate_value ?? null,
       codecQualityValue: row.quality_value ?? null,
       codecBitsPerSample: row.bits_per_sample ?? null,
-      totalBytes,
+      totalBytes: row.total_bytes ?? 0,
       vbrEnabled: !!row.vbr_enabled,
       status: row.status as ShadowLibrary["status"],
       trackCount: row.track_count,

@@ -9,6 +9,7 @@ import { Device } from "./device";
 import { sanitizeMountPath } from "../path-allowlist";
 import { webDeviceRoot } from "./fs/device-fs";
 import { normalizeUsbId } from "./usb-devices";
+import { autoPodcastBlock } from "../../shared/device-locality";
 
 interface DeviceRow {
   id: number;
@@ -178,6 +179,47 @@ function sanitizeArtworkMaxDimension(value: unknown): number {
 }
 
 
+/** The profile columns that name a folder *inside* the device. */
+const CONTENT_FOLDER_FIELDS = new Set([
+  "music_folder",
+  "podcast_folder",
+  "audiobook_folder",
+  "playlist_folder",
+]);
+
+/**
+ * Validate a content-folder name (`Music`, `Podcasts`, …).
+ *
+ * These are joined onto the mount path by every sync, orphan sweep, podcast
+ * copy and podcast cleanup, so each must name a folder strictly *inside* the
+ * device. They used to be stored verbatim: `".."` or an absolute path pointed
+ * a sweep at somewhere else entirely, and `"."`/`""` collapsed "the Podcasts
+ * folder" onto the device root — the shape `resolveResettableFolders()` has to
+ * refuse after the fact. Nested relative paths (`iPod_Control/Music`) are
+ * fine; both separators are split so a Windows-style value is checked the same
+ * on every host. Returns the trimmed value, spelled as the user gave it.
+ */
+export function sanitizeContentFolder(value: unknown, label = "Content folder"): string {
+  if (typeof value !== "string" || value.trim() === "") {
+    throw new Error(`${label} cannot be empty`);
+  }
+  const trimmed = value.trim();
+  if (trimmed.includes("\0")) {
+    throw new Error(`${label} contains an invalid character`);
+  }
+  if (path.posix.isAbsolute(trimmed) || path.win32.isAbsolute(trimmed)) {
+    throw new Error(`${label} must be a folder inside the device, not an absolute path`);
+  }
+  const segments = trimmed.split(/[\\/]+/).filter((s) => s !== "" && s !== ".");
+  if (segments.length === 0) {
+    throw new Error(`${label} must name a folder inside the device`);
+  }
+  if (segments.some((s) => s === "..")) {
+    throw new Error(`${label} cannot leave the device ("..")`);
+  }
+  return trimmed;
+}
+
 /** A device's USB identity, normalized. `null` means "match by mount path". */
 export interface UsbIdentity {
   vendorId: string;
@@ -290,10 +332,10 @@ export class DevicesCore {
       .run(
         config.name,
         mountPath,
-        config.musicFolder ?? "Music",
-        config.podcastFolder ?? "Podcasts",
-        config.audiobookFolder ?? "Audiobooks",
-        config.playlistFolder ?? "Playlists",
+        sanitizeContentFolder(config.musicFolder ?? "Music", "Music folder"),
+        sanitizeContentFolder(config.podcastFolder ?? "Podcasts", "Podcast folder"),
+        sanitizeContentFolder(config.audiobookFolder ?? "Audiobooks", "Audiobook folder"),
+        sanitizeContentFolder(config.playlistFolder ?? "Playlists", "Playlist folder"),
         transferMode.id,
         config.defaultCodecConfigId ?? null,
         config.description ?? null,
@@ -389,13 +431,39 @@ export class DevicesCore {
       values.push(usb?.vendorId ?? null, usb?.productId ?? null, usb?.serial ?? null);
     }
 
+    const isWeb = device.profile.transport === "web";
+
     for (const [key, value] of Object.entries(updates)) {
       if (USB_IDENTITY_KEYS.has(key)) continue;
       const dbField = FIELD_MAP[key];
       if (!dbField || !ALLOWED_UPDATE_FIELDS.has(dbField)) continue;
+
+      // A browser-held device's mount path is not a setting: it is the
+      // synthetic `webDeviceRoot(id)`, which exists on no filesystem and is
+      // what every `RemoteDeviceFs` path is relative to. Whatever the caller
+      // sent, it is written back to that — which also repairs a row that an
+      // earlier version let a guest rewrite into a real server directory (the
+      // podcast cleanup then `unlink`ed files under it).
+      if (dbField === "mount_path" && isWeb) {
+        fields.push("mount_path = ?");
+        values.push(webDeviceRoot(id));
+        continue;
+      }
+
+      // The same rule `podcast:setDeviceAutoPodcasts` applies, here because
+      // this generic loop is the other way to write the column: a remote
+      // device cannot have Auto Podcasts turned *on*. Turning it off is always
+      // allowed — a device that should not have it must be able to give it up.
+      if (dbField === "auto_podcasts_enabled" && value) {
+        const blocked = autoPodcastBlock(device.profile.transport);
+        if (blocked) throw new Error(blocked);
+      }
+
       fields.push(`${dbField} = ?`);
       const normalized =
-        dbField === "mount_path"
+        CONTENT_FOLDER_FIELDS.has(dbField)
+          ? sanitizeContentFolder(value, key)
+          : dbField === "mount_path"
           ? sanitizeMountPath(value)
           : dbField === "artwork_max_dimension"
           ? sanitizeArtworkMaxDimension(value)

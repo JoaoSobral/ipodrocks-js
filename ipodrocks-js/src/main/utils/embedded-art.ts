@@ -11,6 +11,7 @@ import { parseFile } from "music-metadata";
 import { isMpcFile } from "./audio-extensions";
 import { getEncoderEnv } from "./encoder-env";
 import { getFfmpegPath } from "./ffmpeg-path";
+import { ffmpegInputArgs } from "./ffmpeg-input";
 import { readApeTags } from "../tagging/reader";
 
 const execFileAsync = promisify(execFile);
@@ -64,8 +65,11 @@ async function extractPictureViaFfmpeg(
     const { stdout } = await execFileAsync(
       getFfmpegPath(),
       [
+        "-nostdin",
         "-v", "error",
-        "-i", audioPath,
+        // Restricted input: a "track" that is really an HLS playlist would
+        // otherwise hand back the art of whatever file its segment line names.
+        ...ffmpegInputArgs(audioPath),
         "-map", "0:v:0",
         "-frames:v", "1",
         "-c:v", "copy",

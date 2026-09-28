@@ -45,6 +45,8 @@ import type {
   ContentType,
 } from "../../shared/types";
 import { albumLabelsForTrack } from "../../shared/album-label";
+import { subjectForSessionId } from "../../server/auth/sessions";
+import type { HandlerContext } from "../host/bridge";
 
 /**
  * The sync running on each device, if any.
@@ -55,7 +57,40 @@ import { albumLabelsForTrack } from "../../shared/album-label";
  * {@link isSyncActive} — which `device:eject` depends on to refuse unmounting
  * under a running copy — answered about whichever sync started last.
  */
-const activeSyncAborts = new Map<number, AbortController>();
+const activeSyncAborts = new Map<number, ActiveSync>();
+
+/**
+ * A running sync and who started it.
+ *
+ * **One map is one client, and so is one cancel.** `sync:cancel` used to abort
+ * whatever it was told to — or, with no argument, every sync on the server —
+ * so over `/api/invoke` any allowlisted account could stop another's sync
+ * part-way through a `delete-all` reset and leave their player empty. The
+ * starter is recorded so a web caller can cancel only its own, see
+ * {@link mayCancelSync}.
+ */
+export interface ActiveSync {
+  controller: AbortController;
+  /** `undefined` for the desktop window (Electron IPC). */
+  sessionId: string | undefined;
+  /** Resolved at start: a session can expire while its sync keeps running. */
+  subject: string | null;
+}
+
+/**
+ * May this caller cancel that sync? The desktop window may cancel any, as it
+ * always could — it is the machine holding the database. A web caller may
+ * cancel only a sync its own login started, or one started by another login of
+ * the same identity (a phone and a laptop). The locality and ownership checks
+ * `sync:start` applies are not enough on their own: a pre-column web device
+ * has a null owner and admits every account.
+ */
+export function mayCancelSync(ctx: HandlerContext, sync: ActiveSync): boolean {
+  if (ctx.sessionId === undefined) return true;
+  if (sync.sessionId === ctx.sessionId) return true;
+  if (sync.sessionId === undefined || sync.subject === null) return false;
+  return sync.subject === subjectForSessionId(ctx.sessionId);
+}
 
 /**
  * Is a sync running right now — on `deviceId`, or on any device at all?
@@ -111,7 +146,12 @@ export function registerSyncHandlers(): void {
       // that is already refused upstream; two different devices no longer
       // interfere.
       const syncAbort = new AbortController();
-      activeSyncAborts.set(opts.deviceId, syncAbort);
+      activeSyncAborts.set(opts.deviceId, {
+        controller: syncAbort,
+        sessionId: event.sessionId,
+        subject:
+          event.sessionId === undefined ? null : subjectForSessionId(event.sessionId),
+      });
       const syncSignal = syncAbort.signal;
 
       const { music: musicMap, podcast: podcastMap, audiobook: audiobookMap } =
@@ -562,7 +602,8 @@ export function registerSyncHandlers(): void {
             mode: opts.selections?.mode ?? "include",
           },
           syncOpts.progressCallback,
-          device.fs
+          device.fs,
+          syncSignal
         );
         result.synced += autoAbResult.synced;
         result.errors += autoAbResult.errors;
@@ -798,17 +839,37 @@ export function registerSyncHandlers(): void {
   bridgeHandle(
     "sync:cancel",
     // A device id cancels that device's sync; without one every running sync
-    // is cancelled, which is what the renderer has always meant by "cancel"
-    // when only one could ever be running.
-    safe("sync:cancel", async (_event, deviceId?: number) => {
-      const targets =
-        deviceId === undefined
-          ? [...activeSyncAborts.keys()]
-          : activeSyncAborts.has(deviceId)
-            ? [deviceId]
-            : [];
-      for (const id of targets) {
-        activeSyncAborts.get(id)?.abort();
+    // *this caller may cancel* is cancelled, which is what the renderer has
+    // always meant by "cancel" when only one could ever be running. A web
+    // caller naming a device goes through the same locality and ownership
+    // checks as `sync:start`, and then `mayCancelSync()`.
+    safe("sync:cancel", async (event, deviceId?: number) => {
+      if (deviceId !== undefined && deviceId !== null) {
+        if (typeof deviceId !== "number") return { error: "Invalid device id" };
+        const running = activeSyncAborts.get(deviceId);
+        if (event.sessionId !== undefined) {
+          const device = getDevicesCore().getDeviceById(deviceId);
+          if (device) {
+            const wrongMachine = blockWrongLocality(event, device.profile.transport);
+            if (wrongMachine) return wrongMachine;
+            const notYours = blockWrongDeviceOwner(event, deviceId);
+            if (notYours) return notYours;
+          }
+          if (running && !mayCancelSync(event, running)) {
+            return { error: "That sync was started by someone else." };
+          }
+        }
+        if (!running) return { cancelled: false };
+        running.controller.abort();
+        activeSyncAborts.delete(deviceId);
+        return { cancelled: true };
+      }
+
+      const targets = [...activeSyncAborts.entries()].filter(([, sync]) =>
+        mayCancelSync(event, sync)
+      );
+      for (const [id, sync] of targets) {
+        sync.controller.abort();
         activeSyncAborts.delete(id);
       }
       return { cancelled: targets.length > 0 };

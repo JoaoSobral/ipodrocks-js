@@ -10,6 +10,7 @@ import { spawnSync } from "child_process";
 import { parseFile, parseBuffer, type ICommonTagsResult } from "music-metadata";
 import { normalizeKey, toCamelot } from "../harmonic/camelotWheel";
 import { getEncoderEnv } from "../utils/encoder-env";
+import { ffmpegInputArgs } from "../utils/ffmpeg-input";
 import { isMpcFile } from "../utils/audio-extensions";
 import { readApeTags } from "../tagging/reader";
 import { readAudioOnly } from "../tagging/mpc/strip";
@@ -343,7 +344,12 @@ export class MetadataExtractor {
     try {
       const result = spawnSync(
         "ffprobe",
-        ["-v", "quiet", "-print_format", "json", "-show_format", "-show_streams", filePath],
+        [
+          "-v", "quiet", "-print_format", "json", "-show_format", "-show_streams",
+          // Restricted input (utils/ffmpeg-input.ts): a playlist posing as a
+          // track would otherwise report the duration of the file it names.
+          ...ffmpegInputArgs(filePath),
+        ],
         { encoding: "utf8", timeout: 5000, env: getEncoderEnv() }
       );
       if (result.error) {
@@ -390,7 +396,12 @@ export class MetadataExtractor {
     try {
       const result = spawnSync(
         "ffprobe",
-        ["-v", "quiet", "-print_format", "json", "-show_format", "-show_streams", filePath],
+        [
+          "-v", "quiet", "-print_format", "json", "-show_format", "-show_streams",
+          // Restricted input (utils/ffmpeg-input.ts): a playlist posing as a
+          // track would otherwise report the duration of the file it names.
+          ...ffmpegInputArgs(filePath),
+        ],
         { encoding: "utf8", timeout: 5000, env: getEncoderEnv() }
       );
       if (result.status !== 0 || !result.stdout) return null;

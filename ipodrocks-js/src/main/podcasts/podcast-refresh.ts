@@ -179,14 +179,65 @@ function pruneOldEpisodes(db: Database.Database, subId: number): void {
   }
 }
 
-export async function refreshAll(
+/**
+ * Refresh every subscription, one at a time.
+ *
+ * **Each subscription is isolated.** Subscriptions are global rows any
+ * allowlisted user can add, so one of them may be hostile: a feed whose
+ * download throws, or times out, used to reject this whole loop and leave every
+ * subscription after it — and the scheduler's device syncs after that —
+ * unrefreshed. A failure is logged and the loop moves on. (A download that
+ * never *settles* is the downloader's deadline to enforce; this can only
+ * isolate what comes back.)
+ *
+ * **At most one runs at a time.** `podcast:refreshAllForNewFolder`, the
+ * scheduler and Rocksy all reach this, and overlapping runs used to stack. A
+ * call that arrives mid-run asks for one more pass after the current one and
+ * shares its promise, so the caller still waits for a pass that started after
+ * it asked — which is what `refreshAllForNewFolder` needs, having just reset
+ * episode states the running pass may already have gone past.
+ */
+let refreshAllInFlight: Promise<void> | null = null;
+let refreshAllRerun: { apiKey: string; apiSecret: string } | null = null;
+
+export function refreshAll(
+  db: Database.Database,
+  apiKey: string,
+  apiSecret: string
+): Promise<void> {
+  if (refreshAllInFlight) {
+    refreshAllRerun = { apiKey, apiSecret };
+    return refreshAllInFlight;
+  }
+  const run = (async () => {
+    try {
+      let creds: { apiKey: string; apiSecret: string } | null = { apiKey, apiSecret };
+      while (creds) {
+        refreshAllRerun = null;
+        await refreshAllOnce(db, creds.apiKey, creds.apiSecret);
+        creds = refreshAllRerun;
+      }
+    } finally {
+      refreshAllInFlight = null;
+      refreshAllRerun = null;
+    }
+  })();
+  refreshAllInFlight = run;
+  return run;
+}
+
+async function refreshAllOnce(
   db: Database.Database,
   apiKey: string,
   apiSecret: string
 ): Promise<void> {
   const subs = listSubscriptions(db);
   for (const sub of subs) {
-    await refreshSubscription(db, sub.id, apiKey, apiSecret);
+    try {
+      await refreshSubscription(db, sub.id, apiKey, apiSecret);
+    } catch (err) {
+      console.error(`[podcasts] refresh failed for sub ${sub.id}; continuing:`, err);
+    }
   }
 }
 

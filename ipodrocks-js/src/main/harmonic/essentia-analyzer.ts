@@ -1,28 +1,32 @@
 /**
  * Audio analysis using Essentia.js for key and BPM detection.
- * Decodes audio via ffmpeg, runs KeyExtractor and RhythmExtractor2013.
  *
- * The VectorFloat from arrayToVector is explicitly deleted after each track
- * (Embind does not auto-free); otherwise the WASM heap grows until analysis
- * fails after ~97 tracks. Module.print/printErr are set to suppress "undefined" spam.
+ * Two stages, and neither may run unbounded on the main thread:
+ *
+ * 1. **Decode** — ffmpeg writes up to 120 s of mono 44.1 kHz WAV to a temp
+ *    file. It runs through `runQuietFfmpeg()` (stdio never left undrained, a
+ *    hard wall-clock limit, killed on abort) with the restricted input of
+ *    `utils/ffmpeg-input.ts`. The old spawn left stderr as an unread pipe, so
+ *    a file whose metadata dump outgrew the pipe blocked ffmpeg in `write(2)`
+ *    forever, the promise never settled, and the backfill — and its cancel —
+ *    wedged for the life of the process.
+ * 2. **Analysis** — in `essentia-worker.ts`, on a `worker_threads` Worker. See
+ *    that file for why. A track that outlives its time limit, or a cancel,
+ *    terminates the worker; the next track gets a fresh one.
+ *
+ * Both stages honour an `AbortSignal`, so cancelling a backfill interrupts the
+ * track in flight instead of waiting for it.
  */
 
 import * as crypto from "crypto";
 import * as fs from "fs";
-
-// Set Emscripten Module.print/printErr before Essentia WASM loads. The WASM uses
-// these for stdout/stderr; if unset it falls back to console.log/console.warn.
-// Must run before require("essentia.js") to suppress "undefined" spam.
-const g = globalThis as typeof globalThis & { Module?: Record<string, unknown> };
-g.Module = { ...g.Module, print: () => {}, printErr: () => {} };
 import * as os from "os";
 import * as path from "path";
-import { spawn } from "child_process";
-import { toCamelot } from "./camelotWheel";
+import { Worker } from "worker_threads";
 import { getFfmpegPath } from "../utils/ffmpeg-path";
-
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const wav = require("node-wav");
+import { getEncoderEnv } from "../utils/encoder-env";
+import { ffmpegInputArgs, runQuietFfmpeg } from "../utils/ffmpeg-input";
+import type { EssentiaWorkerRequest, EssentiaWorkerResponse } from "./essentia-worker";
 
 export interface EssentiaFeatures {
   key: string | null;
@@ -30,224 +34,197 @@ export interface EssentiaFeatures {
   camelot: string | null;
 }
 
-/** VectorFloat returned by arrayToVector; must be freed with .delete() to avoid WASM heap leak. */
-type EssentiaVector = unknown & { delete?: () => void };
+/**
+ * Essentia itself could not be loaded, or its worker could not start. A fact
+ * about the installation, not the track — the backfill stops on it rather than
+ * marking every remaining track as unanalysable.
+ */
+export class EssentiaUnavailableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "EssentiaUnavailableError";
+  }
+}
 
-type EssentiaEngine = {
-  arrayToVector: (a: Float32Array) => EssentiaVector;
-  KeyExtractor: (v: EssentiaVector) => { key: string; scale: string };
-  RhythmExtractor2013: (v: EssentiaVector) => { bpm: number };
-  shutdown: () => void;
-};
+/** Decoding two minutes of audio takes well under a second; this is a wedge detector. */
+const DECODE_TIMEOUT_MS = 60_000;
+/** Key + rhythm extraction over two minutes of audio is a few seconds. */
+const DEFAULT_ANALYSIS_TIMEOUT_MS = 90_000;
 
-type EssentiaPkg = {
-  Essentia: new (w: unknown) => EssentiaEngine;
-  EssentiaWASM: unknown;
-};
+let analysisTimeoutMs = DEFAULT_ANALYSIS_TIMEOUT_MS;
+let decodeTimeoutMs = DECODE_TIMEOUT_MS;
+let workerScriptOverride: string | null = null;
 
-let essentiaInstance: EssentiaPkg | null = null;
-let cachedEngine: EssentiaEngine | null = null;
+/** Test hooks. `undefined` restores the default. */
+export function setEssentiaTimeoutsForTests(opts: { decodeMs?: number; analysisMs?: number }): void {
+  decodeTimeoutMs = opts.decodeMs ?? DECODE_TIMEOUT_MS;
+  analysisTimeoutMs = opts.analysisMs ?? DEFAULT_ANALYSIS_TIMEOUT_MS;
+}
 
-/** Number of tracks analyzed since last engine reset. Used to periodically recreate the engine to avoid WASM memory buildup. */
-let tracksSinceReset = 0;
+/**
+ * Point the worker at a prebuilt script. Under vitest this module is the `.ts`
+ * source and there is no compiled `essentia-worker.js` beside it, so a test
+ * bundles one and hands its path in here.
+ */
+export function setEssentiaWorkerScriptForTests(scriptPath: string | null): void {
+  workerScriptOverride = scriptPath;
+  terminateWorker();
+}
 
-/** Reset the cached engine so the next analysis creates a fresh instance. Call periodically to avoid memory leaks. */
+function workerScriptPath(): string {
+  return workerScriptOverride ?? path.join(__dirname, "essentia-worker.js");
+}
+
+let worker: Worker | null = null;
+let nextRequestId = 1;
+
+function terminateWorker(): void {
+  const w = worker;
+  worker = null;
+  if (w) void w.terminate().catch(() => {});
+}
+
+/** Stop the analysis worker, if one is running. Idempotent. */
 export function resetEssentiaEngine(): void {
-  cachedEngine = null;
-  tracksSinceReset = 0;
+  terminateWorker();
 }
 
-function getEssentia(): EssentiaPkg | null {
-  if (essentiaInstance) return essentiaInstance;
-  try {
-    essentiaInstance = require("essentia.js") as EssentiaPkg;
-    return essentiaInstance;
-  } catch {
-    return null;
+function getWorker(): Worker {
+  if (worker) return worker;
+  const script = workerScriptPath();
+  if (!fs.existsSync(script)) {
+    throw new EssentiaUnavailableError(`Essentia worker script not found at ${script}`);
   }
+  const w = new Worker(script);
+  // The worker must never keep the process alive on its own.
+  w.unref();
+  w.on("error", () => {
+    if (worker === w) worker = null;
+  });
+  w.on("exit", () => {
+    if (worker === w) worker = null;
+  });
+  worker = w;
+  return w;
 }
 
 /**
- * Suppress all console and process output during Essentia calls.
- * Emscripten may use console.warn for stderr; belt-and-suspenders.
+ * Decode audio to a mono 44.1 kHz WAV temp file with ffmpeg. Returns its path,
+ * or null when the file could not be decoded, the decode timed out, or it was
+ * cancelled — and in every null case the temp file is already gone.
  */
-function suppressOutput<T>(fn: () => T): T {
-  const origLog = console.log;
-  const origWarn = console.warn;
-  const origStdoutWrite = process.stdout.write.bind(process.stdout);
-  const origStderrWrite = process.stderr.write.bind(process.stderr);
-  const noopWrite = (
-    _chunk: unknown,
-    enc?: unknown,
-    cb?: unknown
-  ): boolean => {
-    if (typeof enc === "function") (enc as () => void)();
-    else if (typeof cb === "function") (cb as () => void)();
-    return true;
-  };
-  const noop = () => {};
-  console.log = noop;
-  console.warn = noop;
-  process.stdout.write = noopWrite as typeof process.stdout.write;
-  process.stderr.write = noopWrite as typeof process.stderr.write;
-  try {
-    return fn();
-  } finally {
-    console.log = origLog;
-    console.warn = origWarn;
-    process.stdout.write = origStdoutWrite;
-    process.stderr.write = origStderrWrite;
-  }
-}
-
-/**
- * Return a reusable Essentia WASM engine, creating it once.
- * Suppresses the WASM module's stdout to avoid "undefined" spam.
- */
-function getOrCreateEngine(): EssentiaEngine | null {
-  if (cachedEngine) return cachedEngine;
-  const pkg = getEssentia();
-  if (!pkg) return null;
-
-  cachedEngine = suppressOutput(() => new pkg.Essentia(pkg.EssentiaWASM));
-  return cachedEngine;
-}
-
-/**
- * Decode audio file to mono Float32Array at 44100Hz using ffmpeg (async).
- */
-function decodeAudioToFloat32(filePath: string): Promise<Float32Array | null> {
-  const tmpDir = os.tmpdir();
-  const tmpWav = path.join(
-    tmpDir,
-    `ipodrocks-essentia-${crypto.randomUUID()}.wav`
+async function decodeToWav(filePath: string, signal?: AbortSignal): Promise<string | null> {
+  const tmpWav = path.join(os.tmpdir(), `ipodrocks-essentia-${crypto.randomUUID()}.wav`);
+  const outcome = await runQuietFfmpeg(
+    getFfmpegPath(),
+    [
+      "-y",
+      ...ffmpegInputArgs(filePath),
+      "-f", "wav",
+      "-acodec", "pcm_s16le",
+      "-ac", "1",
+      "-ar", "44100",
+      "-t", "120",
+      tmpWav,
+    ],
+    { timeoutMs: decodeTimeoutMs, signal, env: getEncoderEnv() }
   );
-  const ffmpegPath = getFfmpegPath();
-  return new Promise((resolve) => {
-    const proc = spawn(
-      ffmpegPath,
-      [
-        "-y",
-        "-i",
-        filePath,
-        "-f",
-        "wav",
-        "-acodec",
-        "pcm_s16le",
-        "-ac",
-        "1",
-        "-ar",
-        "44100",
-        "-t",
-        "120",
-        tmpWav,
-      ],
-      { stdio: "pipe" }
-    );
-    proc.on("close", (code) => {
-      try {
-        if (code !== 0 || !fs.existsSync(tmpWav)) {
-          resolve(null);
-          return;
-        }
-        const buf = fs.readFileSync(tmpWav);
-        const decoded = wav.decode(buf);
-        if (!decoded?.channelData?.length) {
-          resolve(null);
-          return;
-        }
-        const mono = decoded.channelData[0] as Float32Array;
-        resolve(mono);
-      } catch {
-        resolve(null);
-      } finally {
-        try {
-          if (fs.existsSync(tmpWav)) fs.unlinkSync(tmpWav);
-        } catch {
-          // ignore
-        }
+  if (outcome.kind === "exited" && outcome.code === 0 && fs.existsSync(tmpWav)) {
+    return tmpWav;
+  }
+  removeQuietly(tmpWav);
+  return null;
+}
+
+function removeQuietly(file: string): void {
+  try {
+    fs.rmSync(file, { force: true });
+  } catch {
+    // ignore
+  }
+}
+
+/** Run one analysis on the worker, bounded by the time limit and the signal. */
+function analyzeOnWorker(
+  wavPath: string,
+  signal?: AbortSignal
+): Promise<EssentiaFeatures | null> {
+  let w: Worker;
+  try {
+    w = getWorker();
+  } catch (err) {
+    return Promise.reject(err);
+  }
+  const id = nextRequestId++;
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const done = (fn: () => void): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+      w.off("message", onMessage);
+      w.off("error", onError);
+      w.off("exit", onExit);
+      fn();
+    };
+    const onMessage = (msg: EssentiaWorkerResponse): void => {
+      if (msg?.id !== id) return;
+      if (msg.unavailable) {
+        done(() => reject(new EssentiaUnavailableError("essentia.js could not be loaded")));
+        return;
       }
-    });
-    proc.on("error", () => resolve(null));
+      done(() => resolve(msg.result));
+    };
+    const onError = (err: Error): void => {
+      done(() => reject(new EssentiaUnavailableError(`Essentia worker failed: ${err.message}`)));
+    };
+    const onExit = (): void => {
+      // Exited without answering and without an error: it was terminated,
+      // which only this module does — treat as a failed track.
+      done(() => resolve(null));
+    };
+    const onAbort = (): void => {
+      terminateWorker();
+      done(() => resolve(null));
+    };
+    const timer = setTimeout(() => {
+      // Too long: the WASM is interrupted where it stands. The track is
+      // reported as failed and the next one gets a fresh worker.
+      terminateWorker();
+      done(() => resolve(null));
+    }, analysisTimeoutMs);
+
+    w.on("message", onMessage);
+    w.on("error", onError);
+    w.on("exit", onExit);
+    if (signal?.aborted) {
+      onAbort();
+      return;
+    }
+    signal?.addEventListener("abort", onAbort, { once: true });
+    const req: EssentiaWorkerRequest = { id, wavPath };
+    w.postMessage(req);
   });
 }
 
 /**
- * Map Essentia key (e.g. "C", "A") + scale ("major", "minor") to our format.
- */
-function essentiaKeyToNormalized(key: string, scale: string): string | null {
-  if (!key) return null;
-  const k = key.trim();
-  if (scale?.toLowerCase() === "minor") return k + "m";
-  return k;
-}
-
-/** Recreate the Essentia engine every N tracks as a safety net (vector is now freed per track). */
-const ESSENTIA_RESET_INTERVAL = 500;
-
-/**
  * Analyze audio file for key and BPM using Essentia.js.
- * Reuses a single WASM instance and periodically resets it to avoid
- * memory buildup that causes the process to die after many tracks.
- * Console and stdout output are suppressed during analysis to avoid
- * "undefined" spam from the WASM module.
  *
- * @returns Features or null if analysis fails / Essentia unavailable.
+ * @returns Features, or null when this track could not be analysed (undecodable,
+ *   too short, timed out, or cancelled — check the signal to tell the last
+ *   apart).
+ * @throws EssentiaUnavailableError when Essentia cannot run at all.
  */
 export async function analyzeAudioWithEssentia(
-  filePath: string
+  filePath: string,
+  opts: { signal?: AbortSignal } = {}
 ): Promise<EssentiaFeatures | null> {
-  if (tracksSinceReset >= ESSENTIA_RESET_INTERVAL) {
-    resetEssentiaEngine();
-  }
-  const essentia = getOrCreateEngine();
-  if (!essentia) return null;
-
-  const audio = await decodeAudioToFloat32(filePath);
-  if (!audio || audio.length < 1000) return null;
-
+  const wavPath = await decodeToWav(filePath, opts.signal);
+  if (!wavPath) return null;
   try {
-    const result = suppressOutput(() => {
-      const vector = essentia.arrayToVector(audio);
-      try {
-        let key: string | null = null;
-        let camelot: string | null = null;
-        let bpm: number | null = null;
-
-        try {
-          const keyResult = essentia.KeyExtractor(vector);
-          if (keyResult?.key) {
-            const normalized = essentiaKeyToNormalized(
-              keyResult.key,
-              keyResult.scale ?? ""
-            );
-            if (normalized) {
-              key = normalized;
-              camelot = toCamelot(normalized);
-            }
-          }
-        } catch {
-          // Key extraction failed
-        }
-
-        try {
-          const rhythmResult = essentia.RhythmExtractor2013(vector);
-          if (rhythmResult?.bpm != null && rhythmResult.bpm > 0) {
-            bpm = Math.round(rhythmResult.bpm * 10) / 10;
-          }
-        } catch {
-          // BPM extraction failed
-        }
-
-        return { key, bpm, camelot };
-      } finally {
-        // Free WASM heap: Embind vectors must be deleted or the heap grows until analysis fails (~97 tracks).
-        vector.delete?.();
-      }
-    });
-    tracksSinceReset++;
-    return result;
-  } catch {
-    return null;
+    return await analyzeOnWorker(wavPath, opts.signal);
+  } finally {
+    removeQuietly(wavPath);
   }
 }

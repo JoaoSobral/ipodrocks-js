@@ -1,5 +1,5 @@
-import { handle as bridgeHandle } from "../host/bridge";
-import { subjectForSessionId } from "../../server/auth/sessions";
+import { handle as bridgeHandle, type HandlerContext } from "../host/bridge";
+import { callerSubject } from "../../server/auth/sessions";
 import { getUserDataPath } from "../host";
 import { safe, getLibrary, getPlaylistCore, getDevicesCore } from "./common";
 import { checkRateLimit } from "../llm/openRouterClient";
@@ -26,14 +26,19 @@ import {
 import type { AiToolContext } from "../assistant/tools";
 
 /**
- * `sessionId` is carried through so the `web_server_*` allowlist tools can ask
- * who is chatting. It is undefined over Electron IPC, which those tools read as
- * "the desktop window on the machine holding the database" — see `ownerGate()`
- * in `assistant/tools.ts`. No other tool looks at it.
+ * `sessionId` is carried through so the gated tools can ask who is chatting.
+ * It is undefined over Electron IPC, which they read as "the desktop window on
+ * the machine holding the database" — see `ownerGate()` / `deviceGate()` in
+ * `assistant/tools.ts`.
+ *
+ * `sender` is the *caller's own* transport: the Electron window that asked, or
+ * the web session's socket fan-out. The trigger tools (`library_scan`,
+ * `shadow_rebuild`, `device_sync`) push to it, never to "the first desktop
+ * window", which over the web would be somebody else's screen.
  */
 function buildToolContext(
   db: import("better-sqlite3").Database,
-  sessionId?: string
+  event: HandlerContext
 ): AiToolContext {
   return {
     db,
@@ -41,7 +46,8 @@ function buildToolContext(
     getPlaylistCore,
     getDevicesCore,
     getPodcastIndexConfig,
-    sessionId,
+    sessionId: event.sessionId,
+    sender: event.sender,
   };
 }
 
@@ -55,11 +61,13 @@ export function registerAssistantHandlers(): void {
       const config = getOpenRouterConfig();
       if (!config?.apiKey?.trim())
         return { error: "OpenRouter API key not configured" };
-      const db = getLibrary().getConnection();
       // Whose conversation this is. Null over Electron IPC, which has no
-      // identity and is the machine holding the database.
-      const subject =
-        event.sessionId === undefined ? null : subjectForSessionId(event.sessionId);
+      // identity and is the machine holding the database — and *only* there:
+      // `callerSubject()` throws for a web caller it cannot name rather than
+      // hand it the desktop owner's history and pinned memories. Resolved
+      // before anything else, so a refused call touches no rows at all.
+      const subject = callerSubject(event);
+      const db = getLibrary().getConnection();
       const recentHistory = loadNonPinnedHistory(db, subject);
       const fullHistory = [
         ...recentHistory,
@@ -73,7 +81,7 @@ export function registerAssistantHandlers(): void {
         autoPodcastEnabled: autoPodcastSettings.enabled,
         autoPodcastIntervalMin: autoPodcastSettings.refreshIntervalMinutes,
       };
-      const toolCtx = buildToolContext(db, event.sessionId);
+      const toolCtx = buildToolContext(db, event);
       const result = await sendAssistantMessage(
         fullHistory,
         db,
@@ -109,8 +117,12 @@ export function registerAssistantHandlers(): void {
     safe("assistant:confirmAction", async (event, action: PendingAction) => {
       if (!checkRateLimit("assistant:chat"))
         return { error: "Rate limit exceeded. Please wait before sending another message." };
+      // Same fail-closed rule as the chat turn. Every gate a tool applies reads
+      // the live session and already refuses an unnamed caller; this makes the
+      // refusal uniform, before any tool runs, rather than per tool.
+      callerSubject(event);
       const db = getLibrary().getConnection();
-      const toolCtx = buildToolContext(db, event.sessionId);
+      const toolCtx = buildToolContext(db, event);
       const rawResult = await executeConfirmedAction(action, toolCtx);
       let resultText: string;
       try {
@@ -132,22 +144,18 @@ export function registerAssistantHandlers(): void {
   bridgeHandle(
     "assistant:history:load",
     safe("assistant:history:load", async (event) => {
-      const db = getLibrary().getConnection();
-      return loadAssistantHistory(
-        db,
-        event.sessionId === undefined ? null : subjectForSessionId(event.sessionId)
-      );
+      const subject = callerSubject(event); // throws for an unnamed web caller
+      return loadAssistantHistory(getLibrary().getConnection(), subject);
     })
   );
 
   bridgeHandle(
     "assistant:history:clear",
     safe("assistant:history:clear", async (event) => {
-      const db = getLibrary().getConnection();
-      clearAssistantHistory(
-        db,
-        event.sessionId === undefined ? null : subjectForSessionId(event.sessionId)
-      );
+      // Never the desktop partition for a web caller: an unresolvable session
+      // clearing "null" would erase the owner's history, pinned memories and all.
+      const subject = callerSubject(event);
+      clearAssistantHistory(getLibrary().getConnection(), subject);
     })
   );
 }

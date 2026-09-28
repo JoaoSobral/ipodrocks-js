@@ -17,6 +17,7 @@ import * as path from "path";
 
 import type { DeviceFs } from "../devices/fs";
 import { getFfmpegPath } from "../utils/ffmpeg-path";
+import { ffmpegInputArgs } from "../utils/ffmpeg-input";
 import { extractEmbeddedPicture } from "../utils/embedded-art";
 import { findOnDisk } from "../utils/normalize-path";
 import {
@@ -136,7 +137,9 @@ export function buildCoverFfmpegArgs(
   return [
     getFfmpegPath(),
     "-y",
-    "-i", src,
+    // An image, and only that image — see utils/ffmpeg-input.ts. `image2` is
+    // deliberately not admitted: it expands a name into a glob or sequence.
+    ...ffmpegInputArgs(src, "image"),
     "-frames:v", "1",
     "-vf", scale,
     "-c:v", "mjpeg",

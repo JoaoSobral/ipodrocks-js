@@ -1,12 +1,123 @@
-import { handle as bridgeHandle, type HandlerSender } from "../host/bridge";
+import { handle as bridgeHandle, type HandlerContext, type HandlerSender } from "../host/bridge";
 import { safe, getLibrary, getPlaylistCore, validateFolderPath } from "./common";
+import { denyIfNotOwner } from "../../server/auth/sessions";
 import { LibraryScanner } from "../library/library-scanner";
 import { getHarmonicPrefs, getRatingPrefs } from "../utils/prefs";
 import { logActivity, getRecentActivity } from "../activity/activity-logger";
 import { invalidateAssistantCache } from "../assistant/assistantChat";
 
-let activeScanAbort: AbortController | null = null;
-let activeShadowBuildAbort: AbortController | null = null;
+/**
+ * The running library scan and the session that started it.
+ *
+ * One at a time: a scan walks every folder and writes the whole library, so a
+ * second one only races the first over the same rows — and this was a single
+ * variable every start overwrote, which left the earlier scan with no cancel
+ * handle at all. `sessionId` is what lets `scan:cancel` refuse a guest trying
+ * to stop somebody else's scan.
+ */
+let activeScan: { controller: AbortController; sessionId: string | undefined } | null = null;
+
+/**
+ * May this caller stop an operation `startedBy` started? The desktop window
+ * and the server's owner may stop anything; any other web session only what it
+ * started itself. Without this a guest's bare "cancel" reached every running
+ * build or scan on the server — the `sync:cancel` finding, in another shape.
+ */
+function mayStop(event: HandlerContext, startedBy: string | undefined): boolean {
+  if (!denyIfNotOwner(event.sessionId)) return true;
+  return startedBy !== undefined && startedBy === event.sessionId;
+}
+
+/**
+ * Running shadow builds, keyed by shadow library id.
+ *
+ * This was one module-level controller: every start overwrote it without
+ * stopping what it held, and every finish nulled it whether or not it was still
+ * its own. So N starts ran N builds — one encoder each, for hours — and cancel
+ * reached only the newest, or nothing once any build had finished. Per id, a
+ * finish removes only its own entry, and a second start for the same library
+ * is refused instead of stacked.
+ */
+const activeShadowBuilds = new Map<number, AbortController>();
+
+/** Which session started each build — `undefined` for the desktop and the startup resume. */
+const shadowBuildStarter = new WeakMap<AbortController, string | undefined>();
+
+/**
+ * How many shadow builds may run at once, across every client.
+ *
+ * Each build runs one encoder at a time for the length of the library, so this
+ * is the number of CPU-bound ffmpeg/mpcenc processes shadow libraries can ever
+ * hold. Two lets the owner build two mirrors side by side (say an MPC and an
+ * AAC one) — the most anyone has asked for — while keeping any number of
+ * requests from multiplying that. The startup resume pass takes one slot and
+ * runs its libraries one after another, so the user still has one free.
+ */
+export const MAX_CONCURRENT_SHADOW_BUILDS = 2;
+
+/** Claim a build slot for `id`, or say why not. */
+function claimShadowBuild(id: number): AbortController | { error: string } {
+  if (activeShadowBuilds.has(id)) {
+    return { error: "This shadow library is already building." };
+  }
+  if (activeShadowBuilds.size >= MAX_CONCURRENT_SHADOW_BUILDS) {
+    return {
+      error: `${activeShadowBuilds.size} shadow libraries are already building — wait for one to finish or pause it, then try again.`,
+    };
+  }
+  const controller = new AbortController();
+  activeShadowBuilds.set(id, controller);
+  return controller;
+}
+
+/** Release `id`'s slot — but only if it still holds this build's controller. */
+function releaseShadowBuild(id: number, controller: AbortController): void {
+  if (activeShadowBuilds.get(id) === controller) activeShadowBuilds.delete(id);
+}
+
+/** Test seam: ids of the builds currently holding a slot. */
+export function activeShadowBuildIds(): number[] {
+  return [...activeShadowBuilds.keys()];
+}
+
+/**
+ * Start a background build for `id` in a claimed slot. Returns the refusal
+ * instead when the library is already building or the cap is reached.
+ */
+function startShadowBuild(
+  id: number,
+  sender: HandlerSender,
+  label: string,
+  sessionId: string | undefined
+): { started: true } | { error: string } {
+  const claim = claimShadowBuild(id);
+  if ("error" in claim) return claim;
+  shadowBuildStarter.set(claim, sessionId);
+  getLibrary()
+    .buildShadowLibrary(
+      id,
+      (progress) => {
+        if (!sender.isDestroyed()) sender.send("shadow:buildProgress", progress);
+      },
+      claim.signal
+    )
+    .catch((err) => {
+      console.error(`[ipc] ${label} error:`, err);
+    })
+    .finally(() => releaseShadowBuild(id, claim));
+  return { started: true };
+}
+
+/**
+ * Creating, deleting and pruning a shadow library act on the *server's*
+ * filesystem at a folder the caller names, so over the web they are the
+ * owner's alone — the same `denyIfNotOwner()` the `server:*` channels use.
+ * `sessionId === undefined` is the desktop window and is admitted.
+ */
+function requireShadowOwner(event: HandlerContext): { error: string } | null {
+  if (!denyIfNotOwner(event.sessionId)) return null;
+  return { error: "Only the server's owner can create, delete or prune shadow libraries." };
+}
 
 /**
  * Re-sync every playlist with the library after tracks may have disappeared.
@@ -39,8 +150,10 @@ export function registerLibraryHandlers(): void {
     "library:scan",
     safe("library:scan", async (event, payload: { folders: Array<{ name: string; path: string; contentType: string }> }) => {
       const lib = getLibrary();
+      if (activeScan) return { error: "A library scan is already running." };
       const scanner = new LibraryScanner(lib.getConnection());
-      activeScanAbort = new AbortController();
+      const scan = { controller: new AbortController(), sessionId: event.sessionId };
+      activeScan = scan;
       const harmonicPrefs = getHarmonicPrefs();
       const ratingPrefs = getRatingPrefs();
 
@@ -66,7 +179,7 @@ export function registerLibraryHandlers(): void {
             validated.path,
             folder.contentType,
             (progress) => event.sender.send("scan:progress", progress),
-            activeScanAbort.signal,
+            scan.controller.signal,
             {
               scanHarmonicData: harmonicPrefs.scanHarmonicData,
               forceRatingFromTags: ratingPrefs.tagRatingAlwaysWins,
@@ -135,20 +248,22 @@ export function registerLibraryHandlers(): void {
           playlistsUpdated: playlistSummary,
         };
       } finally {
-        activeScanAbort = null;
+        if (activeScan === scan) activeScan = null;
       }
     })
   );
 
   bridgeHandle(
     "scan:cancel",
-    safe("scan:cancel", async () => {
-      if (activeScanAbort) {
-        activeScanAbort.abort();
-        activeScanAbort = null;
-        return { cancelled: true };
+    safe("scan:cancel", async (event) => {
+      // The slot is released by the scan's own `finally`, so a new scan cannot
+      // start while this one is still unwinding.
+      if (!activeScan) return { cancelled: false };
+      if (!mayStop(event, activeScan.sessionId)) {
+        return { error: "This library scan was started by someone else." };
       }
-      return { cancelled: false };
+      activeScan.controller.abort();
+      return { cancelled: true };
     })
   );
 
@@ -220,6 +335,8 @@ export function registerLibraryHandlers(): void {
       event,
       config: { name: string; path: string; codecConfigId: number; vbrEnabled?: boolean }
     ) => {
+      const denied = requireShadowOwner(event);
+      if (denied) return denied;
       const validated = validateFolderPath(config.path);
       if ("error" in validated) return { error: validated.error };
 
@@ -241,6 +358,20 @@ export function registerLibraryHandlers(): void {
         return { error: `A shadow library named "${config.name}" already exists.` };
       }
 
+      // The root must be a folder of its own: not a library folder, not
+      // inside or above one, not the app's data, not $HOME itself. Every
+      // destructive shadow operation trusts it as app-owned space.
+      const rootConflict = lib.getShadowManager().rootConflict(validated.path);
+      if (rootConflict) return { error: rootConflict };
+
+      // Refuse before the row exists, so a refused build does not leave a
+      // 'pending' library behind.
+      if (activeShadowBuilds.size >= MAX_CONCURRENT_SHADOW_BUILDS) {
+        return {
+          error: `${activeShadowBuilds.size} shadow libraries are already building — wait for one to finish or pause it, then create this one.`,
+        };
+      }
+
       const id = lib.createShadowLibrary(
         config.name,
         validated.path,
@@ -248,23 +379,8 @@ export function registerLibraryHandlers(): void {
         config.vbrEnabled ?? false
       );
 
-      activeShadowBuildAbort = new AbortController();
-      lib
-        .buildShadowLibrary(
-          id,
-          (progress) => {
-            if (!event.sender.isDestroyed()) {
-              event.sender.send("shadow:buildProgress", progress);
-            }
-          },
-          activeShadowBuildAbort.signal
-        )
-        .catch((err) => {
-          console.error("[ipc] Shadow build error:", err);
-        })
-        .finally(() => {
-          activeShadowBuildAbort = null;
-        });
+      const started = startShadowBuild(id, event.sender, "Shadow build", event.sessionId);
+      if ("error" in started) return started;
 
       return lib.getShadowLibraryById(id);
     })
@@ -272,14 +388,21 @@ export function registerLibraryHandlers(): void {
 
   bridgeHandle(
     "shadow:delete",
-    safe("shadow:delete", async (_event, shadowLibId: number, keepFilesOnDisk?: boolean) => {
+    safe("shadow:delete", async (event, shadowLibId: number, keepFilesOnDisk?: boolean) => {
+      const denied = requireShadowOwner(event);
+      if (denied) return denied;
+      // A build still writing into the folder would recreate what we delete
+      // and then fail on its next row insert; stop it first.
+      activeShadowBuilds.get(shadowLibId)?.abort();
       return getLibrary().deleteShadowLibrary(shadowLibId, !keepFilesOnDisk);
     })
   );
 
   bridgeHandle(
     "shadow:pruneOrphans",
-    safe("shadow:pruneOrphans", async (_event, shadowLibId: number) => {
+    safe("shadow:pruneOrphans", async (event, shadowLibId: number) => {
+      const denied = requireShadowOwner(event);
+      if (denied) return denied;
       const lib = getLibrary();
       const result = await lib.getShadowManager().pruneOrphanedFiles(shadowLibId);
       const shadowLib = lib.getShadowLibraryById(shadowLibId);
@@ -308,38 +431,40 @@ export function registerLibraryHandlers(): void {
           error: `"${shadowLib.name}" has lost its codec configuration and can't be rebuilt. Delete it and create a new shadow library at the same folder — the existing files will be adopted automatically.`,
         };
       }
+      // Checked here as well as inside the build, so the refusal reaches the
+      // caller instead of only the log.
+      const rootConflict = lib.getShadowManager().rootConflictFor(shadowLibId);
+      if (rootConflict) return { error: `"${shadowLib.name}" cannot be rebuilt: ${rootConflict}` };
 
-      activeShadowBuildAbort = new AbortController();
-      lib
-        .buildShadowLibrary(
-          shadowLibId,
-          (progress) => {
-            if (!event.sender.isDestroyed()) {
-              event.sender.send("shadow:buildProgress", progress);
-            }
-          },
-          activeShadowBuildAbort.signal
-        )
-        .catch((err) => {
-          console.error("[ipc] Shadow rebuild error:", err);
-        })
-        .finally(() => {
-          activeShadowBuildAbort = null;
-        });
-
-      return { started: true };
+      return startShadowBuild(shadowLibId, event.sender, "Shadow rebuild", event.sessionId);
     })
   );
 
   bridgeHandle(
     "shadow:cancelBuild",
-    safe("shadow:cancelBuild", async () => {
-      if (activeShadowBuildAbort) {
-        activeShadowBuildAbort.abort();
-        activeShadowBuildAbort = null;
+    safe("shadow:cancelBuild", async (event, shadowLibId?: number) => {
+      // With an id, stop that build; without one, stop them all — which is
+      // what the renderer's single "Pause Build" has always meant. The entries
+      // are released by each build's own `finally`, not here, so a slot is
+      // not handed out again while its encoder is still being killed.
+      // "All" means all the caller may stop (`mayStop`): a guest's Pause
+      // must not pause the owner's builds.
+      if (typeof shadowLibId === "number") {
+        const controller = activeShadowBuilds.get(shadowLibId);
+        if (!controller) return { cancelled: false };
+        if (!mayStop(event, shadowBuildStarter.get(controller))) {
+          return { error: "This shadow build was started by someone else." };
+        }
+        controller.abort();
         return { cancelled: true };
       }
-      return { cancelled: false };
+      let cancelled = false;
+      for (const controller of activeShadowBuilds.values()) {
+        if (!mayStop(event, shadowBuildStarter.get(controller))) continue;
+        controller.abort();
+        cancelled = true;
+      }
+      return { cancelled };
     })
   );
 
@@ -354,26 +479,10 @@ export function registerLibraryHandlers(): void {
           error: `"${shadowLib.name}" has lost its codec configuration and can't be resumed. Delete it and create a new shadow library at the same folder — the existing files will be adopted automatically.`,
         };
       }
+      const rootConflict = lib.getShadowManager().rootConflictFor(shadowLibId);
+      if (rootConflict) return { error: `"${shadowLib.name}" cannot be resumed: ${rootConflict}` };
 
-      activeShadowBuildAbort = new AbortController();
-      lib
-        .buildShadowLibrary(
-          shadowLibId,
-          (progress) => {
-            if (!event.sender.isDestroyed()) {
-              event.sender.send("shadow:buildProgress", progress);
-            }
-          },
-          activeShadowBuildAbort.signal
-        )
-        .catch((err) => {
-          console.error("[ipc] Shadow resume error:", err);
-        })
-        .finally(() => {
-          activeShadowBuildAbort = null;
-        });
-
-      return { started: true };
+      return startShadowBuild(shadowLibId, event.sender, "Shadow resume", event.sessionId);
     })
   );
 }
@@ -396,7 +505,13 @@ export async function resumeInterruptedShadowBuilds(
     .filter((l) => l.status === "paused");
 
   for (const sl of paused) {
-    activeShadowBuildAbort = new AbortController();
+    // Through the same slots as every other build, so the cap and the
+    // already-building refusal hold here too and "Pause Build" reaches it.
+    const claim = claimShadowBuild(sl.id);
+    if ("error" in claim) {
+      console.warn(`[ipc] Shadow resume of #${sl.id} skipped: ${claim.error}`);
+      continue;
+    }
     try {
       await lib.buildShadowLibrary(
         sl.id,
@@ -405,12 +520,15 @@ export async function resumeInterruptedShadowBuilds(
             webContents.send("shadow:buildProgress", progress);
           }
         },
-        activeShadowBuildAbort.signal
+        claim.signal
       );
     } catch (err) {
       console.error("[ipc] Shadow resume error:", err);
     } finally {
-      activeShadowBuildAbort = null;
+      releaseShadowBuild(sl.id, claim);
     }
+    // "Pause Build" stops the whole resume pass, not just the library it
+    // happened to be on — otherwise the next paused library starts at once.
+    if (claim.signal.aborted) break;
   }
 }

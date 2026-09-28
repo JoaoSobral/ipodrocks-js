@@ -286,7 +286,22 @@ export function createAuthRouter(deps: AuthDeps): Router {
     });
 
     router.get(`/${provider}/callback`, (req, res, next) => {
-      const buckets = bucketsFor(remoteAddress(req), `oauth:${provider}`);
+      // **Keyed on the caller, never on the provider.** This used to add
+      // `acct:oauth:<provider>` — one constant bucket shared by every user of
+      // that provider, given the per-*account* ceiling of ten. Ten bare GETs
+      // from anyone then answered every Google login from every address with a
+      // 429, and since the refusal comes before passport, no successful login
+      // could ever reach `clearFailures()` to release it. A failed callback
+      // guesses nothing — the provider did the authenticating — so there is no
+      // account to protect here, only the address to slow down.
+      //
+      // The one secret a callback *can* guess is the claim token carried from
+      // the login form, and that is charged to `acct:claim` exactly like
+      // `/local/claim`, so the provider route is not a second, looser way in.
+      const buckets = bucketsFor(
+        remoteAddress(req),
+        typeof req.session?.pendingClaimToken === "string" ? "claim" : null
+      );
       // Same check-then-act shape as /local/login: passport.authenticate's
       // callback is asynchronous, so a check whose write lands afterwards lets
       // a burst through. Reserve up front; clearFailures() below erases it.

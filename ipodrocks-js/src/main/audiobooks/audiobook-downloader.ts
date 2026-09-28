@@ -5,9 +5,20 @@ import * as crypto from "crypto";
 import { pipeline } from "stream/promises";
 import { Readable } from "stream";
 import type Database from "better-sqlite3";
-import { ensureChapterDir, getChapterPath } from "./audiobook-storage";
+import { ensureChapterDir, getAudiobooksRoot, getChapterPath } from "./audiobook-storage";
 import { DOWNLOAD_HEADERS } from "../utils/download-headers";
-import { byteCapTransform } from "../utils/capped-stream";
+import {
+  byteCapTransform,
+  downloadErrorMessage,
+  downloadWatchdog,
+} from "../utils/capped-stream";
+import {
+  NotAudioError,
+  enclosureExtension,
+  isAllowedEnclosureExtension,
+  provisionalEnclosureExtension,
+  sniffAudioFile,
+} from "../utils/audio-sniff";
 
 interface ChapterRow {
   id: number;
@@ -25,24 +36,32 @@ type DownloadResult = { localPath: string } | { error: string };
  * race this prevents (concurrent attempts clobbering each other's temp file). */
 const inFlight = new Map<number, Promise<DownloadResult>>();
 
-function extFromUrl(url: string): string {
+/** See `isUsableEpisodeFile` in podcast-downloader — the same rule for chapters. */
+function isUsableChapterFile(localPath: string): boolean {
+  if (!isAllowedEnclosureExtension(path.extname(localPath))) return false;
   try {
-    const u = new URL(url);
-    const ext = path.extname(u.pathname);
-    return ext || ".mp3";
+    return sniffAudioFile(localPath) !== null;
   } catch {
-    return ".mp3";
+    return false;
   }
 }
 
+/**
+ * Downloads one chapter. `signal` — the device sync's cancel, when a sync is
+ * downloading on demand — is combined with the download's own time bounds: it
+ * can end a download early, never lift a bound. A caller that joins a chapter
+ * already in flight shares that download, and with it the first caller's
+ * signal.
+ */
 export function downloadChapter(
   db: Database.Database,
-  chapterId: number
+  chapterId: number,
+  signal?: AbortSignal
 ): Promise<DownloadResult> {
   const existing = inFlight.get(chapterId);
   if (existing) return existing;
 
-  const p = runDownload(db, chapterId).finally(() => {
+  const p = runDownload(db, chapterId, signal).finally(() => {
     inFlight.delete(chapterId);
   });
   inFlight.set(chapterId, p);
@@ -51,7 +70,8 @@ export function downloadChapter(
 
 async function runDownload(
   db: Database.Database,
-  chapterId: number
+  chapterId: number,
+  callerSignal?: AbortSignal
 ): Promise<DownloadResult> {
   const row = db
     .prepare(
@@ -66,24 +86,32 @@ async function runDownload(
   if (!row) return { error: "Chapter not found" };
 
   if (row.local_path && fs.existsSync(row.local_path) && row.download_state === "ready") {
-    return { localPath: row.local_path };
+    if (isUsableChapterFile(row.local_path)) return { localPath: row.local_path };
+    // Written before enclosures were sniffed, and not audio: never hand it on.
+    // Deleted only when it is ours — under the audiobooks root.
+    if (path.resolve(row.local_path).startsWith(path.resolve(getAudiobooksRoot()) + path.sep)) {
+      try { fs.unlinkSync(row.local_path); } catch { /* re-download regardless */ }
+    }
   }
 
-  const ext = extFromUrl(row.enclosure_url);
-  const localPath = getChapterPath(row.librivox_id, chapterId, ext);
+  // A placeholder until the bytes are in; see audio-sniff.ts for why the URL
+  // does not get to choose the extension.
+  let localPath = getChapterPath(row.librivox_id, chapterId, provisionalEnclosureExtension(row.enclosure_url));
 
   db.prepare("UPDATE audiobook_chapters SET download_state = 'downloading', local_path = ? WHERE id = ?").run(
     localPath,
     chapterId
   );
 
+  const watchdog = downloadWatchdog(callerSignal);
   try {
     ensureChapterDir(row.librivox_id);
 
     // enclosure_url comes from a feed the caller chose, so it is no more
-    // trusted than the feed URL itself.
+    // trusted than the feed URL itself — its address, its timing and its bytes.
     const res = await safeFetch(row.enclosure_url, {
       headers: DOWNLOAD_HEADERS,
+      signal: watchdog.signal,
     });
 
     if (!res.ok || !res.body) {
@@ -95,8 +123,17 @@ async function runDownload(
       const dest = fs.createWriteStream(tmpPath);
       await pipeline(
         Readable.fromWeb(res.body as Parameters<typeof Readable.fromWeb>[0]),
+        watchdog.meter,
         byteCapTransform(),
         dest
+      );
+      // Judge the bytes before anything else can open them.
+      const container = sniffAudioFile(tmpPath);
+      if (!container) throw new NotAudioError();
+      localPath = getChapterPath(
+        row.librivox_id,
+        chapterId,
+        enclosureExtension(row.enclosure_url, container)
       );
       fs.renameSync(tmpPath, localPath);
     } finally {
@@ -110,10 +147,12 @@ async function runDownload(
 
     return { localPath };
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
+    const msg = downloadErrorMessage(err, watchdog.signal);
     db.prepare(
       "UPDATE audiobook_chapters SET download_state = 'failed', download_error = ? WHERE id = ?"
     ).run(msg, chapterId);
     return { error: msg };
+  } finally {
+    watchdog.dispose();
   }
 }

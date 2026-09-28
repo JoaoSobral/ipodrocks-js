@@ -60,7 +60,13 @@ export async function handleInvoke(
   ensureSession(sessionId, subject);
 
   try {
-    const result = await handler({ sender: senderFor(sessionId), sessionId }, ...args);
+    // `subject` rides along so a handler scoping by identity reuses the answer
+    // this gate just reached — see `callerSubject()`. The session row can be
+    // destroyed (a logout on another connection) between here and the handler.
+    const result = await handler(
+      { sender: senderFor(sessionId), sessionId, subject },
+      ...args
+    );
     // `undefined` is a perfectly ordinary handler result (every setter returns
     // it) and is not valid JSON on its own, so it goes out as null.
     res.json({ result: result === undefined ? null : result });

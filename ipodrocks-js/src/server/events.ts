@@ -213,6 +213,57 @@ export function pushToAll(channel: string, args: unknown[]): void {
   for (const sessionId of sessions.keys()) pushToSession(sessionId, channel, args);
 }
 
+/**
+ * Handles one text frame from an authenticated socket.
+ *
+ * **Nothing a client sends may escape this function.** `ws` emits `message`
+ * synchronously from inside the TCP `data` handler, and neither the daemon nor
+ * the desktop app installs an `uncaughtException` handler — so a throw here is
+ * the whole server gone, every other user's sockets, attachments and in-flight
+ * syncs with it. The frame `null` did exactly that: it is valid JSON, and the
+ * old code read `msg.type` off it. Anything that is not a plain object is
+ * ignored, and a registered handler that throws (or rejects) is logged and
+ * contained to this socket.
+ */
+export function handleSocketFrame(
+  raw: unknown,
+  ctx: { sessionId: string; subject: string; socket: WebSocket }
+): void {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(String(raw));
+  } catch {
+    return;
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return;
+  const msg = parsed as { type?: unknown; channel?: unknown } & Record<string, unknown>;
+
+  try {
+    if (
+      (msg.type === "subscribe" || msg.type === "unsubscribe") &&
+      typeof msg.channel === "string"
+    ) {
+      // Accepted and ignored — see the note on `EventSession`.
+    } else if (msg.type === "ping") {
+      ctx.socket.send(JSON.stringify({ type: "pong" }));
+    } else if (typeof msg.type === "string") {
+      const handler = frameHandlers.get(msg.type);
+      if (!handler) return;
+      const result: unknown = handler(msg, ctx);
+      if (result && typeof (result as Promise<unknown>).catch === "function") {
+        (result as Promise<unknown>).catch((err) => reportFrameError(msg.type, err));
+      }
+    }
+  } catch (err) {
+    reportFrameError(msg.type, err);
+  }
+}
+
+function reportFrameError(type: unknown, err: unknown): void {
+  const message = err instanceof Error ? err.message : String(err);
+  console.warn(`[server] frame "${String(type).slice(0, 64)}" failed: ${message}`);
+}
+
 export interface EventsServerOptions {
   /** Runs express-session against the upgrade request so the cookie is read
    *  with exactly the same signing key and options as an HTTP request. */
@@ -284,26 +335,7 @@ export function attachEventsServer(
           session.sockets.add(ws);
 
           ws.on("message", (raw) => {
-            let msg: { type?: string; channel?: string } & Record<string, unknown>;
-            try {
-              msg = JSON.parse(String(raw)) as typeof msg;
-            } catch {
-              return;
-            }
-            if (
-              (msg.type === "subscribe" || msg.type === "unsubscribe") &&
-              typeof msg.channel === "string"
-            ) {
-              // Accepted and ignored — see the note on `EventSession`.
-            } else if (msg.type === "ping") {
-              ws.send(JSON.stringify({ type: "pong" }));
-            } else if (typeof msg.type === "string") {
-              frameHandlers.get(msg.type)?.(msg as Record<string, unknown>, {
-                sessionId,
-                subject,
-                socket: ws,
-              });
-            }
+            handleSocketFrame(raw, { sessionId, subject, socket: ws });
           });
 
           ws.on("close", () => {

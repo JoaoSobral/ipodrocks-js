@@ -28,6 +28,15 @@ export interface HandlerContext {
   readonly sender: HandlerSender;
   /** Identifies the web session that made the call; absent over Electron IPC. */
   readonly sessionId?: string;
+  /**
+   * The `"<provider>:<subject>"` `/api/invoke` authenticated this call as, set
+   * whenever `sessionId` is. Carried so a handler scoping data by identity
+   * uses the *same* answer the route's 401 gate used, rather than re-reading a
+   * session row that may have been destroyed while the body was still
+   * arriving. Read it through `callerSubject()` (`server/auth/sessions.ts`),
+   * which refuses a web caller with neither.
+   */
+  readonly subject?: string;
 }
 
 // `any` matches the existing `Handler` type in ipc/common.ts: handlers take

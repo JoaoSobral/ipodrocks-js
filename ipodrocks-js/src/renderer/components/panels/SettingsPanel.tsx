@@ -40,6 +40,10 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
   const [testError, setTestError] = useState<string | null>(null);
   const [keyData, setKeyData] = useState<SavantKeyData | null>(null);
   const [saving, setSaving] = useState(false);
+  // A server refusal from Save, shown as a sentence beside the button. Over
+  // the web the server-wide setters are owner-only, so a signed-in guest who
+  // presses Save gets this instead of a modal that closes having saved nothing.
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [podcastSettings, setPodcastSettings] = useState<PodcastSettings>({
     hasApiKey: false,
     hasApiSecret: false,
@@ -97,6 +101,7 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
         setTestStatus("idle");
         setTestError(null);
         setTestedSource(null);
+        setSaveError(null);
         setPodcastTestStatus("idle");
         setPodcastTestError(null);
       }
@@ -146,35 +151,47 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
 
   async function handleSave() {
     setSaving(true);
+    setSaveError(null);
+    const refusals: string[] = [];
+    const note = (r: unknown) => {
+      if (r && typeof r === "object" && "error" in r) {
+        const msg = String((r as { error: unknown }).error);
+        if (!refusals.includes(msg)) refusals.push(msg);
+      }
+    };
     try {
       const modelId = model.trim() || "anthropic/claude-sonnet-4.6";
       const config: OpenRouterConfig = {
         apiKey: apiKey.trim(),
         model: modelId,
       };
-      await setOpenRouterConfig(apiKey.trim() ? config : null);
-      await setHarmonicPrefs({
+      note(await setOpenRouterConfig(apiKey.trim() ? config : null));
+      note(await setHarmonicPrefs({
         scanHarmonicData,
         backfillPercent: Math.min(100, Math.max(1, backfillPercent)),
         analyzeWithEssentia,
         analyzePercent: Math.min(100, Math.max(1, analyzePercent)),
-      });
-      await setRatingPrefs({ tagRatingAlwaysWins });
+      }));
+      note(await setRatingPrefs({ tagRatingAlwaysWins }));
       const customDir = podcastDownloadDir.trim();
       const folderChanged = customDir !== podcastDownloadDirOriginal;
       // Only send credential fields when the user actually typed a value;
       // an empty input means "leave the stored value untouched".
       const newApiKey = podcastApiKey.trim();
       const newApiSecret = podcastApiSecret.trim();
-      await podcastSetSettings({
+      note(await podcastSetSettings({
         apiKey: newApiKey || undefined,
         apiSecret: newApiSecret || undefined,
         autoEnabled: podcastSettings.autoEnabled,
         intervalMin: podcastSettings.intervalMin,
         downloadDir: customDir !== podcastDownloadDirDefault ? customDir : null,
-      });
+      }));
       if (folderChanged) {
         podcastRefreshAllForNewFolder();
+      }
+      if (refusals.length > 0) {
+        setSaveError(refusals.join(" "));
+        return;
       }
       onClose();
     } finally {
@@ -553,7 +570,10 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
           </div>
         </div>
 
-        <div className="flex justify-end gap-2 pt-2 border-t border-border">
+        <div className="flex justify-end items-center gap-2 pt-2 border-t border-border">
+          {saveError && (
+            <span className="text-xs text-destructive mr-auto">{saveError}</span>
+          )}
           <Button variant="secondary" onClick={onClose}>
             Cancel
           </Button>

@@ -306,26 +306,99 @@ export function setPodcastIndexConfig(
   writePrefs(prefs);
 }
 
+/** Podcast refresh cadence bounds, in minutes. */
+export const PODCAST_INTERVAL_MIN_MINUTES = 5;
+export const PODCAST_INTERVAL_MAX_MINUTES = 1440;
+export const PODCAST_INTERVAL_DEFAULT_MINUTES = 15;
+
+/**
+ * Is this a refresh interval the scheduler may be handed?
+ *
+ * It reaches `setInterval`, and Node turns a delay that is NaN, below 1 or
+ * above 2^31-1 ms into **1 ms** — so `"abc"`, `{}` or `1e12` (all of which
+ * `Math.max(5, x)` either passes through or turns into NaN) made the scheduler
+ * refresh every feed a thousand times a second, and the value persisted in this
+ * file across restarts. A finite integer inside the bounds is the only answer.
+ */
+export function isValidPodcastInterval(value: unknown): value is number {
+  return (
+    typeof value === "number" &&
+    Number.isInteger(value) &&
+    value >= PODCAST_INTERVAL_MIN_MINUTES &&
+    value <= PODCAST_INTERVAL_MAX_MINUTES
+  );
+}
+
+/**
+ * Read side of the same rule: a prefs file written by an older version (or by
+ * hand) can hold anything, so a stored value is clamped when it is a finite
+ * number and replaced by the default when it is not. Never throws — a bad file
+ * must not stop the app launching.
+ */
+function readPodcastInterval(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return PODCAST_INTERVAL_DEFAULT_MINUTES;
+  }
+  return Math.min(
+    PODCAST_INTERVAL_MAX_MINUTES,
+    Math.max(PODCAST_INTERVAL_MIN_MINUTES, Math.round(value))
+  );
+}
+
 export function getAutoPodcastSettings(): { enabled: boolean; refreshIntervalMinutes: number } {
   const s = readPrefs().autoPodcasts;
   return {
-    enabled: s?.enabled ?? false,
-    refreshIntervalMinutes: s?.refreshIntervalMinutes ?? 15,
+    // `=== true`: a stored `"false"` string is truthy.
+    enabled: s?.enabled === true,
+    refreshIntervalMinutes: readPodcastInterval(s?.refreshIntervalMinutes),
   };
 }
 
+/**
+ * Validates everything it is given and throws before writing anything, so a
+ * rejected call leaves the stored settings exactly as they were. `downloadDir`
+ * is expected to have been through `validateFolderPath()` already — that check
+ * needs the filesystem and lives with the IPC layer — so only its type is
+ * checked here.
+ */
 export function setAutoPodcastSettings(settings: {
   enabled?: boolean;
   refreshIntervalMinutes?: number;
   downloadDir?: string;
 }): void {
+  if (settings.enabled !== undefined && typeof settings.enabled !== "boolean") {
+    throw new Error("autoEnabled must be true or false");
+  }
+  if (
+    settings.refreshIntervalMinutes !== undefined &&
+    !isValidPodcastInterval(settings.refreshIntervalMinutes)
+  ) {
+    throw new Error(
+      `Refresh interval must be a whole number of minutes between ` +
+        `${PODCAST_INTERVAL_MIN_MINUTES} and ${PODCAST_INTERVAL_MAX_MINUTES}`
+    );
+  }
+  if (settings.downloadDir !== undefined && typeof settings.downloadDir !== "string") {
+    throw new Error("downloadDir must be a folder path");
+  }
   const prefs = readPrefs();
-  prefs.autoPodcasts = { ...prefs.autoPodcasts, ...settings };
+  const next = { ...prefs.autoPodcasts };
+  // Only keys the caller actually set: spreading `{ enabled: undefined }` over
+  // the stored object used to erase a value nobody meant to touch. The one
+  // exception is `downloadDir`, where an explicit `undefined` is how the
+  // Settings card says "back to the default folder".
+  if (settings.enabled !== undefined) next.enabled = settings.enabled;
+  if (settings.refreshIntervalMinutes !== undefined) {
+    next.refreshIntervalMinutes = settings.refreshIntervalMinutes;
+  }
+  if ("downloadDir" in settings) next.downloadDir = settings.downloadDir;
+  prefs.autoPodcasts = next;
   writePrefs(prefs);
 }
 
 export function getPodcastDownloadDir(): string | null {
-  return readPrefs().autoPodcasts?.downloadDir ?? null;
+  const dir = readPrefs().autoPodcasts?.downloadDir;
+  return typeof dir === "string" && dir.trim() !== "" ? dir : null;
 }
 
 export function getWebServerPrefs(): WebServerPrefs {

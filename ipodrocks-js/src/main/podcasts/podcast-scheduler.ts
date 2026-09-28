@@ -1,7 +1,12 @@
 import type Database from "better-sqlite3";
 import { refreshAll } from "./podcast-refresh";
 import { syncPodcastsToDevice, getAutoPodcastDeviceIds } from "./podcast-device-sync";
-import { getPodcastIndexConfig, getAutoPodcastSettings } from "../utils/prefs";
+import {
+  getPodcastIndexConfig,
+  getAutoPodcastSettings,
+  isValidPodcastInterval,
+  PODCAST_INTERVAL_DEFAULT_MINUTES,
+} from "../utils/prefs";
 import { isDeviceOnline, deviceRowToOnlineInput } from "../devices/device-online";
 import { refreshUsbSnapshot } from "../devices/usb-devices";
 
@@ -25,9 +30,54 @@ function getDeviceInfo(db: Database.Database, deviceId: number): DeviceRow | nul
   );
 }
 
-async function runRefreshAndSync(db: Database.Database): Promise<void> {
+/**
+ * At most one refresh-and-sync is ever in flight.
+ *
+ * Four things start one — boot, the interval tick, a device connecting, and
+ * a scheduler restart from `podcast:setSettings` — and none of them used to
+ * look whether one was already running. With a short cadence (or a download
+ * that never finishes) the runs piled up without bound, each opening a request
+ * per subscribed feed. A trigger that arrives mid-run now asks for *one* more
+ * run after this one instead of starting its own: nothing requested is lost
+ * (a device that connected mid-run still gets synced), and however many
+ * triggers arrive, the queue is never deeper than one.
+ */
+let inFlightRun: Promise<void> | null = null;
+let rerunRequested = false;
+
+export function runRefreshAndSync(db: Database.Database): Promise<void> {
+  if (inFlightRun) {
+    rerunRequested = true;
+    return inFlightRun;
+  }
+  const run = (async () => {
+    try {
+      do {
+        rerunRequested = false;
+        await runRefreshAndSyncOnce(db);
+      } while (rerunRequested);
+    } finally {
+      inFlightRun = null;
+    }
+  })();
+  inFlightRun = run;
+  return run;
+}
+
+/** Test seam: is a scheduler run currently in flight? */
+export function isPodcastRunInFlight(): boolean {
+  return inFlightRun !== null;
+}
+
+async function runRefreshAndSyncOnce(db: Database.Database): Promise<void> {
   const config = getPodcastIndexConfig();
-  await refreshAll(db, config?.apiKey ?? "", config?.apiSecret ?? "");
+  // Each stage is isolated from the next: a refresh that fails must not cost
+  // every device its sync, and one device that throws must not cost the rest.
+  try {
+    await refreshAll(db, config?.apiKey ?? "", config?.apiSecret ?? "");
+  } catch (err) {
+    console.error("[podcasts] refresh failed; syncing devices anyway:", err);
+  }
 
   await refreshUsbSnapshot();
   for (const deviceId of getAutoPodcastDeviceIds(db)) {
@@ -35,7 +85,11 @@ async function runRefreshAndSync(db: Database.Database): Promise<void> {
     const mountPath = info?.mount_path ?? null;
     const online = info ? isDeviceOnline(deviceRowToOnlineInput(info)) : false;
     if (!mountPath || !online) continue;
-    await syncPodcastsToDevice(db, deviceId);
+    try {
+      await syncPodcastsToDevice(db, deviceId);
+    } catch (err) {
+      console.error(`[podcasts] auto-sync to device ${deviceId} failed:`, err);
+    }
   }
 }
 
@@ -52,8 +106,15 @@ export function startPodcastScheduler(db: Database.Database): void {
   // Periodic refresh cron — interval is read once on start; setting changes
   // restart the scheduler (see podcast:setSettings handler).
   if (!refreshTimer) {
+    // `getAutoPodcastSettings()` already clamps a stored value to 5..1440, but
+    // this is the line that hands it to `setInterval`, where NaN or anything
+    // past 2^31-1 ms silently becomes 1 ms. So it is checked again here, where
+    // the consequence is, rather than trusted from a file on disk.
     const { refreshIntervalMinutes } = getAutoPodcastSettings();
-    const intervalMs = Math.max(5, refreshIntervalMinutes) * 60 * 1000;
+    const minutes = isValidPodcastInterval(refreshIntervalMinutes)
+      ? refreshIntervalMinutes
+      : PODCAST_INTERVAL_DEFAULT_MINUTES;
+    const intervalMs = minutes * 60 * 1000;
 
     refreshTimer = setInterval(() => {
       if (!getAutoPodcastSettings().enabled) return;

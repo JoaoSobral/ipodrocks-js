@@ -1,7 +1,31 @@
+import * as os from "os";
 import * as path from "path";
 
 /** Matches a Windows drive root prefix only, e.g. `C:\` or `D:\`. */
 const WIN_DRIVE_ROOT = /^[A-Za-z]:\\$/;
+
+/**
+ * Allowed root prefixes for library folder paths.
+ * Includes home dir (all platforms) plus platform-specific external drive roots.
+ *
+ * Lives here rather than in `ipc/common.ts` because the shadow-library root
+ * guard (`library/shadow-root-guard.ts`) needs the same list and the library
+ * layer must not import the IPC layer.
+ */
+export function getAllowedPathPrefixes(): string[] {
+  const prefixes = [os.homedir()];
+  if (process.platform === "darwin") {
+    prefixes.push("/Volumes");
+  } else if (process.platform === "linux") {
+    prefixes.push("/media", "/mnt", "/run/media");
+  } else if (process.platform === "win32") {
+    // Allow all drive letters on Windows (C:\, D:\, etc.)
+    for (let c = 65; c <= 90; c++) {
+      prefixes.push(`${String.fromCharCode(c)}:\\`);
+    }
+  }
+  return prefixes;
+}
 
 /**
  * Returns true if realPath is the given allowed root or a subdirectory/file path under it.

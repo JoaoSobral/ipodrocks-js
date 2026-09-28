@@ -1,12 +1,19 @@
 import * as fs from "fs";
-import * as path from "path";
 import * as crypto from "crypto";
 import type Database from "better-sqlite3";
 import type {
+  DeviceProfile,
   PodcastSubscription,
   PodcastEpisode,
   PodcastSearchResult,
 } from "../../shared/types";
+import {
+  createDeviceFs,
+  DetachedDeviceFs,
+  isWebDevicePath,
+  webDeviceRoot,
+} from "../devices/fs";
+import { assertPodcastFeedId, containPodcastDevicePath } from "./podcast-storage";
 
 interface RssFeedData {
   feedUrl: string;
@@ -155,9 +162,23 @@ export function subscribe(
   db: Database.Database,
   result: PodcastSearchResult
 ): PodcastSubscription {
+  // `result` is the raw JSON argument of `podcast:subscribe`; its TypeScript
+  // type is erased at runtime. `feedId` becomes a directory name under the
+  // podcasts root and a Podcast Index query value, so it is validated here —
+  // the one function both the channel and Rocksy's `podcast_subscribe` reach.
+  // Podcast Index ids are positive; the negative range belongs to RSS feeds
+  // (`stableRssFeedId`), which never come through this function.
+  const feedId = assertPodcastFeedId(result?.feedId);
+  if (feedId < 0) {
+    throw new Error(`invalid Podcast Index feed id: ${String(result.feedId)}`);
+  }
+  if (typeof result.title !== "string" || typeof result.feedUrl !== "string") {
+    throw new Error("podcast subscription needs a title and a feed URL");
+  }
+
   const existing = db
     .prepare("SELECT id FROM podcast_subscriptions WHERE feed_id = ?")
-    .get(result.feedId) as { id: number } | undefined;
+    .get(feedId) as { id: number } | undefined;
   if (existing) {
     return getSubscriptionById(db, existing.id)!;
   }
@@ -168,7 +189,7 @@ export function subscribe(
        VALUES (?, ?, ?, ?, ?, ?, 'podcastindex', 1)`
     )
     .run(
-      result.feedId,
+      feedId,
       result.title,
       result.author || null,
       result.description || null,
@@ -239,15 +260,68 @@ function cleanupEpisodeArtifacts(db: Database.Database, episodeIds: number[]): v
 
   const deviceRows = db
     .prepare(
-      `SELECT ds.device_relative_path, d.mount_path
+      `SELECT ds.device_id, ds.device_relative_path, d.mount_path, d.podcast_folder, d.transport
        FROM device_podcast_synced ds
        JOIN devices d ON d.id = ds.device_id
        WHERE ds.episode_id IN (${ph})`
     )
-    .all(...episodeIds) as { device_relative_path: string; mount_path: string }[];
+    .all(...episodeIds) as DeviceCopyRow[];
   for (const row of deviceRows) {
-    try { fs.unlinkSync(path.join(row.mount_path, row.device_relative_path)); } catch { /* ignore */ }
+    removeDeviceCopy(row);
   }
+}
+
+interface DeviceCopyRow {
+  device_id: number;
+  device_relative_path: string;
+  mount_path: string;
+  podcast_folder: string | null;
+  transport: string | null;
+}
+
+/**
+ * Remove one episode's copy from one device, through that device's own
+ * filesystem.
+ *
+ * This used to be `fs.unlinkSync(path.join(mount_path, relative))` for every
+ * row of every device — including browser-held ones, whose `mount_path` is a
+ * synthetic root that exists on no filesystem. With `mount_path` rewritten by
+ * `device:update` and a relative path built from a guest's own feed titles,
+ * that was an arbitrary server-file delete. So:
+ *
+ * - **A web device is never touched through `fs`.** Its root is re-derived with
+ *   `webDeviceRoot()` rather than read off the row, and the delete goes to the
+ *   browser holding it. If no tab is attached it is skipped, not thrown: the
+ *   episode's DB rows are going either way, and a leftover file on a player is
+ *   the user's to delete, not a reason to fail the unsubscribe.
+ * - **Every path is contained under the device's podcast folder**
+ *   (`containPodcastDevicePath`), for local devices too.
+ *
+ * The web delete is fire-and-forget because `deleteEpisodes()`/`unsubscribe()`
+ * are synchronous all the way up through Rocksy's `podcast_delete_episodes`.
+ */
+function removeDeviceCopy(row: DeviceCopyRow): void {
+  if (row.transport === "web") {
+    const root = webDeviceRoot(row.device_id);
+    const target = containPodcastDevicePath(root, row.podcast_folder, row.device_relative_path);
+    if (!target) return;
+    const deviceFs = createDeviceFs({
+      id: row.device_id,
+      transport: "web",
+      mountPath: root,
+    } as DeviceProfile);
+    if (deviceFs instanceof DetachedDeviceFs) return;
+    deviceFs.unlink(target).catch((err) => {
+      console.warn(`[podcasts] could not remove ${target} from device ${row.device_id}:`, err);
+    });
+    return;
+  }
+
+  const target = containPodcastDevicePath(row.mount_path, row.podcast_folder, row.device_relative_path);
+  // Belt and braces: a local row can never legitimately point into the
+  // synthetic web tree, and `fs` there would build it on the server's disk.
+  if (!target || isWebDevicePath(target)) return;
+  try { fs.unlinkSync(target); } catch { /* ignore */ }
 }
 
 /**

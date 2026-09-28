@@ -7,6 +7,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import * as os from "os";
 import * as fs from "fs";
 import * as path from "path";
+import * as http from "http";
 
 // ---- cover-client tests ----
 
@@ -118,49 +119,53 @@ describe("downloadCover", () => {
   });
 
   it("downloads cover and stores local path in DB", async () => {
-    // Stub fetch: Google Books returns thumbnail URL, image fetch returns PNG bytes
+    // Google Books is a stubbed `fetch`; the image itself comes through
+    // `safeFetch`, which does not use the global `fetch` (it pins the socket
+    // with node:http), so it is served by a real loopback fixture.
     const imageBytes = Buffer.from("FAKEIMGDATA");
+    const imgServer = http.createServer((_req, res) => {
+      res.writeHead(200, { "content-type": "image/jpeg" }).end(imageBytes);
+    });
+    await new Promise<void>((r) => imgServer.listen(0, "127.0.0.1", r));
+    const imgPort = (imgServer.address() as { port: number }).port;
     mockFetch((url) => {
       if (new URL(url).origin === GOOGLE_URL) {
         return new Response(
-          JSON.stringify({ items: [{ volumeInfo: { imageLinks: { thumbnail: "https://img.example.com/cover.jpg" } } }] }),
+          JSON.stringify({ items: [{ volumeInfo: { imageLinks: { thumbnail: `http://127.0.0.1:${imgPort}/cover.jpg` } } }] }),
           { status: 200 }
         );
       }
-      if (new URL(url).hostname === "img.example.com") {
-        return new Response(imageBytes, {
-          status: 200,
-          headers: { "content-type": "image/jpeg" },
-        });
-      }
       throw new Error("unexpected fetch: " + url);
     });
+    try {
+      // Minimal in-memory SQLite DB
+      const Database = (await import("better-sqlite3")).default;
+      const db = new Database(":memory:");
+      db.exec(`
+        CREATE TABLE audiobook_subscriptions (
+          id INTEGER PRIMARY KEY,
+          librivox_id INTEGER NOT NULL,
+          title TEXT NOT NULL,
+          author TEXT,
+          image_url TEXT
+        );
+        INSERT INTO audiobook_subscriptions (id, librivox_id, title, author)
+        VALUES (1, 42, 'Pride and Prejudice', 'Jane Austen');
+      `);
 
-    // Minimal in-memory SQLite DB
-    const Database = (await import("better-sqlite3")).default;
-    const db = new Database(":memory:");
-    db.exec(`
-      CREATE TABLE audiobook_subscriptions (
-        id INTEGER PRIMARY KEY,
-        librivox_id INTEGER NOT NULL,
-        title TEXT NOT NULL,
-        author TEXT,
-        image_url TEXT
-      );
-      INSERT INTO audiobook_subscriptions (id, librivox_id, title, author)
-      VALUES (1, 42, 'Pride and Prejudice', 'Jane Austen');
-    `);
+      const localPath = await downloadCover(db, 1);
+      expect(localPath).not.toBeNull();
+      expect(fs.existsSync(localPath!)).toBe(true);
+      expect(fs.readFileSync(localPath!)).toEqual(imageBytes);
 
-    const localPath = await downloadCover(db, 1);
-    expect(localPath).not.toBeNull();
-    expect(fs.existsSync(localPath!)).toBe(true);
-    expect(fs.readFileSync(localPath!)).toEqual(imageBytes);
+      const row = db.prepare("SELECT image_url FROM audiobook_subscriptions WHERE id = 1").get() as { image_url: string };
+      expect(row.image_url).toBe(localPath);
+      expect(localPath).toContain(path.join("auto-audiobooks", "42", "cover"));
 
-    const row = db.prepare("SELECT image_url FROM audiobook_subscriptions WHERE id = 1").get() as { image_url: string };
-    expect(row.image_url).toBe(localPath);
-    expect(localPath).toContain(path.join("auto-audiobooks", "42", "cover"));
-
-    db.close();
+      db.close();
+    } finally {
+      await new Promise<void>((r) => imgServer.close(() => r()));
+    }
   });
 
   it("returns null when cover resolution finds nothing", async () => {
