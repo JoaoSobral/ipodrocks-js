@@ -20,7 +20,6 @@ import * as path from "path";
 import * as http from "http";
 import express from "express";
 import session from "express-session";
-import lusca from "lusca";
 import { beforeEach, afterEach, describe, expect, it } from "vitest";
 
 import { setHost, createNodeHost, resetHost } from "../../main/host";
@@ -29,7 +28,6 @@ let dataDir: string;
 let db: typeof import("../../server/db");
 let server: http.Server;
 let base: string;
-let csrfToken: string;
 let passportReached = 0;
 
 beforeEach(async () => {
@@ -57,10 +55,6 @@ beforeEach(async () => {
   const app = express();
   app.set("trust proxy", true); // lets the test choose the caller's address
   app.use(session({ secret: "test", resave: false, saveUninitialized: false }));
-  app.use(lusca.csrf());
-  app.get("/__test/csrf-token", (req, res) => {
-    res.json({ csrfToken: req.csrfToken() });
-  });
   app.use(
     "/api/auth",
     createAuthRouter({
@@ -72,9 +66,6 @@ beforeEach(async () => {
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
   const addr = server.address() as { port: number };
   base = `http://127.0.0.1:${addr.port}`;
-  const csrfRes = await fetch(`${base}/__test/csrf-token`);
-  const csrfBody = (await csrfRes.json()) as { csrfToken: string };
-  csrfToken = csrfBody.csrfToken;
 });
 
 afterEach(async () => {
@@ -90,7 +81,7 @@ afterEach(async () => {
 
 async function callback(from: string): Promise<number> {
   const res = await fetch(`${base}/api/auth/google/callback`, {
-    headers: { "X-Forwarded-For": from, "x-csrf-token": csrfToken },
+    headers: { "X-Forwarded-For": from },
     redirect: "manual",
   });
   return res.status;
