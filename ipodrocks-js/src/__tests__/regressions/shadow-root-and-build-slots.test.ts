@@ -141,6 +141,12 @@ describe("shadow libraries: build slots, root guard, owner gate, size", () => {
     } catch {
       /* already closed */
     }
+    // Web-session tests also open the auth store under the same root.
+    try {
+      (await import("../../server/db")).closeServerDb();
+    } catch {
+      /* never opened */
+    }
     fs.rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 

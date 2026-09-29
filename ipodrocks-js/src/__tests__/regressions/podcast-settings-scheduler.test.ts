@@ -183,7 +183,9 @@ describe("podcast:setSettings validates before it writes", () => {
   });
 
   it("refuses a download folder outside the allowed roots, even to the owner", async () => {
-    for (const bad of ["/etc", "/", 42, {}]) {
+    // "/" resolves to the drive root on Windows, which is an allowed root there.
+    const bad_paths = process.platform === "win32" ? ["/etc", 42, {}] : ["/etc", "/", 42, {}];
+    for (const bad of bad_paths) {
       const res = await session.invoke<{ error?: string }>("podcast:setSettings", { downloadDir: bad });
       expect(res?.error, String(bad)).toBeTruthy();
     }

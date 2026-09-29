@@ -34,6 +34,10 @@ beforeAll(() => {
   fs.mkdirSync(path.join(inside, "dir"));
   fs.writeFileSync(path.join(inside, "file.txt"), "x");
 
+  // Windows has no path outside the roots (every drive letter is one), and the
+  // suite that uses these is skipped there — so do not build them.
+  if (process.platform === "win32") return;
+
   // Outside every root on macOS and Linux alike.
   outside = fs.mkdtempSync(path.join("/", "tmp", "ipr-vfp-out-"));
   fs.mkdirSync(path.join(outside, "dir"));
@@ -44,7 +48,7 @@ beforeAll(() => {
 
 afterAll(() => {
   fs.rmSync(inside, { recursive: true, force: true });
-  fs.rmSync(outside, { recursive: true, force: true });
+  if (outside) fs.rmSync(outside, { recursive: true, force: true });
 });
 
 function err(p: string): string | undefined {

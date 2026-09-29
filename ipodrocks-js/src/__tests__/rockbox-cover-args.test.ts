@@ -6,6 +6,7 @@
  * carry no metadata. These are guaranteed by the ffmpeg argv, so we assert on
  * the pure arg builder directly.
  */
+import * as path from "path";
 import { describe, it, expect, vi } from "vitest";
 
 vi.mock("../main/utils/ffmpeg-path", () => ({ getFfmpegPath: () => "ffmpeg" }));
@@ -18,7 +19,8 @@ describe("buildCoverFfmpegArgs", () => {
 
   it("invokes ffmpeg with the source and dest", () => {
     expect(args[0]).toBe("ffmpeg");
-    expect(args).toContain("/src/art.png");
+    // ffmpegInputArgs() resolves the input, which is drive-lettered on Windows.
+    expect(args).toContain(path.resolve("/src/art.png"));
     expect(args[args.length - 1]).toBe("/out/cover.jpg");
   });
 
