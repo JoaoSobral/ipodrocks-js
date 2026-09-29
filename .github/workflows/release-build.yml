@@ -78,6 +78,7 @@ jobs:
           files: |
             ipodrocks-js/out/*.exe
             ipodrocks-js/out/*.AppImage
+            ipodrocks-js/out/*.AppImage.zsync
             ipodrocks-js/out/*.zip
             ipodrocks-js/out/*.dmg
         env:

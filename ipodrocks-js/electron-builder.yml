@@ -19,6 +19,13 @@ extraResources:
     to: icon.ico
   - from: resources/icon.icns
     to: icon.icns
+# Only read for its coordinates: electron-builder embeds them in the AppImage as
+# its update information (gh-releases-zsync) so AppImageUpdate can find new
+# releases. Every script passes `--publish never`; the workflow uploads files.
+publish:
+  provider: github
+  owner: JoaoSobral
+  repo: ipodrocks-js
 linux:
   target:
     - AppImage
