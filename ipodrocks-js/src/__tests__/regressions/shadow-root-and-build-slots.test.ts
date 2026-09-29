@@ -134,7 +134,14 @@ describe("shadow libraries: build slots, root guard, owner gate, size", () => {
     await session.invoke("shadow:cancelBuild");
     await waitFor(() => ipcLibrary.activeShadowBuildIds().length === 0, "builds to stop");
     session.cleanup();
-    fs.rmSync(root, { recursive: true, force: true });
+    // The database lives under `root`. Windows refuses to delete a file that
+    // still has an open handle (EPERM), so close the connection first.
+    try {
+      common.getLibraryDb().close();
+    } catch {
+      /* already closed */
+    }
+    fs.rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   function dir(name: string): string {
