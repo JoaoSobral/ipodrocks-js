@@ -9,6 +9,7 @@ import { PlaylistPanel } from "./components/panels/PlaylistPanel";
 import { AutoPodcastsPanel } from "./components/panels/AutoPodcastsPanel";
 import { AutoAudiobooksPanel } from "./components/panels/AutoAudiobooksPanel";
 import { SettingsPanel } from "./components/panels/SettingsPanel";
+import { announceLinkResult } from "./components/panels/SignInMethodsCard";
 import { FloatChat } from "./components/assistant/FloatChat";
 import { ServerFolderPicker } from "./components/web/ServerFolderPicker";
 import { ThemeToggle } from "./components/common/ThemeToggle";
@@ -209,6 +210,11 @@ export function App() {
 
   useEffect(() => {
     getAppVersion().then(({ version }) => setAppVersion(version));
+  }, []);
+
+  // Back from connecting a sign-in method (web mode only; a no-op otherwise).
+  useEffect(() => {
+    announceLinkResult();
   }, []);
 
   const current = navItems.find((n) => n.id === active)!;

@@ -1239,6 +1239,125 @@ export async function stopWebServer(): Promise<
   >;
 }
 
+// ---------------------------------------------------------------------------
+// Who can sign in: the allowlist, linked sign-in methods, access requests
+// ---------------------------------------------------------------------------
+
+export interface SignInLink {
+  id: number;
+  identityId: number;
+  provider: string;
+  subject: string;
+  email: string | null;
+  displayName: string | null;
+  createdAt: string;
+  lastLoginAt: string | null;
+}
+
+export interface ServerIdentity {
+  id: number;
+  provider: string;
+  subject: string;
+  email: string | null;
+  displayName: string | null;
+  isOwner: boolean;
+  links: SignInLink[];
+}
+
+export interface AccessRequest {
+  id: number;
+  provider: string;
+  subject: string;
+  email: string | null;
+  emailVerified: boolean;
+  displayName: string | null;
+  firstSeenAt: number;
+  lastSeenAt: number;
+  attempts: number;
+}
+
+/** Owner only, like every `server:*` channel. */
+export async function listServerIdentities(): Promise<
+  WebServerResult<{ identities: ServerIdentity[] }>
+> {
+  return window.api.invoke("server:listIdentities") as Promise<
+    WebServerResult<{ identities: ServerIdentity[] }>
+  >;
+}
+
+export async function revokeServerIdentity(
+  identityId: number
+): Promise<WebServerResult<{ ok: true; sessionsRevoked: number }>> {
+  return window.api.invoke("server:revokeIdentity", identityId) as Promise<
+    WebServerResult<{ ok: true; sessionsRevoked: number }>
+  >;
+}
+
+export async function removeServerLink(
+  linkId: number
+): Promise<WebServerResult<{ ok: true }>> {
+  return window.api.invoke("server:removeLink", linkId) as Promise<
+    WebServerResult<{ ok: true }>
+  >;
+}
+
+export async function listAccessRequests(): Promise<
+  WebServerResult<{ requests: AccessRequest[] }>
+> {
+  return window.api.invoke("server:listAccessRequests") as Promise<
+    WebServerResult<{ requests: AccessRequest[] }>
+  >;
+}
+
+export async function approveAccessRequest(
+  requestId: number
+): Promise<WebServerResult<{ ok: true; identity: ServerIdentity }>> {
+  return window.api.invoke("server:approveAccessRequest", requestId) as Promise<
+    WebServerResult<{ ok: true; identity: ServerIdentity }>
+  >;
+}
+
+export async function dismissAccessRequest(
+  requestId: number
+): Promise<WebServerResult<{ ok: true }>> {
+  return window.api.invoke("server:dismissAccessRequest", requestId) as Promise<
+    WebServerResult<{ ok: true }>
+  >;
+}
+
+/**
+ * The signed-in user's *own* sign-in methods. These go over the auth routes
+ * rather than `/api/invoke`, because every `server:*` channel is owner-only and
+ * a guest manages their own links too. Web mode only — the OAuth round trip
+ * needs the public origin, which the desktop window is not on.
+ */
+async function authJson<T>(path: string, init?: RequestInit): Promise<WebServerResult<T>> {
+  const res = await fetch(`/api/auth${path}`, {
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json" },
+    ...init,
+  });
+  const body = (await res.json().catch(() => ({}))) as T | { error?: string };
+  if (!res.ok) {
+    const error = (body as { error?: string }).error;
+    return { error: error ?? `HTTP ${res.status}` };
+  }
+  return body as T;
+}
+
+export function listMySignInLinks(): Promise<WebServerResult<{ links: SignInLink[] }>> {
+  return authJson("/links");
+}
+
+export function removeMySignInLink(linkId: number): Promise<WebServerResult<{ ok: true }>> {
+  return authJson(`/links/${linkId}`, { method: "DELETE" });
+}
+
+/** Marks the session and returns the provider start URL to navigate to. */
+export function startSignInLink(provider: string): Promise<WebServerResult<{ url: string }>> {
+  return authJson(`/link/${encodeURIComponent(provider)}`, { method: "POST" });
+}
+
 export interface DirectoryEntry {
   name: string;
   path: string;

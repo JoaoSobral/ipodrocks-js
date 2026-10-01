@@ -45,8 +45,9 @@ Also update the system prompt rules in `assistantChat.ts` (`ASSISTANT_SYSTEM_PRO
 
 **A tool that manages the allowlist is owner-gated, and the tier does not cover
 that.** `AiToolContext.sessionId` carries who is asking (undefined over Electron
-IPC — the desktop window on the machine holding the database); the five
-`web_server_*` allowlist tools call `denyIfNotOwner()` before anything else. See
+IPC — the desktop window on the machine holding the database); the nine
+`web_server_*` allowlist tools (identities, sessions, access requests, links)
+call `denyIfNotOwner()` before anything else. See
 the hazard below. Every *other* tool is deliberately open to any allowlisted
 user: they are a full user of the app by design.
 
@@ -76,7 +77,7 @@ which are real and deliberately deferred.
 | Efficiency | `rockbox/tagcache-index.ts` — `writeRatingOn()` | One `deviceFs.patch()` per rating, and on a browser-held device `createWritable({keepExistingData:true})` rewrites the whole file through a `.crswap` sibling. Propagating 500 ratings is 500 full copies of a multi-megabyte `database_idx.tcd` plus four RPCs each. Batching needs a plan-then-patch shape across `planRatingEdits`/`propagateRatingsToDeviceOn` |
 | Containment | `player/media-path.ts` — `isServableMediaPath()` | Its middle arm is an extension test with no containment, so the *only* thing keeping it honest is that nothing mints a token from client input any more — see the hazard above. Bounding it by the library roots, the shadow roots and the audiobooks root would make it a gate in its own right instead of a second opinion |
 | Enumeration | `ipc/app.ts` — `app:listDirectory` | Every allowlisted user can walk the server's home directory and mount roots. Deliberate — it is the web folder picker, and library folders genuinely live on the server, gated by the same `validateFolderPath()` as `library:addFolder` — but worth knowing it is a listing oracle for anyone admitted |
-| Verification | `server/auth/passport-setup.ts` — `state: true` | The OAuth anti-CSRF nonce is set on all three strategies, and no automated test can reach it: the e2e daemon has no provider configured. Manual-verification, the way `showDirectoryPicker()` and `mpcenc` already are |
+| Verification | `server/auth/passport-setup.ts` — `state: true` | The OAuth anti-CSRF nonce is set on all three strategies, and no automated test can reach it: the e2e daemon has no provider configured. Manual-verification, the way `showDirectoryPicker()` and `mpcenc` already are. The same goes for the real link round trip (Settings → Sign-in methods → Connect, then sign in with that provider and land as the same identity), which the regression test drives only with a fake strategy |
 
 ### From the PR #116 review (2026-08-22)
 
@@ -1203,6 +1204,32 @@ for free — provided its prefix is in `src/shared/ipc-channels.ts`.
   one-time claim token printed to the server log. Identities are matched on the
   provider's `subject`, never the email, which users can change. Pinned in
   `src/__tests__/regressions/web-identity-allowlist.test.ts`.
+- **A link is a login method for an existing identity; it never creates or
+  promotes one.** `server_identity_links` maps another provider account onto a
+  `server_identities` row, and a login through it puts *that row's* id in the
+  session. Owner status, `callerSubject()` data scope and session revocation
+  all follow unchanged. A link is created only by the callback, only while
+  `req.session.pendingLink` (set by `POST /api/auth/link/:provider`, 10 min)
+  names the identity the session is *still* signed in as. The `state: true`
+  nonce is what stops an attacker from handing a signed-in victim a callback
+  that would link the *attacker's* account to the victim's identity. One
+  provider account is one identity *or* one link, never both:
+  `allowProviderIdentity()` is the only way to admit a provider account and
+  refuses a linked one. Self-service links live on `/api/auth/links` because
+  every `server:*` channel is owner-only.
+- **Access requests admit nobody.** A refused provider login on an owned
+  server is recorded in `server_access_requests`, which is pruned on every
+  write (50 newest, 30 days), because anyone with a Google account can add a
+  row. Approval goes through `allowProviderIdentity()`, so it is never an owner.
+  The display name is attacker-chosen; the UI always shows the provider, the
+  email and its verified flag beside it. Pinned in
+  `src/__tests__/regressions/web-linked-logins.test.ts` and
+  `tests/e2e/web-linked-logins.test.ts`.
+- **The provider list is `src/shared/auth-providers.ts`.** Config, passport
+  (a factory table typed over `OAuthProvider`), the status route, the allowlist
+  routes, IPC, Rocksy's enum and the login labels all read it. Adding a provider
+  means adding it there and to `STRATEGIES` in `passport-setup.ts`; the compiler
+  catches a missing strategy.
 - **The session cookie is `SameSite=Lax`, not `Strict`.** Strict withholds the
   cookie on the cross-site navigation the provider performs on its way back to
   `/api/auth/<provider>/callback`, so every social login fails.
@@ -1377,7 +1404,7 @@ dressed as a convenience.
   what an owner needs to see.
 
 Pinned in `src/__tests__/regressions/web-owner-gate.test.ts` (the gate and all
-five tools, including the mutation where the gate is removed) and
+nine allowlist tools, including the mutation where the gate is removed) and
 `tests/e2e/web-identities.test.ts` (the channels over a real daemon, with a
 signed-in non-owner as the attacker and an ordinary channel as the control).
 

@@ -284,17 +284,20 @@ difference between a comfortable sync and an impossible one.
 Only the owner can. A successful Google login by someone not on the allowlist is
 refused, which is the entire point.
 
-Ask Rocksy — *"who can sign in to my server?"*, *"give my partner an account"* —
-or use the HTTP API:
+**To sign in with Google yourself**, open Settings → **Sign-in methods** in
+the browser and press **Connect Google**. That Google account then signs you in
+as the owner. There is no user id to look up.
+
+**To let someone else in**, have them try to sign in once. The attempt is
+refused and appears in Settings → Web Server → **Waiting for approval**. Press
+**Approve**. Rocksy can do the same: *"who's waiting to get in?"*, *"let in the
+person who just tried"*. A local password account is added with *"give my
+partner an account"*, or over the HTTP API:
 
 ```sh
 curl -b cookies.txt https://ipod.example.com/api/auth/identities
+curl -b cookies.txt https://ipod.example.com/api/auth/access-requests
 ```
-
-For a provider account the **subject** is that provider's own stable user id,
-not the email address. If you do not have it, have the person try to sign in
-once: the attempt is refused, and the subject the provider sent is in the server
-log.
 
 ## Step 8 — connect a device
 
@@ -320,8 +323,8 @@ for what differs from a local device.
 or somebody already claimed it. Check the log.
 
 **"This account is not authorized to use this server."** The login worked and
-the allowlist refused it. Working as intended — the owner has to add that
-identity.
+the allowlist refused it. Working as intended. The attempt is now under
+Settings → Web Server → Waiting for approval, for the owner to approve.
 
 **A provider's button is missing.** Both its variables must be set, and
 `IPODROCKS_PUBLIC_URL` must be set. Restart after changing them.

@@ -65,9 +65,10 @@ export function authRateLimiter(): RateLimitRequestHandler {
 }
 
 /**
- * The allowlist routes — `GET/POST/DELETE /api/auth/identities`.
+ * The allowlist routes — `/api/auth/identities`, `/api/auth/access-requests`,
+ * and the self-service `/api/auth/link` and `/api/auth/links`.
  *
- * Owner-only and low-volume by nature: an owner admits a household, not a
+ * Low-volume by nature: an owner admits a household, not a
  * datacentre. Tight enough that enumerating identity ids by id is not a thing
  * you can do quietly.
  */

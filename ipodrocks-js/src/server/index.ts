@@ -1,6 +1,7 @@
 import { startServer, type RunningServer } from "./http";
 import { loadServerConfig } from "./config";
 import { countIdentities, getOrCreateClaimToken } from "./auth/identities";
+import { OAUTH_PROVIDERS } from "../shared/auth-providers";
 
 export { startServer } from "./http";
 export type { RunningServer } from "./http";
@@ -88,9 +89,7 @@ export function getServerStatus(): ServerStatus {
     host: config.host,
     claimToken,
     identityCount,
-    providers: (["google", "github", "facebook"] as const).filter(
-      (p) => config.oauth[p] !== null
-    ),
+    providers: OAUTH_PROVIDERS.filter((p) => config.oauth[p] !== null),
     tls: config.tls !== null,
     publicUrl: config.publicUrl,
     lastError,

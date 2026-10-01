@@ -242,8 +242,17 @@ export async function startServer(
   const enabledProviders = configurePassport(config);
 
   // The allowlist routes get their own, tighter bucket, mounted first so it is
-  // the one that answers for them.
-  app.use("/api/auth/identities", identityAdminRateLimiter());
+  // the one that answers for them. One limiter for all four paths: they are
+  // the same surface — who may sign in — and share one ceiling.
+  app.use(
+    [
+      "/api/auth/identities",
+      "/api/auth/access-requests",
+      "/api/auth/links",
+      "/api/auth/link",
+    ],
+    identityAdminRateLimiter()
+  );
   app.use(
     "/api/auth",
     authRateLimiter(),

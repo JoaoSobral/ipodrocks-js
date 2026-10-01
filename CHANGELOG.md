@@ -1,5 +1,22 @@
 # Changelog
 
+## [Unreleased]
+
+### 🔑 Easier sign-in for the web server
+
+- **Connect Google, GitHub or Facebook to your account.** In the browser,
+  Settings → Sign-in methods → Connect. That account then signs you in as you,
+  owner rights and Rocksy history included, so you don't need to look up a
+  provider user id to start signing in with Google.
+- **Approve people who tried to sign in.** A refused Google/GitHub/Facebook
+  login now shows up under Settings → Web Server → Waiting for approval, with
+  the provider, the email and whether it is verified. Approve or dismiss it in
+  one click. The 50 most recent are kept, for 30 days.
+- **The allowlist has a panel.** The Web Server card lists everyone who can
+  sign in and their linked sign-in methods, and can remove either.
+- **Rocksy** can list, approve and dismiss waiting sign-ins and remove a linked
+  sign-in method (owner only; approving and removing ask first).
+
 ## [3.0.1] — 2026-09
 
 ### 🔒 Security hardening for the web server

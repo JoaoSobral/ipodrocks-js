@@ -2,8 +2,14 @@ import passport from "passport";
 import { Strategy as GoogleStrategy } from "passport-google-oauth20";
 import { Strategy as GitHubStrategy } from "passport-github2";
 import { Strategy as FacebookStrategy } from "passport-facebook";
-import type { ServerConfig } from "../config";
-import { findIdentityById, type Identity, type Provider } from "./identities";
+import type { OAuthProviderConfig, ServerConfig } from "../config";
+import { findIdentityById, type Identity } from "./identities";
+import {
+  OAUTH_PROVIDERS,
+  PROVIDER_LABELS,
+  type OAuthProvider,
+  type Provider,
+} from "../../shared/auth-providers";
 
 /**
  * Passport wiring.
@@ -49,6 +55,112 @@ export interface ProviderProfile {
   emailVerified: boolean;
 }
 
+type StrategyFactory = (
+  creds: OAuthProviderConfig,
+  callbackURL: string
+) => passport.Strategy;
+
+/**
+ * One constructor per provider, and the only provider-specific code here. The
+ * table is typed over `OAuthProvider`, so a provider added to
+ * `shared/auth-providers.ts` without an entry is a compile error rather than a
+ * login button that 500s.
+ */
+const STRATEGIES: Record<OAuthProvider, StrategyFactory> = {
+  google: (creds, callbackURL) =>
+    new GoogleStrategy(
+      {
+        clientID: creds.clientId,
+        clientSecret: creds.clientSecret,
+        callbackURL,
+        scope: ["profile", "email"],
+        state: true,
+      },
+      (_accessToken, _refreshToken, profile, done) => {
+        const email = profile.emails?.[0];
+        const p: ProviderProfile = {
+          provider: "google",
+          subject: profile.id,
+          email: email?.value ?? null,
+          displayName: profile.displayName ?? null,
+          // passport-google-oauth20 exposes `verified` as a string.
+          emailVerified:
+            String((email as { verified?: unknown })?.verified ?? "") === "true",
+        };
+        done(null, p);
+      }
+    ),
+
+  github: (creds, callbackURL) =>
+    new GitHubStrategy(
+      {
+        clientID: creds.clientId,
+        clientSecret: creds.clientSecret,
+        callbackURL,
+        scope: ["read:user", "user:email"],
+        // `passport-github2`'s own `StrategyOptions` still declares
+        // `state` as a `string` — the pre-nonce meaning. The strategy
+        // extends passport-oauth2, which has taken the boolean and done
+        // the session-backed nonce for years; Google's and Facebook's
+        // types already say so. The cast is the type stub being behind,
+        // not a behaviour we are forcing.
+        state: true as unknown as string,
+      },
+      (
+        _accessToken: string,
+        _refreshToken: string,
+        profile: {
+          id: string;
+          displayName?: string;
+          username?: string;
+          emails?: { value: string }[];
+        },
+        done: (err: unknown, user?: ProviderProfile) => void
+      ) => {
+        const p: ProviderProfile = {
+          provider: "github",
+          subject: String(profile.id),
+          email: profile.emails?.[0]?.value ?? null,
+          displayName: profile.displayName ?? profile.username ?? null,
+          // GitHub's user:email scope returns the address it considers
+          // primary and verified; it does not restate the flag per entry.
+          emailVerified: Boolean(profile.emails?.[0]?.value),
+        };
+        done(null, p);
+      }
+    ),
+
+  facebook: (creds, callbackURL) =>
+    new FacebookStrategy(
+      {
+        clientID: creds.clientId,
+        clientSecret: creds.clientSecret,
+        callbackURL,
+        profileFields: ["id", "displayName", "emails"],
+        state: true,
+      },
+      (
+        _accessToken: string,
+        _refreshToken: string,
+        profile: {
+          id: string;
+          displayName?: string;
+          emails?: { value: string }[];
+        },
+        done: (err: unknown, user?: ProviderProfile) => void
+      ) => {
+        const p: ProviderProfile = {
+          provider: "facebook",
+          subject: String(profile.id),
+          email: profile.emails?.[0]?.value ?? null,
+          displayName: profile.displayName ?? null,
+          emailVerified: false,
+        };
+        done(null, p);
+      }
+    ),
+};
+
 /** Only `passport.authenticate(..., { session: false })` is used, so the user
  *  object passport hands us is a `ProviderProfile`; the express session is
  *  written by our own code once the allowlist has agreed. */
@@ -62,135 +174,20 @@ export function configurePassport(config: ServerConfig): string[] {
     done(null, findIdentityById(id) ?? false);
   });
 
-  const callbackFor = (provider: string): string | null =>
-    config.publicUrl ? `${config.publicUrl}/api/auth/${provider}/callback` : null;
-
-  if (config.oauth.google) {
-    const callbackURL = callbackFor("google");
-    if (!callbackURL) {
+  for (const provider of OAUTH_PROVIDERS) {
+    const creds = config.oauth[provider];
+    if (!creds) continue;
+    if (!config.publicUrl) {
       console.warn(
-        "[server] Google credentials are set but no public URL is configured — " +
-          "Google refuses a callback URI that is not a stable registered host, " +
-          "so the strategy is not enabled."
+        `[server] ${PROVIDER_LABELS[provider]} credentials are set but no public ` +
+          "URL is configured — providers refuse a callback URI that is not a " +
+          "stable registered host, so the strategy is not enabled."
       );
-    } else {
-      passport.use(
-        new GoogleStrategy(
-          {
-            clientID: config.oauth.google.clientId,
-            clientSecret: config.oauth.google.clientSecret,
-            callbackURL,
-            scope: ["profile", "email"],
-            state: true,
-          },
-          (_accessToken, _refreshToken, profile, done) => {
-            const email = profile.emails?.[0];
-            const p: ProviderProfile = {
-              provider: "google",
-              subject: profile.id,
-              email: email?.value ?? null,
-              displayName: profile.displayName ?? null,
-              // passport-google-oauth20 exposes `verified` as a string.
-              emailVerified:
-                String((email as { verified?: unknown })?.verified ?? "") === "true",
-            };
-            done(null, p);
-          }
-        )
-      );
-      enabled.push("google");
+      continue;
     }
-  }
-
-  if (config.oauth.github) {
-    const callbackURL = callbackFor("github");
-    if (callbackURL) {
-      passport.use(
-        new GitHubStrategy(
-          {
-            clientID: config.oauth.github.clientId,
-            clientSecret: config.oauth.github.clientSecret,
-            callbackURL,
-            scope: ["read:user", "user:email"],
-            // `passport-github2`'s own `StrategyOptions` still declares
-            // `state` as a `string` — the pre-nonce meaning. The strategy
-            // extends passport-oauth2, which has taken the boolean and done
-            // the session-backed nonce for years; Google's and Facebook's
-            // types already say so. The cast is the type stub being behind,
-            // not a behaviour we are forcing.
-            state: true as unknown as string,
-          },
-          (
-            _accessToken: string,
-            _refreshToken: string,
-            profile: {
-              id: string;
-              displayName?: string;
-              username?: string;
-              emails?: { value: string }[];
-            },
-            done: (err: unknown, user?: ProviderProfile) => void
-          ) => {
-            const p: ProviderProfile = {
-              provider: "github",
-              subject: String(profile.id),
-              email: profile.emails?.[0]?.value ?? null,
-              displayName: profile.displayName ?? profile.username ?? null,
-              // GitHub's user:email scope returns the address it considers
-              // primary and verified; it does not restate the flag per entry.
-              emailVerified: Boolean(profile.emails?.[0]?.value),
-            };
-            done(null, p);
-          }
-        )
-      );
-      enabled.push("github");
-    } else {
-      console.warn(
-        "[server] GitHub credentials are set but no public URL is configured."
-      );
-    }
-  }
-
-  if (config.oauth.facebook) {
-    const callbackURL = callbackFor("facebook");
-    if (callbackURL) {
-      passport.use(
-        new FacebookStrategy(
-          {
-            clientID: config.oauth.facebook.clientId,
-            clientSecret: config.oauth.facebook.clientSecret,
-            callbackURL,
-            profileFields: ["id", "displayName", "emails"],
-            state: true,
-          },
-          (
-            _accessToken: string,
-            _refreshToken: string,
-            profile: {
-              id: string;
-              displayName?: string;
-              emails?: { value: string }[];
-            },
-            done: (err: unknown, user?: ProviderProfile) => void
-          ) => {
-            const p: ProviderProfile = {
-              provider: "facebook",
-              subject: String(profile.id),
-              email: profile.emails?.[0]?.value ?? null,
-              displayName: profile.displayName ?? null,
-              emailVerified: false,
-            };
-            done(null, p);
-          }
-        )
-      );
-      enabled.push("facebook");
-    } else {
-      console.warn(
-        "[server] Facebook credentials are set but no public URL is configured."
-      );
-    }
+    const callbackURL = `${config.publicUrl}/api/auth/${provider}/callback`;
+    passport.use(provider, STRATEGIES[provider](creds, callbackURL));
+    enabled.push(provider);
   }
 
   return enabled;
@@ -199,7 +196,7 @@ export function configurePassport(config: ServerConfig): string[] {
 /** Drops every registered strategy. A server restart re-registers them against
  *  whatever the config says now. */
 export function resetPassport(): void {
-  for (const name of ["google", "github", "facebook"]) {
+  for (const name of OAUTH_PROVIDERS) {
     try {
       passport.unuse(name);
     } catch {

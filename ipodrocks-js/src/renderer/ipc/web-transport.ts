@@ -21,6 +21,7 @@ export interface AuthStatus {
   providers: string[];
   localEnabled: boolean;
   user: {
+    id: number;
     provider: string;
     displayName: string | null;
     email: string | null;
