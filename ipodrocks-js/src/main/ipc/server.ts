@@ -7,12 +7,16 @@ import {
   stopServerIfRunning,
 } from "../../server";
 import {
-  addIdentity,
+  allowProviderIdentity,
+  approveAccessRequest,
   createLocalAccount,
-  listIdentities,
+  dismissAccessRequest,
+  listAccessRequests,
+  listIdentitiesWithLinks,
   removeIdentity,
-  type Provider,
+  removeLink,
 } from "../../server/auth/identities";
+import { isProvider } from "../../shared/auth-providers";
 import {
   denyIfNotOwner,
   listServerSessions,
@@ -142,8 +146,8 @@ export function registerServerHandlers(): void {
       const denied = requireOwner(event);
       if (denied) return denied;
       // `Identity` carries no password hash — `toIdentity()` drops it — so the
-      // rows go out as they are.
-      return { identities: listIdentities() };
+      // rows go out as they are, each with its linked sign-in methods.
+      return { identities: listIdentitiesWithLinks() };
     })
   );
 
@@ -174,7 +178,7 @@ export function registerServerHandlers(): void {
         if (denied) return denied;
 
         const provider = String(input?.provider ?? "");
-        if (!["google", "github", "facebook", "local"].includes(provider)) {
+        if (!isProvider(provider)) {
           return { error: `Unknown provider "${provider}".` };
         }
         const subject = String(input?.subject ?? "").trim();
@@ -193,16 +197,16 @@ export function registerServerHandlers(): void {
           return { ok: true, identity };
         }
 
-        // Never `isOwner`. Ownership is claimed once, with the one-time token,
-        // and there is deliberately no second way to grant it.
-        const identity = addIdentity({
-          provider: provider as Provider,
+        // Never `isOwner` — `allowProviderIdentity()` has no way to say it.
+        const outcome = allowProviderIdentity({
+          provider,
           subject,
           email: typeof input?.email === "string" ? input.email : null,
           displayName:
             typeof input?.displayName === "string" ? input.displayName : null,
         });
-        return { ok: true, identity };
+        if ("error" in outcome) return outcome;
+        return { ok: true, identity: outcome.identity };
       }
     )
   );
@@ -227,6 +231,58 @@ export function registerServerHandlers(): void {
       // identities.ts and sessions.ts import each other.
       const revoked = revokeSessionsForIdentity(id);
       return { ok: true, sessionsRevoked: revoked };
+    })
+  );
+
+  /** Removes one linked sign-in method. The identity and its sessions stay:
+   *  the person is still allowed in, just not by that route. A guest removes
+   *  their own links over `DELETE /api/auth/links/:id`; this channel is the
+   *  owner's view of everyone's. */
+  bridgeHandle(
+    "server:removeLink",
+    safe("server:removeLink", async (event, linkId: number) => {
+      const denied = requireOwner(event);
+      if (denied) return denied;
+      const id = Number(linkId);
+      if (!Number.isInteger(id)) return { error: "Bad link id." };
+      return removeLink(id);
+    })
+  );
+
+  // -------------------------------------------------------------------------
+  // Access requests — refused provider logins, for the owner to admit
+  // -------------------------------------------------------------------------
+
+  bridgeHandle(
+    "server:listAccessRequests",
+    safe("server:listAccessRequests", async (event) => {
+      const denied = requireOwner(event);
+      if (denied) return denied;
+      return { requests: listAccessRequests() };
+    })
+  );
+
+  bridgeHandle(
+    "server:approveAccessRequest",
+    safe("server:approveAccessRequest", async (event, requestId: number) => {
+      const denied = requireOwner(event);
+      if (denied) return denied;
+      const id = Number(requestId);
+      if (!Number.isInteger(id)) return { error: "Bad request id." };
+      const outcome = approveAccessRequest(id);
+      if ("error" in outcome) return outcome;
+      return { ok: true, identity: outcome.identity };
+    })
+  );
+
+  bridgeHandle(
+    "server:dismissAccessRequest",
+    safe("server:dismissAccessRequest", async (event, requestId: number) => {
+      const denied = requireOwner(event);
+      if (denied) return denied;
+      const id = Number(requestId);
+      if (!Number.isInteger(id)) return { error: "Bad request id." };
+      return dismissAccessRequest(id);
     })
   );
 

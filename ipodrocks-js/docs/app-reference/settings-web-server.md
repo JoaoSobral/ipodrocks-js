@@ -109,28 +109,55 @@ certificate with `IPODROCKS_TLS_CERT` and `IPODROCKS_TLS_KEY`.
 
 ## Managing who may sign in
 
-The Web Server card itself shows the claim token and the status; the allowlist is
-managed by **asking Rocksy** (see below), or over the HTTP API at
-`/api/auth/identities` if you prefer `curl`. A panel for it in Settings is not
-built yet.
+Once the server has an owner, the Web Server card shows a **Who can sign in**
+section: every account on the allowlist, the other sign-in methods linked to
+each one, and a **Waiting for approval** list. You can do the same by **asking
+Rocksy** (see below), or over the HTTP API at `/api/auth/identities` and
+`/api/auth/access-requests` if you prefer `curl`.
 
-Either way the rules are the same. The allowlist is the gate, so editing it is
+Whichever you use, the rules are the same. The allowlist is the gate, so editing it is
 **owner-only** — the account that claimed the server. Everyone else is a full
 user of the app and can do everything else; they simply cannot change who else
 gets in.
 
 - **See the list** — provider, username or subject, and which one is the owner.
-- **Add an account.** A local account needs a username and a password of at
-  least 12 characters. A Google, GitHub or Facebook account needs that
-  provider's own **stable user id**, not the email address — emails change, and
-  matching on one would hand an account to whoever claimed the address next. If
-  you do not have it, have the person try signing in once; the refusal is logged
-  with the subject the provider sent.
-- **Revoke an account** — removes it and signs its browsers out. The owner
+- **Let someone in who tried to sign in.** When a Google, GitHub or Facebook
+  login is refused, it appears under **Waiting for approval** with the provider,
+  the email (marked if the provider has not verified it), and the provider's
+  user id. Press **Approve** to add it as an ordinary account, or **Dismiss**.
+  The display name is whatever the person put in their profile, so go by the
+  provider and email. The list keeps the 50 most recent attempts and forgets
+  any not repeated within 30 days.
+- **Add an account by hand.** A local account needs a username and a password
+  of at least 12 characters. A provider account needs that provider's own
+  **stable user id**, not the email address: emails change, and matching on one
+  would give the account to whoever got the address next. Approving a
+  request is easier, because it already carries the id.
+- **Unlink a sign-in method**: stops one linked Google/GitHub/Facebook account
+  from signing in. The account itself, and its open sessions, stay.
+- **Revoke an account**: removes it, along with its linked sign-in methods,
+  and signs its browsers out. The owner
   account cannot be removed: a server whose owner is gone has an allowlist
   nobody can edit, including to put an owner back.
 - **Sign browsers out without removing the account** — for a lost laptop, or
   after a scare. "Sign everyone out" includes you.
+
+## Sign-in methods
+
+In a browser, Settings also has a **Sign-in methods** card for whoever is
+signed in. **Connect Google** (or GitHub, Facebook) sends you to the provider
+and back. From then on that account also signs you in, **as the same account**:
+same owner rights, same Rocksy history, same devices. This is how the owner
+adds Google sign-in without ever looking up a Google user id.
+
+Anyone on the allowlist can connect sign-in methods to their own account and
+remove them. It gives them no access they did not already have, and the owner
+sees every linked method under Who can sign in. A provider account can only be
+used once on a server: one already linked or admitted elsewhere is refused.
+
+The card appears only in a browser, because the provider has to send you back
+to the server's public URL, which the desktop window isn't on. It
+needs that provider's credentials configured, like its login button.
 
 ## Ask Rocksy
 
@@ -140,8 +167,9 @@ gets in.
 - "Why can't my partner sign in to the server?"
 - "Who can sign in to my server?" / "Is anyone connected right now?"
 - "Give my partner an account" *(asks you to confirm first)*
+- "Who's waiting to get in?" / "Let in the person who just tried" *(approving asks you to confirm first)*
 - "Cut off access for that old account" *(asks you to confirm first)*
 - "Sign every browser out" *(asks you to confirm first — including yours)*
 
-The last four are owner-only. Asked by anyone else, Rocksy says so and does
+Managing accounts and approvals is owner-only. Asked by anyone else, Rocksy says so and does
 nothing; it also never reads a claim token or a password back into the chat.

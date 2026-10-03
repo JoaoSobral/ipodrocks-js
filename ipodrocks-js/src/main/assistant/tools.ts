@@ -55,6 +55,7 @@ import {
 import { ingestRuntimeDataForDevice } from "../rockbox/runtime-ingest";
 import { getRatingPrefs, setRatingPrefs } from "../utils/prefs";
 import type { HandlerSender } from "../host/bridge";
+import { PROVIDERS, isProvider } from "../../shared/auth-providers";
 
 export interface AiToolContext {
   db: Database.Database;
@@ -784,15 +785,15 @@ const web_server_set_enabled: AiTool = {
 const web_server_list_identities: AiTool = {
   name: "web_server_list_identities",
   description:
-    "List the accounts allowed to sign in to the web server — provider, username or subject, display name, and which one is the owner. Use when the user asks who can reach their server, why someone cannot sign in, or before adding or revoking access. Owner only.",
+    "List the accounts allowed to sign in to the web server — provider, username or subject, display name, which one is the owner, and each account's linked sign-in methods (other Google/GitHub/Facebook accounts that sign in as it). Use when the user asks who can reach their server, why someone cannot sign in, or before adding or revoking access. Owner only.",
   parameters: { type: "object", properties: {}, required: [] },
   kind: "read",
   summarize: () => "List who can sign in to the web server",
   async run(_args, ctx) {
     const denied = await ownerGate(ctx);
     if (denied) return denied;
-    const { listIdentities } = await import("../../server/auth/identities");
-    const identities = listIdentities();
+    const { listIdentitiesWithLinks } = await import("../../server/auth/identities");
+    const identities = listIdentitiesWithLinks();
     return {
       identities,
       count: identities.length,
@@ -828,13 +829,13 @@ const web_server_list_sessions: AiTool = {
 const web_server_allow_identity: AiTool = {
   name: "web_server_allow_identity",
   description:
-    "Add an account to the web server's allowlist so it can sign in. For provider sign-in (google/github/facebook) the subject is that provider's stable user id, not the email address — the person has to try signing in once and read it out of the refusal, or the owner has to look it up. For a local account, the subject is the username and a password of at least 12 characters is required. Use when the user wants to give someone access to their server. Owner only.",
+    "Add an account to the web server's allowlist so it can sign in. For provider sign-in (google/github/facebook) the subject is that provider's stable user id, not the email address — if the person has already tried to sign in, approve their entry from web_server_list_access_requests instead, which needs no id. For a local account, the subject is the username and a password of at least 12 characters is required. Use when the user wants to give someone access to their server. Owner only.",
   parameters: {
     type: "object",
     properties: {
       provider: {
         type: "string",
-        enum: ["local", "google", "github", "facebook"],
+        enum: [...PROVIDERS],
         description: "Which sign-in method this account uses.",
       },
       subject: {
@@ -863,7 +864,7 @@ const web_server_allow_identity: AiTool = {
     if (denied) return denied;
 
     const provider = String(args.provider ?? "");
-    if (!["local", "google", "github", "facebook"].includes(provider)) {
+    if (!isProvider(provider)) {
       return { error: `Unknown provider "${provider}".` };
     }
     const subject = String(args.subject ?? "").trim();
@@ -880,14 +881,15 @@ const web_server_allow_identity: AiTool = {
       );
       return { ok: true, identity, message: `${subject} can now sign in with that password.` };
     }
-    // Never `isOwner`. Ownership is claimed once with the one-time token and
-    // there is deliberately no second way to grant it.
-    const identity = identities.addIdentity({
-      provider: provider as "google" | "github" | "facebook",
+    // Never `isOwner` — `allowProviderIdentity()` has no way to say it.
+    const outcome = identities.allowProviderIdentity({
+      provider,
       subject,
       email: typeof args.email === "string" ? args.email : null,
       displayName: typeof args.display_name === "string" ? args.display_name : null,
     });
+    if ("error" in outcome) return outcome;
+    const identity = outcome.identity;
     return {
       ok: true,
       identity,
@@ -979,6 +981,109 @@ const web_server_revoke_sessions: AiTool = {
     }
     const revoked = sessions.revokeSessionsForIdentity(id);
     return { ok: true, revoked, message: `${revoked} session(s) ended for that account.` };
+  },
+};
+
+const web_server_list_access_requests: AiTool = {
+  name: "web_server_list_access_requests",
+  description:
+    "List recent Google/GitHub/Facebook sign-ins the web server refused because the account is not on the allowlist — provider, display name, email (and whether the provider verified it), provider user id, and how many times they tried. Display names are chosen by whoever signed in, so say which provider and email each one is rather than trusting the name. Use when someone says they cannot get in, or the user wants to let a person in who has already tried. Owner only.",
+  parameters: { type: "object", properties: {}, required: [] },
+  kind: "read",
+  summarize: () => "List refused sign-ins waiting for approval",
+  async run(_args, ctx) {
+    const denied = await ownerGate(ctx);
+    if (denied) return denied;
+    const { listAccessRequests } = await import("../../server/auth/identities");
+    const requests = listAccessRequests();
+    return { requests, count: requests.length };
+  },
+};
+
+const web_server_approve_access_request: AiTool = {
+  name: "web_server_approve_access_request",
+  description:
+    "Let the account behind a refused sign-in onto the web server: adds it to the allowlist as a normal (non-owner) account. Call web_server_list_access_requests first for the id, and make sure the user means that exact provider and email. Owner only.",
+  parameters: {
+    type: "object",
+    properties: {
+      request_id: {
+        type: "number",
+        description: "The id from web_server_list_access_requests.",
+      },
+    },
+    required: ["request_id"],
+  },
+  // Same tier as `web_server_allow_identity`: it changes who can reach the
+  // library.
+  kind: "write-destructive",
+  summarize: (a) => `Approve web server access request #${String(a.request_id)}`,
+  async run(args, ctx) {
+    const denied = await ownerGate(ctx);
+    if (denied) return denied;
+    const id = Number(args.request_id);
+    if (!Number.isInteger(id)) return { error: "request_id must be a whole number." };
+    const { approveAccessRequest } = await import("../../server/auth/identities");
+    const outcome = approveAccessRequest(id);
+    if ("error" in outcome) return outcome;
+    return {
+      ok: true,
+      identity: outcome.identity,
+      message: "Approved. They can sign in now.",
+    };
+  },
+};
+
+const web_server_dismiss_access_request: AiTool = {
+  name: "web_server_dismiss_access_request",
+  description:
+    "Drop a refused sign-in from the access-request list without letting them in. Nothing about who can sign in changes; if they try again it reappears. Owner only.",
+  parameters: {
+    type: "object",
+    properties: {
+      request_id: {
+        type: "number",
+        description: "The id from web_server_list_access_requests.",
+      },
+    },
+    required: ["request_id"],
+  },
+  kind: "write-safe",
+  summarize: (a) => `Dismiss web server access request #${String(a.request_id)}`,
+  async run(args, ctx) {
+    const denied = await ownerGate(ctx);
+    if (denied) return denied;
+    const id = Number(args.request_id);
+    if (!Number.isInteger(id)) return { error: "request_id must be a whole number." };
+    const { dismissAccessRequest } = await import("../../server/auth/identities");
+    return dismissAccessRequest(id);
+  },
+};
+
+const web_server_remove_link: AiTool = {
+  name: "web_server_remove_link",
+  description:
+    "Remove one linked sign-in method (a Google/GitHub/Facebook account that signs in as an existing account). The account itself stays on the allowlist and its browsers stay signed in; only that way in stops working. Get the link id from web_server_list_identities. Owner only.",
+  parameters: {
+    type: "object",
+    properties: {
+      link_id: {
+        type: "number",
+        description: "The id of the link, from an identity's links in web_server_list_identities.",
+      },
+    },
+    required: ["link_id"],
+  },
+  // Destructive: it can lock someone out of the way they actually sign in.
+  kind: "write-destructive",
+  summarize: (a) => `Remove linked sign-in method #${String(a.link_id)}`,
+  async run(args, ctx) {
+    const denied = await ownerGate(ctx);
+    if (denied) return denied;
+    const id = Number(args.link_id);
+    if (!Number.isInteger(id)) return { error: "link_id must be a whole number." };
+    const { removeLink } = await import("../../server/auth/identities");
+    return removeLink(id);
   },
 };
 
@@ -2151,6 +2256,10 @@ export const AI_TOOLS: AiTool[] = [
   web_server_allow_identity,
   web_server_revoke_identity,
   web_server_revoke_sessions,
+  web_server_list_access_requests,
+  web_server_approve_access_request,
+  web_server_dismiss_access_request,
+  web_server_remove_link,
 ];
 
 export function getToolByName(name: string): AiTool | undefined {

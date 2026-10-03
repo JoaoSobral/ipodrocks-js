@@ -34,6 +34,40 @@ CREATE TABLE IF NOT EXISTS server_identities (
   UNIQUE(provider, subject)
 );
 
+-- Extra ways to sign in *as* an existing identity: "my Google account is also
+-- me". A link is a login method, never an identity of its own, so a session
+-- reached through one carries the linked row's id — same owner flag, same
+-- per-identity data scope. Removing the identity removes its links.
+CREATE TABLE IF NOT EXISTS server_identity_links (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  identity_id INTEGER NOT NULL REFERENCES server_identities(id) ON DELETE CASCADE,
+  provider TEXT NOT NULL,
+  subject TEXT NOT NULL,
+  email TEXT,
+  display_name TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  last_login_at TEXT,
+  UNIQUE(provider, subject)
+);
+CREATE INDEX IF NOT EXISTS idx_server_identity_links_identity
+  ON server_identity_links(identity_id);
+
+-- Provider logins the allowlist refused, kept so the owner can admit someone
+-- without knowing their provider user id. Bounded by count and age in
+-- identities.ts, because anyone with a Google account can add a row.
+CREATE TABLE IF NOT EXISTS server_access_requests (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  provider TEXT NOT NULL,
+  subject TEXT NOT NULL,
+  email TEXT,
+  email_verified INTEGER NOT NULL DEFAULT 0,
+  display_name TEXT,
+  first_seen_at INTEGER NOT NULL,
+  last_seen_at INTEGER NOT NULL,
+  attempts INTEGER NOT NULL DEFAULT 1,
+  UNIQUE(provider, subject)
+);
+
 CREATE TABLE IF NOT EXISTS server_sessions (
   sid TEXT PRIMARY KEY,
   data TEXT NOT NULL,

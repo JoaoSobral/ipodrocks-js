@@ -43,6 +43,7 @@ chat. It tells you where to find them instead.
 - "Who can sign in to my server?" → lists the allowlist
 - "Is anyone connected right now?" → lists the live sessions
 - "Give my partner an account on the server" → asks you to confirm, then adds it
+- "Who's waiting to get in?" → lists refused sign-ins; "let them in" asks you to confirm, then approves
 - "Sign every browser out" → asks you to confirm, then ends every session including yours
 
 ## How it works

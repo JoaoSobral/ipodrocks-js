@@ -3,6 +3,7 @@ import { Button } from "../common/Button";
 import { Card } from "../common/Card";
 import { Input } from "../common/Input";
 import { Switch } from "../common/Switch";
+import { SignInAllowlist } from "./SignInAllowlist";
 import {
   getWebServerStatus,
   isWebServerDenied,
@@ -207,6 +208,8 @@ export function WebServerCard({ open }: { open: boolean }) {
             <p className="text-xs text-destructive">{status.lastError}</p>
           )}
         </div>
+
+        {status && status.identityCount > 0 && <SignInAllowlist open={open} />}
       </div>
     </Card>
   );

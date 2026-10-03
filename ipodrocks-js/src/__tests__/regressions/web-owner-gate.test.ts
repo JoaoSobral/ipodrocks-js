@@ -51,6 +51,10 @@ const GATED = [
   "web_server_allow_identity",
   "web_server_revoke_identity",
   "web_server_revoke_sessions",
+  "web_server_list_access_requests",
+  "web_server_approve_access_request",
+  "web_server_dismiss_access_request",
+  "web_server_remove_link",
 ] as const;
 
 const ARGS: Record<string, Record<string, unknown>> = {
@@ -63,6 +67,11 @@ const ARGS: Record<string, Record<string, unknown>> = {
   },
   web_server_revoke_identity: { identity_id: 1 },
   web_server_revoke_sessions: { all: true },
+  // Ids 1: the first (and only) request and link the refusal test seeds.
+  web_server_list_access_requests: {},
+  web_server_approve_access_request: { request_id: 1 },
+  web_server_dismiss_access_request: { request_id: 1 },
+  web_server_remove_link: { link_id: 1 },
 };
 
 beforeEach(async () => {
@@ -134,6 +143,16 @@ describe("the web_server_* allowlist tools", () => {
     });
     const guest = identities.addIdentity({ provider: "local", subject: "guest" });
     putSession("sid-guest", guest.id);
+    // Something for the access-request and link tools to act on, if the gate
+    // let them.
+    identities.recordAccessRequest({
+      provider: "google",
+      subject: "waiting",
+      email: null,
+      emailVerified: false,
+      displayName: null,
+    });
+    identities.addLink({ identityId: owner.id, provider: "google", subject: "owner-google" });
 
     for (const name of GATED) {
       const tool = tools.getToolByName(name);
@@ -148,6 +167,9 @@ describe("the web_server_* allowlist tools", () => {
     const after = identities.listIdentities();
     expect(after.find((i) => i.subject === "intruder")).toBeUndefined();
     expect(after.find((i) => i.id === owner.id)).toBeTruthy();
+    expect(after.find((i) => i.subject === "waiting")).toBeUndefined();
+    expect(identities.listAccessRequests()).toHaveLength(1);
+    expect(identities.findLink("google", "owner-google")).not.toBeNull();
     expect(sessions.listServerSessions()).toHaveLength(1);
   });
 

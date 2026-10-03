@@ -251,7 +251,8 @@ so a random one was generated at boot.
 right answer for a LAN install.
 
 **"This account is not authorized to use this server."** The login worked and
-the allowlist refused it. The owner has to add that identity.
+the allowlist refused it. The owner approves it under Settings → Web Server →
+Waiting for approval.
 
 **The device never connects, or the app loads but nothing updates.** The
 WebSocket upgrade is refused when the request's `Origin` is not `publicUrl` or

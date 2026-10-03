@@ -2,11 +2,19 @@ import { Router, type Request, type Response, type NextFunction } from "express"
 import type { ServerConfig } from "../config";
 import { passport, type ProviderProfile } from "./passport-setup";
 import {
+  addLink,
+  allowProviderIdentity,
+  approveAccessRequest,
   authorizeIdentity,
   countIdentities,
   createLocalAccount,
-  listIdentities,
+  dismissAccessRequest,
+  findLinkById,
+  listAccessRequests,
+  listIdentitiesWithLinks,
+  listLinks,
   removeIdentity,
+  removeLink,
   setLocalPassword,
   verifyLocalLogin,
   findIdentityById,
@@ -14,6 +22,7 @@ import {
   type Identity,
 } from "./identities";
 import { validatePassword } from "./passwords";
+import { isOAuthProvider, isProvider, type OAuthProvider } from "../../shared/auth-providers";
 import {
   bucketsFor,
   checkRateLimit,
@@ -40,8 +49,15 @@ declare module "express-session" {
     /** Claim token typed at the login form, carried across the OAuth redirect
      *  so the callback can present it. Cleared as soon as it is used. */
     pendingClaimToken?: string;
+    /** Set by `POST /link/:provider`: the next callback for `provider` attaches
+     *  the account to `identityId` instead of logging in. Honoured only while
+     *  the session is still that identity and before `expiresAt`. */
+    pendingLink?: { identityId: number; provider: OAuthProvider; expiresAt: number };
   }
 }
+
+/** How long a started link waits for the provider to come back. */
+export const PENDING_LINK_TTL_MS = 10 * 60 * 1000;
 
 export interface AuthDeps {
   config: ServerConfig;
@@ -155,6 +171,7 @@ export function createAuthRouter(deps: AuthDeps): Router {
         localEnabled: true,
         user: identity
           ? {
+              id: identity.id,
               provider: identity.provider,
               displayName: identity.displayName,
               email: identity.email,
@@ -321,6 +338,52 @@ export function createAuthRouter(deps: AuthDeps): Router {
               res.redirect("/?auth=provider_failed");
               return;
             }
+            // A link started by `POST /link/:provider`. Consumed whatever
+            // happens next, so a stale one cannot turn a later login into a
+            // link. It is honoured only for the provider it was started for
+            // and only while the session is still the identity that started
+            // it — `currentIdentity()` re-reads the row, so a revoked identity
+            // or a session that has since changed hands falls through to an
+            // ordinary login.
+            //
+            // **The `state: true` nonce is what makes this safe.** Without it,
+            // an attacker could complete the provider leg with their *own*
+            // account and hand the signed-in victim the callback URL: this
+            // branch would then attach the attacker's account to the victim's
+            // identity, and the attacker could sign in as the victim from then
+            // on. The nonce lives in the session that started the flow, so a
+            // callback minted in any other browser fails in passport before it
+            // gets here.
+            const pendingLink = req.session.pendingLink;
+            delete req.session.pendingLink;
+            const linker = currentIdentity(req);
+            if (
+              pendingLink &&
+              pendingLink.provider === provider &&
+              pendingLink.expiresAt > Date.now() &&
+              linker !== null &&
+              linker.id === pendingLink.identityId
+            ) {
+              const linked = addLink({
+                identityId: linker.id,
+                provider: pendingLink.provider,
+                subject: profile.subject,
+                email: profile.emailVerified ? profile.email : null,
+                displayName: profile.displayName,
+              });
+              clearFailures(buckets);
+              // No `loginAs()`: the session already is this identity, and
+              // regenerating it would only log the user out of other tabs.
+              req.session.save(() => {
+                res.redirect(
+                  "error" in linked
+                    ? `/?auth=link_failed&reason=${linked.error}`
+                    : "/?auth=linked"
+                );
+              });
+              return;
+            }
+
             const claimToken = req.session.pendingClaimToken;
             // A successful provider login is not an admission. This is the
             // only thing standing between "anyone with a Google account" and
@@ -328,7 +391,8 @@ export function createAuthRouter(deps: AuthDeps): Router {
             const outcome = authorizeIdentity({
               provider: profile.provider,
               subject: profile.subject,
-              email: profile.emailVerified ? profile.email : null,
+              email: profile.email,
+              emailVerified: profile.emailVerified,
               displayName: profile.displayName,
               claimToken,
             });
@@ -348,10 +412,99 @@ export function createAuthRouter(deps: AuthDeps): Router {
   }
 
   // -------------------------------------------------------------------------
+  // Linked sign-in methods — any signed-in user, for their own identity
+  // -------------------------------------------------------------------------
+
+  /**
+   * Starts attaching a provider account to the caller's identity.
+   *
+   * A POST, so `origin-guard.ts` refuses it from any page we do not serve —
+   * a cross-site page cannot start a link in the owner's browser. It only marks
+   * the session; the browser then navigates to the ordinary
+   * `/api/auth/<provider>` start, and the callback finishes the link.
+   */
+  router.post("/link/:provider", requireAuth(config), (req, res) => {
+    const provider = String(req.params.provider);
+    if (!isOAuthProvider(provider) || !deps.enabledProviders.includes(provider)) {
+      res.status(404).json({ error: "That sign-in provider is not configured." });
+      return;
+    }
+    const identity = currentIdentity(req);
+    if (!identity) {
+      res.status(401).json({ error: "Not authenticated" });
+      return;
+    }
+    req.session.pendingLink = {
+      identityId: identity.id,
+      provider,
+      expiresAt: Date.now() + PENDING_LINK_TTL_MS,
+    };
+    req.session.save((err) => {
+      if (err) {
+        res.status(500).json({ error: "Could not start linking." });
+        return;
+      }
+      res.json({ url: `/api/auth/${provider}` });
+    });
+  });
+
+  router.get("/links", requireAuth(config), (req, res) => {
+    const identity = currentIdentity(req);
+    res.json({ links: identity ? listLinks(identity.id) : [] });
+  });
+
+  /** The caller's own link, or any link for the owner. Sessions are left
+   *  alone: they belong to the identity, which is still allowed in. */
+  router.delete("/links/:id", requireAuth(config), (req, res) => {
+    const id = Number.parseInt(String(req.params.id), 10);
+    const identity = currentIdentity(req);
+    const link = Number.isFinite(id) ? findLinkById(id) : null;
+    if (!link || !identity) {
+      res.status(404).json({ error: "No such sign-in method" });
+      return;
+    }
+    if (link.identityId !== identity.id && !identity.isOwner) {
+      res.status(403).json({ error: "That sign-in method belongs to someone else." });
+      return;
+    }
+    res.json(removeLink(link.id));
+  });
+
+  // -------------------------------------------------------------------------
+  // Access requests — owner only
+  // -------------------------------------------------------------------------
+  router.get("/access-requests", requireAuth(config), requireOwner, (_req, res) => {
+    res.json({ requests: listAccessRequests() });
+  });
+
+  router.post(
+    "/access-requests/:id/approve",
+    requireAuth(config),
+    requireOwner,
+    (req, res) => {
+      const id = Number.parseInt(String(req.params.id), 10);
+      const outcome = Number.isFinite(id)
+        ? approveAccessRequest(id)
+        : { error: "Bad id" };
+      if ("error" in outcome) {
+        res.status(400).json(outcome);
+        return;
+      }
+      res.json(outcome);
+    }
+  );
+
+  router.delete("/access-requests/:id", requireAuth(config), requireOwner, (req, res) => {
+    const id = Number.parseInt(String(req.params.id), 10);
+    const outcome = Number.isFinite(id) ? dismissAccessRequest(id) : { error: "Bad id" };
+    res.status("error" in outcome ? 400 : 200).json(outcome);
+  });
+
+  // -------------------------------------------------------------------------
   // Allowlist management — owner only
   // -------------------------------------------------------------------------
   router.get("/identities", requireAuth(config), requireOwner, (_req, res) => {
-    res.json({ identities: listIdentities() });
+    res.json({ identities: listIdentitiesWithLinks() });
   });
 
   router.post("/identities", requireAuth(config), requireOwner, (req, res) => {
@@ -359,7 +512,7 @@ export function createAuthRouter(deps: AuthDeps): Router {
       const { provider, subject, email, displayName, password } = (req.body ??
         {}) as Record<string, unknown>;
       const p = String(provider ?? "");
-      if (!["google", "github", "facebook", "local"].includes(p)) {
+      if (!isProvider(p)) {
         res.status(400).json({ error: "Unknown provider" });
         return;
       }
@@ -378,14 +531,17 @@ export function createAuthRouter(deps: AuthDeps): Router {
         res.json({ identity });
         return;
       }
-      const { addIdentity } = await import("./identities");
-      const identity = addIdentity({
-        provider: p as Identity["provider"],
+      const outcome = allowProviderIdentity({
+        provider: p,
         subject: s,
         email: typeof email === "string" ? email : null,
         displayName: typeof displayName === "string" ? displayName : null,
       });
-      res.json({ identity });
+      if ("error" in outcome) {
+        res.status(409).json(outcome);
+        return;
+      }
+      res.json(outcome);
     })();
   });
 

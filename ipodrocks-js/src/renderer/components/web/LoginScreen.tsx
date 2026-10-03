@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Button } from "../common/Button";
 import { Input } from "../common/Input";
 import type { AuthStatus } from "../../ipc/web-transport";
+import { PROVIDER_LABELS, isProvider } from "@shared/auth-providers";
 
 /**
  * The web mode login screen.
@@ -16,11 +17,6 @@ import type { AuthStatus } from "../../ipc/web-transport";
  * identity exists, so a stale page cannot be used to create a second one.
  */
 
-const PROVIDER_LABELS: Record<string, string> = {
-  google: "Google",
-  github: "GitHub",
-  facebook: "Facebook",
-};
 
 interface LoginScreenProps {
   auth: AuthStatus;
@@ -152,7 +148,7 @@ export function LoginScreen({ auth, onAuthenticated }: LoginScreenProps) {
                 }
               >
                 <Button className="w-full" type="button">
-                  Continue with {PROVIDER_LABELS[p] ?? p}
+                  Continue with {isProvider(p) ? PROVIDER_LABELS[p] : p}
                 </Button>
               </a>
             ))}

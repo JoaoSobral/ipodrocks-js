@@ -1,5 +1,6 @@
 import * as fs from "fs";
 import { getWebServerPrefs, type WebServerPrefs } from "../main/utils/prefs";
+import { OAUTH_PROVIDERS, type OAuthProvider } from "../shared/auth-providers";
 
 /**
  * Where the server's configuration comes from, and why it is split.
@@ -42,11 +43,8 @@ export interface ServerConfig {
   allowedOrigins: string[];
   tls: { certPath: string; keyPath: string } | null;
   sessionSecret: string | null;
-  oauth: {
-    google: OAuthProviderConfig | null;
-    github: OAuthProviderConfig | null;
-    facebook: OAuthProviderConfig | null;
-  };
+  /** One entry per `OAUTH_PROVIDERS` member; null when its pair is unset. */
+  oauth: Record<OAuthProvider, OAuthProviderConfig | null>;
   cloudflareAccess: { teamDomain: string; audience: string } | null;
 }
 
@@ -85,6 +83,16 @@ function provider(idVar: string, secretVar: string): OAuthProviderConfig | null 
   return { clientId, clientSecret };
 }
 
+/** `IPODROCKS_<PROVIDER>_CLIENT_ID` / `_CLIENT_SECRET` for every provider. */
+function oauthFromEnv(): Record<OAuthProvider, OAuthProviderConfig | null> {
+  const out = {} as Record<OAuthProvider, OAuthProviderConfig | null>;
+  for (const p of OAUTH_PROVIDERS) {
+    const prefix = `IPODROCKS_${p.toUpperCase()}`;
+    out[p] = provider(`${prefix}_CLIENT_ID`, `${prefix}_CLIENT_SECRET`);
+  }
+  return out;
+}
+
 /** Normalizes an origin to scheme://host[:port], dropping any path. */
 export function normalizeOrigin(raw: string): string | null {
   try {
@@ -116,14 +124,7 @@ export function loadServerConfig(prefs?: WebServerPrefs): ServerConfig {
       .filter((o): o is string => o !== null),
     tls: certPath && keyPath ? { certPath, keyPath } : null,
     sessionSecret: envStr("IPODROCKS_SESSION_SECRET") ?? null,
-    oauth: {
-      google: provider("IPODROCKS_GOOGLE_CLIENT_ID", "IPODROCKS_GOOGLE_CLIENT_SECRET"),
-      github: provider("IPODROCKS_GITHUB_CLIENT_ID", "IPODROCKS_GITHUB_CLIENT_SECRET"),
-      facebook: provider(
-        "IPODROCKS_FACEBOOK_CLIENT_ID",
-        "IPODROCKS_FACEBOOK_CLIENT_SECRET"
-      ),
-    },
+    oauth: oauthFromEnv(),
     cloudflareAccess: cfTeam && cfAud ? { teamDomain: cfTeam, audience: cfAud } : null,
   };
 }

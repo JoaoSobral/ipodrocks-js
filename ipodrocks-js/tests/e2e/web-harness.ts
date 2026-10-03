@@ -174,3 +174,68 @@ export async function setMpcReminderDisabled(
   await invoke(request, "app:setMpcRemindDisabled", disabled);
   return before.disabled;
 }
+
+/**
+ * Seeds a refused provider sign-in, as `authorizeIdentity()` records one.
+ *
+ * The third exception to "nothing here reaches inside the app", for the same
+ * reason as the device rows: the only producer of an access request is a real
+ * Google/GitHub/Facebook callback, which the e2e daemon has no provider for.
+ * Everything a request is *used* for — listing, approving, dismissing, the
+ * owner gate on all three — then runs through the app.
+ */
+export function seedAccessRequest(
+  provider: string,
+  subject: string,
+  email: string | null,
+  displayName: string | null
+): number {
+  const db = new Database(path.join(WEB_DATA_DIR, "ipodrocks-server.db"));
+  try {
+    const now = Date.now();
+    const info = db
+      .prepare(
+        "INSERT INTO server_access_requests " +
+          "(provider, subject, email, email_verified, display_name, first_seen_at, last_seen_at) " +
+          "VALUES (?, ?, ?, ?, ?, ?, ?)"
+      )
+      .run(provider, subject, email, email ? 1 : 0, displayName, now, now);
+    return Number(info.lastInsertRowid);
+  } finally {
+    db.close();
+  }
+}
+
+/**
+ * Seeds a linked sign-in method for an identity. Same exception as
+ * {@link seedAccessRequest}: a link is only ever made by a provider callback.
+ */
+export function seedSignInLink(identityId: number, provider: string, subject: string): number {
+  const db = new Database(path.join(WEB_DATA_DIR, "ipodrocks-server.db"));
+  try {
+    const info = db
+      .prepare(
+        "INSERT INTO server_identity_links (identity_id, provider, subject, email) " +
+          "VALUES (?, ?, ?, ?)"
+      )
+      .run(identityId, provider, subject, `${subject}@example.com`);
+    return Number(info.lastInsertRowid);
+  } finally {
+    db.close();
+  }
+}
+
+/** Drops whatever {@link seedAccessRequest} and {@link seedSignInLink} left
+ *  behind for these subjects, so a spec leaves the shared daemon as it found
+ *  it even when it fails halfway. */
+export function clearSeededSignIns(subjects: string[]): void {
+  const db = new Database(path.join(WEB_DATA_DIR, "ipodrocks-server.db"));
+  try {
+    for (const s of subjects) {
+      db.prepare("DELETE FROM server_access_requests WHERE subject = ?").run(s);
+      db.prepare("DELETE FROM server_identity_links WHERE subject = ?").run(s);
+    }
+  } finally {
+    db.close();
+  }
+}
