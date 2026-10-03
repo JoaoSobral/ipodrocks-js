@@ -23,3 +23,6 @@ docs/.vitepress/cache
 .gitignore
 .DS_Store
 .claude
+
+# Docker Hub page text, not image content
+docker

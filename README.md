@@ -18,7 +18,7 @@ iPodRocks is a sync manager for [Rockbox devices](https://www.rockbox.org/) — 
 
 Run iPodRocks as a **server** on a NAS, a home server, an old desktop, then open it in a **browser from wherever you happen to be**. Plug your player into *that* laptop, point the browser at its folder, and sync it to the library sitting at home.
 
-It also runs **headless**: a plain daemon with no Electron, shipped with a `Dockerfile`, a `docker-compose.yml` and a systemd unit.
+It also runs **headless**: a plain daemon with no Electron, published on Docker Hub as [`jpsobral/ipodrocks-server`](https://hub.docker.com/r/jpsobral/ipodrocks-server) (amd64 + arm64), with a `docker-compose.yml` and a systemd unit.
 
 ### What is not!
 
@@ -82,7 +82,7 @@ If you really like iPodRocks and want to keep it caffeinated, you can buy me a c
 ### 🌍 Sync from anywhere — web server & remote devices
 - **The whole app in a browser** — Turn on **Settings → Web Server** and iPodRocks serves its interface over HTTP: same library, same database, same devices, sync, playlists, ratings and Rocksy. Not a companion view — it is the app.
 - **Your iPod does not have to be on the same machine as your library** — The server keeps the library, the database and the encoders; the *player* is plugged into whatever laptop you are sitting at. Your browser hands iPodRocks the player's folder and every file travels server → browser → device. Needs Chrome, Edge or another Chromium browser over HTTPS.
-- **Runs headless** — A standalone daemon with no Electron at all, so the machine holding your library needs no screen and no login session. Ships with a `Dockerfile`, a `docker-compose.yml` (with a `cloudflared` sidecar) and a systemd unit.
+- **Runs headless** — A standalone daemon with no Electron at all, so the machine holding your library needs no screen and no login session. `docker pull jpsobral/ipodrocks-server` — published for amd64 and arm64 with every release — plus a `docker-compose.yml` (with a `cloudflared` sidecar) and a systemd unit.
 - **Sign in with Google, GitHub, Facebook or a password** — and **signing in is not the same as being let in**: only accounts on an allowlist you control reach your library, however valid their Google account. The first person to arrive claims the server with a one-time token printed to its log.
 - **Built for Cloudflare Tunnel** — The recommended shape opens no inbound port at all. Cloudflare Access is verified at the origin, not merely trusted.
 
@@ -227,16 +227,30 @@ npm run build
 IPODROCKS_DATA_DIR=/srv/ipodrocks IPODROCKS_SERVER_HOST=127.0.0.1 IPODROCKS_SERVER_PORT=8780 IPODROCKS_SESSION_SECRET="$(openssl rand -base64 48)" npm run server
 ```
 
-With Docker:
+With Docker — every release is published to Docker Hub as
+[`jpsobral/ipodrocks-server`](https://hub.docker.com/r/jpsobral/ipodrocks-server)
+for `linux/amd64` and `linux/arm64`, so there is nothing to clone or build:
 
 ```bash
-cd ipodrocks-js
-docker build -t ipodrocks-server .
-docker run -d --name ipodrocks   -p 127.0.0.1:8780:8780   -v ipodrocks-data:/data   -v /srv/music:/music:ro   -e IPODROCKS_SESSION_SECRET="$(openssl rand -base64 48)"   ipodrocks-server
+docker pull jpsobral/ipodrocks-server:latest
+docker run -d --name ipodrocks \
+  -p 127.0.0.1:8780:8780 \
+  -v ipodrocks-data:/data \
+  -v /srv/music:/music:ro \
+  -e IPODROCKS_SESSION_SECRET="$(openssl rand -base64 48)" \
+  jpsobral/ipodrocks-server:latest
 ```
 
-Or `docker compose up -d`, adding `--profile tunnel` for a `cloudflared`
-sidecar. A systemd unit is in `ipodrocks-js/deploy/`.
+Tags: `latest` is the newest full release, `3.0.1` / `3.0` pin a release, and
+betas are published only under their own tag (e.g. `3.1.0-beta`) — they never
+move `latest`. To upgrade, pull and recreate the container; everything lives in
+the `/data` volume.
+
+Or use [`ipodrocks-js/docker-compose.yml`](ipodrocks-js/docker-compose.yml)
+(`docker compose up -d`, adding `--profile tunnel` for a `cloudflared`
+sidecar; `docker compose pull && docker compose up -d` to upgrade). To build
+your own checkout instead: `cd ipodrocks-js && docker build -t ipodrocks-server .`
+A systemd unit is in `ipodrocks-js/deploy/`.
 
 ### First run
 

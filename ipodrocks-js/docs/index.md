@@ -54,8 +54,9 @@ you control.
   the sync engine             ◀──WS────   holds the device
 ```
 
-It runs headless too — a plain daemon with no Electron, shipped with a
-`Dockerfile`, a `docker-compose.yml` and a systemd unit — and it is built to sit
+It runs headless too — a plain daemon with no Electron, published on Docker Hub
+as [`jpsobral/ipodrocks-server`](https://hub.docker.com/r/jpsobral/ipodrocks-server)
+(amd64 and arm64), with a `docker-compose.yml` and a systemd unit — and it is built to sit
 behind a Cloudflare Tunnel that opens no inbound port at all.
 
 → [Setting up the server, end to end](/guide/server-setup)

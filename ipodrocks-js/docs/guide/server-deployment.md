@@ -32,7 +32,7 @@ reference for the deployment itself.
 
 ## Requirements
 
-Node 22 or newer, and a checkout built with `npm run build`. That is all — the
+Node 24 or newer, and a checkout built with `npm run build`. That is all — the
 daemon imports no Electron and needs none installed.
 
 `better-sqlite3`, the only native dependency, ships prebuilt binaries in its npm
@@ -42,19 +42,58 @@ either way.
 
 ## Docker
 
-The `Dockerfile` in the repository root builds the daemon and nothing else. It
-installs with `--ignore-scripts`, which skips Electron's ~100 MB binary
-download; the image never runs Electron and has no other use for it.
+Every GitHub release publishes the daemon to Docker Hub as
+[`jpsobral/ipodrocks-server`](https://hub.docker.com/r/jpsobral/ipodrocks-server),
+for `linux/amd64` and `linux/arm64` (a Raspberry Pi 4/5, most ARM NAS boxes,
+Apple-silicon Docker). Nothing to clone, nothing to build:
 
 ```sh
-docker build -t ipodrocks-server .
+docker pull jpsobral/ipodrocks-server:latest
 docker run -d --name ipodrocks \
   -p 127.0.0.1:8780:8780 \
   -v ipodrocks-data:/data \
   -v /srv/music:/music:ro \
   -e IPODROCKS_SESSION_SECRET="$(openssl rand -base64 48)" \
-  ipodrocks-server
+  jpsobral/ipodrocks-server:latest
 ```
+
+| Tag | Meaning |
+|---|---|
+| `latest` | The newest full release. |
+| `3.0.1` | That exact release. Pin this if you want upgrades to be a decision. |
+| `3.0` | The newest patch release of 3.0. |
+| `3.1.0-beta` | A pre-release. Betas are published only under their own tag and **never move `latest`**. |
+
+The image contains the daemon and nothing else — it never runs Electron.
+
+### Upgrading
+
+Everything that matters lives in the `/data` volume, so an upgrade is a new
+container on the same volume:
+
+```sh
+docker pull jpsobral/ipodrocks-server:latest
+docker rm -f ipodrocks
+docker run -d --name ipodrocks …same flags as before…
+```
+
+With compose, `docker compose pull && docker compose up -d`. Database
+migrations run on the first start of the new version; take a copy of `/data`
+first if you are jumping several releases.
+
+### Building the image yourself
+
+The `Dockerfile` beside `package.json` is what the release builds. To run your
+own checkout instead:
+
+```sh
+cd ipodrocks-js
+docker build -t ipodrocks-server .
+```
+
+and use `ipodrocks-server` in place of `jpsobral/ipodrocks-server:latest`
+above (or `docker compose up -d --build`). It installs with
+`--ignore-scripts`, which skips Electron's ~100 MB binary download.
 
 Then read the claim token out of the log (see [First run](#first-run)):
 
@@ -91,10 +130,12 @@ on a desktop install with no `mpcenc` on `PATH`.
 
 ### docker-compose
 
-`docker-compose.yml` in the repository root is a starting point. Copy the
-variables it references into a `.env` beside it:
+`docker-compose.yml` beside the `Dockerfile` is a starting point. It runs the
+published image; you need only that file and a `.env` beside it holding the
+variables it references:
 
 ```sh
+IPODROCKS_VERSION=latest          # or pin a release, e.g. 3.0.1
 IPODROCKS_SESSION_SECRET=…        # openssl rand -base64 48
 IPODROCKS_PUBLIC_URL=https://ipod.example.com
 IPODROCKS_MUSIC_DIR=/srv/music
@@ -244,8 +285,9 @@ the move from Electron to a daemon.
 for a platform or architecture other than the one it is running on. Reinstall on
 the target machine rather than copying `node_modules` across.
 
-**Locked out of the owner account.** Run `node dist/main/server/cli.js password
-<username>` on the server (`docker exec -it` in a container), or boot once with
+**Locked out of the owner account.** Run
+`node dist/main/server/cli.js password <username>` on the server
+(`docker exec -it` in a container), or boot once with
 `IPODROCKS_RESET_OWNER=1`. See [Forgot your password](/guide/server-setup#forgot-your-password).
 
 **Everyone is logged out after a restart.** `IPODROCKS_SESSION_SECRET` is unset,

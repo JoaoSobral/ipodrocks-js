@@ -17,7 +17,10 @@
 # assuming, because a future dependency that *does* need a build step would
 # otherwise fail at the first database open in production.
 
-ARG NODE_VERSION=22-bookworm
+# 24, not 22: the lockfile is written by a current npm, and Node 22's npm 10
+# reads vitepress's `@docsearch/react` peer (react <19) as a lockfile mismatch
+# and refuses `npm ci` outright. Node 24's npm 11 accepts it, as CI's does.
+ARG NODE_VERSION=24-bookworm
 
 # ---------------------------------------------------------------------------
 # deps — the production tree the runtime stage keeps
@@ -67,12 +70,17 @@ COPY package.json ./
 ENV IPODROCKS_DATA_DIR=/data \
     IPODROCKS_SERVER_HOST=0.0.0.0 \
     IPODROCKS_SERVER_PORT=8780
-VOLUME ["/data", "/music"]
 EXPOSE 8780
 
 # Not root. The daemon writes only to IPODROCKS_DATA_DIR and to the OS temp
 # directory, and reads the library; nothing it does needs privilege.
+#
+# The chown must come *before* VOLUME: anything a later step does to a declared
+# volume path is discarded, so /data stayed root-owned and a fresh volume (named
+# or anonymous — both are seeded from the image) gave `node` a directory it
+# could not create the database in.
 RUN mkdir -p /data /music && chown -R node:node /data
+VOLUME ["/data", "/music"]
 USER node
 
 # `/api/auth/status` is unauthenticated on purpose — it is what the login screen

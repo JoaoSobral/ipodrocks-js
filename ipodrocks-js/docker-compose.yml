@@ -12,10 +12,14 @@
 
 services:
   ipodrocks:
+    # The published image, built for amd64 and arm64 on every GitHub release.
+    # Pin a version with IPODROCKS_VERSION=3.0.1 in .env; upgrade with
+    # `docker compose pull && docker compose up -d`. The `build:` block below is
+    # only used by `docker compose up --build`, for running your own checkout.
+    image: jpsobral/ipodrocks-server:${IPODROCKS_VERSION:-latest}
     build:
       context: .
       dockerfile: Dockerfile
-    image: ipodrocks-server:local
     restart: unless-stopped
     # Published to loopback only: the tunnel and the healthcheck reach it, the
     # LAN does not. Change to "8780:8780" only together with TLS.

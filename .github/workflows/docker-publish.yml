@@ -1,0 +1,217 @@
+name: Publish server image to Docker Hub
+
+# Builds ipodrocks-js/Dockerfile (the headless daemon, never Electron) for
+# amd64 and arm64 on native runners, smoke-tests it, and pushes one multi-arch
+# manifest to Docker Hub.
+#
+# Kept apart from release-build.yml on purpose: a broken desktop build must not
+# hold back the image, nor the other way round.
+#
+# Tags:
+#   full release  v3.1.0       -> 3.1.0, 3.1, latest
+#   pre-release   v3.1.0-beta  -> 3.1.0-beta only; `latest` never moves
+# A release ticked "Set as a pre-release" in GitHub is treated as one even when
+# its tag looks stable.
+#
+# Needs two repository secrets: DOCKERHUB_USERNAME and DOCKERHUB_TOKEN (a Docker
+# Hub personal access token with Read, Write, Delete scope — the Delete scope is
+# what the description sync at the end needs).
+#
+# Actions are pinned to commit SHAs: this workflow holds a token that can
+# overwrite the published image.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Git tag to build and publish (e.g. v3.0.1)"
+        required: true
+      latest:
+        description: "Also move :latest and :X.Y"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docker-publish-${{ github.event.release.tag_name || inputs.tag }}
+  cancel-in-progress: false
+
+env:
+  IMAGE: jpsobral/ipodrocks-server
+  GIT_REF: ${{ github.event.release.tag_name || inputs.tag }}
+
+jobs:
+  build:
+    name: Build ${{ matrix.platform }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            platform: linux/amd64
+            pair: linux-amd64
+          - runner: ubuntu-24.04-arm
+            platform: linux/arm64
+            pair: linux-arm64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.GIT_REF }}
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # Labels only; the tags are decided once, in the merge job.
+      - name: Image labels
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=semver,pattern={{version}},value=${{ env.GIT_REF }}
+          labels: |
+            org.opencontainers.image.title=iPodRocks server
+            org.opencontainers.image.description=Headless iPodRocks daemon: sync Rockbox players from a browser
+            org.opencontainers.image.licenses=GPL-3.0-only
+
+      # Pushed by digest only: no tag exists until the merge job has smoke-tested
+      # the result, so a broken build never reaches anyone pulling :latest.
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: ipodrocks-js
+          platforms: ${{ matrix.platform }}
+          labels: ${{ steps.meta.outputs.labels }}
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=${{ matrix.pair }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.pair }}
+
+      - name: Export digest
+        run: |
+          mkdir -p "${{ runner.temp }}/digests"
+          digest="${{ steps.build.outputs.digest }}"
+          touch "${{ runner.temp }}/digests/${digest#sha256:}"
+
+      - name: Upload digest
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: digest-${{ matrix.pair }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge:
+    name: Smoke-test and publish manifest
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.GIT_REF }}
+
+      - name: Download digests
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          path: ${{ runner.temp }}/digests
+          pattern: digest-*
+          merge-multiple: true
+
+      - name: Download amd64 digest for the smoke test
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: digest-linux-amd64
+          path: ${{ runner.temp }}/amd64
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # Stable = may move :latest and :X.Y. On a release that is "not marked
+      # pre-release"; on a manual run it is the `latest` input. A semver
+      # pre-release tag (v3.1.0-beta) is never stable either way — the semver
+      # rules below skip it on their own.
+      - name: Decide stability
+        id: stable
+        env:
+          EVENT: ${{ github.event_name }}
+          PRERELEASE: ${{ github.event.release.prerelease }}
+          INPUT_LATEST: ${{ inputs.latest }}
+        run: |
+          if [ "$EVENT" = "release" ]; then
+            [ "$PRERELEASE" = "true" ] && echo "value=false" >> "$GITHUB_OUTPUT" || echo "value=true" >> "$GITHUB_OUTPUT"
+          else
+            [ "$INPUT_LATEST" = "true" ] && echo "value=true" >> "$GITHUB_OUTPUT" || echo "value=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Compute tags
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ${{ env.IMAGE }}
+          flavor: |
+            latest=false
+          tags: |
+            type=semver,pattern={{version}},value=${{ env.GIT_REF }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ env.GIT_REF }},enable=${{ steps.stable.outputs.value }}
+            type=raw,value=latest,enable=${{ steps.stable.outputs.value == 'true' && !contains(env.GIT_REF, '-') }}
+
+      # Run the amd64 build exactly as a user would, and wait for the same
+      # unauthenticated route the Dockerfile HEALTHCHECK uses.
+      - name: Smoke-test amd64 image
+        working-directory: ${{ runner.temp }}/amd64
+        run: |
+          set -eu
+          ref="${IMAGE}@sha256:$(ls)"
+          docker run -d --name smoke -p 127.0.0.1:8780:8780 "$ref"
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8780/api/auth/status; then
+              echo; echo "daemon answered after ${i}s"; docker rm -f smoke; exit 0
+            fi
+            sleep 1
+          done
+          docker logs smoke
+          exit 1
+
+      - name: Create and push manifest
+        working-directory: ${{ runner.temp }}/digests
+        # Word splitting is the point here: one `-t` per tag, one ref per digest.
+        run: |
+          # shellcheck disable=SC2046
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf "${IMAGE}@sha256:%s " *)
+
+      - name: Inspect published image
+        run: docker buildx imagetools inspect "${IMAGE}:${{ steps.meta.outputs.version }}"
+
+      # Cosmetic: keeps the Docker Hub page in step with the repo. Never fails a
+      # release — the image is already published by this point.
+      - name: Sync Docker Hub description
+        if: steps.stable.outputs.value == 'true'
+        continue-on-error: true
+        uses: peter-evans/dockerhub-description@1b9a80c056b620d92cedb9d9b5a223409c68ddfa # v5.0.0
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          repository: ${{ env.IMAGE }}
+          short-description: "Headless iPodRocks server: sync Rockbox players from a browser"
+          readme-filepath: ipodrocks-js/docker/DOCKERHUB.md

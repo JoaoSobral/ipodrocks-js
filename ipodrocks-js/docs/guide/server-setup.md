@@ -62,17 +62,20 @@ IPODROCKS_SESSION_SECRET="$(openssl rand -base64 48)" \
 npm run server
 ```
 
-Or with Docker:
+Or with Docker, using the image every release publishes to Docker Hub
+(`linux/amd64` and `linux/arm64`) — no checkout needed:
 
 ```sh
-docker build -t ipodrocks-server .
+docker pull jpsobral/ipodrocks-server:latest
 docker run -d --name ipodrocks \
   -p 127.0.0.1:8780:8780 \
   -v ipodrocks-data:/data \
   -v /srv/music:/music:ro \
   -e IPODROCKS_SESSION_SECRET="$(openssl rand -base64 48)" \
-  ipodrocks-server
+  jpsobral/ipodrocks-server:latest
 ```
+
+Tags and upgrades are covered in [Deploying the Server](/guide/server-deployment#docker).
 
 For a compose file, a systemd unit and the full environment reference, see
 [Deploying the Server](/guide/server-deployment).
