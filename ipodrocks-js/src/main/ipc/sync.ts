@@ -43,7 +43,10 @@ import type {
   SyncOptions,
   DeviceSyncPreferences,
   ContentType,
+  SyncStatusSnapshot,
 } from "../../shared/types";
+import { onDeviceLinkStateChange } from "../devices/fs";
+import type { SyncProgressPayload } from "../sync/sync-core";
 import { albumLabelsForTrack } from "../../shared/album-label";
 import { subjectForSessionId } from "../../server/auth/sessions";
 import type { HandlerContext } from "../host/bridge";
@@ -101,6 +104,92 @@ export function mayCancelSync(ctx: HandlerContext, sync: ActiveSync): boolean {
  * reason to care about a sync running on another, so callers that know which
  * device they mean should say so.
  */
+/**
+ * What a sync looks like from outside, per device — kept after it finishes for
+ * {@link STATUS_RETENTION_MS} so a tab that reconnects *after* the end still
+ * learns how it went.
+ *
+ * Scoped exactly like cancelling: `sync:status` shows a caller only the syncs
+ * {@link mayCancelSync} would let it stop. A sync's log names library files,
+ * and a guest has no business reading another account's.
+ */
+interface StatusEntry {
+  snapshot: SyncStatusSnapshot;
+  owner: ActiveSync;
+  finishedAt?: number;
+  offLink?: () => void;
+  /** Deletion a `delete-all` left running in the background. */
+  background?: Promise<void>;
+}
+
+const syncStatuses = new Map<number, StatusEntry>();
+/** The entry each `sync:start` call created, so its wrapper can close it. */
+const statusByCall = new WeakMap<object, StatusEntry>();
+const STATUS_RETENTION_MS = 10 * 60 * 1000;
+const STATUS_LOG_LINES = 50;
+
+function pruneStatuses(now: number): void {
+  for (const [deviceId, entry] of syncStatuses) {
+    if (entry.finishedAt !== undefined && now - entry.finishedAt > STATUS_RETENTION_MS) {
+      syncStatuses.delete(deviceId);
+    }
+  }
+}
+
+/** Folds one progress event into the snapshot. Mirrors what the progress
+ *  modal counts, so a re-joining modal starts from the same numbers. */
+function recordProgress(entry: StatusEntry, ev: SyncProgressPayload): void {
+  const snap = entry.snapshot;
+  switch (ev.event) {
+    case "total":
+      snap.total = Number(ev.path) || 0;
+      break;
+    case "total_add":
+      snap.total += Number(ev.path) || 0;
+      break;
+    case "copy":
+      snap.processed++;
+      if (ev.status === "copied" || ev.status === "converted") snap.synced++;
+      else if (ev.status === "error") snap.errors++;
+      break;
+    case "remove":
+      snap.removed++;
+      break;
+    case "bytes":
+      snap.bytes += Number(ev.bytes) || 0;
+      break;
+    case "state":
+      snap.state = ev.state === "waiting" ? "waiting" : "running";
+      snap.reason = typeof ev.message === "string" ? ev.message : undefined;
+      break;
+    default:
+      break;
+  }
+  if ((ev.event === "log" || ev.event === "state") && typeof ev.message === "string") {
+    snap.log.push(ev.message);
+    if (snap.log.length > STATUS_LOG_LINES) snap.log.splice(0, snap.log.length - STATUS_LOG_LINES);
+  }
+}
+
+/**
+ * The sync snapshots `caller` may see — the same rule as cancelling. Shared
+ * by `sync:status` and Rocksy's `sync_status`, so the two cannot disagree
+ * about whose sync is whose.
+ */
+export function listSyncStatuses(
+  caller: Pick<HandlerContext, "sessionId">,
+  deviceId?: number
+): SyncStatusSnapshot[] {
+  pruneStatuses(Date.now());
+  const out: SyncStatusSnapshot[] = [];
+  for (const [id, entry] of syncStatuses) {
+    if (deviceId !== undefined && deviceId !== null && id !== deviceId) continue;
+    if (!mayCancelSync(caller as HandlerContext, entry.owner)) continue;
+    out.push({ ...entry.snapshot, log: [...entry.snapshot.log] });
+  }
+  return out;
+}
+
 export function isSyncActive(deviceId?: number): boolean {
   if (deviceId === undefined) return activeSyncAborts.size > 0;
   return activeSyncAborts.has(deviceId);
@@ -146,13 +235,33 @@ export function registerSyncHandlers(): void {
       // that is already refused upstream; two different devices no longer
       // interfere.
       const syncAbort = new AbortController();
-      activeSyncAborts.set(opts.deviceId, {
+      const activeSync: ActiveSync = {
         controller: syncAbort,
         sessionId: event.sessionId,
         subject:
           event.sessionId === undefined ? null : subjectForSessionId(event.sessionId),
-      });
+      };
+      activeSyncAborts.set(opts.deviceId, activeSync);
       const syncSignal = syncAbort.signal;
+
+      const statusEntry: StatusEntry = {
+        owner: activeSync,
+        snapshot: {
+          deviceId: opts.deviceId,
+          startedAt: Date.now(),
+          active: true,
+          state: "running",
+          total: 0,
+          processed: 0,
+          synced: 0,
+          errors: 0,
+          removed: 0,
+          bytes: 0,
+          log: [],
+        },
+      };
+      syncStatuses.set(opts.deviceId, statusEntry);
+      statusByCall.set(event, statusEntry);
 
       const { music: musicMap, podcast: podcastMap, audiobook: audiobookMap } =
         buildLibraryTrackMaps(lib);
@@ -301,11 +410,29 @@ export function registerSyncHandlers(): void {
         preloadedMtimes,
         profileCodecExtOverride: profileCodecExtOverride ?? undefined,
         progressCallback: (progressEvent) => {
+          recordProgress(statusEntry, progressEvent);
           if (!event.sender.isDestroyed()) {
             event.sender.send("sync:progress", progressEvent);
           }
         },
       };
+
+      // A browser-held device whose tab dropped is not an error yet: every
+      // call waits out the reconnect grace. Saying so is the difference between
+      // "the sync is stuck" and "the sync is waiting for you".
+      statusEntry.offLink = onDeviceLinkStateChange((deviceId, linkState) => {
+        if (deviceId !== opts.deviceId) return;
+        syncOpts.progressCallback?.(
+          linkState === "suspended"
+            ? {
+                event: "state",
+                state: "waiting",
+                message:
+                  "Lost the connection to the browser holding the device — waiting for it to reconnect…",
+              }
+            : { event: "state", state: "running", message: "Device reconnected — resuming." }
+        );
+      });
 
       let result: {
         status: string;
@@ -482,6 +609,7 @@ export function registerSyncHandlers(): void {
           progressCallback: syncOpts.progressCallback,
           cancelSignal: syncSignal,
         });
+        statusEntry.background = reset.background;
         if (syncSignal.aborted) throw new SyncCancelled();
         syncOpts.progressCallback?.({
           event: "log",
@@ -810,6 +938,16 @@ export function registerSyncHandlers(): void {
         }
       }
 
+      if (statusEntry.background) {
+        // The old folders were swapped out at the start and have been deleting
+        // alongside the copy; the device is not handed back with them on it.
+        syncOpts.progressCallback?.({
+          event: "log",
+          message: "Delete all: finishing removal of the old files…",
+        });
+        await statusEntry.background;
+      }
+
       if (result.removed > 0) {
         syncOpts.progressCallback?.({
           event: "log",
@@ -829,12 +967,34 @@ export function registerSyncHandlers(): void {
   // `device:eject` refuses that player forever, with no user action that
   // clears it.
   bridgeHandle("sync:start", async (event, opts: SyncOptions) => {
+    let outcome: unknown;
     try {
-      return await runStartSync(event, opts);
+      outcome = await runStartSync(event, opts);
+      return outcome;
     } finally {
       if (typeof opts?.deviceId === "number") activeSyncAborts.delete(opts.deviceId);
+      const entry = statusByCall.get(event);
+      if (entry) {
+        entry.offLink?.();
+        entry.snapshot.active = false;
+        entry.snapshot.state = "running";
+        entry.snapshot.result = outcome ?? { error: "Sync failed" };
+        entry.finishedAt = Date.now();
+      }
     }
   });
+
+  bridgeHandle(
+    "sync:status",
+    // A tab that reloads or reconnects mid-sync calls this to pick the
+    // progress display back up. Read-only, and scoped like `sync:cancel`.
+    safe("sync:status", async (event, deviceId?: number) => {
+      if (deviceId !== undefined && deviceId !== null && typeof deviceId !== "number") {
+        return { error: "Invalid device id" };
+      }
+      return listSyncStatuses(event, deviceId ?? undefined);
+    })
+  );
 
   bridgeHandle(
     "sync:cancel",

@@ -13,6 +13,7 @@
 import {
   DEVICE_ATTACH,
   DEVICE_DETACH,
+  DEVICE_RPC_PROGRESS,
   DEVICE_RPC_REQUEST,
   DEVICE_RPC_RESULT,
   type DeviceAttachFrame,
@@ -34,6 +35,12 @@ import {
 /** What the client needs of the transport: a way to send, and a way to hear. */
 export interface DeviceSocket {
   send(frame: unknown): void;
+  /**
+   * Sends now, or — if the socket is down — as soon as it is back. For RPC
+   * replies: a reply dropped on the floor during a reconnect is a call the
+   * server waits out to its timeout, for an operation that actually finished.
+   */
+  sendReliable?(frame: unknown): void;
   onFrame(listener: (frame: Record<string, unknown>) => void): () => void;
 }
 
@@ -50,8 +57,15 @@ interface Held {
   worker: Worker | null;
   /** Calls in flight in the worker, so a detach can fail them rather than hang. */
   pending: Map<number, (result: { ok: boolean; value?: unknown; error?: string; code?: string }) => void>;
+  /** Write permission as of the attach. */
+  writable: boolean;
+  /** Progress callbacks for calls in flight in the worker, by worker id. */
+  progress: Map<number, (bytes: number, total: number | null) => void>;
   nextWorkerId: number;
 }
+
+/** Progress frames per transfer are throttled to this interval. */
+const PROGRESS_INTERVAL_MS = 250;
 
 export class DeviceClient {
   private held = new Map<number, Held>();
@@ -134,7 +148,9 @@ export class DeviceClient {
     const held: Held = {
       handle,
       worker: this.spawnWorker(deviceId, handle),
+      writable,
       pending: new Map(),
+      progress: new Map(),
       nextWorkerId: 1,
     };
     this.held.set(deviceId, held);
@@ -150,6 +166,35 @@ export class DeviceClient {
     };
     this.socket.send(frame);
     this.setState(deviceId, { status: "attached", rootName: handle.name, writable });
+  }
+
+  /**
+   * Re-announces a device this tab still holds, after its socket reconnected.
+   *
+   * Unlike {@link attachHandle} this does **not** restart the worker: a
+   * transfer it was in the middle of keeps going, and its reply reaches the
+   * server over the new socket, which inherits the calls the old one was
+   * waiting on (`resumed: true`). Restarting would abort every one of them.
+   */
+  async reannounce(deviceId: number): Promise<boolean> {
+    const held = this.held.get(deviceId);
+    if (!held) return this.restore(deviceId);
+    // Synchronous up to the send, on purpose: the transport flushes queued
+    // RPC replies straight after its reopen listeners return, and the server
+    // can only match them once this frame has told it which socket they
+    // belong to. Awaiting a permission check first would put them in front.
+    const writable = held.writable;
+    const frame: DeviceAttachFrame = {
+      type: DEVICE_ATTACH,
+      deviceId,
+      clientNow: Date.now(),
+      rootName: held.handle.name,
+      writable,
+      resumed: true,
+    };
+    this.socket.send(frame);
+    this.setState(deviceId, { status: "attached", rootName: held.handle.name, writable });
+    return true;
   }
 
   /** Gives a device up, and forgets the folder so it is not silently re-used. */
@@ -168,6 +213,7 @@ export class DeviceClient {
       settle({ ok: false, error: "The device was disconnected.", code: "EDEVICEDETACHED" });
     }
     held.pending.clear();
+    held.progress.clear();
     held.worker?.terminate();
   }
 
@@ -188,11 +234,19 @@ export class DeviceClient {
       });
       worker.onmessage = (event: MessageEvent<Record<string, unknown>>) => {
         const message = event.data;
+        if (message.kind === "progress") {
+          this.held
+            .get(deviceId)
+            ?.progress.get(Number(message.id))
+            ?.(Number(message.bytes), message.total == null ? null : Number(message.total));
+          return;
+        }
         if (message.kind !== "result") return;
         const held = this.held.get(deviceId);
         const settle = held?.pending.get(Number(message.id));
         if (!settle) return;
         held!.pending.delete(Number(message.id));
+        held!.progress.delete(Number(message.id));
         settle({
           ok: message.ok === true,
           value: message.value,
@@ -234,7 +288,8 @@ export class DeviceClient {
   private runVerb(
     deviceId: number,
     verb: DeviceRpcVerb,
-    args: unknown[]
+    args: unknown[],
+    onProgress?: (bytes: number, total: number | null) => void
   ): Promise<{ ok: boolean; value?: unknown; error?: string; code?: string }> {
     const held = this.held.get(deviceId);
     if (!held) {
@@ -246,7 +301,7 @@ export class DeviceClient {
     }
 
     if (!held.worker) {
-      return dispatchDeviceRpc(held.handle, verb, args).then(
+      return dispatchDeviceRpc(held.handle, verb, args, onProgress).then(
         (value) => ({ ok: true, value }),
         (err: Error & { code?: string }) => ({
           ok: false,
@@ -259,7 +314,8 @@ export class DeviceClient {
     const id = held.nextWorkerId++;
     return new Promise((resolve) => {
       held.pending.set(id, resolve);
-      held.worker!.postMessage({ kind: "call", id, verb, args });
+      if (onProgress) held.progress.set(id, onProgress);
+      held.worker!.postMessage({ kind: "call", id, verb, args, progress: !!onProgress });
     });
   }
 
@@ -274,9 +330,26 @@ export class DeviceClient {
     if (frame.type !== DEVICE_RPC_REQUEST) return;
 
     const request = frame as unknown as DeviceRpcRequestFrame;
+    // Transfers report progress: the server's MB/s readout, and the heartbeat
+    // that keeps a slow transfer from being declared stalled.
+    let onProgress: ((bytes: number, total: number | null) => void) | undefined;
+    if (request.verb === "pull" || request.verb === "push") {
+      let lastSent = 0;
+      onProgress = (bytes, total) => {
+        const now = Date.now();
+        if (now - lastSent < PROGRESS_INTERVAL_MS && (total === null || bytes < total)) return;
+        lastSent = now;
+        this.socket.send({ type: DEVICE_RPC_PROGRESS, id: request.id, bytes, total });
+      };
+    }
     void (async () => {
-      const result = await this.runVerb(request.deviceId, request.verb, request.args);
-      this.socket.send({
+      const result = await this.runVerb(
+        request.deviceId,
+        request.verb,
+        request.args,
+        onProgress
+      );
+      (this.socket.sendReliable ?? this.socket.send).call(this.socket, {
         type: DEVICE_RPC_RESULT,
         id: request.id,
         ok: result.ok,

@@ -45,6 +45,13 @@ export interface DeviceFsCapabilities {
   freeSpace: boolean;
   /** Can the volume be ejected from the machine running the sync? */
   eject: boolean;
+  /**
+   * Does every call cross a network to reach the device? True for a
+   * browser-held device. The copy loop then adapts its concurrency to how the
+   * link is coping, rather than pushing four transfers through a connection
+   * that is dropping one.
+   */
+  overNetwork?: boolean;
 }
 
 export interface DeviceStat {
@@ -86,6 +93,22 @@ export interface ListTreeOptions {
   includeDirectories?: boolean;
 }
 
+/** Options for {@link DeviceFs.copyFromLocal}. */
+export interface CopyOptions {
+  /**
+   * Bytes written so far for this one file. Remotely it is called as the
+   * browser reports progress; locally, once, when the copy completes.
+   */
+  onProgress?: (bytes: number, total: number | null) => void;
+}
+
+/** One path's outcome in {@link DeviceFs.rmMany}. */
+export interface RemoveResult {
+  path: string;
+  ok: boolean;
+  code?: string;
+}
+
 /** One contiguous write into an existing file. */
 export interface DevicePatchRange {
   offset: number;
@@ -122,12 +145,22 @@ export interface DeviceFs {
    * file that must never be read into memory whole: locally this is
    * `fs.copyFile`, and remotely it is a streamed HTTP transfer.
    */
-  copyFromLocal(localSrc: string, dest: string): Promise<void>;
+  copyFromLocal(localSrc: string, dest: string, opts?: CopyOptions): Promise<void>;
 
   mkdir(p: string, opts?: { recursive?: boolean }): Promise<void>;
   unlink(p: string): Promise<void>;
   rmdir(p: string): Promise<void>;
   rm(p: string, opts?: { recursive?: boolean; force?: boolean }): Promise<void>;
+  /**
+   * Remove many entries in as few round trips as the implementation allows,
+   * answering per path rather than throwing on the first failure.
+   *
+   * Without `recursive` each entry is a file or an *empty* directory — a
+   * non-empty one comes back `ENOTEMPTY`, which is what lets the empty-folder
+   * cleanup offer a whole chain of parents and keep only the ones that were
+   * really empty. A missing entry is `{ ok: false, code: "ENOENT" }`.
+   */
+  rmMany(paths: string[], opts?: { recursive?: boolean }): Promise<RemoveResult[]>;
   rename(from: string, to: string): Promise<void>;
 
   /**

@@ -26,7 +26,39 @@ export interface EventSession {
   readonly sessionId: string;
   readonly subject: string;
   sockets: Set<WebSocket>;
+  /** Sequence number of the last push frame sent to this session. */
+  seq: number;
+  /** The most recent push frames, so a socket that reconnects can be handed
+   *  what it missed while it was away — see `replayTo`. */
+  replay: { seq: number; at: number; payload: string }[];
 }
+
+/**
+ * Identifies this server *process*. A sequence number means nothing across a
+ * restart (the session map, and every counter in it, starts again from zero),
+ * so a client resuming against a different epoch is told to `resync` instead
+ * of being replayed a stranger's history.
+ */
+const SERVER_EPOCH = crypto.randomBytes(8).toString("hex");
+
+/** How much history a session keeps for replay. A sync emits a frame per
+ *  file, so two thousand covers a long outage on a fast sync; five minutes
+ *  bounds the memory on a slow one. */
+const REPLAY_MAX_FRAMES = 2000;
+const REPLAY_MAX_AGE_MS = 5 * 60 * 1000;
+
+/** A freshly opened socket gets no live pushes until it says where it left
+ *  off (or this long passes) — otherwise a live frame could overtake the
+ *  replay and the client would discard the replay as already seen. */
+const RESUME_WAIT_MS = 3000;
+
+/** Protocol-level heartbeat. A half-open TCP connection (Wi-Fi switch, lid
+ *  closed) otherwise looks alive until the OS gives up, which is minutes. */
+export const SERVER_PING_MS = 20_000;
+const MAX_MISSED_PONGS = 2;
+
+/** Sockets that have not yet sent `resume`, with the seq they connected at. */
+const awaitingResume = new Map<WebSocket, { seqAtConnect: number; timer: NodeJS.Timeout }>();
 
 /**
  * **There is deliberately no per-session subscription set.**
@@ -136,12 +168,66 @@ interface PushFrame {
   type: "push";
   channel: string;
   args: unknown[];
+  /** Per-session, monotonically increasing. What a reconnecting client quotes
+   *  back in `resume`. */
+  seq: number;
+}
+
+function trimReplay(session: EventSession, now: number): void {
+  const buf = session.replay;
+  let drop = Math.max(0, buf.length - REPLAY_MAX_FRAMES);
+  while (drop < buf.length && now - buf[drop].at > REPLAY_MAX_AGE_MS) drop++;
+  if (drop > 0) buf.splice(0, drop);
+}
+
+/**
+ * Sends `socket` every frame of its session after `lastSeq`, or `resync` when
+ * that history is no longer held (or never was — another server epoch).
+ *
+ * Strictly the *socket's own* session: the replay buffer is per session, and
+ * nothing a client sends can name another one.
+ */
+function replayTo(
+  session: EventSession,
+  socket: WebSocket,
+  lastSeq: number,
+  epoch: unknown
+): void {
+  const pending = awaitingResume.get(socket);
+  if (pending) {
+    clearTimeout(pending.timer);
+    awaitingResume.delete(socket);
+  }
+  trimReplay(session, Date.now());
+  const sameEpoch = epoch === SERVER_EPOCH;
+  const oldest = session.replay[0]?.seq ?? session.seq + 1;
+  const covered =
+    sameEpoch && lastSeq <= session.seq && lastSeq >= oldest - 1;
+  if (!covered) {
+    sendRawToSocket(socket, { type: "resync", seq: session.seq, epoch: SERVER_EPOCH });
+    // Still owed whatever was held back while it was deciding.
+    if (pending) flushSince(session, socket, pending.seqAtConnect);
+    return;
+  }
+  flushSince(session, socket, lastSeq);
+}
+
+function flushSince(session: EventSession, socket: WebSocket, seq: number): void {
+  for (const entry of session.replay) {
+    if (entry.seq <= seq) continue;
+    if (socket.readyState !== WebSocket.OPEN) return;
+    try {
+      socket.send(entry.payload);
+    } catch {
+      return;
+    }
+  }
 }
 
 function getOrCreate(sessionId: string, subject: string): EventSession {
   let s = sessions.get(sessionId);
   if (!s) {
-    s = { sessionId, subject, sockets: new Set() };
+    s = { sessionId, subject, sockets: new Set(), seq: 0, replay: [] };
     sessions.set(sessionId, s);
   }
   return s;
@@ -174,8 +260,13 @@ export function senderFor(sessionId: string): HandlerSender {
     send(channel: string, ...args: unknown[]): void {
       pushToSession(sessionId, channel, args);
     },
+    // "Destroyed" means the session is *gone* (swept, revoked), not that it
+    // has no socket this instant. Handlers check this before every push, so
+    // answering "no socket" here dropped every progress frame of a reconnect
+    // window before it could reach the replay buffer — the tab came back to a
+    // sync log with a hole exactly where the outage was.
     isDestroyed(): boolean {
-      return !isSessionLive(sessionId);
+      return !sessions.has(sessionId);
     },
   };
 }
@@ -194,9 +285,15 @@ export function pushToSession(
   }
   const session = sessions.get(sessionId);
   if (!session) return;
-  const frame: PushFrame = { type: "push", channel, args };
+  session.seq += 1;
+  const frame: PushFrame = { type: "push", channel, args, seq: session.seq };
   const payload = JSON.stringify(frame);
+  const now = Date.now();
+  session.replay.push({ seq: session.seq, at: now, payload });
+  trimReplay(session, now);
   for (const ws of session.sockets) {
+    // Held back until it has resumed; the frame is in the replay buffer.
+    if (awaitingResume.has(ws)) continue;
     if (ws.readyState === WebSocket.OPEN) {
       try {
         ws.send(payload);
@@ -246,6 +343,25 @@ export function handleSocketFrame(
       // Accepted and ignored — see the note on `EventSession`.
     } else if (msg.type === "ping") {
       ctx.socket.send(JSON.stringify({ type: "pong" }));
+    } else if (msg.type === "resume") {
+      const session = sessions.get(ctx.sessionId);
+      if (!session) return;
+      // `null` (a first connect) and anything not a finite integer mean "I have
+      // seen nothing": no replay of history, but release the hold.
+      const lastSeq =
+        typeof msg.lastSeq === "number" && Number.isSafeInteger(msg.lastSeq)
+          ? msg.lastSeq
+          : null;
+      if (lastSeq === null) {
+        const pending = awaitingResume.get(ctx.socket);
+        if (pending) {
+          clearTimeout(pending.timer);
+          awaitingResume.delete(ctx.socket);
+          flushSince(session, ctx.socket, pending.seqAtConnect);
+        }
+        return;
+      }
+      replayTo(session, ctx.socket, lastSeq, msg.epoch);
     } else if (typeof msg.type === "string") {
       const handler = frameHandlers.get(msg.type);
       if (!handler) return;
@@ -272,6 +388,9 @@ export interface EventsServerOptions {
   allowedOrigins: string[];
   /** Resolves the authenticated subject, or null to reject the upgrade. */
   authenticate: (req: IncomingMessage) => Promise<string | null>;
+  /** Identifies the renderer bundle being served. A client that sees it change
+   *  across a reconnect knows the server was updated under it. */
+  buildId?: () => string;
 }
 
 export interface EventsServer {
@@ -333,12 +452,48 @@ export function attachEventsServer(
         wss.handleUpgrade(req, socket, head, (ws) => {
           const session = getOrCreate(sessionId, subject);
           session.sockets.add(ws);
+          clearTimeout(sweepTimers.get(sessionId));
+          const seqAtConnect = session.seq;
+          awaitingResume.set(ws, {
+            seqAtConnect,
+            // An older client that never sends `resume` still gets its frames.
+            timer: setTimeout(() => {
+              if (!awaitingResume.has(ws)) return;
+              awaitingResume.delete(ws);
+              flushSince(session, ws, seqAtConnect);
+            }, RESUME_WAIT_MS),
+          });
+
+          let missedPongs = 0;
+          ws.on("pong", () => {
+            missedPongs = 0;
+          });
+          const heartbeat = setInterval(() => {
+            if (missedPongs >= MAX_MISSED_PONGS) {
+              // `terminate`, not `close`: a dead peer never completes a
+              // closing handshake, and the `close` event is what releases its
+              // device attachments into their reconnect grace.
+              ws.terminate();
+              return;
+            }
+            missedPongs++;
+            try {
+              ws.ping();
+            } catch {
+              /* the close handler cleans up */
+            }
+          }, heartbeatMs());
+          heartbeat.unref?.();
 
           ws.on("message", (raw) => {
             handleSocketFrame(raw, { sessionId, subject, socket: ws });
           });
 
           ws.on("close", () => {
+            clearInterval(heartbeat);
+            const pending = awaitingResume.get(ws);
+            if (pending) clearTimeout(pending.timer);
+            awaitingResume.delete(ws);
             session.sockets.delete(ws);
             for (const l of socketClosedListeners) l(sessionId, ws);
             // The session entry itself is kept: a reconnect within the same
@@ -353,7 +508,15 @@ export function attachEventsServer(
             session.sockets.delete(ws);
           });
 
-          ws.send(JSON.stringify({ type: "ready", sessionId }));
+          ws.send(
+            JSON.stringify({
+              type: "ready",
+              sessionId,
+              epoch: SERVER_EPOCH,
+              seq: session.seq,
+              buildId: opts.buildId?.() ?? null,
+            })
+          );
         });
       })();
     });
@@ -445,7 +608,16 @@ export function closeSessionSockets(sessionIds: readonly string[]): number {
   return closed;
 }
 
+/** The heartbeat interval; overridable so a test can watch a dead socket get
+ *  terminated without waiting forty seconds. */
+function heartbeatMs(): number {
+  const raw = Number(process.env.IPODROCKS_WS_PING_MS);
+  return Number.isFinite(raw) && raw >= 50 && raw <= 300_000 ? raw : SERVER_PING_MS;
+}
+
 export function resetEventSessions(): void {
+  for (const { timer } of awaitingResume.values()) clearTimeout(timer);
+  awaitingResume.clear();
   for (const t of sweepTimers.values()) clearTimeout(t);
   sweepTimers.clear();
   sessions.clear();

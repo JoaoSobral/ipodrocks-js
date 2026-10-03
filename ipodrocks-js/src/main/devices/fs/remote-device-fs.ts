@@ -29,16 +29,19 @@
 import * as path from "path";
 
 import type { DiskSpace } from "../../../shared/types";
-import type {
-  RpcDirent,
-  RpcFreeSpace,
-  RpcStat,
-  RpcTreeEntry,
+import {
+  RM_MANY_CHUNK,
+  type RpcDirent,
+  type RpcFreeSpace,
+  type RpcRemoveResult,
+  type RpcStat,
+  type RpcTreeEntry,
 } from "../../../shared/device-rpc";
 import { toMountRelative } from "../../rockbox/device-path-match";
 
 import {
   isWebDevicePath,
+  type CopyOptions,
   type DeviceDirent,
   type DeviceFs,
   type DeviceFsCapabilities,
@@ -46,6 +49,7 @@ import {
   type DeviceStat,
   type DeviceTreeEntry,
   type ListTreeOptions,
+  type RemoveResult,
 } from "./device-fs";
 import type { DeviceRpcTransport } from "./device-transport";
 
@@ -62,6 +66,7 @@ const REMOTE_CAPABILITIES: DeviceFsCapabilities = {
   setMtime: false,
   freeSpace: true,
   eject: false,
+  overNetwork: true,
 };
 
 /** An error carrying the `code` the browser mapped its DOMException onto, so
@@ -329,9 +334,15 @@ export class RemoteDeviceFs implements DeviceFs {
     ]);
   }
 
-  async copyFromLocal(localSrc: string, dest: string): Promise<void> {
+  async copyFromLocal(localSrc: string, dest: string, opts?: CopyOptions): Promise<void> {
     const rel = await this.resolveRel(this.rel(dest));
-    await this.transport.pull(localSrc, rel);
+    try {
+      await this.transport.pull(localSrc, rel, { onProgress: opts?.onProgress });
+    } catch (err) {
+      // Carry the code across: the sync's retry decides on it.
+      const e = err as { message?: string; code?: string };
+      throw new RemoteFsError(e?.message ?? String(err), e?.code);
+    }
     this.invalidate(rel);
   }
 
@@ -364,6 +375,40 @@ export class RemoteDeviceFs implements DeviceFs {
       { recursive: opts.recursive ?? false, force: opts.force ?? false },
     ]);
     this.invalidate(rel);
+  }
+
+  /**
+   * One frame per {@link RM_MANY_CHUNK} paths, instead of a `stat`, an
+   * `unlink` and a parent re-listing per path.
+   *
+   * Spellings are resolved through the directory cache as usual — a sweep's
+   * paths almost always come from a `listTree` that has just filled it, so
+   * that costs nothing — and each touched parent is invalidated once, after.
+   */
+  async rmMany(
+    paths: string[],
+    opts: { recursive?: boolean } = {}
+  ): Promise<RemoveResult[]> {
+    const results: RemoveResult[] = [];
+    for (let start = 0; start < paths.length; start += RM_MANY_CHUNK) {
+      const chunk = paths.slice(start, start + RM_MANY_CHUNK);
+      const rels: string[] = [];
+      for (const p of chunk) rels.push(await this.resolveRel(this.rel(p)));
+      const answers = await this.call<RpcRemoveResult[]>("rmMany", [
+        rels,
+        { recursive: opts.recursive ?? false },
+      ]);
+      chunk.forEach((p, i) => {
+        const answer = answers?.[i];
+        results.push({
+          path: p,
+          ok: answer?.ok === true,
+          code: answer?.ok === true ? undefined : (answer?.code ?? "EIO"),
+        });
+      });
+      for (const rel of rels) this.invalidate(rel);
+    }
+    return results;
   }
 
   async rename(from: string, to: string): Promise<void> {

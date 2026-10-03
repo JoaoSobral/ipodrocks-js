@@ -12,6 +12,7 @@ import * as path from "path";
 import type { DiskSpace } from "../../../shared/types";
 import {
   isWebDevicePath,
+  type CopyOptions,
   type DeviceDirent,
   type DeviceFs,
   type DeviceFsCapabilities,
@@ -19,7 +20,12 @@ import {
   type DeviceStat,
   type DeviceTreeEntry,
   type ListTreeOptions,
+  type RemoveResult,
 } from "./device-fs";
+
+/** Local removals in flight at once in an `rmMany`. A USB mass-storage player
+ *  gains little past this, and an SSD does not need more. */
+const NODE_RM_CONCURRENCY = 16;
 
 const NODE_CAPABILITIES: DeviceFsCapabilities = {
   setMtime: true,
@@ -180,8 +186,14 @@ export class NodeDeviceFs implements DeviceFs {
     }
   }
 
-  async copyFromLocal(localSrc: string, dest: string): Promise<void> {
+  async copyFromLocal(localSrc: string, dest: string, opts?: CopyOptions): Promise<void> {
     await fsp.copyFile(localSrc, this.guard(dest));
+    if (opts?.onProgress) {
+      // `copyFile` is one kernel call with no progress of its own; the size
+      // on completion is what the rate readout needs.
+      const { size } = await fsp.stat(localSrc);
+      opts.onProgress(size, size);
+    }
   }
 
   async mkdir(p: string, opts: { recursive?: boolean } = {}): Promise<void> {
@@ -204,6 +216,50 @@ export class NodeDeviceFs implements DeviceFs {
       recursive: opts.recursive ?? false,
       force: opts.force ?? false,
     });
+  }
+
+  async rmMany(
+    paths: string[],
+    opts: { recursive?: boolean } = {}
+  ): Promise<RemoveResult[]> {
+    const results: RemoveResult[] = new Array(paths.length);
+    const removeOne = async (p: string): Promise<void> => {
+      const target = this.guard(p);
+      if (opts.recursive) {
+        await fsp.rm(target, { recursive: true });
+        return;
+      }
+      try {
+        await fsp.unlink(target);
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException).code;
+        // A directory: `unlink` says EISDIR on Linux and EPERM on macOS.
+        if (code !== "EISDIR" && code !== "EPERM") throw err;
+        await fsp.rmdir(target);
+      }
+    };
+    let next = 0;
+    const workers = Array.from(
+      { length: Math.min(NODE_RM_CONCURRENCY, paths.length) },
+      async () => {
+        while (next < paths.length) {
+          const index = next++;
+          const p = paths[index];
+          try {
+            await removeOne(p);
+            results[index] = { path: p, ok: true };
+          } catch (err) {
+            results[index] = {
+              path: p,
+              ok: false,
+              code: (err as NodeJS.ErrnoException).code ?? "EIO",
+            };
+          }
+        }
+      }
+    );
+    await Promise.all(workers);
+    return results;
   }
 
   async rename(from: string, to: string): Promise<void> {

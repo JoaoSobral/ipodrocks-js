@@ -1342,6 +1342,67 @@ guard it names.** If `requireSameOrigin` ever stops being mounted ahead of every
 `/api` route, or the cookie ever loses `SameSite=Lax`, the alert becomes true
 and nothing will re-raise it.
 
+## Hazard: the link between the server and a browser drops, and that is normal
+
+Over a Cloudflare Tunnel, a socket drop, a stalled transfer and a request cut at
+~100 s (HTTP 524) are routine. Each one used to end a remote sync. The pieces
+that now absorb them, and the rule each one depends on:
+
+- **No request is held open for a handler's lifetime.** `invoke-route.ts` races
+  every handler against `invokeDeferMs()` (20 s; the e2e daemon uses 1 s, so the
+  whole `web` suite runs through it) and answers `202 { pending }`. The outcome
+  is long-polled from `GET /api/invoke/result/:id`. Jobs live in
+  `invoke-jobs.ts`, **keyed on `(sessionId, X-Request-Id)` and never on the id
+  alone**: the id is client-chosen. A repeated id joins the running call, which
+  is the only reason `web-transport.ts` may retry `device:add` or `sync:start`
+  after a lost response. **It must never retry under a new id.**
+- **Push frames carry a per-session `seq` and are replayed.** `events.ts` keeps
+  a bounded buffer per session (2000 frames / 5 min). A reconnecting socket gets
+  no live pushes until it sends `resume { epoch, lastSeq }` (or 3 s pass), so a
+  live frame can never overtake the replay. Another epoch, or history no longer
+  held, gets `resync`, and listeners re-read state (`sync:status`).
+  **`senderFor().isDestroyed()` means "session gone", not "no socket right
+  now"**: every handler checks it before pushing, and the old meaning dropped
+  exactly the outage's frames before they reached the buffer.
+- **A device's link outlives its socket.** `device-session.ts` registers one
+  transport per device, which resolves the live attachment on every call. A
+  socket close *suspends* the link for `DEVICE_RECONNECT_GRACE_MS` (2 min), and
+  calls wait instead of failing. Re-attaching from the same login with
+  `resumed: true` (the same tab, worker intact; `DeviceClient.reannounce()`)
+  inherits the calls in flight. Anything else fails them *retryably*, and
+  `RETRYABLE_DEVICE_VERBS` re-sends them. **`patch` is not retryable**; its
+  caller already leaves a failed rating for the next sync. **A suspended link
+  can be resumed only by the identity that held it.** Otherwise a null-owner
+  device could be picked up mid-sync by anyone.
+  - `reannounce()` must send its attach frame *synchronously*. The transport
+    flushes queued RPC replies straight after its reopen listeners return, and
+    the server can match them only once the attach has named the new socket.
+- **Transfers time out on progress, not on length.** `pull`/`push` use
+  `DEVICE_TRANSFER_IDLE_MS`, re-armed by every `device-rpc-progress` frame.
+  Those frames are also the sync's byte counter. They are not replayed, so a
+  finished copy tops its bytes up to the source size itself.
+- **The sync retries only link failures** (`transient-retry.ts`:
+  `ETIMEDOUT`, `ECONNRESET`, `EPIPE`, `EIO` starting "Transfer failed").
+  `EDEVICEDETACHED` is **not** transient there. By then the transport has
+  already waited out the grace, so the copy loop throws `DeviceGoneError`
+  instead of recording one error per remaining file. On an `overNetwork` device
+  the worker count is AIMD.
+- **Deletes are bulk.** `DeviceFs.rmMany()` is one RPC per 500 paths, answering
+  per path (`ENOENT` and `ENOTEMPTY` are results, not throws). The orphan sweep
+  takes sizes from the listing it already has. `removeEmptiedDirsOn()` climbs
+  only from what was removed, one depth level per call.
+  - A local "Delete all" renames each folder to `.ipodrocks-trash-*` at the
+    mount root and deletes it in the background. `sync:start` awaits that
+    before reporting done, and the next reset sweeps stale trash.
+  - A remote "Delete all" is chunked, because a single recursive `removeEntry`
+    had to finish inside the RPC timeout.
+
+Pinned in `regressions/invoke-deferred-results`, `ws-event-replay`,
+`device-reconnect-grace`, `sync-link-resilience` and `device-fs-parity`, and in
+e2e `web-sync-resilience` (a real socket drop and a real reload mid-sync),
+`web-connection-resilience`, `web-device-sync` (remote delete-all) and
+`orphan-reset-policy` (local delete-all leaves no trash).
+
 ## Hazard: `/api/invoke` checks authentication, not authorization
 
 Every `server:*`, `library:*`, `device:*` … channel reaching a web client goes

@@ -21,6 +21,7 @@ import {
   REPLAYGAIN_TRACK_PEAK,
 } from "../tagging/replaygain-keys";
 import type { ApeTags } from "../tagging/apev2/types";
+import { withTransientRetry } from "./transient-retry";
 
 /** Metadata to write into converted files (e.g. MPC). */
 export interface ConversionMetadata {
@@ -105,7 +106,9 @@ export async function placeConvertedFile(
   to: string,
   target: DeviceFs
 ): Promise<void> {
-  await target.copyFromLocal(from, to);
+  // The transcode is already done and sitting in a temp file; a link failure
+  // putting it on the device is worth retrying rather than re-encoding.
+  await withTransientRetry(() => target.copyFromLocal(from, to));
   cleanupTemp(from);
 }
 

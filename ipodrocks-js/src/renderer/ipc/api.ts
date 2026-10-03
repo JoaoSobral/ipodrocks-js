@@ -6,6 +6,7 @@ import type {
   UsbSnapshot,
   ScanResult,
   SyncOptions,
+  SyncStatusSnapshot,
   ScanProgress,
   SyncProgress,
   Playlist,
@@ -506,6 +507,17 @@ export async function startSync(
 export async function cancelSync(deviceId?: number): Promise<void> {
   if (deviceId === undefined) await window.api.invoke("sync:cancel");
   else await window.api.invoke("sync:cancel", deviceId);
+}
+
+/**
+ * Running (and recently finished) syncs this caller may see. A tab that
+ * reloads or reconnects mid-sync uses it to re-join the progress display.
+ */
+export async function getSyncStatus(deviceId?: number): Promise<SyncStatusSnapshot[]> {
+  const result = (deviceId === undefined
+    ? await window.api.invoke("sync:status")
+    : await window.api.invoke("sync:status", deviceId)) as SyncStatusSnapshot[] | { error: string };
+  return Array.isArray(result) ? result : [];
 }
 
 export async function getDeviceSyncPreferences(

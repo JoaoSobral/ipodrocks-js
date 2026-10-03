@@ -2,11 +2,17 @@ import * as fs from "fs";
 import * as fsp from "fs/promises";
 import * as path from "path";
 
-import type { DeviceFs } from "../devices/fs";
+import type { CopyOptions, DeviceFs } from "../devices/fs";
 import { findOnDisk } from "../utils/normalize-path";
 
 import { ConversionSettings, convertWithCodec, convertWithFfmpeg, updateExtension } from "./sync-conversion";
 import { appendSyncError } from "./sync-error-log";
+import {
+  AdaptiveConcurrency,
+  isDeviceGone,
+  isTransientDeviceError,
+  withTransientRetry,
+} from "./transient-retry";
 
 const MAX_COPY_WORKERS = 4;
 
@@ -16,6 +22,16 @@ export interface CopyProgress {
   srcPath: string;
   destPath: string | null;
   status: CopyStatus;
+  /** Size of the file that was put on the device, when known. */
+  bytes?: number;
+}
+
+/** A copy about to be retried after a link failure. */
+export interface CopyRetryInfo {
+  srcPath: string;
+  attempt: number;
+  error: string;
+  delayMs: number;
 }
 
 export interface CopyToDeviceOptions {
@@ -27,6 +43,28 @@ export interface CopyToDeviceOptions {
   progressCallback?: (progress: CopyProgress) => void;
   logCallback?: (line: string) => void;
   cancelSignal?: AbortSignal;
+  /** Bytes moved since the last call, across every copy in flight. */
+  bytesCallback?: (deltaBytes: number) => void;
+  /** A copy is about to be retried after a link failure. */
+  retryCallback?: (info: CopyRetryInfo) => void;
+}
+
+/**
+ * The browser holding the device is gone, past its reconnect grace. Thrown
+ * out of the copy loop rather than recorded per file: every remaining file
+ * would fail the same way, and a sync that reports "4,000 errors" for one
+ * closed tab is worse than one that says the tab closed.
+ */
+export class DeviceGoneError extends Error {
+  readonly code = "EDEVICEDETACHED";
+  constructor(cause: unknown) {
+    super(
+      `The browser holding the device disconnected and did not come back: ${
+        (cause as Error)?.message ?? String(cause)
+      }`
+    );
+    this.name = "DeviceGoneError";
+  }
 }
 
 /**
@@ -46,7 +84,8 @@ export interface CopyToDeviceOptions {
 export async function copyFileToDevice(
   deviceFs: DeviceFs,
   src: string,
-  dest: string
+  dest: string,
+  copyOpts?: CopyOptions
 ): Promise<boolean> {
   await deviceFs.mkdir(path.dirname(dest), { recursive: true });
 
@@ -64,7 +103,7 @@ export async function copyFileToDevice(
   };
 
   try {
-    await deviceFs.copyFromLocal(src, dest);
+    await deviceFs.copyFromLocal(src, dest, copyOpts);
 
     // A device that cannot set mtimes is not an error: `name-size-sync.ts`
     // compares by size first whenever it knows one, and for a lossy transcode
@@ -115,6 +154,8 @@ export async function copyToDevice(
     progressCallback,
     logCallback,
     cancelSignal,
+    bytesCallback,
+    retryCallback,
   } = options;
 
   await deviceFs.mkdir(deviceFolder, { recursive: true });
@@ -172,7 +213,13 @@ export async function copyToDevice(
   }
 
   if (copyJobs.length > 0) {
-    await runParallelCopies(deviceFs, copyJobs, { progressCallback, logCallback, cancelSignal });
+    await runParallelCopies(deviceFs, copyJobs, {
+      progressCallback,
+      logCallback,
+      cancelSignal,
+      bytesCallback,
+      retryCallback,
+    });
   }
 
   for (const job of convertJobs) {
@@ -256,15 +303,77 @@ async function runParallelCopies(
     progressCallback?: (progress: CopyProgress) => void;
     logCallback?: (line: string) => void;
     cancelSignal?: AbortSignal;
+    bytesCallback?: (deltaBytes: number) => void;
+    retryCallback?: (info: CopyRetryInfo) => void;
   }
 ): Promise<void> {
-  const { progressCallback, logCallback, cancelSignal } = opts;
+  const { progressCallback, logCallback, cancelSignal, bytesCallback, retryCallback } = opts;
+  // Over a network the worker count follows how the link is coping; on a
+  // local mount it stays where it always was.
+  const adaptive = deviceFs.capabilities.overNetwork === true;
+  const limiter = new AdaptiveConcurrency(MAX_COPY_WORKERS);
+  let deviceGone: unknown = null;
 
   const doCopy = async (job: CopyJob): Promise<CopyProgress> => {
+    // Progress is reported per attempt as a running total; turning it into
+    // deltas here is what lets several copies in flight share one counter.
+    let reported = 0;
+    let size: number | undefined;
+    const copyOpts: CopyOptions = {
+      onProgress: (bytes, total) => {
+        if (total !== null) size = total;
+        if (bytes > reported) {
+          bytesCallback?.(bytes - reported);
+          reported = bytes;
+        }
+      },
+    };
     try {
-      const ok = await copyFileToDevice(deviceFs, job.src, job.dest);
-      return { srcPath: job.src, destPath: job.dest, status: ok ? "copied" : "skipped" };
+      const ok = await withTransientRetry(
+        () => {
+          reported = 0;
+          return copyFileToDevice(deviceFs, job.src, job.dest, copyOpts);
+        },
+        {
+          signal: cancelSignal,
+          onRetry: (attempt, err, delayMs) => {
+            if (adaptive) limiter.onTransientFailure();
+            const error = (err as Error)?.message ?? String(err);
+            logCallback?.(
+              `Retrying ${path.basename(job.src)} in ${Math.round(delayMs / 1000)}s ` +
+                `(attempt ${attempt + 1}): ${error}`
+            );
+            retryCallback?.({ srcPath: job.src, attempt, error, delayMs });
+          },
+        }
+      );
+      if (adaptive) limiter.onSuccess();
+      // A finished copy accounts for every byte of it. Progress is advisory —
+      // frames the browser sent while its socket was down are not replayed —
+      // and a direct copy is exactly the size of its source.
+      if (size === undefined) {
+        try {
+          size = (await fsp.stat(job.src)).size;
+        } catch {
+          size = reported;
+        }
+      }
+      if (size > reported) {
+        bytesCallback?.(size - reported);
+        reported = size;
+      }
+      return {
+        srcPath: job.src,
+        destPath: job.dest,
+        status: ok ? "copied" : "skipped",
+        bytes: size,
+      };
     } catch (err) {
+      if (isDeviceGone(err)) {
+        deviceGone = err;
+        return { srcPath: job.src, destPath: job.dest, status: "error" };
+      }
+      if (adaptive && isTransientDeviceError(err)) limiter.onTransientFailure();
       const msg = String(err);
       appendSyncError(job.src, job.dest, msg);
       logCallback?.(`Failed to copy ${path.basename(job.src)}: ${msg}`);
@@ -272,27 +381,35 @@ async function runParallelCopies(
     }
   };
 
-  const concurrency = Math.min(jobs.length, MAX_COPY_WORKERS);
   let nextIndex = 0;
+  const running = new Set<Promise<void>>();
 
-  const worker = async (): Promise<void> => {
-    while (nextIndex < jobs.length) {
-      if (cancelSignal?.aborted) return;
-      const idx = nextIndex++;
-      if (idx >= jobs.length) return;
-      const result = await doCopy(jobs[idx]);
+  const start = (job: CopyJob): void => {
+    const task = doCopy(job).then((result) => {
+      running.delete(task);
+      if (deviceGone) return;
       if (result.status === "error") {
         logCallback?.(`Failed to copy ${path.basename(result.srcPath)}`);
       }
       progressCallback?.(result);
-    }
+    });
+    running.add(task);
   };
 
-  const workers: Promise<void>[] = [];
-  for (let i = 0; i < concurrency; i++) {
-    workers.push(worker());
+  while (nextIndex < jobs.length || running.size > 0) {
+    while (
+      nextIndex < jobs.length &&
+      running.size < limiter.limit &&
+      !cancelSignal?.aborted &&
+      !deviceGone
+    ) {
+      start(jobs[nextIndex++]);
+    }
+    if (running.size === 0) break;
+    await Promise.race(running);
   }
-  await Promise.all(workers);
+
+  if (deviceGone) throw new DeviceGoneError(deviceGone);
 }
 
 /**

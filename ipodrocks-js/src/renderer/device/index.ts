@@ -41,6 +41,7 @@ export function getDeviceClient(): DeviceClient | null {
 
   const socket: DeviceSocket = {
     send: (frame) => transport.sendFrame(frame),
+    sendReliable: (frame) => transport.sendFrame(frame, { queue: true }),
     onFrame: (listener) => transport.onFrame(listener),
   };
   client = new DeviceClient(socket);
@@ -51,7 +52,9 @@ export function getDeviceClient(): DeviceClient | null {
   // sleep invisible, which is what it should be.
   transport.onReopen(() => {
     for (const deviceId of attached) {
-      void client?.restore(deviceId).catch(() => {});
+      // `reannounce`, not `restore`: the worker — and any transfer it is in
+      // the middle of — survives the reconnect.
+      void client?.reannounce(deviceId).catch(() => {});
     }
   });
 

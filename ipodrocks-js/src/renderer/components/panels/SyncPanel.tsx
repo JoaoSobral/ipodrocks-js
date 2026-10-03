@@ -16,6 +16,7 @@ import {
   getShadowLibraries,
   getLibraryStats,
   getDeviceSyncPreferences,
+  getSyncStatus,
   getBrokenPlaylists,
   repairPlaylist,
 } from "../../ipc/api";
@@ -132,6 +133,25 @@ export function SyncPanel() {
   const [statusRefreshKey, setStatusRefreshKey] = useState(0);
   const [showSyncModal, setShowSyncModal] = useState(false);
   const [syncOptionsForModal, setSyncOptionsForModal] = useState<SyncOptions | null>(null);
+  /** The modal is following a sync already running, rather than starting one. */
+  const [rejoinSync, setRejoinSync] = useState(false);
+
+  // A sync outlives the page that started it: the server carries on through a
+  // reload, a reconnect, or a visit to another panel. Coming back, pick its
+  // progress up again rather than leaving the user guessing whether it ran.
+  useEffect(() => {
+    let cancelled = false;
+    void getSyncStatus().then((snaps) => {
+      const running = snaps.find((s) => s.active);
+      if (cancelled || !running) return;
+      setSyncOptionsForModal({ deviceId: running.deviceId } as SyncOptions);
+      setRejoinSync(true);
+      setShowSyncModal(true);
+    }).catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   const [precheckError, setPrecheckError] = useState<string | null>(null);
   const [brokenGateModal, setBrokenGateModal] = useState<{ broken: { id: number; name: string; typeName: string; missingCount: number; totalCount: number }[]; pendingOptions: SyncOptions } | null>(null);
   // "Delete all" erases the device's content folders before copying, so it is
@@ -1021,9 +1041,11 @@ export function SyncPanel() {
       {showSyncModal && syncOptionsForModal && (
         <SyncProgressModal
           open={showSyncModal}
+          rejoin={rejoinSync}
           onClose={() => {
             setShowSyncModal(false);
             setSyncOptionsForModal(null);
+            setRejoinSync(false);
           }}
           syncOptions={syncOptionsForModal}
           onComplete={() => setStatusRefreshKey((n) => n + 1)}

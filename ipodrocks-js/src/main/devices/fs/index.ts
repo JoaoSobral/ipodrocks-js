@@ -95,6 +95,9 @@ export class DetachedDeviceFs implements DeviceFs {
   async rm(): Promise<never> {
     this.fail();
   }
+  async rmMany(): Promise<never> {
+    this.fail();
+  }
   async rename(): Promise<never> {
     this.fail();
   }

@@ -13,6 +13,11 @@
  */
 import type { DeviceRpcVerb } from "../../../shared/device-rpc";
 
+export interface TransferOptions {
+  /** Bytes moved so far for this one file, as the browser reports them. */
+  onProgress?: (bytes: number, total: number | null) => void;
+}
+
 export interface DeviceRpcTransport {
   /**
    * Milliseconds to add to a device-reported mtime to put it in server time
@@ -38,7 +43,7 @@ export interface DeviceRpcTransport {
    * file — framing one through the WebSocket would buffer it twice in memory
    * and lose backpressure entirely.
    */
-  pull(localSrc: string, destRel: string): Promise<void>;
+  pull(localSrc: string, destRel: string, opts?: TransferOptions): Promise<void>;
 
   /**
    * Data plane: have the browser POST `srcRel`'s bytes back, into a
@@ -80,10 +85,35 @@ export function onDeviceAttachmentChange(listener: Listener): () => void {
   return () => listeners.delete(listener);
 }
 
+/**
+ * A registered device whose browser dropped and is inside its reconnect
+ * grace (`suspended`), or has come back (`live`). Calls made while suspended
+ * wait rather than fail; this is how a sync learns to *say* it is waiting.
+ */
+export type DeviceLinkState = "live" | "suspended";
+type LinkStateListener = (deviceId: number, state: DeviceLinkState) => void;
+const linkStateListeners = new Set<LinkStateListener>();
+
+export function onDeviceLinkStateChange(listener: LinkStateListener): () => void {
+  linkStateListeners.add(listener);
+  return () => linkStateListeners.delete(listener);
+}
+
+export function notifyDeviceLinkState(deviceId: number, state: DeviceLinkState): void {
+  for (const listener of [...linkStateListeners]) {
+    try {
+      listener(deviceId, state);
+    } catch (err) {
+      console.error("[device-transport] link-state listener threw", err);
+    }
+  }
+}
+
 /** Tests, and a server restart. */
 export function resetDeviceTransports(): void {
   transports.clear();
   listeners.clear();
+  linkStateListeners.clear();
 }
 
 /**

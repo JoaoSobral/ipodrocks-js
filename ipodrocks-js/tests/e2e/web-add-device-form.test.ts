@@ -231,3 +231,54 @@ test("a server-side device is listed but not operable from the browser", async (
     removeDeviceRow(device.id);
   }
 });
+
+test("the Edit form of a remote device offers its folder, however it was added", async ({
+  page,
+  request,
+}) => {
+  await signIn(request);
+  // Added with no folder — exactly what Firefox (no File System Access API)
+  // produces. The handle lives in a browser's IndexedDB, so a device added in
+  // one browser arrives in another with nothing to restore. The Edit form used
+  // to show the folder control only while *adding*, which left this device no
+  // way to be given one from the form at all.
+  const device = await invoke<{ id: number }>(request, "device:add", {
+    name: "E2E Folderless Remote",
+    transport: "web",
+  });
+
+  try {
+    await openDevices(page);
+    const card = page
+      .getByRole("heading", { name: "E2E Folderless Remote" })
+      .locator('xpath=ancestor::*[.//button[normalize-space()="Edit"]][1]');
+    await card.getByRole("button", { name: "Edit" }).click();
+
+    const dialog = page.getByRole("dialog").filter({ hasText: "Device folder" });
+    const folder = dialog.getByTestId("edit-device-folder");
+    await expect(folder).toBeVisible();
+    await expect(folder.getByRole("button", { name: "Connect this device" })).toBeVisible();
+
+    // Attach an OPFS directory — the same interface the picker returns — and
+    // the form follows the attachment state, offering to change it.
+    await page.evaluate(async (targetId: number) => {
+      const root = await navigator.storage.getDirectory();
+      const deviceRoot = await root.getDirectoryHandle(`device-${targetId}`, { create: true });
+      await (
+        window as unknown as {
+          __ipodrocksDevice: {
+            attachHandle(id: number, h: FileSystemDirectoryHandle): Promise<void>;
+          };
+        }
+      ).__ipodrocksDevice.attachHandle(targetId, deviceRoot);
+    }, device.id);
+
+    await expect(folder.getByRole("button", { name: "Disconnect" })).toBeVisible({
+      timeout: 10_000,
+    });
+    await expect(folder.getByRole("button", { name: "Change folder" })).toBeVisible();
+    await expect(folder).toContainText(`device-${device.id}`);
+  } finally {
+    await invoke(request, "device:remove", device.id);
+  }
+});

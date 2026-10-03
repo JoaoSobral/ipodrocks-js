@@ -32,6 +32,14 @@ export const DEVICE_RPC_RESULT = "device-rpc-result";
 export const DEVICE_ATTACH = "device-attach";
 /** The browser giving a device up — tab closing, or the user disconnecting it. */
 export const DEVICE_DETACH = "device-detach";
+/**
+ * The browser reporting bytes moved on a data-plane call still in flight.
+ *
+ * Two jobs: it is what the sync's MB/s readout is made of, and it is the
+ * heartbeat that keeps a slow transfer alive — `pull`/`push` time out after
+ * {@link DEVICE_TRANSFER_IDLE_MS} *without progress*, not after a fixed total.
+ */
+export const DEVICE_RPC_PROGRESS = "device-rpc-progress";
 
 /**
  * The verbs.
@@ -51,6 +59,7 @@ export type DeviceRpcVerb =
   | "unlink"
   | "rmdir"
   | "rm"
+  | "rmMany"
   | "rename"
   | "freeSpace"
   | "pull"
@@ -82,9 +91,29 @@ export interface DeviceRpcResultFrame {
   code?: string;
 }
 
+export interface DeviceRpcProgressFrame {
+  type: typeof DEVICE_RPC_PROGRESS;
+  id: number;
+  bytes: number;
+  total: number | null;
+}
+
+/** One path's outcome in an `rmMany`. */
+export interface RpcRemoveResult {
+  ok: boolean;
+  code?: string;
+}
+
 export interface DeviceAttachFrame {
   type: typeof DEVICE_ATTACH;
   deviceId: number;
+  /**
+   * True when this is the *same* tab re-announcing after its socket dropped,
+   * with its worker — and therefore any call it was carrying — still alive.
+   * The server then hands the new socket the calls the old one was waiting
+   * on, and their replies land instead of being retried.
+   */
+  resumed?: boolean;
   /**
    * `Date.now()` in the browser, read as close to sending as possible.
    *
@@ -138,10 +167,55 @@ export interface RpcFreeSpace {
  * How long the server waits for one control-plane reply.
  *
  * Generous, because the browser may be walking a folder of ten thousand files
- * on a USB 2.0 iPod. The data plane is not bounded by this at all — it is an
- * HTTP transfer with its own lifetime.
+ * on a USB 2.0 iPod. The data-plane verbs (`pull`, `push`) are *not* bounded
+ * by this: they use {@link DEVICE_TRANSFER_IDLE_MS}, reset by every progress
+ * frame, so a large file on a slow link is never cut off while it is moving.
  */
 export const DEVICE_RPC_TIMEOUT_MS = 120_000;
+
+/** A transfer that reports no progress for this long is considered stalled. */
+export const DEVICE_TRANSFER_IDLE_MS = 60_000;
+
+/**
+ * How long a device stays attached after the socket that holds it drops.
+ *
+ * A tunnel blip, a Wi-Fi switch or a laptop lid closed for a minute used to
+ * end a sync: the attachment went with the socket, and every remaining call
+ * failed even though the tab came straight back. Inside this window a call
+ * waits for the tab to re-announce instead.
+ */
+export const DEVICE_RECONNECT_GRACE_MS = 120_000;
+
+/**
+ * Verbs that may be re-sent after a connection loss.
+ *
+ * Each one either only reads, or leaves the device in the same state however
+ * many times it runs (a `pull` rewrites the whole file; a remove that already
+ * happened reads as success). **`patch` is deliberately absent**: it is a
+ * rating write into the checksum-less Rockbox index, and its caller already
+ * wraps each track alone and leaves a failed one unmarked for the next sync.
+ * `rename` is absent because it is copy-then-delete underneath. `writeFile`
+ * replaces the whole file, so repeating it is harmless.
+ */
+export const RETRYABLE_DEVICE_VERBS: ReadonlySet<DeviceRpcVerb> = new Set<DeviceRpcVerb>([
+  "stat",
+  "readdir",
+  "listTree",
+  "readFile",
+  "readRange",
+  "writeFile",
+  "mkdir",
+  "unlink",
+  "rmdir",
+  "rm",
+  "rmMany",
+  "freeSpace",
+  "pull",
+  "push",
+]);
+
+/** Paths per `rmMany` frame. Keeps one frame, and one reply, small. */
+export const RM_MANY_CHUNK = 500;
 
 /** Bytes the server will accept from a single control-plane `readFile`. The
  *  Rockbox index is the big one and is a few megabytes; anything larger should

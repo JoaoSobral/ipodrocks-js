@@ -136,9 +136,15 @@ export async function invoke<T = unknown>(
   channel: string,
   ...args: unknown[]
 ): Promise<T> {
-  const res = await request.post(`/api/invoke/${encodeURIComponent(channel)}`, {
+  let res = await request.post(`/api/invoke/${encodeURIComponent(channel)}`, {
     data: { args },
   });
+  // A handler that outlives the defer deadline answers `202 { pending }`; the
+  // outcome is collected from the result route, exactly as the transport does.
+  while (res.status() === 202) {
+    const { pending } = (await res.json()) as { pending: string };
+    res = await request.get(`/api/invoke/result/${encodeURIComponent(pending)}`);
+  }
   if (!res.ok()) {
     throw new Error(`invoke ${channel} failed: ${res.status()} ${await res.text()}`);
   }
