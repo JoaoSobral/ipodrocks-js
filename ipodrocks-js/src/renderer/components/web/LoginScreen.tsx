@@ -15,6 +15,10 @@ import { PROVIDER_LABELS, isProvider } from "@shared/auth-providers";
  * the server's answer, not a guess from the client — `needsOwnerClaim` comes
  * from `/api/auth/status`, and the claim itself is refused server-side once an
  * identity exists, so a stale page cannot be used to create a second one.
+ *
+ * A third path, owner recovery, appears only while the daemon was started with
+ * `IPODROCKS_RESET_OWNER=1` (`ownerResetAvailable`): the token it printed to
+ * the log buys the owner account a new password.
  */
 
 
@@ -29,21 +33,32 @@ export function LoginScreen({ auth, onAuthenticated }: LoginScreenProps) {
   const [claimToken, setClaimToken] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(initialError());
+  const [resetting, setResetting] = useState(false);
+  const [resetToken, setResetToken] = useState("");
 
   const claiming = auth.needsOwnerClaim;
+  const canReset = !claiming && auth.ownerResetAvailable === true;
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true);
     setError(null);
     try {
-      const endpoint = claiming ? "/api/auth/local/claim" : "/api/auth/local/login";
+      const endpoint = resetting
+        ? "/api/auth/local/reset-owner"
+        : claiming
+          ? "/api/auth/local/claim"
+          : "/api/auth/local/login";
       const res = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "same-origin",
         body: JSON.stringify(
-          claiming ? { username, password, claimToken } : { username, password }
+          resetting
+            ? { token: resetToken, newPassword: password }
+            : claiming
+              ? { username, password, claimToken }
+              : { username, password }
         ),
       });
       const body = (await res.json().catch(() => null)) as { error?: string } | null;
@@ -65,9 +80,11 @@ export function LoginScreen({ auth, onAuthenticated }: LoginScreenProps) {
         <div className="text-center space-y-1">
           <h1 className="text-2xl font-semibold text-foreground">iPodRocks</h1>
           <p className="text-sm text-muted-foreground">
-            {claiming
-              ? "Claim this server to finish setting it up."
-              : "Sign in to continue."}
+            {resetting
+              ? "Set a new password for the owner account."
+              : claiming
+                ? "Claim this server to finish setting it up."
+                : "Sign in to continue."}
           </p>
         </div>
 
@@ -95,23 +112,40 @@ export function LoginScreen({ auth, onAuthenticated }: LoginScreenProps) {
               />
             </div>
           )}
+          {resetting && (
+            <div className="space-y-1">
+              <label className="text-xs font-medium text-foreground">Reset token</label>
+              <Input
+                id="reset-token"
+                value={resetToken}
+                onChange={(e) => setResetToken(e.target.value)}
+                autoComplete="off"
+                spellCheck={false}
+                placeholder="From the server log"
+              />
+            </div>
+          )}
+          {!resetting && (
+            <div className="space-y-1">
+              <label className="text-xs font-medium text-foreground">Username</label>
+              <Input
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                autoComplete="username"
+              />
+            </div>
+          )}
           <div className="space-y-1">
-            <label className="text-xs font-medium text-foreground">Username</label>
-            <Input
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              autoComplete="username"
-            />
-          </div>
-          <div className="space-y-1">
-            <label className="text-xs font-medium text-foreground">Password</label>
+            <label className="text-xs font-medium text-foreground">
+              {resetting ? "New password" : "Password"}
+            </label>
             <Input
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              autoComplete={claiming ? "new-password" : "current-password"}
+              autoComplete={claiming || resetting ? "new-password" : "current-password"}
             />
-            {claiming && (
+            {(claiming || resetting) && (
               <p className="text-xs text-muted-foreground">
                 At least 12 characters.
               </p>
@@ -126,11 +160,30 @@ export function LoginScreen({ auth, onAuthenticated }: LoginScreenProps) {
             className="w-full"
             disabled={busy}
           >
-            {busy ? "Signing in…" : claiming ? "Claim server" : "Sign in"}
+            {busy
+              ? "Signing in…"
+              : resetting
+                ? "Reset password and sign in"
+                : claiming
+                  ? "Claim server"
+                  : "Sign in"}
           </Button>
+          {canReset && (
+            <button
+              type="button"
+              className="block w-full text-center text-xs text-muted-foreground hover:text-foreground"
+              onClick={() => {
+                setResetting(!resetting);
+                setPassword("");
+                setError(null);
+              }}
+            >
+              {resetting ? "Back to sign in" : "Reset owner password"}
+            </button>
+          )}
         </form>
 
-        {auth.providers.length > 0 && (
+        {!resetting && auth.providers.length > 0 && (
           <div className="space-y-2">
             <div className="flex items-center gap-3">
               <div className="h-px flex-1 bg-border" />

@@ -45,8 +45,9 @@ Also update the system prompt rules in `assistantChat.ts` (`ASSISTANT_SYSTEM_PRO
 
 **A tool that manages the allowlist is owner-gated, and the tier does not cover
 that.** `AiToolContext.sessionId` carries who is asking (undefined over Electron
-IPC — the desktop window on the machine holding the database); the nine
-`web_server_*` allowlist tools (identities, sessions, access requests, links)
+IPC — the desktop window on the machine holding the database); the ten
+`web_server_*` allowlist tools (identities, sessions, access requests, links,
+passwords)
 call `denyIfNotOwner()` before anything else. See
 the hazard below. Every *other* tool is deliberately open to any allowlisted
 user: they are a full user of the app by design.
@@ -1465,9 +1466,47 @@ dressed as a convenience.
   what an owner needs to see.
 
 Pinned in `src/__tests__/regressions/web-owner-gate.test.ts` (the gate and all
-nine allowlist tools, including the mutation where the gate is removed) and
+ten allowlist tools, including the mutation where the gate is removed) and
 `tests/e2e/web-identities.test.ts` (the channels over a real daemon, with a
 signed-in non-owner as the attacker and an ordinary channel as the control).
+
+## Passwords: one writer, four front doors
+
+A local account's password is changed in exactly one place,
+`resetLocalPassword()` (`server/auth/password-reset.ts`). Settings and
+`server:setPassword` (owner), Rocksy's `web_server_set_password` (owner),
+`POST /api/auth/local/password` (any local user, for their own) and the two
+headless recovery paths all call it. It refuses a provider identity (giving a
+Google account a hash would be a second way into it) and signs out every
+*other* session of the account.
+
+- **Adding never updates.** `addNewLocalAccount()` (`identities.ts`) is what
+  every "add a local account" path calls, and it refuses an existing username.
+  `createLocalAccount()` goes through `addIdentity()`, which *upserts*. Wired
+  to the Add form, that reported "added" while silently replacing the existing
+  account's password, the owner's included, and the user saw an account that
+  "could not be removed" because it was the owner.
+- **The self-service route is a guessing oracle for whoever holds the
+  session**, so it uses `reserveAttempt()` on the *login form's* per-account
+  bucket before `verifyLocalLogin()`. A separate bucket would hand an attacker
+  ten more tries.
+- **`server:claimOwner` is Electron-IPC only** (`sessionId === undefined`). The
+  desktop already reads the claim token off `server:getStatus`, so it grants
+  nothing new. Over the web the token *is* the proof. It hashes *before*
+  checking the allowlist is empty, so no `await` sits between the check and
+  the insert.
+- **Headless recovery trusts the machine, like the claim token.**
+  `src/server/cli.ts` (`npm run server:accounts`) writes straight to the
+  database and reads the password without echo, never from argv.
+  `IPODROCKS_RESET_OWNER=1` (checked `=== "1"`) prints a 30-minute,
+  single-use owner token at boot. **Every boot without the flag deletes it**,
+  so a forgotten variable does not leave a standing way in. A policy-failing
+  password does not consume it.
+
+Pinned in `regressions/server-password-management.test.ts`, e2e
+`web-password-management`, `web-owner-reset` (its own daemon, token read from
+the log, reset through the rendered login screen) and
+`settings-server-accounts` (the desktop card).
 
 ## Decision: the daemon's container does **not** rebuild `better-sqlite3`
 

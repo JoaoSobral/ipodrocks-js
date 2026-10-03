@@ -1305,6 +1305,40 @@ export async function revokeServerIdentity(
   >;
 }
 
+/** Adds a local username + password account. Owner only. */
+export async function allowServerLocalAccount(
+  username: string,
+  password: string
+): Promise<WebServerResult<{ ok: true; identity: ServerIdentity }>> {
+  return window.api.invoke("server:allowIdentity", {
+    provider: "local",
+    subject: username,
+    password,
+  }) as Promise<WebServerResult<{ ok: true; identity: ServerIdentity }>>;
+}
+
+/** Sets a local account's password and signs its other browsers out. Owner
+ *  only — a user changing their *own* goes through `changeMyPassword`. */
+export async function setServerPassword(
+  identityId: number,
+  password: string
+): Promise<WebServerResult<{ ok: true; signedOut: number }>> {
+  return window.api.invoke("server:setPassword", { identityId, password }) as Promise<
+    WebServerResult<{ ok: true; signedOut: number }>
+  >;
+}
+
+/** Creates the owner from the desktop window while nobody has claimed the
+ *  server. Refused to a web client, which claims with the token instead. */
+export async function claimServerOwner(
+  username: string,
+  password: string
+): Promise<WebServerResult<{ ok: true; identity: ServerIdentity }>> {
+  return window.api.invoke("server:claimOwner", { username, password }) as Promise<
+    WebServerResult<{ ok: true; identity: ServerIdentity }>
+  >;
+}
+
 export async function removeServerLink(
   linkId: number
 ): Promise<WebServerResult<{ ok: true }>> {
@@ -1363,6 +1397,17 @@ export function listMySignInLinks(): Promise<WebServerResult<{ links: SignInLink
 
 export function removeMySignInLink(linkId: number): Promise<WebServerResult<{ ok: true }>> {
   return authJson(`/links/${linkId}`, { method: "DELETE" });
+}
+
+/** Changes the signed-in local account's own password. Web mode only. */
+export function changeMyPassword(
+  currentPassword: string,
+  newPassword: string
+): Promise<WebServerResult<{ ok: true; signedOut: number }>> {
+  return authJson("/local/password", {
+    method: "POST",
+    body: JSON.stringify({ currentPassword, newPassword }),
+  });
 }
 
 /** Marks the session and returns the provider start URL to navigate to. */

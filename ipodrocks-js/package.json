@@ -19,6 +19,7 @@
     "dev:electron:verbose": "npx wait-on http://localhost:5173 dist/main/main/index.js && npx cross-env VITE_DEV_SERVER_URL=http://localhost:5173 electron . --dev",
     "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.main.json && npm run bundle-preload && vite build",
     "server": "node dist/main/server/daemon.js",
+    "server:accounts": "node dist/main/server/cli.js",
     "preview": "npm run build && electron .",
     "test": "cross-env ELECTRON_RUN_AS_NODE=1 electron node_modules/vitest/vitest.mjs",
     "test:e2e": "npm run build && playwright test",

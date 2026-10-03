@@ -829,7 +829,7 @@ const web_server_list_sessions: AiTool = {
 const web_server_allow_identity: AiTool = {
   name: "web_server_allow_identity",
   description:
-    "Add an account to the web server's allowlist so it can sign in. For provider sign-in (google/github/facebook) the subject is that provider's stable user id, not the email address — if the person has already tried to sign in, approve their entry from web_server_list_access_requests instead, which needs no id. For a local account, the subject is the username and a password of at least 12 characters is required. Use when the user wants to give someone access to their server. Owner only.",
+    "Add an account to the web server's allowlist so it can sign in. For provider sign-in (google/github/facebook) the subject is that provider's stable user id, not the email address — if the person has already tried to sign in, approve their entry from web_server_list_access_requests instead, which needs no id. For a local account, the subject is the username and a password of at least 12 characters is required; an existing username is refused — use web_server_set_password to change a password. Use when the user wants to give someone access to their server. Owner only.",
   parameters: {
     type: "object",
     properties: {
@@ -875,11 +875,13 @@ const web_server_allow_identity: AiTool = {
       const { validatePassword } = await import("../../server/auth/passwords");
       const bad = validatePassword(args.password);
       if (bad) return bad;
-      const identity = await identities.createLocalAccount(
-        subject,
-        String(args.password)
-      );
-      return { ok: true, identity, message: `${subject} can now sign in with that password.` };
+      const outcome = await identities.addNewLocalAccount(subject, String(args.password));
+      if ("error" in outcome) return outcome;
+      return {
+        ok: true,
+        identity: outcome.identity,
+        message: `${subject} can now sign in with that password.`,
+      };
     }
     // Never `isOwner` — `allowProviderIdentity()` has no way to say it.
     const outcome = identities.allowProviderIdentity({
@@ -934,6 +936,49 @@ const web_server_revoke_identity: AiTool = {
       ok: true,
       sessionsRevoked,
       message: `Removed. ${sessionsRevoked} signed-in browser(s) were logged out.`,
+    };
+  },
+};
+
+const web_server_set_password: AiTool = {
+  name: "web_server_set_password",
+  description:
+    "Set a new password for a local (username + password) account on the web server — a reset for someone who forgot theirs, including the owner. Call web_server_list_identities first for the id. Accounts that sign in with Google/GitHub/Facebook have no password and are refused. Every other browser signed in to that account is logged out. Use when the user wants to reset or change a web server password. Owner only.",
+  parameters: {
+    type: "object",
+    properties: {
+      identity_id: {
+        type: "number",
+        description: "The id from web_server_list_identities.",
+      },
+      password: {
+        type: "string",
+        description: "The new password, at least 12 characters. Never invent one — ask the user.",
+      },
+    },
+    required: ["identity_id", "password"],
+  },
+  // It decides who can get in, like `web_server_allow_identity`.
+  kind: "write-destructive",
+  summarize: (a) => `Set a new web server password for identity #${String(a.identity_id)}`,
+  async run(args, ctx) {
+    const denied = await ownerGate(ctx);
+    if (denied) return denied;
+
+    const id = Number(args.identity_id);
+    if (!Number.isInteger(id)) return { error: "identity_id must be a whole number." };
+
+    const { resetLocalPassword } = await import("../../server/auth/password-reset");
+    const result = await resetLocalPassword(id, args.password, {
+      keepSessionId: ctx.sessionId,
+    });
+    if ("error" in result) return result;
+    return {
+      ok: true,
+      signedOut: result.signedOut,
+      message:
+        `Password set for ${result.identity.subject}. ` +
+        `${result.signedOut} other signed-in browser(s) were logged out.`,
     };
   },
 };
@@ -2302,6 +2347,7 @@ export const AI_TOOLS: AiTool[] = [
   web_server_list_sessions,
   web_server_allow_identity,
   web_server_revoke_identity,
+  web_server_set_password,
   web_server_revoke_sessions,
   web_server_list_access_requests,
   web_server_approve_access_request,

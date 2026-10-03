@@ -163,11 +163,18 @@ export function callerSubject(ctx: {
  * top. An owner revoking their own is a legitimate "sign me out of that other
  * browser" and is not blocked.
  */
-export function revokeSessionsForIdentity(identityId: number): number {
+export function revokeSessionsForIdentity(
+  identityId: number,
+  /** Left alone: a password change signs out the *other* browsers, not the
+   *  tab that made it. */
+  exceptSessionId?: string
+): number {
   const rows = getServerDb()
     .prepare("SELECT sid, data, expires_at FROM server_sessions")
     .all() as SessionRow[];
-  const victims = rows.filter((r) => identityIdOf(r) === identityId).map((r) => r.sid);
+  const victims = rows
+    .filter((r) => identityIdOf(r) === identityId && r.sid !== exceptSessionId)
+    .map((r) => r.sid);
   if (victims.length === 0) return 0;
   const stmt = getServerDb().prepare("DELETE FROM server_sessions WHERE sid = ?");
   const run = getServerDb().transaction((sids: string[]) => {

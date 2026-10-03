@@ -7,7 +7,7 @@ import {
   approveAccessRequest,
   authorizeIdentity,
   countIdentities,
-  createLocalAccount,
+  addNewLocalAccount,
   dismissAccessRequest,
   findLinkById,
   listAccessRequests,
@@ -32,6 +32,13 @@ import {
 } from "./rate-limit";
 import { verifyCfAccessJwt } from "./cf-access";
 import { revokeSessionsForIdentity } from "./sessions";
+import {
+  clearOwnerResetToken,
+  findOwner,
+  ownerResetAvailable,
+  ownerResetTokenMatches,
+  resetLocalPassword,
+} from "./password-reset";
 
 /**
  * Every route that creates, inspects or destroys a login.
@@ -167,6 +174,9 @@ export function createAuthRouter(deps: AuthDeps): Router {
       res.json({
         authenticated: subject !== null,
         needsOwnerClaim: countIdentities() === 0,
+        // Only while an operator started the daemon with
+        // IPODROCKS_RESET_OWNER=1 and the token has not been used or expired.
+        ownerResetAvailable: ownerResetAvailable(),
         providers: deps.enabledProviders,
         localEnabled: true,
         user: identity
@@ -276,6 +286,106 @@ export function createAuthRouter(deps: AuthDeps): Router {
       await setLocalPassword(verdict2.identity.id, String(password));
       clearFailures(buckets);
       await loginAs(req, verdict2.identity);
+      res.json({ ok: true });
+    })();
+  });
+
+  /**
+   * Change your own password. Any signed-in local account, owner or not —
+   * `server:setPassword` is the owner's tool for everybody else's.
+   *
+   * The current password is checked through the same reserve-then-verify as
+   * login, on the same per-account bucket: a hijacked session must not be a
+   * way to guess the password at leisure, and it must not get ten extra tries
+   * on top of the login form's ten.
+   */
+  router.post("/local/password", requireAuth(config), (req, res) => {
+    void (async () => {
+      const identity = currentIdentity(req);
+      if (!identity) {
+        res.status(401).json({ error: "Not authenticated" });
+        return;
+      }
+      if (identity.provider !== "local") {
+        res.status(400).json({
+          error: `You sign in with ${identity.provider}, so there is no password to change.`,
+        });
+        return;
+      }
+      const { currentPassword, newPassword } = (req.body ?? {}) as Record<string, unknown>;
+      if (typeof currentPassword !== "string" || typeof newPassword !== "string") {
+        res.status(400).json({ error: "Enter your current and new password." });
+        return;
+      }
+      const bad = validatePassword(newPassword);
+      if (bad) {
+        res.status(400).json(bad);
+        return;
+      }
+      const buckets = bucketsFor(remoteAddress(req), identity.subject);
+      const verdict = reserveAttempt(buckets);
+      if (!verdict.allowed) {
+        res.setHeader("Retry-After", String(verdict.retryAfterSeconds));
+        res.status(429).json({
+          error: "Too many failed attempts. Try again later.",
+          retryAfterSeconds: verdict.retryAfterSeconds,
+        });
+        return;
+      }
+      const verified = await verifyLocalLogin(identity.subject, currentPassword);
+      if (!verified || verified.id !== identity.id) {
+        res.status(403).json({ error: "Your current password is not correct." });
+        return;
+      }
+      clearFailures(buckets);
+      const result = await resetLocalPassword(identity.id, newPassword, {
+        keepSessionId: req.sessionID,
+      });
+      if ("error" in result) {
+        res.status(400).json(result);
+        return;
+      }
+      res.json({ ok: true, signedOut: result.signedOut });
+    })();
+  });
+
+  /**
+   * Owner recovery for a headless install — see `password-reset.ts`. Only
+   * answers while the daemon was started with `IPODROCKS_RESET_OWNER=1`.
+   * Charged to one shared bucket like `/local/claim`: the token is the only
+   * secret here, so there is no account to key on.
+   */
+  router.post("/local/reset-owner", (req, res) => {
+    void (async () => {
+      const { token, newPassword } = (req.body ?? {}) as Record<string, unknown>;
+      const buckets = bucketsFor(remoteAddress(req), "reset-owner");
+      const verdict = reserveAttempt(buckets);
+      if (!verdict.allowed) {
+        res.setHeader("Retry-After", String(verdict.retryAfterSeconds));
+        res.status(429).json({ error: "Too many attempts. Try again later." });
+        return;
+      }
+      if (!ownerResetTokenMatches(token)) {
+        res.status(403).json({ error: "That reset token is not valid or has expired." });
+        return;
+      }
+      const owner = findOwner();
+      if (!owner) {
+        res.status(409).json({ error: "This server has no owner to reset." });
+        return;
+      }
+      const result = await resetLocalPassword(owner.id, newPassword);
+      if ("error" in result) {
+        // A password that fails the policy leaves the token usable: the
+        // operator typed a short password, not a wrong token.
+        res.status(400).json(result);
+        return;
+      }
+      clearOwnerResetToken();
+      clearFailures(buckets);
+      clearFailures(bucketsFor(remoteAddress(req), owner.subject));
+      markLogin(owner.id);
+      await loginAs(req, owner);
       res.json({ ok: true });
     })();
   });
@@ -527,8 +637,12 @@ export function createAuthRouter(deps: AuthDeps): Router {
           res.status(400).json(bad);
           return;
         }
-        const identity = await createLocalAccount(s, String(password));
-        res.json({ identity });
+        const outcome = await addNewLocalAccount(s, String(password));
+        if ("error" in outcome) {
+          res.status(409).json(outcome);
+          return;
+        }
+        res.json({ identity: outcome.identity });
         return;
       }
       const outcome = allowProviderIdentity({

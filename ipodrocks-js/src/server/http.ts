@@ -21,6 +21,7 @@ import {
   requireAuth,
 } from "./auth/routes";
 import { getOrCreateClaimToken } from "./auth/identities";
+import { OWNER_RESET_TTL_MS, prepareOwnerReset } from "./auth/password-reset";
 import { attachEventsServer, resetEventSessions, type EventsServer } from "./events";
 import { requireSameOrigin } from "./origin-guard";
 import {
@@ -413,6 +414,21 @@ export async function startServer(
         "  │ later login is checked against the allowlist.              │\n" +
         "  └────────────────────────────────────────────────────────────┘\n"
     );
+  }
+  const ownerReset = prepareOwnerReset();
+  if (ownerReset.kind === "token") {
+    console.log(
+      "\n" +
+        "  ┌─ Owner password reset ─────────────────────────────────────┐\n" +
+        "  │ IPODROCKS_RESET_OWNER=1 is set. Open the server, choose    │\n" +
+        "  │ \"Reset owner password\" and enter this one-time token:      │\n" +
+        `  │   ${ownerReset.token.padEnd(57)}│\n` +
+        `  │ ${`Valid ${OWNER_RESET_TTL_MS / 60000} minutes, for "${ownerReset.owner.subject}".`.slice(0, 59).padEnd(59)}│\n` +
+        "  │ Remove the variable and restart once you are back in.      │\n" +
+        "  └────────────────────────────────────────────────────────────┘\n"
+    );
+  } else if (ownerReset.kind === "refused") {
+    console.log(`[server] IPODROCKS_RESET_OWNER=1 ignored: ${ownerReset.reason}.`);
   }
   if (!config.publicUrl && enabledProviders.length === 0) {
     console.log(

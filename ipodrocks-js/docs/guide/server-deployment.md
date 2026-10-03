@@ -230,6 +230,7 @@ Server when the desktop app is hosting; the environment always wins.
 | `IPODROCKS_GITHUB_CLIENT_ID` / `_SECRET` | — | GitHub sign-in. |
 | `IPODROCKS_FACEBOOK_CLIENT_ID` / `_SECRET` | — | Facebook sign-in. |
 | `IPODROCKS_CF_ACCESS_TEAM_DOMAIN` / `_AUD` | — | Verify Cloudflare Access assertions. |
+| `IPODROCKS_RESET_OWNER` | — | `1` prints a one-time owner password-reset token at boot. Remove it once used — see [Forgot your password](/guide/server-setup#forgot-your-password). |
 
 OAuth client secrets are environment-only on purpose. They belong to someone
 else's console and have no business in a file the app rewrites on every settings
@@ -242,6 +243,10 @@ the move from Electron to a daemon.
 `better-sqlite3`'s prebuilt binary, which happens if the package was installed
 for a platform or architecture other than the one it is running on. Reinstall on
 the target machine rather than copying `node_modules` across.
+
+**Locked out of the owner account.** Run `node dist/main/server/cli.js password
+<username>` on the server (`docker exec -it` in a container), or boot once with
+`IPODROCKS_RESET_OWNER=1`. See [Forgot your password](/guide/server-setup#forgot-your-password).
 
 **Everyone is logged out after a restart.** `IPODROCKS_SESSION_SECRET` is unset,
 so a random one was generated at boot.

@@ -3,7 +3,9 @@ import { toast } from "sonner";
 import { PROVIDER_LABELS, isProvider } from "@shared/auth-providers";
 import { Button } from "../common/Button";
 import { Card } from "../common/Card";
+import { Input } from "../common/Input";
 import {
+  changeMyPassword,
   isWebServerDenied,
   listMySignInLinks,
   removeMySignInLink,
@@ -152,8 +154,97 @@ export function SignInMethodsCard({ open }: { open: boolean }) {
         )}
 
         {error && <p className="text-xs text-destructive">{error}</p>}
+
+        {user?.provider === "local" && <ChangePasswordForm />}
       </div>
     </Card>
+  );
+}
+
+/**
+ * A local account changing its own password. The server checks the current
+ * one on the login form's rate-limit bucket, and signs out every other browser
+ * on this account — this one stays signed in.
+ */
+function ChangePasswordForm() {
+  const [current, setCurrent] = useState("");
+  const [next, setNext] = useState("");
+  const [repeat, setRepeat] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function submit() {
+    setError(null);
+    if (next !== repeat) {
+      setError("The new passwords do not match.");
+      return;
+    }
+    setBusy(true);
+    try {
+      const result = await changeMyPassword(current, next);
+      if (isWebServerDenied(result)) {
+        setError(result.error);
+        return;
+      }
+      setCurrent("");
+      setNext("");
+      setRepeat("");
+      toast.success(
+        result.signedOut > 0
+          ? `Password changed. ${result.signedOut} other browser(s) were signed out.`
+          : "Password changed."
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <form
+      className="space-y-2 border-t border-border pt-4"
+      data-testid="change-password"
+      onSubmit={(e) => {
+        e.preventDefault();
+        void submit();
+      }}
+    >
+      <p className="text-sm font-medium text-foreground">Change password</p>
+      <Input
+        id="current-password"
+        type="password"
+        autoComplete="current-password"
+        placeholder="Current password"
+        value={current}
+        onChange={(e) => setCurrent(e.target.value)}
+      />
+      <div className="grid grid-cols-2 gap-2">
+        <Input
+          id="next-password"
+          type="password"
+          autoComplete="new-password"
+          placeholder="New password (12+ characters)"
+          value={next}
+          onChange={(e) => setNext(e.target.value)}
+        />
+        <Input
+          id="repeat-password"
+          type="password"
+          autoComplete="new-password"
+          placeholder="Repeat new password"
+          value={repeat}
+          onChange={(e) => setRepeat(e.target.value)}
+        />
+      </div>
+      <Button
+        size="sm"
+        variant="secondary"
+        type="submit"
+        disabled={busy || !current || !next || !repeat}
+      >
+        Change password
+      </Button>
+      {error && <p className="text-xs text-destructive">{error}</p>}
+    </form>
   );
 }
 

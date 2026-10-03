@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { PROVIDER_LABELS, isProvider } from "@shared/auth-providers";
 import { Button } from "../common/Button";
+import { Input } from "../common/Input";
 import {
+  allowServerLocalAccount,
   approveAccessRequest,
   dismissAccessRequest,
   isWebServerDenied,
@@ -9,6 +11,7 @@ import {
   listServerIdentities,
   removeServerLink,
   revokeServerIdentity,
+  setServerPassword,
   type AccessRequest,
   type ServerIdentity,
 } from "../../ipc/api";
@@ -26,6 +29,10 @@ function label(provider: string): string {
  * display name is whatever the person typed into their Google profile, so the
  * provider, the email and whether it is verified are always shown beside it —
  * "Pedro" is not evidence of anything.
+ *
+ * Local accounts are added and their passwords reset here, which is the
+ * forgotten-password answer for anyone with the desktop app: it is the owner
+ * without logging in. A reset signs that account's other browsers out.
  */
 export function SignInAllowlist({ open }: { open: boolean }) {
   const [identities, setIdentities] = useState<ServerIdentity[]>([]);
@@ -34,6 +41,12 @@ export function SignInAllowlist({ open }: { open: boolean }) {
   const [error, setError] = useState<string | null>(null);
   // Removing an account is two clicks: the first arms, the second does it.
   const [armedRemoval, setArmedRemoval] = useState<number | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  // The one row whose "Set password" field is open.
+  const [passwordFor, setPasswordFor] = useState<number | null>(null);
+  const [newPassword, setNewPassword] = useState("");
+  const [newUsername, setNewUsername] = useState("");
+  const [newUserPassword, setNewUserPassword] = useState("");
 
   const load = useCallback(async () => {
     const [ids, reqs] = await Promise.all([listServerIdentities(), listAccessRequests()]);
@@ -52,25 +65,48 @@ export function SignInAllowlist({ open }: { open: boolean }) {
   useEffect(() => {
     if (!open) return;
     setArmedRemoval(null);
+    setPasswordFor(null);
+    setNotice(null);
     void load();
   }, [open, load]);
 
-  async function run(action: () => Promise<unknown>) {
+  /** Resolves true when the action succeeded. */
+  async function run(action: () => Promise<unknown>): Promise<boolean> {
     setBusy(true);
     setError(null);
+    setNotice(null);
     try {
       const result = await action();
-      if (
+      const failed =
         typeof result === "object" &&
         result !== null &&
-        isWebServerDenied(result as { error: string })
-      ) {
-        setError((result as { error: string }).error);
-      }
+        isWebServerDenied(result as { error: string });
+      if (failed) setError((result as { error: string }).error);
       await load();
+      return !failed;
     } finally {
       setBusy(false);
     }
+  }
+
+  async function savePassword(identity: ServerIdentity) {
+    const ok = await run(() => setServerPassword(identity.id, newPassword));
+    if (!ok) return;
+    setPasswordFor(null);
+    setNewPassword("");
+    setNotice(
+      `Password set for ${identity.displayName ?? identity.subject}. ` +
+        "Any other browser signed in to that account was signed out."
+    );
+  }
+
+  async function addAccount() {
+    const name = newUsername.trim();
+    const ok = await run(() => allowServerLocalAccount(name, newUserPassword));
+    if (!ok) return;
+    setNewUsername("");
+    setNewUserPassword("");
+    setNotice(`${name} can now sign in with that password.`);
   }
 
   return (
@@ -96,24 +132,62 @@ export function SignInAllowlist({ open }: { open: boolean }) {
                     {identity.email ? ` · ${identity.email}` : ""}
                   </p>
                 </div>
-                {!identity.isOwner && (
-                  <Button
-                    size="sm"
-                    variant={armedRemoval === identity.id ? "danger" : "secondary"}
-                    disabled={busy}
-                    onClick={() => {
-                      if (armedRemoval !== identity.id) {
-                        setArmedRemoval(identity.id);
-                        return;
-                      }
-                      setArmedRemoval(null);
-                      void run(() => revokeServerIdentity(identity.id));
-                    }}
-                  >
-                    {armedRemoval === identity.id ? "Confirm remove" : "Remove"}
-                  </Button>
-                )}
+                <div className="flex shrink-0 gap-2">
+                  {identity.provider === "local" && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      disabled={busy}
+                      data-testid="set-password"
+                      onClick={() => {
+                        setNewPassword("");
+                        setPasswordFor(passwordFor === identity.id ? null : identity.id);
+                      }}
+                    >
+                      Set password
+                    </Button>
+                  )}
+                  {!identity.isOwner && (
+                    <Button
+                      size="sm"
+                      variant={armedRemoval === identity.id ? "danger" : "secondary"}
+                      disabled={busy}
+                      onClick={() => {
+                        if (armedRemoval !== identity.id) {
+                          setArmedRemoval(identity.id);
+                          return;
+                        }
+                        setArmedRemoval(null);
+                        void run(() => revokeServerIdentity(identity.id));
+                      }}
+                    >
+                      {armedRemoval === identity.id ? "Confirm remove" : "Remove"}
+                    </Button>
+                  )}
+                </div>
               </div>
+              {passwordFor === identity.id && (
+                <form
+                  className="flex items-end gap-2 pt-1"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    void savePassword(identity);
+                  }}
+                >
+                  <Input
+                    className="flex-1"
+                    id={`new-password-${identity.id}`}
+                    type="password"
+                    autoComplete="new-password"
+                    placeholder="New password (12+ characters)"
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                  />
+                  <Button size="sm" type="submit" disabled={busy || newPassword.length === 0}>
+                    Save
+                  </Button>
+                </form>
+              )}
               {identity.links.map((link) => (
                 <div
                   key={link.id}
@@ -137,6 +211,46 @@ export function SignInAllowlist({ open }: { open: boolean }) {
           ))}
         </ul>
       </div>
+
+      <form
+        className="space-y-2"
+        data-testid="add-local-account"
+        onSubmit={(e) => {
+          e.preventDefault();
+          void addAccount();
+        }}
+      >
+        <p className="text-sm font-medium text-foreground">Add a local account</p>
+        <p className="text-xs text-muted-foreground">
+          A username and password that signs in to this server. Works on a LAN
+          with no sign-in provider configured.
+        </p>
+        <div className="grid grid-cols-2 gap-2">
+          <Input
+            id="new-account-username"
+            placeholder="Username"
+            autoComplete="off"
+            value={newUsername}
+            onChange={(e) => setNewUsername(e.target.value)}
+          />
+          <Input
+            id="new-account-password"
+            type="password"
+            autoComplete="new-password"
+            placeholder="Password (12+ characters)"
+            value={newUserPassword}
+            onChange={(e) => setNewUserPassword(e.target.value)}
+          />
+        </div>
+        <Button
+          size="sm"
+          variant="secondary"
+          type="submit"
+          disabled={busy || newUsername.trim().length < 2 || newUserPassword.length === 0}
+        >
+          Add account
+        </Button>
+      </form>
 
       <div className="space-y-2">
         <p className="text-sm font-medium text-foreground">Waiting for approval</p>
@@ -191,6 +305,11 @@ export function SignInAllowlist({ open }: { open: boolean }) {
         )}
       </div>
 
+      {notice && (
+        <p className="text-xs text-muted-foreground" data-testid="allowlist-notice">
+          {notice}
+        </p>
+      )}
       {error && <p className="text-xs text-destructive">{error}</p>}
     </div>
   );

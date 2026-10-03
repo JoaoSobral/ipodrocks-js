@@ -18,6 +18,8 @@ import type { IpcApi } from "@shared/types";
 export interface AuthStatus {
   authenticated: boolean;
   needsOwnerClaim: boolean;
+  /** True only while the daemon was started with `IPODROCKS_RESET_OWNER=1`. */
+  ownerResetAvailable?: boolean;
   providers: string[];
   localEnabled: boolean;
   user: {

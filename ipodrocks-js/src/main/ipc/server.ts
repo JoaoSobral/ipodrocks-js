@@ -7,9 +7,12 @@ import {
   stopServerIfRunning,
 } from "../../server";
 import {
+  addIdentity,
   allowProviderIdentity,
   approveAccessRequest,
-  createLocalAccount,
+  consumeClaimToken,
+  countIdentities,
+  addNewLocalAccount,
   dismissAccessRequest,
   listAccessRequests,
   listIdentitiesWithLinks,
@@ -23,7 +26,8 @@ import {
   revokeAllSessions,
   revokeSessionsForIdentity,
 } from "../../server/auth/sessions";
-import { validatePassword } from "../../server/auth/passwords";
+import { hashPassword, validatePassword } from "../../server/auth/passwords";
+import { resetLocalPassword } from "../../server/auth/password-reset";
 
 /**
  * The Settings → Web Server card's channels.
@@ -193,8 +197,9 @@ export function registerServerHandlers(): void {
         if (provider === "local") {
           const bad = validatePassword(input?.password);
           if (bad) return bad;
-          const identity = await createLocalAccount(subject, String(input.password));
-          return { ok: true, identity };
+          const outcome = await addNewLocalAccount(subject, String(input.password));
+          if ("error" in outcome) return outcome;
+          return { ok: true, identity: outcome.identity };
         }
 
         // Never `isOwner` — `allowProviderIdentity()` has no way to say it.
@@ -207,6 +212,78 @@ export function registerServerHandlers(): void {
         });
         if ("error" in outcome) return outcome;
         return { ok: true, identity: outcome.identity };
+      }
+    )
+  );
+
+  /**
+   * Sets a local account's password — the owner's reset for anyone, including
+   * themselves. Every other session of that account is signed out; the
+   * caller's own is kept so an owner resetting their own password over the web
+   * does not lose the page they did it from.
+   */
+  bridgeHandle(
+    "server:setPassword",
+    safe(
+      "server:setPassword",
+      async (event, input: { identityId?: unknown; password?: unknown }) => {
+        const denied = requireOwner(event);
+        if (denied) return denied;
+        const id = Number(input?.identityId);
+        if (!Number.isInteger(id)) return { error: "Pass an identityId." };
+        const result = await resetLocalPassword(id, input?.password, {
+          keepSessionId: event.sessionId,
+        });
+        if ("error" in result) return result;
+        return { ok: true, signedOut: result.signedOut };
+      }
+    )
+  );
+
+  /**
+   * Creates the owner straight from the desktop window, for a server nobody
+   * has claimed yet.
+   *
+   * **Electron IPC only.** The desktop window already reads the claim token
+   * off `server:getStatus` (it is the machine holding the database), so this
+   * grants nothing the claim form did not — it only spares the owner a trip
+   * through a browser. A web caller is refused outright: over the web the
+   * claim token *is* the proof, and this channel takes none. Ownership is
+   * still granted exactly once, because the token is consumed here too.
+   */
+  bridgeHandle(
+    "server:claimOwner",
+    safe(
+      "server:claimOwner",
+      async (event, input: { username?: unknown; password?: unknown }) => {
+        if (event.sessionId !== undefined) {
+          return {
+            error: "Claim the server from its login page, with the one-time claim token.",
+          };
+        }
+        if (countIdentities() > 0) {
+          return { error: "This server already has an owner." };
+        }
+        const name = typeof input?.username === "string" ? input.username.trim() : "";
+        if (name.length < 2) return { error: "Username must be at least 2 characters." };
+        const bad = validatePassword(input?.password);
+        if (bad) return bad;
+        // Hash first: the empty-allowlist check and the insert must not have
+        // an await between them, or a browser claim landing in the gap makes
+        // a second owner.
+        const hash = await hashPassword(String(input.password));
+        if (countIdentities() > 0) {
+          return { error: "This server already has an owner." };
+        }
+        const identity = addIdentity({
+          provider: "local",
+          subject: name.toLowerCase(),
+          displayName: name,
+          isOwner: true,
+          passwordHash: hash,
+        });
+        consumeClaimToken();
+        return { ok: true, identity };
       }
     )
   );

@@ -4,7 +4,9 @@ import { Card } from "../common/Card";
 import { Input } from "../common/Input";
 import { Switch } from "../common/Switch";
 import { SignInAllowlist } from "./SignInAllowlist";
+import { isWebMode } from "../../ipc/web-transport";
 import {
+  claimServerOwner,
   getWebServerStatus,
   isWebServerDenied,
   setWebServerConfig,
@@ -34,6 +36,9 @@ export function WebServerCard({ open }: { open: boolean }) {
   // channels are owner-only, so a signed-in guest opening Settings gets this
   // instead of a card whose every control would fail on click.
   const [denied, setDenied] = useState<string | null>(null);
+  const [ownerName, setOwnerName] = useState("");
+  const [ownerPassword, setOwnerPassword] = useState("");
+  const [claimError, setClaimError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     const s = await getWebServerStatus();
@@ -93,6 +98,23 @@ export function WebServerCard({ open }: { open: boolean }) {
       if (next && !s.running) {
         setError(s.lastError ?? "The server did not start.");
       }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function claim() {
+    setBusy(true);
+    setClaimError(null);
+    try {
+      const result = await claimServerOwner(ownerName.trim(), ownerPassword);
+      if (isWebServerDenied(result)) {
+        setClaimError(result.error);
+        return;
+      }
+      setOwnerName("");
+      setOwnerPassword("");
+      await load();
     } finally {
       setBusy(false);
     }
@@ -192,6 +214,49 @@ export function WebServerCard({ open }: { open: boolean }) {
             <code className="block text-xs font-mono break-all text-foreground">
               {status.claimToken}
             </code>
+            {/* The desktop window is the machine holding the database, so it
+                can create the owner directly — `server:claimOwner` refuses a
+                web client, which claims with the token above instead. */}
+            {!isWebMode() && (
+              <form
+                className="space-y-2 pt-2"
+                data-testid="claim-owner"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  void claim();
+                }}
+              >
+                <p className="text-xs text-muted-foreground">
+                  Or create the owner account here:
+                </p>
+                <div className="grid grid-cols-2 gap-2">
+                  <Input
+                    id="owner-username"
+                    placeholder="Username"
+                    autoComplete="off"
+                    value={ownerName}
+                    onChange={(e) => setOwnerName(e.target.value)}
+                  />
+                  <Input
+                    id="owner-password"
+                    type="password"
+                    autoComplete="new-password"
+                    placeholder="Password (12+ characters)"
+                    value={ownerPassword}
+                    onChange={(e) => setOwnerPassword(e.target.value)}
+                  />
+                </div>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  type="submit"
+                  disabled={busy || ownerName.trim().length < 2 || ownerPassword.length === 0}
+                >
+                  Create owner account
+                </Button>
+                {claimError && <p className="text-xs text-destructive">{claimError}</p>}
+              </form>
+            )}
           </div>
         )}
 

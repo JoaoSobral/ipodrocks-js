@@ -99,8 +99,12 @@ if the desktop app is hosting. Whoever can read that log owns the machine, so
 binding the first identity to it grants nothing an attacker did not already
 have.
 
-Open the server in a browser, choose a username and a password of at least 12
-characters, and paste the token. That account is the **owner** — the only one
+If the server runs inside the desktop app, you can skip the browser: Settings →
+Web Server shows **Create owner account** under the token while nobody owns the
+server.
+
+Otherwise, open the server in a browser, choose a username and a password of at
+least 12 characters, and paste the token. That account is the **owner** — the only one
 that can manage who else gets in. The token is consumed and never printed again.
 
 A local password account works everywhere, including on a home network with no
@@ -299,6 +303,17 @@ curl -b cookies.txt https://ipod.example.com/api/auth/identities
 curl -b cookies.txt https://ipod.example.com/api/auth/access-requests
 ```
 
+**To manage accounts from the desktop app**, open Settings → Web Server → **Who
+can sign in**. Add a local account (username and password), press **Set
+password** on any local account (yours included) to reset it, or **Remove** to
+cut someone off. The desktop app is the owner without signing in, because it
+runs on the machine holding the database. A browser signed in as the owner sees
+the same list.
+
+**To change your own password** in a browser, go to Settings → **Sign-in
+methods** → **Change password**. You need your current one. Every other browser
+signed in to your account is signed out.
+
 ## Step 8 — connect a device
 
 On the machine with the device plugged in, open the server in **Chrome, Edge or
@@ -316,6 +331,40 @@ says so up front.
 
 See [Devices → Remote devices](/app-reference/devices#remote-devices)
 for what differs from a local device.
+
+## Forgot your password
+
+Accounts that sign in with Google, GitHub or Facebook have no password here, so
+this only concerns local (username and password) accounts. Pick whichever of
+these you can reach:
+
+- **The desktop app is hosting the server.** Settings → Web Server → Who can
+  sign in → **Set password** on your account. No sign-in needed.
+- **Someone else's password.** If you are the owner, the same **Set password**
+  button works from a browser too.
+- **A headless server you have a shell on.** On that machine, with the same
+  `IPODROCKS_DATA_DIR` the daemon uses:
+
+  ```sh
+  npm run server:accounts -- list
+  npm run server:accounts -- password <username>
+  # Docker:
+  docker exec -it ipodrocks node dist/main/server/cli.js password <username>
+  ```
+
+  The new password is asked for twice without echo (or read from one line of
+  stdin when piped), never taken from the command line. The account's existing
+  sessions are signed out. It is safe to run while the daemon is up.
+- **A headless server with no shell, only its log** (a hosted container, for
+  example). Restart it with `IPODROCKS_RESET_OWNER=1`. The log prints a
+  one-time token, valid for 30 minutes. On the login page press **Reset owner
+  password**, paste the token and choose a new password. You are signed in as
+  the owner. Then **remove the variable and restart**. A boot without it
+  deletes any unused token, so a forgotten variable does not leave a way in
+  open. This resets the *owner* only; the owner can then reset anyone else.
+
+All four rely on the same rule as the claim token: whoever can reach the
+machine's database or its log already controls the server.
 
 ## Troubleshooting
 

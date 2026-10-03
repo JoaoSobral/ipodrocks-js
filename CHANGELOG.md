@@ -17,6 +17,21 @@
 - **Rocksy** can list, approve and dismiss waiting sign-ins and remove a linked
   sign-in method (owner only; approving and removing ask first).
 
+### 🔐 Manage passwords, and recover a forgotten one
+
+- **Manage accounts from the desktop app.** Settings → Web Server → Who can
+  sign in can now add a local account and reset any local account's password,
+  the owner's included. If nobody owns the server yet, you can create the owner
+  there too, without a browser or the claim token.
+- **Change your own password** in the browser under Settings → Sign-in
+  methods. It asks for your current password, and signs your other browsers out.
+- **Headless recovery.** `npm run server:accounts -- password <username>` (or
+  `docker exec -it … node dist/main/server/cli.js password <username>`) resets a
+  password on the server itself. With no shell at all, start the server once
+  with `IPODROCKS_RESET_OWNER=1` and use the one-time token it prints to reset
+  the owner from the login page.
+- **Rocksy** can reset a web server password too (owner only, asks first).
+
 ## [3.0.1] — 2026-09
 
 ### 🔒 Security hardening for the web server

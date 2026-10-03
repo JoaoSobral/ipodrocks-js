@@ -233,6 +233,42 @@ export async function createLocalAccount(
   });
 }
 
+/**
+ * Adds a *new* local account — the one implementation behind "Add account" in
+ * Settings, `server:allowIdentity`, `POST /identities` and Rocksy's
+ * `web_server_allow_identity`.
+ *
+ * Refuses a username that already exists. `addIdentity()` upserts, so going
+ * straight to `createLocalAccount()` with an existing name silently replaced
+ * that account's password — the owner's included — while the form reported a
+ * new account. Changing a password is `resetLocalPassword()`'s job, which also
+ * signs the account's other browsers out.
+ *
+ * The hash is computed first so the existence check and the insert have no
+ * `await` between them.
+ */
+export async function addNewLocalAccount(
+  username: string,
+  password: string
+): Promise<{ identity: Identity } | { error: string }> {
+  const name = username.trim();
+  if (name.length < 2) return { error: "Username must be at least 2 characters." };
+  const hash = await hashPassword(password);
+  if (findIdentity("local", name.toLowerCase())) {
+    return {
+      error: `An account named "${name}" already exists. Use Set password to change its password.`,
+    };
+  }
+  return {
+    identity: addIdentity({
+      provider: "local",
+      subject: name.toLowerCase(),
+      displayName: name,
+      passwordHash: hash,
+    }),
+  };
+}
+
 export async function setLocalPassword(id: number, password: string): Promise<void> {
   const hash = await hashPassword(password);
   getServerDb()

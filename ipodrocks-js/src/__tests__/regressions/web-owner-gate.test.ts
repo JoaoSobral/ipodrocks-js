@@ -55,6 +55,7 @@ const GATED = [
   "web_server_approve_access_request",
   "web_server_dismiss_access_request",
   "web_server_remove_link",
+  "web_server_set_password",
 ] as const;
 
 const ARGS: Record<string, Record<string, unknown>> = {
@@ -72,6 +73,8 @@ const ARGS: Record<string, Record<string, unknown>> = {
   web_server_approve_access_request: { request_id: 1 },
   web_server_dismiss_access_request: { request_id: 1 },
   web_server_remove_link: { link_id: 1 },
+  // Id 1: the owner. A guest resetting it would be a takeover.
+  web_server_set_password: { identity_id: 1, password: "a-guest-chosen-password" },
 };
 
 beforeEach(async () => {
