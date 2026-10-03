@@ -27,17 +27,24 @@ import type { Request, Response } from "express";
 import {
   DEVICE_ATTACH,
   DEVICE_DETACH,
+  DEVICE_RECONNECT_GRACE_MS,
+  DEVICE_RPC_PROGRESS,
   DEVICE_RPC_REQUEST,
   DEVICE_RPC_RESULT,
   DEVICE_RPC_TIMEOUT_MS,
+  DEVICE_TRANSFER_IDLE_MS,
+  RETRYABLE_DEVICE_VERBS,
   type DeviceAttachFrame,
+  type DeviceRpcProgressFrame,
   type DeviceRpcRequestFrame,
   type DeviceRpcResultFrame,
   type DeviceRpcVerb,
 } from "../shared/device-rpc";
 import {
+  notifyDeviceLinkState,
   registerDeviceTransport,
   type DeviceRpcTransport,
+  type TransferOptions,
 } from "../main/devices/fs/device-transport";
 import type { WebSocket } from "ws";
 import {
@@ -62,9 +69,11 @@ export interface DeviceAttachRecord {
 export type DeviceTransportLookup = (deviceId: number) => DeviceAttachRecord | null;
 
 interface Pending {
+  verb: DeviceRpcVerb;
   resolve: (value: unknown) => void;
   reject: (err: Error) => void;
-  timer: NodeJS.Timeout;
+  timer: NodeJS.Timeout | null;
+  onProgress?: (bytes: number, total: number | null) => void;
 }
 
 interface Attachment {
@@ -81,10 +90,33 @@ interface Attachment {
   rootName: string;
   writable: boolean;
   pending: Map<number, Pending>;
-  release: () => void;
 }
 
-const attachments = new Map<number, Attachment>();
+/**
+ * One device's link to whichever tab holds it — **outliving any one socket**.
+ *
+ * The transport registered for a device used to *be* an attachment, so a
+ * dropped socket ended it: the tab re-attached a second later, but the sync
+ * already running held the old transport, and every call it made from then on
+ * failed `EDEVICEDETACHED` against a device that was, by then, connected
+ * again. Now the registered transport resolves the live attachment on every
+ * call, and between a drop and a re-announce the link is *suspended* — calls
+ * wait — for up to {@link DEVICE_RECONNECT_GRACE_MS}.
+ */
+interface Link {
+  deviceId: number;
+  /** The live attachment, or null while suspended. */
+  attachment: Attachment | null;
+  /** The most recent attachment, live or not: clock skew, root name, and the
+   *  identity that may resume it. */
+  last: Attachment;
+  graceTimer: NodeJS.Timeout | null;
+  waiters: Set<{ resolve: (a: Attachment) => void; reject: (e: Error) => void }>;
+  release: () => void;
+  dead: boolean;
+}
+
+const links = new Map<number, Link>();
 
 /**
  * Correlation ids, counted once for the whole process rather than per
@@ -102,11 +134,38 @@ let nextRpcId = 1;
 /** An error carrying a `code`, so the EPERM/ENOENT branches on the server side
  *  keep working against a device that is really a browser. */
 class DeviceRpcError extends Error {
-  constructor(message: string, readonly code?: string) {
+  constructor(
+    message: string,
+    readonly code?: string,
+    /** The connection, not the device, failed: the call may be re-sent once
+     *  the tab is back. Never set for a link that is gone for good. */
+    readonly retryable = false
+  ) {
     super(message);
     this.name = "DeviceRpcError";
   }
 }
+
+const DETACHED_MESSAGE = "The browser holding this device disconnected.";
+
+function connectionLost(): DeviceRpcError {
+  return new DeviceRpcError(DETACHED_MESSAGE, "EDEVICEDETACHED", true);
+}
+
+function goneForGood(): DeviceRpcError {
+  return new DeviceRpcError(DETACHED_MESSAGE, "EDEVICEDETACHED", false);
+}
+
+/** Overridable so a test can watch the grace expire without waiting minutes. */
+function graceMs(): number {
+  const raw = Number(process.env.IPODROCKS_DEVICE_GRACE_MS);
+  return Number.isFinite(raw) && raw >= 0 && raw <= 60 * 60 * 1000
+    ? raw
+    : DEVICE_RECONNECT_GRACE_MS;
+}
+
+/** Attempts per call across connection losses, the first included. */
+const MAX_CALL_ATTEMPTS = 3;
 
 // ---------------------------------------------------------- data plane ----
 
@@ -213,98 +272,222 @@ function redeemIoToken(token: string, sessionId: string | null): IoTokenPayload 
 
 // -------------------------------------------------------------- transport --
 
-function makeTransport(attachment: Attachment): DeviceRpcTransport {
-  const send = (verb: DeviceRpcVerb, args: unknown[]): Promise<unknown> => {
-    const current = attachments.get(attachment.deviceId);
-    if (current !== attachment) {
-      return Promise.reject(
-        new DeviceRpcError("The browser holding this device disconnected.", "EDEVICEDETACHED")
-      );
-    }
-    const id = nextRpcId++;
-    const frame: DeviceRpcRequestFrame = {
-      type: DEVICE_RPC_REQUEST,
-      id,
-      deviceId: attachment.deviceId,
-      verb,
-      args,
-    };
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        attachment.pending.delete(id);
-        reject(
-          new DeviceRpcError(
-            `The device did not answer "${verb}" within ${DEVICE_RPC_TIMEOUT_MS / 1000}s.`,
-            "ETIMEDOUT"
-          )
-        );
-      }, DEVICE_RPC_TIMEOUT_MS);
-      timer.unref?.();
-      attachment.pending.set(id, { resolve, reject, timer });
-      // Addressed to the tab that attached, not fanned out to the login: only
-      // that one has the directory handle.
-      if (!sendRawToSocket(attachment.socket, frame)) {
-        attachment.pending.delete(id);
-        clearTimeout(timer);
-        reject(
-          new DeviceRpcError("The browser holding this device disconnected.", "EDEVICEDETACHED")
-        );
-      }
-    });
-  };
+function isTransferVerb(verb: DeviceRpcVerb): boolean {
+  return verb === "pull" || verb === "push";
+}
 
+/** (Re)starts a pending call's timeout. A transfer's is an *idle* timeout,
+ *  re-armed by every progress frame; a control call's is a total. */
+function armTimer(attachment: Attachment, id: number, pending: Pending): void {
+  if (pending.timer) clearTimeout(pending.timer);
+  const transfer = isTransferVerb(pending.verb);
+  const ms = transfer ? DEVICE_TRANSFER_IDLE_MS : DEVICE_RPC_TIMEOUT_MS;
+  pending.timer = setTimeout(() => {
+    attachment.pending.delete(id);
+    pending.reject(
+      new DeviceRpcError(
+        transfer
+          ? `The transfer stalled: no progress for ${ms / 1000}s.`
+          : `The device did not answer "${pending.verb}" within ${ms / 1000}s.`,
+        "ETIMEDOUT"
+      )
+    );
+  }, ms);
+  pending.timer.unref?.();
+}
+
+/** The live attachment, waiting for one while the link is suspended. */
+function liveAttachment(link: Link): Promise<Attachment> {
+  if (link.dead) return Promise.reject(goneForGood());
+  if (link.attachment) return Promise.resolve(link.attachment);
+  return new Promise((resolve, reject) => {
+    link.waiters.add({ resolve, reject });
+  });
+}
+
+async function sendOnce(
+  link: Link,
+  verb: DeviceRpcVerb,
+  args: unknown[],
+  onProgress?: Pending["onProgress"]
+): Promise<unknown> {
+  const attachment = await liveAttachment(link);
+  const id = nextRpcId++;
+  const frame: DeviceRpcRequestFrame = {
+    type: DEVICE_RPC_REQUEST,
+    id,
+    deviceId: link.deviceId,
+    verb,
+    args,
+  };
+  return new Promise((resolve, reject) => {
+    const pending: Pending = { verb, resolve, reject, timer: null, onProgress };
+    attachment.pending.set(id, pending);
+    armTimer(attachment, id, pending);
+    // Addressed to the tab that attached, not fanned out to the login: only
+    // that one has the directory handle.
+    if (!sendRawToSocket(attachment.socket, frame)) {
+      attachment.pending.delete(id);
+      if (pending.timer) clearTimeout(pending.timer);
+      reject(connectionLost());
+    }
+  });
+}
+
+/**
+ * One call, re-sent across connection losses when the verb allows it.
+ *
+ * `make` builds the arguments per attempt — a `pull` needs a fresh one-shot
+ * token every time, since the last one may already have been spent.
+ */
+async function sendWithRetry(
+  link: Link,
+  verb: DeviceRpcVerb,
+  make: () => unknown[],
+  onProgress?: Pending["onProgress"]
+): Promise<unknown> {
+  const retryable = RETRYABLE_DEVICE_VERBS.has(verb);
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await sendOnce(link, verb, make(), onProgress);
+    } catch (err) {
+      const e = err as DeviceRpcError;
+      // A remove the lost attempt already carried out reads as "not found"
+      // the second time round, and that is the success it looks like.
+      if (
+        attempt > 1 &&
+        e?.code === "ENOENT" &&
+        (verb === "unlink" || verb === "rmdir" || verb === "rm")
+      ) {
+        return undefined;
+      }
+      if (!retryable || !e?.retryable || attempt >= MAX_CALL_ATTEMPTS) throw err;
+    }
+  }
+}
+
+function makeTransport(link: Link): DeviceRpcTransport {
+  const current = () => link.attachment ?? link.last;
   return {
     get clockSkewMs() {
-      return attachment.clockSkewMs;
+      return current().clockSkewMs;
     },
     get rootName() {
-      return attachment.rootName;
+      return current().rootName;
     },
     get writable() {
-      return attachment.writable;
+      return current().writable;
     },
     async call<T>(verb: DeviceRpcVerb, args: unknown[]): Promise<T> {
-      return (await send(verb, args)) as T;
+      return (await sendWithRetry(link, verb, () => args)) as T;
     },
-    async pull(localSrc: string, destRel: string): Promise<void> {
+    async pull(localSrc: string, destRel: string, opts?: TransferOptions): Promise<void> {
       // Fail here rather than handing out a token for a file that is not
       // there: the browser would get a 404 mid-stream and leave a zero-byte
       // track on the device.
       await fsp.access(localSrc, fs.constants.R_OK);
-      const token = issueIoToken({
-        d: attachment.deviceId,
-        dir: "pull",
-        p: localSrc,
-        s: attachment.sessionId,
-      });
-      await send("pull", [destRel, `/api/device-io/pull/${token}`]);
+      await sendWithRetry(
+        link,
+        "pull",
+        () => [
+          destRel,
+          `/api/device-io/pull/${issueIoToken({
+            d: link.deviceId,
+            dir: "pull",
+            p: localSrc,
+            s: current().sessionId,
+          })}`,
+        ],
+        opts?.onProgress
+      );
     },
     async push(srcRel: string, localDest: string): Promise<void> {
-      const token = issueIoToken({
-        d: attachment.deviceId,
-        dir: "push",
-        p: localDest,
-        s: attachment.sessionId,
-      });
-      await send("push", [srcRel, `/api/device-io/push/${token}`]);
+      await sendWithRetry(link, "push", () => [
+        srcRel,
+        `/api/device-io/push/${issueIoToken({
+          d: link.deviceId,
+          dir: "push",
+          p: localDest,
+          s: current().sessionId,
+        })}`,
+      ]);
     },
   };
 }
 
 // ------------------------------------------------------------- lifecycle --
 
-function detach(deviceId: number): void {
-  const attachment = attachments.get(deviceId);
-  if (!attachment) return;
-  attachments.delete(deviceId);
-  attachment.release();
+function failPending(attachment: Attachment, err: () => Error): void {
   for (const [, pending] of attachment.pending) {
-    clearTimeout(pending.timer);
-    pending.reject(
-      new DeviceRpcError("The browser holding this device disconnected.", "EDEVICEDETACHED")
-    );
+    if (pending.timer) clearTimeout(pending.timer);
+    pending.reject(err());
   }
   attachment.pending.clear();
+}
+
+/** Ends a link for good: an explicit disconnect, an expired grace, a reset. */
+function detach(deviceId: number): void {
+  const link = links.get(deviceId);
+  if (!link) return;
+  links.delete(deviceId);
+  link.dead = true;
+  if (link.graceTimer) clearTimeout(link.graceTimer);
+  link.release();
+  failPending(link.last, goneForGood);
+  if (link.attachment && link.attachment !== link.last) {
+    failPending(link.attachment, goneForGood);
+  }
+  for (const waiter of link.waiters) waiter.reject(goneForGood());
+  link.waiters.clear();
+}
+
+/**
+ * The socket holding this link dropped. Calls already sent stay pending — the
+ * same tab may come back with its worker still carrying them — but their
+ * timers stop: the grace timer is the one deadline that applies now.
+ */
+function suspend(link: Link): void {
+  if (!link.attachment) return;
+  link.last = link.attachment;
+  link.attachment = null;
+  for (const [, pending] of link.last.pending) {
+    if (pending.timer) clearTimeout(pending.timer);
+    pending.timer = null;
+  }
+  link.graceTimer = setTimeout(() => detach(link.deviceId), graceMs());
+  link.graceTimer.unref?.();
+  notifyDeviceLinkState(link.deviceId, "suspended");
+}
+
+/** Makes `attachment` the live one, resuming a suspended link or replacing
+ *  another tab's hold on it. */
+function bind(link: Link, attachment: Attachment, inheritPending: boolean): void {
+  const previous = link.attachment ?? link.last;
+  const wasSuspended = link.attachment === null;
+  if (link.graceTimer) {
+    clearTimeout(link.graceTimer);
+    link.graceTimer = null;
+  }
+  if (previous !== attachment) {
+    if (inheritPending) {
+      // The same tab, same worker: its replies to the old socket's calls will
+      // arrive on this one.
+      for (const [id, pending] of previous.pending) {
+        attachment.pending.set(id, pending);
+        armTimer(attachment, id, pending);
+      }
+      previous.pending.clear();
+    } else {
+      // A different tab, or a reloaded one: nothing will ever answer these.
+      // Retryable, so the calls go again to whoever holds the device now.
+      failPending(previous, connectionLost);
+    }
+  }
+  link.attachment = attachment;
+  link.last = attachment;
+  for (const waiter of link.waiters) waiter.resolve(attachment);
+  link.waiters.clear();
+  if (wasSuspended) notifyDeviceLinkState(link.deviceId, "live");
 }
 
 export interface DeviceSessionsOptions {
@@ -357,7 +540,19 @@ export function attachDeviceSessions(opts: DeviceSessionsOptions): DeviceSession
       return;
     }
 
-    detach(deviceId);
+    const existing = links.get(deviceId);
+    // A suspended link belongs to whoever held it until it is resumed or its
+    // grace runs out. Only that identity may pick it up: anything else would
+    // let a second account step into a sync mid-flight — and, for a device
+    // with no recorded owner, the ownership check above admits everybody.
+    if (existing && !existing.attachment && existing.last.subject !== ctx.subject) {
+      sendRawToSocket(ctx.socket, {
+        type: "device-attach-refused",
+        deviceId,
+        reason: "That device is reconnecting to another account.",
+      });
+      return;
+    }
 
     const attachment: Attachment = {
       deviceId,
@@ -370,10 +565,29 @@ export function attachDeviceSessions(opts: DeviceSessionsOptions): DeviceSession
       writable: frame.writable !== false,
       socket: ctx.socket,
       pending: new Map(),
-      release: () => {},
     };
-    attachment.release = registerDeviceTransport(deviceId, makeTransport(attachment));
-    attachments.set(deviceId, attachment);
+
+    if (existing) {
+      // Inherit in-flight calls only from the very same login re-announcing
+      // with its worker intact. A second tab or a reload starts clean.
+      const inherit =
+        frame.resumed === true &&
+        existing.attachment === null &&
+        existing.last.sessionId === ctx.sessionId;
+      bind(existing, attachment, inherit);
+    } else {
+      const link: Link = {
+        deviceId,
+        attachment,
+        last: attachment,
+        graceTimer: null,
+        waiters: new Set(),
+        release: () => {},
+        dead: false,
+      };
+      link.release = registerDeviceTransport(deviceId, makeTransport(link));
+      links.set(deviceId, link);
+    }
 
     sendRawToSocket(ctx.socket, { type: "device-attached", deviceId });
   });
@@ -381,34 +595,54 @@ export function attachDeviceSessions(opts: DeviceSessionsOptions): DeviceSession
   const offDetach = registerFrameHandler(DEVICE_DETACH, (raw, ctx) => {
     const frame = raw as unknown as { deviceId?: number };
     const deviceId = Number(frame.deviceId);
-    const attachment = attachments.get(deviceId);
-    if (attachment && attachment.socket === ctx.socket) detach(deviceId);
+    const link = links.get(deviceId);
+    if (link?.attachment && link.attachment.socket === ctx.socket) detach(deviceId);
   });
 
   const offResult = registerFrameHandler(DEVICE_RPC_RESULT, (raw, ctx) => {
     const frame = raw as unknown as DeviceRpcResultFrame;
-    for (const attachment of attachments.values()) {
-      // Matched on the socket the request went out on, for the same reason it
-      // was sent there: a reply can only come from the tab that was asked.
-      if (attachment.socket !== ctx.socket) continue;
-      const pending = attachment.pending.get(Number(frame.id));
-      if (!pending) continue;
-      attachment.pending.delete(Number(frame.id));
-      clearTimeout(pending.timer);
-      if (frame.ok) pending.resolve(frame.value);
-      else pending.reject(new DeviceRpcError(frame.error ?? "Device error", frame.code));
-      return;
+    const found = pendingFor(ctx.socket, Number(frame.id));
+    if (!found) return;
+    found.attachment.pending.delete(Number(frame.id));
+    if (found.pending.timer) clearTimeout(found.pending.timer);
+    if (frame.ok) found.pending.resolve(frame.value);
+    else {
+      found.pending.reject(
+        new DeviceRpcError(
+          typeof frame.error === "string" ? frame.error : "Device error",
+          typeof frame.code === "string" ? frame.code : undefined,
+          // The tab answering "I lost the handle mid-call" (its worker was
+          // restarted under it) is a connection failure, not a device one.
+          frame.code === "EDEVICEDETACHED"
+        )
+      );
     }
   });
 
-  // A tab that goes away takes its devices with it. Without this the device
-  // still looks attached, and the first sync after the tab closed waits two
-  // minutes per call before failing.
+  const offProgress = registerFrameHandler(DEVICE_RPC_PROGRESS, (raw, ctx) => {
+    const frame = raw as unknown as DeviceRpcProgressFrame;
+    const found = pendingFor(ctx.socket, Number(frame.id));
+    if (!found) return;
+    armTimer(found.attachment, Number(frame.id), found.pending);
+    const bytes = Number(frame.bytes);
+    const total = frame.total === null ? null : Number(frame.total);
+    if (!Number.isFinite(bytes) || bytes < 0) return;
+    try {
+      found.pending.onProgress?.(bytes, total !== null && Number.isFinite(total) ? total : null);
+    } catch {
+      // A progress listener must never take the frame loop down with it.
+    }
+  });
+
+  // A tab that goes away suspends its devices rather than dropping them: the
+  // same tab is usually back within seconds (a tunnel blip, a Wi-Fi switch),
+  // and a sync in flight should simply wait for it. A tab that really is gone
+  // is detached when the grace runs out.
   const offClosed = onSocketClosed((_sessionId, socket) => {
     // Per socket, not per session: closing one of two tabs must not take the
     // other tab's device down with it.
-    for (const [deviceId, attachment] of [...attachments]) {
-      if (attachment.socket === socket) detach(deviceId);
+    for (const link of [...links.values()]) {
+      if (link.attachment?.socket === socket) suspend(link);
     }
   });
 
@@ -417,8 +651,9 @@ export function attachDeviceSessions(opts: DeviceSessionsOptions): DeviceSession
       offAttach();
       offDetach();
       offResult();
+      offProgress();
       offClosed();
-      for (const deviceId of [...attachments.keys()]) detach(deviceId);
+      for (const deviceId of [...links.keys()]) detach(deviceId);
       liveIoTokens.clear();
     },
   };
@@ -427,12 +662,27 @@ export function attachDeviceSessions(opts: DeviceSessionsOptions): DeviceSession
 /** Which devices a browser is holding right now. The Devices panel asks so it
  *  can show a web device as connected. */
 export function attachedDeviceIds(): number[] {
-  return [...attachments.keys()];
+  return [...links.keys()];
+}
+
+function pendingFor(
+  socket: WebSocket,
+  id: number
+): { attachment: Attachment; pending: Pending } | null {
+  for (const link of links.values()) {
+    // Matched on the socket the request went out on, for the same reason it
+    // was sent there: a reply can only come from the tab that was asked.
+    const attachment = link.attachment;
+    if (!attachment || attachment.socket !== socket) continue;
+    const pending = attachment.pending.get(id);
+    if (pending) return { attachment, pending };
+  }
+  return null;
 }
 
 /** Tests, and a server restart. */
 export function resetDeviceSessions(): void {
-  for (const deviceId of [...attachments.keys()]) detach(deviceId);
+  for (const deviceId of [...links.keys()]) detach(deviceId);
   liveIoTokens.clear();
   resetDeviceIoKey();
 }

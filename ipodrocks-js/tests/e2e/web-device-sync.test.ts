@@ -271,8 +271,57 @@ test("orphans on the device are swept when the policy says so", async ({ page })
 
   const contents = await deviceContents(page, deviceId);
   expect(Object.keys(contents).some((p) => p.includes("99 Gone.mp3"))).toBe(false);
-  // And the emptied folders went with it, which is `cleanEmptyDirectoriesOn`.
+  // And the emptied folders went with it, which is `removeEmptiedDirsOn`.
   expect(Object.keys(contents).some((p) => p.includes("Stale Artist"))).toBe(false);
+});
+
+test("delete-all erases the browser-held device in bulk and rebuilds it", async ({ page }) => {
+  await attachOpfsDevice(page, deviceId);
+  await runSync(page, deviceId);
+
+  // Leftovers the reset must take with it, including a folder the sync
+  // knows nothing about.
+  await page.evaluate(async (targetId: number) => {
+    const root = await navigator.storage.getDirectory();
+    const deviceRoot = await root.getDirectoryHandle(`device-${targetId}`);
+    const music = await deviceRoot.getDirectoryHandle("Music");
+    const junk = await music.getDirectoryHandle("Old Junk", { create: true });
+    for (let i = 0; i < 25; i++) {
+      const file = await junk.getFileHandle(`${i}.mp3`, { create: true });
+      const writable = await file.createWritable();
+      await writable.write(new Uint8Array(16));
+      await writable.close();
+    }
+  }, deviceId);
+
+  const logs: string[] = [];
+  await page.evaluate(() => {
+    const w = window as unknown as {
+      api: { on(c: string, cb: (p: { event: string; message?: string }) => void): void };
+      __resetLog: string[];
+    };
+    w.__resetLog = [];
+    w.api.on("sync:progress", (p) => {
+      if (p.event === "log" && p.message) w.__resetLog.push(p.message);
+    });
+  });
+  const result = await runSync(page, deviceId, { extraTrackPolicy: "delete-all" });
+  logs.push(
+    ...(await page.evaluate(() => (window as unknown as { __resetLog: string[] }).__resetLog))
+  );
+
+  expect(result.errors).toBe(0);
+  expect(result.synced).toBe(TRACKS.length);
+  const contents = await deviceContents(page, deviceId);
+  expect(Object.keys(contents).some((p) => p.includes("Old Junk"))).toBe(false);
+  expect(Object.keys(contents).filter((p) => p.startsWith("Music/"))).toHaveLength(
+    TRACKS.length
+  );
+  // Chunked, with progress — not one recursive call that had to finish inside
+  // the RPC timeout with nothing to show while it ran.
+  expect(logs.some((l) => /Delete all: removed \d+\/\d+ file\(s\) from Music/.test(l))).toBe(
+    true
+  );
 });
 
 test("playlists are written onto the browser-held device", async ({ page, request }) => {

@@ -383,27 +383,58 @@ export async function opFreeSpace(): Promise<{
   }
 }
 
+/** Bytes moved so far on one transfer. */
+export type ProgressFn = (bytes: number, total: number | null) => void;
+
+/** How often a transfer with no byte-level progress still says it is alive. */
+const TRANSFER_HEARTBEAT_MS = 10_000;
+
 /** Streams a server URL straight into a device file. The data plane. */
 export async function opPull(
   root: FileSystemDirectoryHandle,
   rel: string,
-  url: string
+  url: string,
+  onProgress?: ProgressFn
 ): Promise<void> {
-  const res = await fetch(url, { credentials: "same-origin" });
+  let res: Response;
+  try {
+    res = await fetch(url, { credentials: "same-origin" });
+  } catch (err) {
+    // No response at all: the network, not the device. EIO is what the sync's
+    // retry treats as transient.
+    throw new DeviceOpError(
+      `Transfer failed: ${(err as Error)?.message ?? String(err)}`,
+      "EIO"
+    );
+  }
   if (!res.ok) {
     throw new DeviceOpError(`Transfer failed: HTTP ${res.status}`, "EIO");
   }
+  const lengthHeader = Number(res.headers.get("Content-Length"));
+  const total = Number.isFinite(lengthHeader) && lengthHeader >= 0 ? lengthHeader : null;
   const handle = await fileAt(root, rel, true);
   const writable = await handle.createWritable();
   try {
     if (res.body) {
       // Piped, not buffered: a FLAC is tens of megabytes and this is the whole
-      // reason the data plane is HTTP and not socket frames.
-      await res.body.pipeTo(writable);
+      // reason the data plane is HTTP and not socket frames. The counting
+      // stage is a pass-through; it only watches the chunks go by.
+      let moved = 0;
+      const counter = new TransformStream<Uint8Array, Uint8Array>({
+        transform(chunk, controller) {
+          moved += chunk.byteLength;
+          onProgress?.(moved, total);
+          controller.enqueue(chunk);
+        },
+      });
+      await res.body.pipeThrough(counter).pipeTo(writable);
+      onProgress?.(moved, total);
       return;
     }
-    await writable.write(await res.arrayBuffer());
+    const buf = await res.arrayBuffer();
+    await writable.write(buf);
     await writable.close();
+    onProgress?.(buf.byteLength, total);
   } catch (err) {
     try {
       await writable.abort();
@@ -418,16 +449,112 @@ export async function opPull(
 export async function opPush(
   root: FileSystemDirectoryHandle,
   rel: string,
-  url: string
+  url: string,
+  onProgress?: ProgressFn
 ): Promise<void> {
   const file = await (await fileAt(root, rel, false)).getFile();
-  const res = await fetch(url, {
-    method: "POST",
-    credentials: "same-origin",
-    headers: { "Content-Type": "application/octet-stream" },
-    body: file,
-  });
+  // `fetch` reports no upload progress, so this only says "still going" —
+  // enough to keep the server's stall timer from firing on a big upload.
+  onProgress?.(0, file.size);
+  const heartbeat = setInterval(() => onProgress?.(0, file.size), TRANSFER_HEARTBEAT_MS);
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/octet-stream" },
+      body: file,
+    });
+  } catch (err) {
+    throw new DeviceOpError(
+      `Transfer failed: ${(err as Error)?.message ?? String(err)}`,
+      "EIO"
+    );
+  } finally {
+    clearInterval(heartbeat);
+  }
   if (!res.ok) {
     throw new DeviceOpError(`Transfer failed: HTTP ${res.status}`, "EIO");
   }
+  onProgress?.(file.size, file.size);
+}
+
+/** Removals running at once within one `rmMany`. */
+const RM_MANY_CONCURRENCY = 16;
+
+/**
+ * Removes many entries in one call, answering per path.
+ *
+ * An orphan sweep of a few thousand files used to be a few thousand round
+ * trips — three each, counting the re-listing every single delete forced on
+ * the server's directory cache. Here each parent directory is resolved once
+ * and its entries are removed in parallel. A missing entry is reported, not
+ * thrown: one file someone already deleted must not abort the rest.
+ */
+export async function opRmMany(
+  root: FileSystemDirectoryHandle,
+  rels: string[],
+  opts: { recursive?: boolean } = {}
+): Promise<{ ok: boolean; code?: string }[]> {
+  const results: { ok: boolean; code?: string }[] = rels.map(() => ({ ok: false }));
+  const byParent = new Map<string, { index: number; name: string }[]>();
+  rels.forEach((rel, index) => {
+    const segments = segmentsOf(rel);
+    const name = segments.pop();
+    if (!name) {
+      // The device root. Never what a caller means.
+      results[index] = { ok: false, code: "EPERM" };
+      return;
+    }
+    const parent = segments.join("/");
+    let bucket = byParent.get(parent);
+    if (!bucket) {
+      bucket = [];
+      byParent.set(parent, bucket);
+    }
+    bucket.push({ index, name });
+  });
+
+  const jobs: (() => Promise<void>)[] = [];
+  for (const [parentRel, entries] of byParent) {
+    let parent: FileSystemDirectoryHandle | null = null;
+    let parentError: DeviceOpError | null = null;
+    let resolving: Promise<void> | null = null;
+    const ensureParent = () =>
+      (resolving ??= dirAt(root, parentRel, false).then(
+        (dir) => {
+          parent = dir;
+        },
+        (err) => {
+          parentError = mapError(err);
+        }
+      ));
+    for (const { index, name } of entries) {
+      jobs.push(async () => {
+        await ensureParent();
+        if (!parent) {
+          results[index] = { ok: false, code: parentError?.code ?? "ENOENT" };
+          return;
+        }
+        try {
+          await (parent as FileSystemDirectoryHandle).removeEntry(name, {
+            recursive: opts.recursive === true,
+          });
+          results[index] = { ok: true };
+        } catch (err) {
+          results[index] = { ok: false, code: mapError(err).code };
+        }
+      });
+    }
+  }
+
+  let next = 0;
+  const workers = Array.from({ length: Math.min(RM_MANY_CONCURRENCY, jobs.length) }, async () => {
+    while (next < jobs.length) {
+      const job = jobs[next++];
+      await job();
+    }
+  });
+  await Promise.all(workers);
+  return results;
 }

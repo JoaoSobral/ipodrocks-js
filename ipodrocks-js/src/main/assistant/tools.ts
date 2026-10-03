@@ -46,7 +46,7 @@ import { invalidateAssistantCache } from "./assistantChat";
 import { listUsbDevices } from "../devices/usb-devices";
 import { ejectDevice, isEjectSupported } from "../devices/device-eject";
 import { isDeviceMountPathOnline } from "../devices/device-online";
-import { isSyncActive } from "../ipc/sync";
+import { isSyncActive, listSyncStatuses } from "../ipc/sync";
 import { isDeviceAttached } from "../devices/fs/device-transport";
 import {
   getGeniusTypesWithAvailability,
@@ -1200,6 +1200,52 @@ const device_check: AiTool = {
   },
 };
 
+const sync_status: AiTool = {
+  name: "sync_status",
+  description:
+    "Report on a sync that is running now or finished in the last ten minutes: how many files are done out of how many, bytes transferred, whether it is waiting for the browser holding the device to reconnect, the latest log lines, and the result once finished. Use when the user asks how their sync is going, whether it is stuck, how fast it is copying, or whether it finished.",
+  parameters: {
+    type: "object",
+    properties: {
+      device_id: {
+        type: "number",
+        description: "Device ID (from device_list). Omit to report every sync the user can see.",
+      },
+    },
+  },
+  kind: "read",
+  summarize: (a) =>
+    a.device_id === undefined ? "Check sync progress" : `Check sync progress for device #${a.device_id}`,
+  async run(args, ctx) {
+    let deviceId: number | undefined;
+    if (args.device_id !== undefined && args.device_id !== null) {
+      deviceId = Number(args.device_id);
+      if (!Number.isInteger(deviceId) || deviceId <= 0) throw new Error("Invalid device_id");
+    }
+    // Scoped exactly as `sync:status` is — a guest sees only syncs it could
+    // cancel — so this is not a second, wider window onto anyone's log.
+    const syncs = listSyncStatuses({ sessionId: ctx.sessionId }, deviceId).map((s) => ({
+      deviceId: s.deviceId,
+      running: s.active,
+      waitingForConnection: s.state === "waiting",
+      reason: s.reason,
+      processed: s.processed,
+      total: s.total,
+      synced: s.synced,
+      errors: s.errors,
+      removed: s.removed,
+      megabytesTransferred: Math.round((s.bytes / (1024 * 1024)) * 10) / 10,
+      startedAt: new Date(s.startedAt).toISOString(),
+      recentLog: s.log.slice(-10),
+      result: s.active ? undefined : s.result,
+    }));
+    if (syncs.length === 0) {
+      return { syncs, note: "No sync is running, and none finished in the last ten minutes." };
+    }
+    return { syncs };
+  },
+};
+
 const device_read_runtime_data: AiTool = {
   name: "device_read_runtime_data",
   description:
@@ -2218,6 +2264,7 @@ export const AI_TOOLS: AiTool[] = [
   ratings_resolve_conflicts,
   ratings_set_tag_priority,
   device_read_runtime_data,
+  sync_status,
   playlist_create_classic,
   playlist_update_classic,
   podcast_subscribe,

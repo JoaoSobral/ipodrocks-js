@@ -209,7 +209,55 @@ describe("NodeDeviceFs and RemoteDeviceFs agree", () => {
       setMtime: false,
       freeSpace: true,
       eject: false,
+      // Not a missing ability but a fact the copy loop adapts to: every call
+      // crosses a network, so its concurrency follows how the link copes.
+      overNetwork: true,
     });
+  });
+
+  it("on a bulk remove: files go, missing ones say ENOENT, full folders say ENOTEMPTY", async () => {
+    const { local, remote } = await both(async (impl, at) => {
+      const results = await impl.rmMany([
+        at("Music/Artist/Album/01 One.mp3"),
+        at("Music/Artist/Album/ghost.mp3"),
+        at("Music/Empty"),
+        at("Music/Artist"),
+      ]);
+      const left = (await impl.listTree(at("Music"))).map((e) => e.name).sort();
+      return {
+        results: results.map((r) => ({ ok: r.ok, code: r.code })),
+        left,
+      };
+    });
+    expect(remote).toEqual(local);
+    expect(local.results).toEqual([
+      { ok: true, code: undefined },
+      { ok: false, code: "ENOENT" },
+      { ok: true, code: undefined },
+      { ok: false, code: "ENOTEMPTY" },
+    ]);
+    expect(local.left).toEqual(["02 Two.mp3", "Album", "Artist", "cover.jpg"]);
+  });
+
+  it("on a recursive bulk remove", async () => {
+    const { local, remote } = await both(async (impl, at) => {
+      const results = await impl.rmMany([at("Music/Artist")], { recursive: true });
+      return {
+        ok: results.map((r) => r.ok),
+        left: (await impl.listTree(at("Music"))).map((e) => e.name).sort(),
+      };
+    });
+    expect(remote).toEqual(local);
+    expect(local).toEqual({ ok: [true], left: ["Empty"] });
+  });
+
+  it("reports a path for every result, in the order asked", async () => {
+    const asked = ["Music/Artist/Album/02 Two.mp3", "Music/Artist/Album/cover.jpg"];
+    const { local, remote } = await both(async (impl, at) =>
+      (await impl.rmMany(asked.map(at))).map((r) => r.path)
+    );
+    expect(local).toEqual(asked.map((rel) => pair(rel).local));
+    expect(remote).toEqual(asked.map((rel) => pair(rel).remote));
   });
 });
 

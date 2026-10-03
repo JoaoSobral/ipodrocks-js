@@ -564,7 +564,21 @@ export async function copyMissingTracks(
       destination: cp.destPath,
       status: cp.status,
       contentType,
+      bytes: cp.bytes,
     });
+  };
+
+  // Byte progress arrives per chunk from every copy in flight; it goes out at
+  // most every BYTES_EVENT_INTERVAL_MS as one delta, which is all a rate
+  // readout needs and keeps a fast local copy from flooding the socket.
+  let pendingBytes = 0;
+  let lastBytesEmit = 0;
+  const flushBytes = (force: boolean): void => {
+    const now = Date.now();
+    if (pendingBytes === 0 || (!force && now - lastBytesEmit < BYTES_EVENT_INTERVAL_MS)) return;
+    lastBytesEmit = now;
+    progressCallback?.({ event: "bytes", bytes: pendingBytes });
+    pendingBytes = 0;
   };
 
   const opts: CopyToDeviceOptions = {
@@ -576,37 +590,122 @@ export async function copyMissingTracks(
     logCallback: (line: string) =>
       progressCallback?.({ event: "convert_log", message: line }),
     cancelSignal,
+    bytesCallback: (delta) => {
+      pendingBytes += delta;
+      flushBytes(false);
+    },
+    retryCallback: (info) =>
+      progressCallback?.({
+        event: "log",
+        message:
+          `Connection trouble copying ${path.basename(info.srcPath)} — retrying in ` +
+          `${Math.round(info.delayMs / 1000)}s (${info.error}).`,
+      }),
   };
 
-  await copyToDevice(deviceFs, existingPaths, deviceContentPath, opts);
+  try {
+    await copyToDevice(deviceFs, existingPaths, deviceContentPath, opts);
+  } finally {
+    flushBytes(true);
+  }
   return { synced: stats.synced, missingFiles, errors: stats.errors };
 }
 
+/** Minimum spacing of `bytes` progress events. */
+const BYTES_EVENT_INTERVAL_MS = 250;
+
+/** Paths handed to one `rmMany`, so a long sweep still reports progress and
+ *  notices a cancel between chunks. */
+const REMOVE_CHUNK = 500;
+
+/**
+ * Delete files from the device in bulk.
+ *
+ * It used to be a `stat` and an `unlink` per file, one at a time — and on a
+ * browser-held device each unlink also threw away the parent folder's cached
+ * listing, so the next file's path resolution re-listed it: about three round
+ * trips per orphan. Now it is one `rmMany` per {@link REMOVE_CHUNK} files, and
+ * sizes come from the listing the caller already has (`sizeOf`), never from a
+ * fresh `stat`.
+ *
+ * Returns the paths actually removed, so the empty-folder cleanup can climb
+ * from exactly those instead of walking the whole device.
+ */
 export async function removeExtraTracks(
   deviceFs: DeviceFs,
   extraPaths: string[],
   progressCallback?: ProgressCallback,
-  cancelSignal?: AbortSignal
-): Promise<{ removed: number; bytesRemoved: number }> {
+  cancelSignal?: AbortSignal,
+  sizeOf?: (p: string) => number | undefined
+): Promise<{ removed: number; bytesRemoved: number; removedPaths: string[] }> {
   let removed = 0;
   let bytesRemoved = 0;
+  const removedPaths: string[] = [];
 
-  for (const p of extraPaths) {
+  for (let start = 0; start < extraPaths.length; start += REMOVE_CHUNK) {
     if (cancelSignal?.aborted) throw new SyncCancelled();
-    // The size is read for the progress report only; a file that has already
-    // gone is reported as zero bytes rather than skipped.
-    const stat = await deviceFs.stat(p);
-    const fileSize = stat?.size ?? 0;
-    try {
-      await deviceFs.unlink(p);
+    const chunk = extraPaths.slice(start, start + REMOVE_CHUNK);
+    const results = await deviceFs.rmMany(chunk);
+    for (const result of results) {
+      // A file that is already gone is not an error and not a removal.
+      if (!result.ok) continue;
+      const fileSize = sizeOf?.(result.path) ?? 0;
       removed++;
       bytesRemoved += fileSize;
-      progressCallback?.({ event: "remove", path: p, bytes: fileSize });
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") continue;
+      removedPaths.push(result.path);
+      progressCallback?.({ event: "remove", path: result.path, bytes: fileSize });
     }
   }
-  return { removed, bytesRemoved };
+  return { removed, bytesRemoved, removedPaths };
+}
+
+/**
+ * Remove the folders a sweep just emptied — and only those.
+ *
+ * {@link cleanEmptyDirectoriesOn} walks the entire content tree, four calls per
+ * directory, after every sweep that removed anything: on a remote player with
+ * a thousand album folders that is four thousand round trips to delete three
+ * folders. This climbs from the parents of the removed files instead, never
+ * above `rootDir`, and removes one *depth* at a time — deepest first, one
+ * `rmMany` per level — so an album folder goes before its artist folder can be
+ * judged. A folder that still holds anything answers `ENOTEMPTY` and stays.
+ */
+export async function removeEmptiedDirsOn(
+  deviceFs: DeviceFs,
+  removedPaths: string[],
+  rootDir: string
+): Promise<number> {
+  const root = path.resolve(rootDir);
+  const candidates = new Set<string>();
+  for (const removedPath of removedPaths) {
+    let dir = path.dirname(path.resolve(removedPath));
+    while (dir !== root && dir.startsWith(root + path.sep)) {
+      if (candidates.has(dir)) break;
+      candidates.add(dir);
+      dir = path.dirname(dir);
+    }
+  }
+  if (candidates.size === 0) return 0;
+
+  const byDepth = new Map<number, string[]>();
+  for (const dir of candidates) {
+    const depth = dir.split(path.sep).length;
+    const bucket = byDepth.get(depth) ?? [];
+    bucket.push(dir);
+    byDepth.set(depth, bucket);
+  }
+
+  let removed = 0;
+  for (const depth of [...byDepth.keys()].sort((a, b) => b - a)) {
+    try {
+      const results = await deviceFs.rmMany(byDepth.get(depth)!);
+      removed += results.filter((r) => r.ok).length;
+    } catch {
+      // Best effort, like the walk it replaces: a folder left behind is
+      // harmless and the next sweep offers it again.
+    }
+  }
+  return removed;
 }
 
 export interface ArtworkSyncResult {
@@ -926,24 +1025,33 @@ export async function runSync(
   const extrasWereRemoved =
     extraTrackPolicy === "remove" || extraTrackPolicy === "delete-all";
 
+  // Sizes for the progress report come from the listing already in hand.
+  const sizeOf = (p: string): number | undefined => deviceFilesMap[p]?.file_size;
+  const removedPaths: string[] = [];
+
   let removedCount = 0;
   if (extrasWereRemoved && analysis.extras.length > 0) {
-    const { removed } = await removeExtraTracks(
+    const swept = await removeExtraTracks(
       deviceFs,
       analysis.extras,
       progressCallback,
-      cancelSignal
+      cancelSignal,
+      sizeOf
     );
-    removedCount = removed;
+    removedCount = swept.removed;
+    removedPaths.push(...swept.removedPaths);
   }
 
   if (analysis.codecMismatchPaths.length > 0) {
-    const { removed } = await removeExtraTracks(
+    const swept = await removeExtraTracks(
       deviceFs,
       analysis.codecMismatchPaths,
       progressCallback,
-      cancelSignal
+      cancelSignal,
+      sizeOf
     );
+    const removed = swept.removed;
+    removedPaths.push(...swept.removedPaths);
     removedCount += removed;
     if (removed > 0) {
       progressCallback?.({
@@ -966,12 +1074,14 @@ export async function runSync(
   );
   if (orphanedArt.length > 0) {
     if (extrasWereRemoved) {
-      const { removed } = await removeExtraTracks(
+      const swept = await removeExtraTracks(
         deviceFs,
         orphanedArt,
         progressCallback,
         cancelSignal
       );
+      const removed = swept.removed;
+      removedPaths.push(...swept.removedPaths);
       removedCount += removed;
       if (removed > 0) {
         progressCallback?.({
@@ -1063,8 +1173,8 @@ export async function runSync(
     }
   }
 
-  if (removedCount > 0) {
-    await cleanEmptyDirectoriesOn(deviceFs, deviceContentPath);
+  if (removedPaths.length > 0) {
+    await removeEmptiedDirsOn(deviceFs, removedPaths, deviceContentPath);
   }
 
   return {

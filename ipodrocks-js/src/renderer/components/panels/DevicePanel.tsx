@@ -1064,6 +1064,23 @@ export function DevicePanel() {
             </div>
           )}
 
+          {/* Editing a remote device: its folder lives in *this* browser's
+              IndexedDB, so a device added in another browser (or one with no
+              File System Access API, like Firefox) arrives here with no folder
+              at all. The card's control is the same component — one copy of
+              connect / change / disconnect. */}
+          {isWebMode() && editingDeviceId != null && webTransport && (
+            <div
+              className="rounded-lg border border-border bg-muted/30 p-3"
+              data-testid="edit-device-folder"
+            >
+              <div className="mb-2 text-sm font-medium text-foreground">
+                Device folder
+              </div>
+              <WebDeviceLink deviceId={editingDeviceId} />
+            </div>
+          )}
+
           {/* Mount Path */}
           {!webTransport && (
           <div>

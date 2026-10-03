@@ -10,8 +10,10 @@
  *
  * The sweeping and erasing behaviour itself runs against a real tmp device in
  * src/__tests__/behaviors/orphan-reset-policy.test.ts, and the folder guard in
- * src/__tests__/regressions/delete-all-path-guard.test.ts. Only the affordance
- * lives here.
+ * src/__tests__/regressions/delete-all-path-guard.test.ts. Here: the
+ * affordance, and one confirmed reset end to end — the local reset swaps each
+ * folder aside and deletes it in the background, and the sync must not report
+ * done while that trash is still on the device.
  *
  * Run: npm run build && npx playwright test tests/e2e/orphan-reset-policy.test.ts
  */
@@ -173,4 +175,43 @@ test("choosing Delete all confirms before anything is erased", async () => {
   await window.getByRole("button", { name: "Cancel" }).click();
   await expect(window.getByText("Erase and rebuild this device?")).toBeHidden();
   expect(fs.readFileSync(planted, "utf8")).toBe("keep me until confirmed");
+});
+
+test("confirming Delete all erases the device, rebuilds it, and leaves no trash behind", async () => {
+  test.skip(!seedTrack("track.flac"), "ffmpeg unavailable — cannot seed a library");
+
+  const window = await readyWindow();
+  await scanLibrary(window);
+  await addDevice(window, mountPath);
+
+  // A full folder the reset has to take with it. On a local device the reset
+  // renames each content folder aside, recreates it empty at once, and deletes
+  // the old one while the copy runs — so a hidden trash folder exists for a
+  // while and must be gone by the time the sync says it is done.
+  for (let i = 0; i < 50; i++) {
+    const p = path.join(mountPath, "Music", `Old ${i % 5}`, `${i}.mp3`);
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, "old");
+  }
+  const planted = path.join(mountPath, "Podcasts", "Show", "episode.mp3");
+  fs.mkdirSync(path.dirname(planted), { recursive: true });
+  fs.writeFileSync(planted, "erase me");
+
+  await window.getByRole("button", { name: "Sync", exact: true }).click();
+  await expect(
+    window.getByText("Orphan & Reset Policy", { exact: true })
+  ).toBeVisible({ timeout: 10_000 });
+  await policySelect(window).click();
+  await window.getByRole("option", { name: "Delete all" }).click();
+  await window.getByRole("button", { name: "Start Sync" }).click();
+  await window.getByRole("button", { name: "Erase and rebuild" }).click();
+
+  const dialog = window.getByRole("dialog").filter({ hasText: "Syncing to Device" });
+  await expect(dialog.getByRole("button", { name: "Close" })).toBeVisible({ timeout: 30_000 });
+
+  expect(fs.existsSync(planted)).toBe(false);
+  const music = fs.readdirSync(path.join(mountPath, "Music"), { recursive: true }) as string[];
+  expect(music.some((p) => p.startsWith("Old "))).toBe(false);
+  expect(music.some((p) => p.endsWith(".flac"))).toBe(true);
+  expect(fs.readdirSync(mountPath).filter((n) => n.startsWith(".ipodrocks-trash-"))).toEqual([]);
 });

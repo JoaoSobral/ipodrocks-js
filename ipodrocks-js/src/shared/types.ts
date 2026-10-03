@@ -464,7 +464,11 @@ export type SyncProgressEventName =
   | "remove"
   | "total"
   | "total_add"
-  | "complete";
+  | "complete"
+  /** Bytes moved onto the device since the previous `bytes` event. */
+  | "bytes"
+  /** The sync is waiting on the link (`waiting`) or running again (`running`). */
+  | "state";
 
 export interface SyncProgress {
   event: SyncProgressEventName;
@@ -473,6 +477,39 @@ export interface SyncProgress {
   status: "pending" | "syncing" | "complete" | "error" | "cancelled";
   contentType?: string;
   message?: string;
+  /** `bytes`: the delta. `copy` / `remove`: the file's size, when known. */
+  bytes?: number;
+  /** `state` only. */
+  state?: SyncRunState;
+}
+
+/** Whether a running sync is moving files or waiting on its connection. */
+export type SyncRunState = "running" | "waiting";
+
+/**
+ * What `sync:status` reports about one device's sync, so a tab that reloads or
+ * reconnects mid-sync can pick the progress display back up instead of
+ * showing a sync that is still running as failed.
+ */
+export interface SyncStatusSnapshot {
+  deviceId: number;
+  startedAt: number;
+  /** True while it runs; false once `result` is in. */
+  active: boolean;
+  state: SyncRunState;
+  /** Why it is waiting, when it is. */
+  reason?: string;
+  total: number;
+  processed: number;
+  synced: number;
+  errors: number;
+  removed: number;
+  /** Bytes moved onto the device so far. */
+  bytes: number;
+  /** The most recent log lines, oldest first. */
+  log: string[];
+  /** The handler's own return value, once finished. */
+  result?: unknown;
 }
 
 export interface BackfillProgress {

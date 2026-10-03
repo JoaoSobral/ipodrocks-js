@@ -24,6 +24,8 @@ interface CallMessage {
   id: number;
   verb: DeviceRpcVerb;
   args: unknown[];
+  /** Post `progress` messages while a transfer runs. */
+  progress?: boolean;
 }
 
 type Incoming = InitMessage | CallMessage;
@@ -53,7 +55,15 @@ self.onmessage = (event: MessageEvent<Incoming>): void => {
       return;
     }
     try {
-      const value = await dispatchDeviceRpc(root, message.verb, message.args);
+      const value = await dispatchDeviceRpc(
+        root,
+        message.verb,
+        message.args,
+        message.progress
+          ? (bytes, total) =>
+              self.postMessage({ kind: "progress", id: message.id, bytes, total })
+          : undefined
+      );
       self.postMessage({ kind: "result", id: message.id, ok: true, value });
     } catch (err) {
       self.postMessage({

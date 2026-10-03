@@ -42,6 +42,8 @@ function sliderStyle(value: number, max: number): CSSProperties {
 export function PlayerBar() {
   const audioRef = useRef<HTMLAudioElement>(null);
   const lastReportedTimeRef = useRef(0);
+  /** Network recoveries attempted for the current source. */
+  const networkRetriesRef = useRef(0);
 
   const currentTrack = usePlayerStore((s) => s.currentTrack);
   const sourceUrl = usePlayerStore((s) => s.sourceUrl);
@@ -69,6 +71,7 @@ export function PlayerBar() {
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio || !sourceUrl) return;
+    networkRetriesRef.current = 0;
     audio.src = sourceUrl;
     audio.load();
     audio.play().catch((e) => {
@@ -140,10 +143,36 @@ export function PlayerBar() {
         }}
         onLoadedMetadata={(e) => _setDuration(e.currentTarget.duration)}
         onEnded={_onEnded}
+        onPlaying={() => {
+          networkRetriesRef.current = 0;
+        }}
         onError={(e) => {
+          const audio = e.currentTarget;
           // MEDIA_ERR_SRC_NOT_SUPPORTED (code 4) → retry with ffmpeg
-          if (e.currentTarget.error?.code === 4) {
+          if (audio.error?.code === 4) {
             retryAsTranscode();
+            return;
+          }
+          // MEDIA_ERR_NETWORK (code 2): the link dropped mid-stream. Over the
+          // web server that is a tunnel blip, not a broken file — re-request
+          // the same URL and pick up where it stopped, a few times, with a
+          // growing pause so a reconnecting socket has time to come back.
+          if (audio.error?.code === 2 && sourceUrl && networkRetriesRef.current < 3) {
+            const attempt = ++networkRetriesRef.current;
+            const resumeAt = audio.currentTime;
+            const wasPlaying = isPlaying;
+            window.setTimeout(() => {
+              if (audioRef.current !== audio || usePlayerStore.getState().sourceUrl !== sourceUrl) {
+                return;
+              }
+              audio.src = sourceUrl;
+              audio.load();
+              const seekBack = () => {
+                audio.currentTime = resumeAt;
+                if (wasPlaying) audio.play().catch(() => {});
+              };
+              audio.addEventListener("loadedmetadata", seekBack, { once: true });
+            }, 1000 * attempt);
           }
         }}
       />

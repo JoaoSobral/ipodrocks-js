@@ -96,6 +96,12 @@ Press **Choose folder** and pick the root of the device: the folder holding
 this device** on its card whenever you like. Either way, from that point the tab
 *is* the device.
 
+The folder is remembered by *the browser that picked it*, not by the server. A
+device added in one browser — or in one that cannot pick folders at all, such
+as Firefox — arrives in another with no folder. Open its **Edit** form there:
+the **Device folder** section connects it, changes the folder, or disconnects
+it, exactly like the card.
+
 ### What to expect, and why
 
 - **It needs Chrome, Edge or another Chromium browser, on a desktop, over
@@ -111,7 +117,16 @@ this device** on its card whenever you like. Either way, from that point the tab
   [Deploying the Server](/guide/server-deployment).
 - **The tab has to stay open.** Close it and the device goes offline. Next time
   you press Connect again, because a browser deliberately does not let a page
-  keep silent access to your disk across visits.
+  keep silent access to your disk across visits. While a sync runs, the tab asks
+  before closing and asks the browser not to put it to sleep.
+- **A dropped connection pauses a sync; it does not end it.** If the link to the
+  server drops — Wi-Fi switching, a tunnel blip, a reload — the sync waits up to
+  two minutes for the tab to come back, says *Waiting for connection…* while it
+  does, and carries on from where it was. A transfer that stalls or fails is
+  retried a few times before it counts as an error, and on a struggling link
+  the sync copies fewer files at once. Files already on the device are never
+  copied again, so re-running a sync that did give up resumes it. A banner at
+  the top of the window says when the app itself is reconnecting.
 - **Only one tab at a time.** Opening the same device in a second tab detaches
   the first. Two tabs writing into Rockbox's index — which has no checksum —
   would corrupt it.

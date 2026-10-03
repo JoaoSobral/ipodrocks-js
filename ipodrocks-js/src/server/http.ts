@@ -35,7 +35,7 @@ import {
   type DeviceSessions,
 } from "./device-session";
 import { getLibraryDb } from "../main/ipc/common";
-import { handleInvoke, MAX_INVOKE_BODY_BYTES } from "./invoke-route";
+import { handleInvoke, handleInvokeResult, MAX_INVOKE_BODY_BYTES } from "./invoke-route";
 import { handleMediaRequest } from "./media-route";
 import { issueMediaToken, resetMediaTokenKey } from "./media-token";
 import { setMediaUrlEncoder } from "../main/player/media-url";
@@ -153,6 +153,23 @@ export function stripCspMeta(html: string): string {
 export function injectBaseHref(html: string): string {
   if (/<base\s/i.test(html)) return html;
   return html.replace(/<head(\s[^>]*)?>/i, (match) => `${match}\n  <base href="/">`);
+}
+
+/**
+ * A fingerprint of the renderer bundle on disk. Vite hashes every asset name
+ * into `index.html`, so the document changes exactly when the bundle does —
+ * which is the question a reconnecting tab is asking ("is the code I am
+ * running still the code this server serves?"). `IPODROCKS_BUILD_ID` overrides
+ * it, for a deployment that wants to name its builds.
+ */
+export function rendererBuildId(dir: string): string {
+  if (process.env.IPODROCKS_BUILD_ID) return process.env.IPODROCKS_BUILD_ID;
+  try {
+    const html = fs.readFileSync(path.join(dir, "index.html"));
+    return crypto.createHash("sha256").update(html).digest("hex").slice(0, 16);
+  } catch {
+    return "unknown";
+  }
 }
 
 function serveIndex(dir: string, res: express.Response): void {
@@ -280,6 +297,12 @@ export async function startServer(
     }
   );
 
+  // Registered before nothing that could shadow it: `/api/invoke/:channel` is
+  // POST-only, this is GET-only.
+  app.get("/api/invoke/result/:requestId", apiLimiter, requireAuth(config), (req, res) => {
+    void handleInvokeResult(req, res);
+  });
+
   app.get("/api/media/:token", apiLimiter, requireAuth(config), handleMediaRequest);
   app.head("/api/media/:token", apiLimiter, requireAuth(config), handleMediaRequest);
 
@@ -330,6 +353,7 @@ export async function startServer(
     sessionMiddleware,
     allowedOrigins,
     authenticate: (req) => authenticatedSubject(req as unknown as Request, config),
+    buildId: () => rendererBuildId(dir),
   });
 
   // Devices held in a browser. The lookup is what stops one authenticated

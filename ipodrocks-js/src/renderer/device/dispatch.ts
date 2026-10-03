@@ -25,9 +25,11 @@ import {
   opRename,
   opRm,
   opRmdir,
+  opRmMany,
   opStat,
   opUnlink,
   opWriteFile,
+  type ProgressFn,
 } from "./fs-ops";
 
 function toBase64(buf: ArrayBuffer): string {
@@ -52,7 +54,8 @@ function fromBase64(value: string): Uint8Array {
 export async function dispatchDeviceRpc(
   root: FileSystemDirectoryHandle,
   verb: DeviceRpcVerb,
-  args: unknown[]
+  args: unknown[],
+  onProgress?: ProgressFn
 ): Promise<unknown> {
   switch (verb) {
     case "stat":
@@ -86,14 +89,20 @@ export async function dispatchDeviceRpc(
       return opRmdir(root, String(args[0]));
     case "rm":
       return opRm(root, String(args[0]), args[1] as { recursive?: boolean; force?: boolean });
+    case "rmMany":
+      return opRmMany(
+        root,
+        Array.isArray(args[0]) ? (args[0] as unknown[]).map(String) : [],
+        args[1] as { recursive?: boolean }
+      );
     case "rename":
       return opRename(root, String(args[0]), String(args[1]));
     case "freeSpace":
       return opFreeSpace();
     case "pull":
-      return opPull(root, String(args[0]), String(args[1]));
+      return opPull(root, String(args[0]), String(args[1]), onProgress);
     case "push":
-      return opPush(root, String(args[0]), String(args[1]));
+      return opPush(root, String(args[0]), String(args[1]), onProgress);
     default:
       throw new DeviceOpError(`Unknown device verb: ${String(verb)}`, "EINVAL");
   }

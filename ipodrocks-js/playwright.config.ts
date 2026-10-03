@@ -72,6 +72,11 @@ export default defineConfig({
       // are holding.
       IPODROCKS_SESSION_SECRET: "e2e-session-secret-not-for-production",
       IPODROCKS_DISABLE_UPDATE_CHECK: "1",
+      // One second instead of twenty, so every call that does real work —
+      // scans, syncs — comes back through `202` and the result route. The
+      // whole `web` suite then exercises the path that keeps a long sync clear
+      // of a proxy's request timeout, not just the spec written for it.
+      IPODROCKS_INVOKE_DEFER_MS: "1000",
     },
   },
 });

@@ -10,7 +10,7 @@ The Sync panel copies music, podcasts, audiobooks, and playlists from your libra
 - **Custom sync** — Select specific albums, artists, genres, podcasts, audiobooks, and playlists. Choose **Include** (sync only the ticked items) or **Exclude** (sync everything *except* the ticked items). The Audiobooks box includes **Extra Audiobooks** subscribed from LibriVox (see [Extra Audiobooks](./audiobooks.md)).
 - **Mirror library folder structure** — On by default. Reproduces your library's folder tree on the device 1:1, keeping album folder names exactly as they are (including the year, e.g. `Levels (2011)`). Turn it off to rebuild device paths from tags instead, as `Artist/Album/track.ext`.
 - **Group albums by** — Which artist identifies an album: **Album artist** (default) or **Track artist**. See below.
-- **Start Sync** — Runs the sync. Progress modal shows files copied, converted, and removed.
+- **Start Sync** — Runs the sync. Progress modal shows files copied, converted, and removed, the amount transferred and the current speed (KB/s or MB/s) with an estimate of the time left. A sync keeps running on its own if you leave the Sync panel or reload the page; coming back re-opens its progress.
 - **Results** — After sync, a summary card shows success, warnings, or errors.
 
 ## How it works
@@ -24,7 +24,7 @@ The Sync panel copies music, podcasts, audiobooks, and playlists from your libra
 - **Orphan & Reset Policy** (called "Orphan Policy" before 2.3.2, and "Extra Track Policy" in some earlier versions) — Controls what happens to content that exists **on the device but is not part of the sync**:
   - **Keep** — Leave it alone. Useful if you manually copy files to the device outside of iPodRocks.
   - **Remove orphans** — Delete anything the sync selection does not account for, so the device mirrors the library. This covers **songs, podcasts and audiobooks alike**, including content types the current sync has nothing to copy to. (Before 2.3.2 those were skipped, so a device full of podcasts survived "remove" untouched if your selection had no podcasts.)
-  - **Delete all** — Erase the device's **Music**, **Podcasts** and **Audiobooks** folders outright, then rebuild them from the library in the same sync. Everything in those folders goes, including files iPodRocks did not put there, and auto-podcast episodes are downloaded again. The **Playlists** folder is left alone, and so are the ratings and listening history stored on the device. iPodRocks asks you to confirm before anything is deleted.
+  - **Delete all** — Erase the device's **Music**, **Podcasts** and **Audiobooks** folders outright, then rebuild them from the library in the same sync. Everything in those folders goes, including files iPodRocks did not put there, and auto-podcast episodes are downloaded again. The **Playlists** folder is left alone, and so are the ratings and listening history stored on the device. iPodRocks asks you to confirm before anything is deleted. On a device plugged into this computer the old folders are moved aside instantly and deleted while the new files copy; on a remote device they are deleted in batches, with progress in the log.
   - **Prompt** — Report what was found instead of deleting it.
 
   If a device had the retired **Remove all** option saved, it loads as **Remove orphans** — upgrading never turns an old setting into a wipe.

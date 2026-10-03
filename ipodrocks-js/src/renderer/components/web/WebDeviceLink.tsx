@@ -64,6 +64,15 @@ export function WebDeviceLink({ deviceId }: { deviceId: number }) {
         >
           {connected ? "Disconnect" : "Connect this device"}
         </Button>
+        {connected && (
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => void client.pickAndAttach(deviceId)}
+          >
+            Change folder
+          </Button>
+        )}
         {state.status === "attaching" && (
           <span className="text-xs text-muted-foreground">Connecting…</span>
         )}

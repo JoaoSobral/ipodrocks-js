@@ -2,6 +2,7 @@ import { StrictMode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { App } from "./App";
 import { LoginScreen } from "./components/web/LoginScreen";
+import { ConnectionBanner } from "./components/web/ConnectionBanner";
 import {
   fetchAuthStatus,
   installWebTransport,
@@ -26,6 +27,7 @@ const container = document.getElementById("root");
 function renderApp(root: Root): void {
   root.render(
     <StrictMode>
+      {isWebMode() && <ConnectionBanner />}
       <App />
     </StrictMode>
   );

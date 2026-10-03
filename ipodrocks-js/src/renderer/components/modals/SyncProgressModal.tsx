@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import type { Dispatch, MutableRefObject, SetStateAction } from "react";
-import type { SyncOptions, SyncProgress } from "@shared/types";
-import { startSync, cancelSync, onSyncProgress } from "@renderer/ipc/api";
+import type { SyncOptions, SyncProgress, SyncStatusSnapshot } from "@shared/types";
+import { startSync, cancelSync, onSyncProgress, getSyncStatus } from "@renderer/ipc/api";
+import { getWebTransport, isWebMode } from "@renderer/ipc/web-transport";
+import { useKeepTabAlive } from "@renderer/device/keep-alive";
 import { Modal } from "../common/Modal";
 import { Button } from "../common/Button";
 import { ProgressBar } from "../common/ProgressBar";
@@ -36,6 +38,37 @@ interface SyncProgressModalProps {
   onClose: () => void;
   syncOptions: SyncOptions;
   onComplete?: (result: SyncCompleteResult) => void;
+  /**
+   * Re-join a sync that is already running on `syncOptions.deviceId` — after a
+   * page reload, say — instead of starting one. Progress resumes from the
+   * server's `sync:status` snapshot.
+   */
+  rejoin?: boolean;
+}
+
+/** The window the transfer rate is averaged over. */
+const RATE_WINDOW_MS = 5000;
+/** How often a re-joined modal asks whether the sync has finished. */
+const REJOIN_POLL_MS = 3000;
+
+/** "850 KB/s", "12.4 MB/s". */
+export function formatRate(bytesPerSec: number): string {
+  if (bytesPerSec >= 1024 * 1024) return `${(bytesPerSec / (1024 * 1024)).toFixed(1)} MB/s`;
+  return `${Math.max(0, Math.round(bytesPerSec / 1024))} KB/s`;
+}
+
+/** "640 MB", "1.2 GB". */
+function formatBytes(bytes: number): string {
+  if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(1)} GB`;
+  if (bytes >= 1024 ** 2) return `${Math.round(bytes / 1024 ** 2)} MB`;
+  return `${Math.round(bytes / 1024)} KB`;
+}
+
+function formatEta(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds <= 0) return "";
+  if (seconds < 60) return "<1 min left";
+  if (seconds < 3600) return `~${Math.round(seconds / 60)} min left`;
+  return `~${(seconds / 3600).toFixed(1)} h left`;
 }
 
 const statusIcon: Record<string, string> = {
@@ -83,11 +116,38 @@ const EMPTY_SKIP_BREAKDOWN = {
   playlist: 0,
 } as const;
 
+type SyncResult = {
+  synced?: number;
+  removed?: number;
+  errors?: number;
+  artworkErrors?: number;
+  error?: string;
+};
+
+/**
+ * Follows a sync this tab did not start (or no longer holds the request for)
+ * until it finishes, feeding each `sync:status` snapshot to `onSnapshot`.
+ * Resolves with the sync's own result, exactly as `startSync()` would have.
+ */
+async function waitForRunningSync(
+  deviceId: number,
+  onSnapshot: (snap: SyncStatusSnapshot) => void
+): Promise<SyncResult> {
+  for (;;) {
+    const snap = (await getSyncStatus(deviceId)).find((s) => s.deviceId === deviceId);
+    if (!snap) return { error: "That sync is no longer running." };
+    onSnapshot(snap);
+    if (!snap.active) return (snap.result as SyncResult) ?? {};
+    await new Promise((resolve) => setTimeout(resolve, REJOIN_POLL_MS));
+  }
+}
+
 export function SyncProgressModal({
   open,
   onClose,
   syncOptions,
   onComplete,
+  rejoin = false,
 }: SyncProgressModalProps) {
   const [progress, setProgress] = useState<SyncProgress | null>(null);
   const [recentItems, setRecentItems] = useState<RecentItem[]>([]);
@@ -113,6 +173,13 @@ export function SyncProgressModal({
    */
   const [reportedSynced, setReportedSynced] = useState<number | null>(null);
   const [elapsedSec, setElapsedSec] = useState(0);
+  /** Bytes put on the device so far, and the rolling rate over them. */
+  const [bytesTotal, setBytesTotal] = useState(0);
+  const [rate, setRate] = useState(0);
+  /** `waiting` while the link to the device is down. */
+  const [waitingReason, setWaitingReason] = useState<string | null>(null);
+  const bytesTotalRef = useRef(0);
+  const rateSamplesRef = useRef<{ t: number; total: number }[]>([]);
 
   const listRef = useRef<HTMLDivElement>(null);
   const logRef = useRef<HTMLDivElement>(null);
@@ -149,6 +216,28 @@ export function SyncProgressModal({
   const pct = finished && !error && !cancelled ? 100 : Math.min(rawPct, 100);
 
   const handleProgress = useCallback((p: SyncProgress) => {
+    if (p.event === "bytes") {
+      const total = bytesTotalRef.current + (Number(p.bytes) || 0);
+      bytesTotalRef.current = total;
+      setBytesTotal(total);
+      const now = Date.now();
+      const samples = rateSamplesRef.current;
+      samples.push({ t: now, total });
+      while (samples.length > 2 && now - samples[0].t > RATE_WINDOW_MS) samples.shift();
+      const first = samples[0];
+      const span = (now - first.t) / 1000;
+      if (span > 0.5) setRate((total - first.total) / span);
+      return;
+    }
+
+    if (p.event === "state") {
+      setWaitingReason(p.state === "waiting" ? (p.message ?? "Waiting for the device…") : null);
+      if (p.message) {
+        appendCappedLog(setStatusMessages, statusIdRef, p.message, LOG_BUFFER_CAP);
+      }
+      return;
+    }
+
     setProgress(p);
 
     if (p.event === "log") {
@@ -267,13 +356,28 @@ export function SyncProgressModal({
     setElapsedSec(0);
     hasReceivedTotalRef.current = false;
 
+    setBytesTotal(0);
+    setRate(0);
+    setWaitingReason(null);
+    bytesTotalRef.current = 0;
+    rateSamplesRef.current = [];
+
     elapsedInterval.current = setInterval(() => {
       setElapsedSec((s) => s + 1);
+      // A rate with no fresh samples is a stalled transfer, not the last
+      // speed it happened to have.
+      const samples = rateSamplesRef.current;
+      if (samples.length > 0 && Date.now() - samples[samples.length - 1].t > RATE_WINDOW_MS) {
+        setRate(0);
+      }
     }, 1000);
 
     const opts = syncOptions;
 
-    startSync(opts)
+    const run: Promise<SyncResult> =
+      rejoin ? waitForRunningSync(opts.deviceId, applySnapshot) : startSync(opts);
+
+    run
       .then((result: { synced?: number; removed?: number; errors?: number; artworkErrors?: number; error?: string }) => {
         setFinished(true);
         const errMsg = result?.error != null ? String(result.error) : "";
@@ -345,6 +449,42 @@ export function SyncProgressModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
+  /**
+   * Adopt the server's counters. Used when re-joining, and after a reconnect
+   * whose missed frames could not be replayed — either way the live frames
+   * alone would leave the counts short.
+   */
+  function applySnapshot(snap: SyncStatusSnapshot): void {
+    hasReceivedTotalRef.current = snap.total > 0 || hasReceivedTotalRef.current;
+    setTotalItems(snap.total);
+    setProcessedItems(snap.processed);
+    processedItemsRef.current = snap.processed;
+    setCopiedItems(snap.synced);
+    copiedItemsRef.current = snap.synced;
+    bytesTotalRef.current = snap.bytes;
+    setBytesTotal(snap.bytes);
+    setWaitingReason(snap.state === "waiting" ? (snap.reason ?? "Waiting for the device…") : null);
+    if (snap.log.length > 0) {
+      setStatusMessages(snap.log.map((text) => ({ id: ++statusIdRef.current, text })));
+    }
+  }
+
+  // Frames lost beyond what the server could replay: re-read the counters.
+  useEffect(() => {
+    if (!open || !isWebMode()) return;
+    const transport = getWebTransport();
+    if (!transport) return;
+    return transport.onResync(() => {
+      void getSyncStatus(syncOptions.deviceId).then((snaps) => {
+        const snap = snaps.find((s) => s.deviceId === syncOptions.deviceId);
+        if (snap) applySnapshot(snap);
+      });
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, syncOptions.deviceId]);
+
+  useKeepTabAlive(open && isRunning && isWebMode(), `sync-${syncOptions.deviceId}`);
+
   useEffect(() => {
     if (listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight;
   }, [recentItems]);
@@ -407,6 +547,33 @@ export function SyncProgressModal({
               <span>{processedItems} processed</span>
               <span className="text-muted-foreground">{Math.floor(elapsedSec / 60)}:{String(elapsedSec % 60).padStart(2, "0")} elapsed</span>
             </div>
+          </div>
+        )}
+
+        {!finished && bytesTotal > 0 && (
+          <div
+            className="flex items-center justify-between text-xs text-muted-foreground tabular-nums"
+            data-testid="sync-rate"
+          >
+            <span>{formatBytes(bytesTotal)} transferred</span>
+            <span>
+              {formatRate(rate)}
+              {rate > 0 && copiedItems > 0 && totalItems > processedItems
+                ? ` · ${formatEta(
+                    ((totalItems - processedItems) * (bytesTotal / copiedItems)) / rate
+                  )}`
+                : ""}
+            </span>
+          </div>
+        )}
+
+        {!finished && waitingReason && (
+          <div
+            role="status"
+            data-testid="sync-waiting"
+            className="rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-warning"
+          >
+            {waitingReason}
           </div>
         )}
 
