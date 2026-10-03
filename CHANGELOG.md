@@ -1,6 +1,53 @@
 # Changelog
 
-## [Unreleased]
+## [3.1.0] — 2026-10
+
+### 📶 Syncs that survive a bad connection
+
+Syncing a player from a browser over Wi-Fi or a Cloudflare Tunnel used to end
+the moment the connection hiccuped. Now a sync rides it out.
+
+- **A dropped connection pauses the sync instead of ending it.** Wi-Fi
+  switching networks, a tunnel blip, even reloading the page: the sync waits up
+  to two minutes for the tab to come back, shows *Waiting for connection…*
+  meanwhile, and carries on where it was.
+- **Stalled or failed transfers are retried** a few times before they count as
+  an error, and on a struggling connection the sync copies fewer files at once
+  rather than giving up.
+- **Re-running a sync resumes it.** Files already on the player are never
+  copied again, so if a sync does give up, starting it again picks up from
+  where it stopped.
+- **A sync keeps going when you look away.** Leave the Sync panel or reload the
+  page and the sync carries on; come back and its progress re-opens. In the
+  browser, the tab asks before you close it mid-sync and keeps the computer
+  from going to sleep under a long one.
+- **You can see what the connection is doing.** A slim banner at the top of
+  the window says when the app is reconnecting, instead of panels sitting on a
+  spinner.
+
+### 📊 Clearer sync progress
+
+- The progress window now shows **how much has been transferred, the current
+  speed, and an estimate of the time left**.
+- **"Delete all" is faster.** On a player plugged into this computer the old
+  folders are moved aside instantly and deleted while the new files copy; on a
+  remote player they are deleted in batches, with progress in the log.
+- A remote device's **Edit** form can now connect, change or disconnect its
+  folder, so a device added in one browser can be picked up in another.
+
+### 🐳 Ready-made Docker image
+
+- **The server is on Docker Hub** as
+  [`jpsobral/ipodrocks-server`](https://hub.docker.com/r/jpsobral/ipodrocks-server),
+  for both regular PCs (amd64) and ARM machines such as a Raspberry Pi or most
+  NAS boxes (arm64). No need to download the code or build anything:
+  `docker pull jpsobral/ipodrocks-server`. A new image is published with every
+  release; `latest` always means the newest full release, and test builds like
+  this alpha only get their own tag.
+- The included `docker-compose.yml` uses that image too, so upgrading is
+  `docker compose pull && docker compose up -d`.
+- Fixed two problems that stopped the image from building and from starting
+  on a fresh data volume.
 
 ### 🔑 Easier sign-in for the web server
 
