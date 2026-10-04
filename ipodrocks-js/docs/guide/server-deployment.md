@@ -100,23 +100,32 @@ first if you are jumping several releases.
 
 ### Building the image yourself
 
-The `Dockerfile` beside `package.json` is what the release builds. To run your
-own checkout instead:
+The `Dockerfile` beside `package.json` is what the release builds, both
+flavours (`--target distroless`, the default, and `--target alpine`). From a
+checkout, in `ipodrocks-js/`:
 
 ```sh
-cd ipodrocks-js
-docker build -t ipodrocks-server .
+npm run docker:distroless    # build + run the default image on http://127.0.0.1:8780
+npm run docker:alpine        # build + run the Alpine image on http://127.0.0.1:8781
+npm run docker:test          # build both and run the release's smoke test
+npm run docker:test -- alpine
 ```
 
-and use `ipodrocks-server` in place of `jpsobral/ipodrocks-server:latest`
-above (or `docker compose up -d --build`). It installs with
+The two `docker:<flavour>` commands stay in the foreground with the server's
+log on screen — the claim token is in it — and Ctrl-C stops and removes the
+container. Each keeps its data in its own volume (`ipodrocks-local-<flavour>-data`),
+so they can run side by side. Set `IPODROCKS_MUSIC_DIR=/path/to/music` to mount
+a library read-only, and `IPODROCKS_SESSION_SECRET` to stay signed in across
+restarts.
+
+`docker:test` is the check every release runs before it is tagged: the server
+answers, finds `mpcenc`, encodes a real Musepack file inside the container, and
+runs as a non-root user.
+
+Plain Docker works too: `docker build --target alpine -t ipodrocks-server .`,
+then use `ipodrocks-server` in place of `jpsobral/ipodrocks-server:latest`
+above (or `docker compose up -d --build`). The build installs with
 `--ignore-scripts`, which skips Electron's ~100 MB binary download.
-
-Then read the claim token out of the log (see [First run](#first-run)):
-
-```sh
-docker logs ipodrocks
-```
 
 ### Volumes
 

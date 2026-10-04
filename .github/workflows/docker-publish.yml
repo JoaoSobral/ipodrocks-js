@@ -200,6 +200,8 @@ jobs:
       # encoders the daemon reports are really there: a Musepack encode inside
       # the container is the one thing each flavour gets differently (Debian's
       # mpcenc in distroless, one compiled from source in alpine).
+      # `npm run docker:test` (ipodrocks-js/scripts/docker-local.js) runs the
+      # same checks locally; change one, change the other.
       - name: Smoke-test amd64 image
         working-directory: ${{ runner.temp }}/amd64
         run: |
