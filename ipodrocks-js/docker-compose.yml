@@ -13,9 +13,12 @@
 services:
   ipodrocks:
     # The published image, built for amd64 and arm64 on every GitHub release.
-    # Pin a version with IPODROCKS_VERSION=3.0.1 in .env; upgrade with
-    # `docker compose pull && docker compose up -d`. The `build:` block below is
-    # only used by `docker compose up --build`, for running your own checkout.
+    # IPODROCKS_VERSION in .env is the tag, and so also the flavour:
+    #   latest, 3.1.0, 3.1                 distroless (no shell) — the default
+    #   alpine, 3.1.0-alpine, 3.1-alpine   Alpine (has a shell)
+    # Upgrade with `docker compose pull && docker compose up -d`. The `build:`
+    # block below is only used by `docker compose up --build`, for running your
+    # own checkout; add `target: alpine` there for the Alpine flavour.
     image: jpsobral/ipodrocks-server:${IPODROCKS_VERSION:-latest}
     build:
       context: .

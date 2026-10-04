@@ -71,7 +71,8 @@ npm run server
 It uses the same data folder, so a daemon and the desktop app on one machine
 share a library rather than quietly starting two.
 
-There is a container image (`docker pull jpsobral/ipodrocks-server`), a
+There is a container image (`docker pull jpsobral/ipodrocks-server`, or
+`:alpine` for one with a shell), a
 `docker-compose.yml`, a systemd unit and a
 Cloudflare Tunnel walkthrough for this — see
 [Deploying the Server](/guide/server-deployment), or

@@ -176,7 +176,13 @@ CMD ["node", "dist/main/server/daemon.js"]
 FROM gcr.io/distroless/nodejs24-debian13:nonroot AS distroless
 
 WORKDIR /app
-ENV NODE_ENV=production
+# Distroless sets no HOME; `nonroot` gets /home/nonroot from /etc/passwd. But a
+# `user: "1000:1000"` override — the usual way to make a bind-mounted data dir
+# writable — has no passwd entry, so os.homedir() falls back to `/`, and the
+# folder picker's "Home" and the path allowlist's home root become `/`. Pinning
+# HOME keeps every uid on the same answer.
+ENV NODE_ENV=production \
+    HOME=/home/nonroot
 
 COPY --from=encoders /out/bin/ /usr/local/bin/
 COPY --from=deps  /app/node_modules ./node_modules

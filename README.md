@@ -18,7 +18,7 @@ iPodRocks is a sync manager for [Rockbox devices](https://www.rockbox.org/) — 
 
 Run iPodRocks as a **server** on a NAS, a home server, an old desktop, then open it in a **browser from wherever you happen to be**. Plug your player into *that* laptop, point the browser at its folder, and sync it to the library sitting at home.
 
-It also runs **headless**: a plain daemon with no Electron, published on Docker Hub as [`jpsobral/ipodrocks-server`](https://hub.docker.com/r/jpsobral/ipodrocks-server) (amd64 + arm64), with a `docker-compose.yml` and a systemd unit.
+It also runs **headless**: a plain daemon with no Electron, published on Docker Hub as [`jpsobral/ipodrocks-server`](https://hub.docker.com/r/jpsobral/ipodrocks-server) (amd64 + arm64, in a minimal *distroless* or an *Alpine* flavour), with a `docker-compose.yml` and a systemd unit.
 
 ### What is not!
 
@@ -82,7 +82,7 @@ If you really like iPodRocks and want to keep it caffeinated, you can buy me a c
 ### 🌍 Sync from anywhere — web server & remote devices
 - **The whole app in a browser** — Turn on **Settings → Web Server** and iPodRocks serves its interface over HTTP: same library, same database, same devices, sync, playlists, ratings and Rocksy. Not a companion view — it is the app.
 - **Your iPod does not have to be on the same machine as your library** — The server keeps the library, the database and the encoders; the *player* is plugged into whatever laptop you are sitting at. Your browser hands iPodRocks the player's folder and every file travels server → browser → device. Needs Chrome, Edge or another Chromium browser over HTTPS.
-- **Runs headless** — A standalone daemon with no Electron at all, so the machine holding your library needs no screen and no login session. `docker pull jpsobral/ipodrocks-server` — published for amd64 and arm64 with every release — plus a `docker-compose.yml` (with a `cloudflared` sidecar) and a systemd unit.
+- **Runs headless** — A standalone daemon with no Electron at all, so the machine holding your library needs no screen and no login session. `docker pull jpsobral/ipodrocks-server` — published for amd64 and arm64 with every release, as a minimal distroless image or an Alpine one (`:alpine`) — plus a `docker-compose.yml` (with a `cloudflared` sidecar) and a systemd unit.
 - **Sign in with Google, GitHub, Facebook or a password** — and **signing in is not the same as being let in**: only accounts on an allowlist you control reach your library, however valid their Google account. The first person to arrive claims the server with a one-time token printed to its log.
 - **Built for Cloudflare Tunnel** — The recommended shape opens no inbound port at all. Cloudflare Access is verified at the origin, not merely trusted.
 
@@ -167,7 +167,7 @@ Download the installer for your platform from the [Releases](https://github.com/
 
 **Requirements:**
 
-- Node.js 18+
+- Node.js 24+
 - npm
 
 ```bash
@@ -252,7 +252,14 @@ the `/data` volume.
 Or use [`ipodrocks-js/docker-compose.yml`](ipodrocks-js/docker-compose.yml)
 (`docker compose up -d`, adding `--profile tunnel` for a `cloudflared`
 sidecar; `docker compose pull && docker compose up -d` to upgrade). To build
-your own checkout instead: `cd ipodrocks-js && docker build -t ipodrocks-server .`
+your own checkout instead, from `ipodrocks-js/`: `npm run docker:distroless` or
+`npm run docker:alpine` builds that flavour and runs it on
+`http://127.0.0.1:8780` / `:8781` (Ctrl-C stops it), and `npm run docker:test`
+runs the same smoke test every release passes. Plain `docker build --target
+alpine -t ipodrocks-server .` works too; without `--target` you get distroless.
+
+If you bind-mount a host folder as `/data` instead of using a named volume, add
+`--user "$(id -u):$(id -g)"` (or `user:` in compose) so the server can write it.
 A systemd unit is in `ipodrocks-js/deploy/`.
 
 ### First run
@@ -376,6 +383,10 @@ and no browser grants folder access on an insecure origin.
 | `npm run build` | Compile main + bundle renderer |
 | `npm run test` | Run tests (Vitest)             |
 | `npm run dist` | Package for current platform   |
+| `npm run server` | Run the headless web server from `dist/` |
+| `npm run docker:distroless` / `docker:alpine` | Build and run that server image locally |
+| `npm run docker:test` | Build both images and run the release smoke test |
+| `npm run docs:dev` | Preview the documentation site |
 
 ---
 
@@ -383,10 +394,12 @@ and no browser grants folder access on an insecure origin.
 
 | Layer    | Technology                    |
 |----------|--------------------------------|
-| Shell    | Electron 35                   |
+| Shell    | Electron 43                   |
 | Frontend | React 19, Tailwind CSS 4, Zustand 5 |
 | Backend  | TypeScript, better-sqlite3, music-metadata, Essentia.js |
-| Tooling  | Vite 6, Vitest, electron-builder |
+| Server   | Express, WebSocket, Passport — headless on Node 24 |
+| Images   | Docker Hub `jpsobral/ipodrocks-server`: distroless (default) and Alpine, amd64 + arm64 |
+| Tooling  | Vite 7, Vitest, electron-builder, Playwright |
 
 ---
 

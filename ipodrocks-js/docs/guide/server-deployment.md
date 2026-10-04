@@ -137,6 +137,28 @@ above (or `docker compose up -d --build`). The build installs with
 `/data` is `IPODROCKS_DATA_DIR`, which is the one variable with no sensible
 default in a container — the Node host resolves *everything* it writes from it.
 
+#### Using a host folder instead of a named volume
+
+A named volume (`-v ipodrocks-data:/data`) just works. If you bind-mount a
+folder from the host instead — to keep the database somewhere you back up, or to
+share it with the desktop app — the container's user must be able to write it.
+The images run as a non-root user (uid 65532 in distroless, 1000 in Alpine), so
+run the container as the folder's owner:
+
+```sh
+docker run … --user "$(id -u):$(id -g)" -v /srv/ipodrocks:/data …
+```
+
+or `user: "1000:1000"` in compose. Without it the server stops at startup with
+`unable to open database file`.
+
+::: warning Sharing the desktop app's data folder
+Pointing `/data` at the desktop app's own folder (`~/.config/ipodrocks` on
+Linux) makes the server and the app one install: same library, devices and
+logins. **Never run both at once** — it is one SQLite database, and it wants one
+writer. Stop the container before opening the app.
+:::
+
 ### Encoders
 
 `ffmpeg` comes from `@ffmpeg-installer/ffmpeg` in `node_modules`;
@@ -164,7 +186,7 @@ published image; you need only that file and a `.env` beside it holding the
 variables it references:
 
 ```sh
-IPODROCKS_VERSION=latest          # or pin a release, e.g. 3.0.1
+IPODROCKS_VERSION=latest          # or alpine, or pin: 3.1.0 / 3.1.0-alpine
 IPODROCKS_SESSION_SECRET=…        # openssl rand -base64 48
 IPODROCKS_PUBLIC_URL=https://ipod.example.com
 IPODROCKS_MUSIC_DIR=/srv/music
@@ -175,6 +197,11 @@ CLOUDFLARE_TUNNEL_TOKEN=…         # only for --profile tunnel
 docker compose up -d                       # server only, loopback
 docker compose --profile tunnel up -d      # server + cloudflared
 ```
+
+`IPODROCKS_VERSION` is the image tag, so it also picks the flavour: `latest`
+or `3.1.0` for distroless, `alpine` or `3.1.0-alpine` for Alpine. To build your
+checkout instead of pulling, run `docker compose up -d --build`; add
+`target: alpine` under `build:` for the Alpine flavour.
 
 Two defaults in that file are deliberately conservative and may be wrong for
 you: `/music` is read-only, and the port is published to `127.0.0.1` only.

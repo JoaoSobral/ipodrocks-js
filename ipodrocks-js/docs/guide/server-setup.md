@@ -75,7 +75,10 @@ docker run -d --name ipodrocks \
   jpsobral/ipodrocks-server:latest
 ```
 
-Tags and upgrades are covered in [Deploying the Server](/guide/server-deployment#docker).
+Prefer an image with a shell inside? Use `jpsobral/ipodrocks-server:alpine`
+instead — the same server on Alpine Linux. Flavours, tags, upgrades and using a
+host folder for `/data` are covered in
+[Deploying the Server](/guide/server-deployment#docker).
 
 For a compose file, a systemd unit and the full environment reference, see
 [Deploying the Server](/guide/server-deployment).
