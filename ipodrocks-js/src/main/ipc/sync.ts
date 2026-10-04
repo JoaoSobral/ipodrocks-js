@@ -52,6 +52,8 @@ import { albumLabelsForTrack } from "../../shared/album-label";
 import { subjectForSessionId } from "../../server/auth/sessions";
 import type { HandlerContext } from "../host/bridge";
 import { devLog, isDevLogEnabled } from "../utils/dev-log";
+import { DevicePresence, DEFAULT_UNPLUG_WAIT_MS } from "../sync/device-presence";
+import { effectiveParallelCopies } from "../devices/devices-core";
 
 /**
  * The sync running on each device, if any.
@@ -116,6 +118,8 @@ export function mayCancelSync(ctx: HandlerContext, sync: ActiveSync): boolean {
  * and a guest has no business reading another account's.
  */
 interface StatusEntry {
+  /** The device was unplugged and did not come back in time. */
+  unpluggedGaveUp?: boolean;
   snapshot: SyncStatusSnapshot;
   owner: ActiveSync;
   finishedAt?: number;
@@ -179,6 +183,8 @@ function recordProgress(entry: StatusEntry, ev: SyncProgressPayload): void {
     case "state":
       snap.state = ev.state === "waiting" ? "waiting" : "running";
       snap.reason = typeof ev.message === "string" ? ev.message : undefined;
+      snap.waitKind =
+        ev.state === "waiting" && ev.waitKind === "unplugged" ? "unplugged" : undefined;
       break;
     default:
       break;
@@ -227,6 +233,32 @@ export function listSyncStatuses(
 export function isSyncActive(deviceId?: number): boolean {
   if (deviceId === undefined) return activeSyncAborts.size > 0;
   return activeSyncAborts.has(deviceId);
+}
+
+/**
+ * Tells macOS Spotlight not to index the device.
+ *
+ * Spotlight reads every new file on a mounted volume, which on an old iPod's
+ * hard drive is extra seeking during the sync — the load that makes such an
+ * iPod drop off USB. `.metadata_never_index` is Apple's own opt-out. It is an
+ * empty, hidden file: harmless on any other OS, and Rockbox's default file
+ * view hides dot-files. Best effort; never a reason to fail a sync.
+ */
+async function optOutOfSpotlight(device: import("../devices/device").Device): Promise<void> {
+  if (!device.mountPath) return;
+  const marker = path.join(device.mountPath, ".metadata_never_index");
+  try {
+    if (await device.fs.exists(marker)) return;
+    await device.fs.writeFile(marker, new Uint8Array(0));
+    devLog("sync", `wrote ${marker} so Spotlight leaves the device alone`);
+  } catch (err) {
+    devLog("sync", `could not write ${marker}: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+function unplugWaitMs(): number {
+  const raw = Number(process.env.IPODROCKS_UNPLUG_WAIT_MS);
+  return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_UNPLUG_WAIT_MS;
 }
 
 export function registerSyncHandlers(): void {
@@ -442,7 +474,33 @@ export function registerSyncHandlers(): void {
         if (!Number.isNaN(ms)) preloadedMtimes.set(r.file_path, ms);
       }
 
+      // An old iPod dropping off USB reads as ENOENT on every call. This is
+      // what turns that into "waiting for the device" instead of one error per
+      // remaining file, and what resumes the copy when it comes back.
+      const presence = new DevicePresence(device.fs, {
+        signal: syncSignal,
+        onWaiting: () =>
+          syncOpts.progressCallback?.({
+            event: "state",
+            state: "waiting",
+            waitKind: "unplugged",
+            message:
+              "The device disconnected. Plug it back in — the sync continues from the file it was on.",
+          }),
+        onBack: () =>
+          syncOpts.progressCallback?.({
+            event: "state",
+            state: "running",
+            message: "Device reconnected — resuming.",
+          }),
+        onGiveUp: () => {
+          statusEntry.unpluggedGaveUp = true;
+        },
+      });
+
       const syncOpts: RunSyncOptions = {
+        presence,
+        maxParallelCopies: effectiveParallelCopies(device.profile),
         syncType: opts.syncType,
         extraTrackPolicy: opts.extraTrackPolicy,
         cancelSignal: syncSignal,
@@ -529,6 +587,7 @@ export function registerSyncHandlers(): void {
       const deviceMusicPath = device.getContentPath("music");
       try {
         await device.fs.mkdir(deviceMusicPath, { recursive: true });
+        await optOutOfSpotlight(device);
       } catch (err) {
         const code = (err as NodeJS.ErrnoException).code;
         if (code === "EACCES") {
@@ -1014,6 +1073,18 @@ export function registerSyncHandlers(): void {
     let outcome: unknown;
     try {
       outcome = await runStartSync(event, opts);
+      const entry = statusByCall.get(event);
+      if (entry?.unpluggedGaveUp) {
+        // One sentence for one cable, with the numbers that say how far it got.
+        const { synced, total } = entry.snapshot;
+        outcome = {
+          error:
+            `The device disconnected and didn't come back within ` +
+            `${Math.round(unplugWaitMs() / 60000)} minutes. ${synced} of ${total || "?"} ` +
+            `file(s) were copied — plug it in and sync again; copied files are skipped.`,
+          synced,
+        };
+      }
       return outcome;
     } finally {
       if (typeof opts?.deviceId === "number") activeSyncAborts.delete(opts.deviceId);

@@ -350,3 +350,33 @@ describe("progress before the first file lands", () => {
     await waitFor(() => expect(screen.getByText("25%")).toBeInTheDocument());
   });
 });
+
+// An iPod that dropped off USB mid-sync used to end with a red box naming an
+// album folder — "/media/music/Parcels/Parcels" — because any event with
+// status "error" was written into the sync-level error.
+describe("a device that disconnects mid-sync", () => {
+  it("does not put one file's failure in the sync's error box", async () => {
+    render(<SyncProgressModal open onClose={() => {}} syncOptions={SYNC_OPTIONS} />);
+    emit({ event: "total", path: "2" });
+    emit({ event: "copy", path: "/media/music/Parcels/Parcels", status: "error", contentType: "artwork" });
+
+    await waitFor(() => expect(screen.getByText("1 processed")).toBeInTheDocument());
+    // Once, as the ✕ line. Before the fix the error box repeated it.
+    expect(screen.getAllByText("/media/music/Parcels/Parcels")).toHaveLength(1);
+  });
+
+  it("says the device disconnected while it waits", async () => {
+    render(<SyncProgressModal open onClose={() => {}} syncOptions={SYNC_OPTIONS} />);
+    emit({
+      event: "state",
+      state: "waiting",
+      waitKind: "unplugged",
+      message: "The device disconnected. Plug it back in — the sync continues from the file it was on.",
+    });
+    await waitFor(() => expect(screen.getByTestId("sync-waiting")).toBeInTheDocument());
+    expect(screen.getByTestId("sync-waiting")).toHaveTextContent("Plug it back in");
+
+    emit({ event: "state", state: "running", message: "Device reconnected — resuming." });
+    await waitFor(() => expect(screen.queryByTestId("sync-waiting")).not.toBeInTheDocument());
+  });
+});

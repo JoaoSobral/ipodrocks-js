@@ -77,6 +77,32 @@ Devices that have never been synced through this panel fall back to the panel de
 
 When you switch between devices, the panel live-swaps to that device's saved configuration. Removing a device from the Devices panel also clears its saved preferences.
 
+## When the device disconnects mid-sync
+
+Old iPods with a hard drive sometimes drop off USB during a long sync. macOS
+shows "Disk Not Ejected Properly". iPodRocks notices that the *device* is gone,
+rather than failing every remaining file:
+
+- The sync window says **The device disconnected. Plug it back in**, and copies
+  nothing more while it waits.
+- Plug the iPod back in. The sync carries on from the file it was on, and that
+  file is copied again. For a remote device, if it does not resume by itself,
+  press **Reconnect iPod** in the sync window and pick the same folder.
+- If the device is not back within 15 minutes, the sync stops with one message
+  saying how many files were copied. Run it again: files already on the device
+  are skipped.
+
+**To make it less likely:**
+
+- Lower **Parallel copies** in the device's settings. It sets how many files are
+  written at once. A remote device defaults to 1, the gentlest on a hard drive; a
+  local device defaults to 4. Use 1 for an iPod that keeps dropping off.
+- Plug the iPod straight into the computer, not into a hub or a front-panel
+  port, which often cannot supply a spinning drive.
+- iPodRocks writes an empty `.metadata_never_index` file to the device root so
+  macOS Spotlight does not index every new file during the sync. It is hidden,
+  and harmless on other systems.
+
 ## Rocksy
 
 [Rocksy](./assistant.md) can run a sync for you from the chat:

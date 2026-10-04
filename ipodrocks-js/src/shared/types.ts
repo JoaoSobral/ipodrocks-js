@@ -144,6 +144,12 @@ export interface DeviceProfile extends Device {
    * device, whose real figures come from the filesystem.
    */
   capacityGb?: number | null;
+  /**
+   * Files written to the device at once (1-4). Null means the transport's
+   * default: 1 for a remote device, 4 for a local one. See
+   * `effectiveParallelCopies()`.
+   */
+  maxParallelCopies?: number | null;
   rockboxSmartPlaylists?: boolean;
   devMode?: boolean;
   autoPodcastsEnabled?: boolean;
@@ -229,6 +235,8 @@ export interface AddDeviceConfig {
   artworkMaxDimension?: number;
   /** See DeviceProfile.capacityGb. Null clears it. */
   capacityGb?: number | null;
+  /** See DeviceProfile.maxParallelCopies. Null means the default. */
+  maxParallelCopies?: number | null;
   /**
    * Optional USB hardware identity. When set, this device is matched by the
    * physical USB unit rather than by mount path alone. All three move together:
@@ -504,6 +512,8 @@ export interface SyncProgress {
   bytes?: number;
   /** `state` only. */
   state?: SyncRunState;
+  /** `state: "waiting"` only: why. Absent for a dropped link to the browser. */
+  waitKind?: SyncWaitKind;
   /** `bytes` only: every file being copied right now, and how far it has got. */
   inflight?: InflightFile[];
 }
@@ -519,6 +529,9 @@ export interface InflightFile {
 /** Whether a running sync is moving files or waiting on its connection. */
 export type SyncRunState = "running" | "waiting";
 
+/** What a waiting sync is waiting for. "unplugged": the device itself vanished. */
+export type SyncWaitKind = "unplugged";
+
 /**
  * What `sync:status` reports about one device's sync, so a tab that reloads or
  * reconnects mid-sync can pick the progress display back up instead of
@@ -532,6 +545,8 @@ export interface SyncStatusSnapshot {
   state: SyncRunState;
   /** Why it is waiting, when it is. */
   reason?: string;
+  /** See {@link SyncProgress.waitKind}. */
+  waitKind?: SyncWaitKind;
   total: number;
   processed: number;
   synced: number;

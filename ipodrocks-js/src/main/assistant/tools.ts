@@ -1619,7 +1619,7 @@ const device_eject: AiTool = {
 const device_update_settings: AiTool = {
   name: "device_update_settings",
   description:
-    "Update a device's sync settings. Supports toggling album-artwork generation (skip_album_artwork) and choosing the generated cover.jpg size (artwork_max_dimension: 200, 300, 500, or 750 px; 300 is recommended for iPods so they stay responsive), and setting a remote (browser-held) device's capacity (capacity_gb, in GB with up to 4 decimals, or 0 to clear) — a browser cannot read a disk's size, so free space on a remote device comes from this number.",
+    "Update a device's sync settings. Supports toggling album-artwork generation (skip_album_artwork) and choosing the generated cover.jpg size (artwork_max_dimension: 200, 300, 500, or 750 px; 300 is recommended for iPods so they stay responsive), and how many files are written at once (parallel_copies, 1-4, 0 for the default — 1 is gentlest on an old iPod's hard drive and the fix for one that disconnects mid-sync), and setting a remote (browser-held) device's capacity (capacity_gb, in GB with up to 4 decimals, or 0 to clear) — a browser cannot read a disk's size, so free space on a remote device comes from this number.",
   parameters: {
     type: "object",
     properties: {
@@ -1627,6 +1627,11 @@ const device_update_settings: AiTool = {
       skip_album_artwork: {
         type: "boolean",
         description: "When true, no album artwork is generated for this device during sync.",
+      },
+      parallel_copies: {
+        type: "number",
+        description:
+          "How many files are written to the device at once, 1-4; 0 restores the default (1 for a remote device, 4 for a local one). 1 is the fix for an old iPod that disconnects or ejects itself during syncs.",
       },
       capacity_gb: {
         type: "number",
@@ -1646,6 +1651,13 @@ const device_update_settings: AiTool = {
     const parts: string[] = [];
     if (a.skip_album_artwork !== undefined) parts.push(`skip artwork = ${a.skip_album_artwork}`);
     if (a.artwork_max_dimension !== undefined) parts.push(`artwork size = ${a.artwork_max_dimension}px`);
+    if (a.parallel_copies !== undefined) {
+      parts.push(
+        Number(a.parallel_copies) === 0
+          ? "default parallel copies"
+          : `parallel copies = ${a.parallel_copies}`
+      );
+    }
     if (a.capacity_gb !== undefined) {
       parts.push(Number(a.capacity_gb) === 0 ? "clear capacity" : `capacity = ${a.capacity_gb} GB`);
     }
@@ -1669,6 +1681,12 @@ const device_update_settings: AiTool = {
         throw new Error("artwork_max_dimension must be one of 200, 300, 500, 750");
       }
       updates.artworkMaxDimension = dim;
+    }
+    if (args.parallel_copies !== undefined) {
+      // 0 (or null) is "the default"; anything else is validated by
+      // updateDevice's sanitizeParallelCopies, the same check the channel gets.
+      const n = args.parallel_copies === null ? 0 : Number(args.parallel_copies);
+      updates.maxParallelCopies = n === 0 ? null : n;
     }
     if (args.capacity_gb !== undefined) {
       if (device.profile.transport !== "web") {

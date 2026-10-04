@@ -1,9 +1,16 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import type { Dispatch, MutableRefObject, SetStateAction } from "react";
-import type { InflightFile, SyncOptions, SyncProgress, SyncStatusSnapshot } from "@shared/types";
+import type {
+  InflightFile,
+  SyncOptions,
+  SyncProgress,
+  SyncStatusSnapshot,
+  SyncWaitKind,
+} from "@shared/types";
 import { startSync, cancelSync, onSyncProgress, getSyncStatus } from "@renderer/ipc/api";
 import { getWebTransport, isWebMode } from "@renderer/ipc/web-transport";
 import { useKeepTabAlive } from "@renderer/device/keep-alive";
+import { getDeviceClient } from "@renderer/device";
 import { Modal } from "../common/Modal";
 import { Button } from "../common/Button";
 import { ProgressBar } from "../common/ProgressBar";
@@ -197,6 +204,9 @@ export function SyncProgressModal({
   const [rate, setRate] = useState(0);
   /** `waiting` while the link to the device is down. */
   const [waitingReason, setWaitingReason] = useState<string | null>(null);
+  /** Set while the *device* (not the link) is gone, so the banner can offer Reconnect. */
+  const [waitKind, setWaitKind] = useState<SyncWaitKind | null>(null);
+  const [reconnecting, setReconnecting] = useState(false);
   const bytesTotalRef = useRef(0);
   const rateSamplesRef = useRef<{ t: number; total: number }[]>([]);
 
@@ -285,6 +295,7 @@ export function SyncProgressModal({
 
     if (p.event === "state") {
       setWaitingReason(p.state === "waiting" ? (p.message ?? "Waiting for the device…") : null);
+      setWaitKind(p.state === "waiting" ? (p.waitKind ?? null) : null);
       if (p.message) {
         appendCappedLog(setStatusMessages, statusIdRef, p.message, LOG_BUFFER_CAP);
         pushFeed({ kind: "log", text: p.message });
@@ -353,7 +364,12 @@ export function SyncProgressModal({
       setCancelled(true);
       setFinished(true);
     }
-    if (p.status === "error") setError(p.path || p.message || "Sync failed");
+    // Only a sync-level failure fills the error box. A file or album that
+    // failed is already a ✕ line — putting its path in the box made one bad
+    // album read as "the sync failed: /media/music/Parcels/Parcels".
+    if (p.status === "error" && p.event !== "copy") {
+      setError(p.message || p.path || "Sync failed");
+    }
   }, [pushFeed]);
 
   useEffect(() => {
@@ -425,6 +441,7 @@ export function SyncProgressModal({
     setBytesTotal(0);
     setRate(0);
     setWaitingReason(null);
+    setWaitKind(null);
     bytesTotalRef.current = 0;
     rateSamplesRef.current = [];
 
@@ -532,6 +549,7 @@ export function SyncProgressModal({
     setTotalBytes(snap.totalBytes ?? 0);
     setInflight(new Map((snap.inflight ?? []).map((f) => [f.path, f])));
     setWaitingReason(snap.state === "waiting" ? (snap.reason ?? "Waiting for the device…") : null);
+    setWaitKind(snap.state === "waiting" ? (snap.waitKind ?? null) : null);
     if (snap.log.length > 0) {
       setStatusMessages(snap.log.map((text) => ({ id: ++statusIdRef.current, text })));
       // A rejoined modal has no file history to show, but it can show what the
@@ -649,6 +667,32 @@ export function SyncProgressModal({
             className="rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-warning"
           >
             {waitingReason}
+            {waitKind === "unplugged" && isWebMode() && (
+              <div className="mt-2 flex items-center gap-2">
+                <Button
+                  size="sm"
+                  disabled={reconnecting}
+                  data-testid="sync-reconnect-device"
+                  onClick={() => {
+                    // Straight from the click: both the permission prompt and
+                    // the folder picker need a user gesture.
+                    const client = getDeviceClient();
+                    if (!client) return;
+                    setReconnecting(true);
+                    void client
+                      .restore(syncOptions.deviceId, { prompt: true })
+                      .then((ok) => (ok ? undefined : client.pickAndAttach(syncOptions.deviceId)))
+                      .finally(() => setReconnecting(false));
+                  }}
+                >
+                  {reconnecting ? "Reconnecting…" : "Reconnect iPod"}
+                </Button>
+                <span className="text-muted-foreground">
+                  If it doesn&apos;t resume by itself once plugged in, press Reconnect and pick
+                  the same folder.
+                </span>
+              </div>
+            )}
           </div>
         )}
 

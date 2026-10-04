@@ -28,6 +28,7 @@ import {
   generateRockboxCover,
 } from "./rockbox-cover";
 import { logCompareDiagnostics } from "./compare-diagnostics";
+import { isDeviceUnplugged, type DevicePresence } from "./device-presence";
 
 // Re-exported: these moved to utils/device-path so the Rockbox runtime matcher
 // can build its lookup keys with the same code that lays the files out.
@@ -69,6 +70,10 @@ export interface RunSyncOptions {
   preserveFolderStructure?: boolean;
   /** Issue #113: which artist keys the rebuilt device folder layout. */
   albumGrouping?: AlbumGrouping;
+  /** See {@link RunOptions.presence}. */
+  presence?: DevicePresence;
+  /** Files written to the device at once (see `effectiveParallelCopies`). */
+  maxParallelCopies?: number;
 }
 
 /**
@@ -92,6 +97,8 @@ export interface LayoutOptions {
 export interface RunOptions {
   cancelSignal?: AbortSignal;
   progressCallback?: ProgressCallback;
+  /** Waits out an unplugged device instead of failing every remaining file. */
+  presence?: DevicePresence;
 }
 
 export interface BuildDestMapOptions extends LayoutOptions, RunOptions {
@@ -111,6 +118,8 @@ export interface CopyMissingTracksOptions extends LayoutOptions, RunOptions {
     vbrEnabled?: boolean;
   };
   codecMismatchMap?: Map<string, string>;
+  /** Files written to the device at once (see `effectiveParallelCopies`). */
+  maxParallelCopies?: number;
 }
 
 export interface CopyAlbumArtworkOptions extends LayoutOptions, RunOptions {
@@ -615,6 +624,8 @@ export async function copyMissingTracks(
   };
 
   const opts: CopyToDeviceOptions = {
+    presence: options.presence,
+    maxWorkers: options.maxParallelCopies,
     convert: needsConversion,
     preserveStructure: false,
     perTrackConversion,
@@ -778,6 +789,7 @@ export async function copyAlbumArtworkToDevice(
     progressCallback,
     cancelSignal,
     maxDim = DEFAULT_COVER_MAX_DIMENSION,
+    presence,
   } = options;
   if (Object.keys(libraryTracks).length === 0) {
     return { copied: 0, skipped: 0, errors: 0, totalCandidates: 0, failedAlbums: [] };
@@ -813,11 +825,33 @@ export async function copyAlbumArtworkToDevice(
     if (!source) continue;
 
     const destPath = path.join(deviceContentPath, deviceRelAlbum, "cover.jpg");
-    const result = await generateRockboxCover(deviceFs, source, destPath, {
+    let result = await generateRockboxCover(deviceFs, source, destPath, {
       maxDim,
       log: (message: string) => progressCallback?.({ event: "log", message }),
       signal: cancelSignal,
     });
+    // A cover that failed because the device went away is not this album's
+    // failure. Wait for the device, then try the same album again — the
+    // alternative is one ✕ per remaining album for a single unplug.
+    while (
+      result !== "written" &&
+      result !== "skipped" &&
+      presence &&
+      !cancelSignal?.aborted &&
+      (await presence.isGone(deviceContentPath))
+    ) {
+      try {
+        await presence.waitForReturn(deviceContentPath);
+      } catch (err) {
+        if (isDeviceUnplugged(err)) throw err;
+        throw new SyncCancelled();
+      }
+      result = await generateRockboxCover(deviceFs, source, destPath, {
+        maxDim,
+        log: (message: string) => progressCallback?.({ event: "log", message }),
+        signal: cancelSignal,
+      });
+    }
 
     // Whether a cover needs writing is only known after the skip check, so the
     // total grows one item at a time alongside the processed count. The renderer
@@ -1010,7 +1044,7 @@ export async function runSync(
   /** Album-artwork failures, counted apart from track/song-data failures. */
   artworkErrors: number;
 }> {
-  const { extraTrackPolicy, progressCallback, cancelSignal, skipAlbumArtwork, artworkMaxDimension, preloadedMtimes, profileCodecExtOverride, preserveFolderStructure, albumGrouping = "album-artist" } =
+  const { extraTrackPolicy, progressCallback, cancelSignal, skipAlbumArtwork, artworkMaxDimension, preloadedMtimes, profileCodecExtOverride, preserveFolderStructure, albumGrouping = "album-artist", presence, maxParallelCopies } =
     options;
   let artworkErrors = 0;
 
@@ -1156,6 +1190,8 @@ export async function runSync(
       cancelSignal,
       deviceProfile: device.profile,
       codecMismatchMap: analysis.codecMismatchMap,
+      presence,
+      maxParallelCopies,
     }
   );
 
@@ -1170,6 +1206,7 @@ export async function runSync(
         progressCallback,
         cancelSignal,
         maxDim: artworkMaxDimension ?? DEFAULT_COVER_MAX_DIMENSION,
+        presence,
       }
     );
     // Artwork failures are counted separately from track failures: they surface

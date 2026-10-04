@@ -1023,6 +1023,42 @@ no `total_bytes`**, because its output size is unknown, and the bar falls back
 to the count. Pinned in `regressions/sync-progress-inflight.test.ts`,
 `sync-progress-modal.test.tsx` and e2e `web-sync-progress`.
 
+### Hazard: an unplugged device reads as ENOENT on every call
+
+An old iPod dropping off USB does not announce itself. Locally every call is
+ENOENT, and through a browser every File System Access call throws
+`NotFoundError`, which maps to ENOENT. The copy loop used to read each one as
+that file's own failure: "8 / 3067 copied" with a ✕ per track and then per
+album, in two minutes. `DevicePresence` (`sync/device-presence.ts`) tells the two
+apart. After a failure the loop probes the content folder it just created; null
+means the device is gone.
+
+- While it waits it records nothing and starts nothing; every worker shares one
+  outage promise. It then retries the same file, first deleting a remote
+  `.crswap` leftover.
+- After `IPODROCKS_UNPLUG_WAIT_MS` (15 min) it throws `DeviceUnpluggedError`
+  once, and `sync:start` turns that into a single message with the counts.
+- **The probe must be a child folder.** A remote root always stats as a
+  directory.
+- The copy loop, the convert loop and the artwork loop all use it. **A new loop
+  that writes to the device needs the same check**, or it brings the cascade
+  back.
+- `EDEVICEDETACHED` (tab gone) stays `DeviceGoneError`: a different failure with
+  its own grace.
+- **Parallel copies.** `devices.max_parallel_copies` (null = default:
+  `effectiveParallelCopies()` gives 1 for `web`, 4 for local) feeds the
+  `AdaptiveConcurrency` limit, because parallel writes to an iPod's hard drive
+  are what make it drop.
+- **Spotlight.** `optOutOfSpotlight()` writes `.metadata_never_index` at the
+  device root on every sync.
+- **The modal.** Its error box is sync-level only. A `copy` event with
+  `status: "error"` no longer fills it (it used to show an album path).
+
+Pinned in `regressions/device-unplug-resume.test.ts`, `sync-progress-modal.test.tsx`
+and e2e `web-device-unplug`. The e2e simulates the unplug by deleting the OPFS
+folder, and includes a control showing that without the probe the sync never
+reaches `waitKind: "unplugged"`.
+
 ### Hazard: the browser's clock is not the server's
 
 `RemoteDeviceFs` measures `clientNow - serverNow` when the browser attaches and

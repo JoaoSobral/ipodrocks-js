@@ -262,6 +262,10 @@ CREATE TABLE IF NOT EXISTS devices (
     -- user: the File System Access API cannot read a disk's size. NULL when
     -- unset, and on every local device, which reads the real figure off statfs.
     capacity_gb REAL,
+    -- Files written to the device at once, 1-4. NULL means the transport's
+    -- default (effectiveParallelCopies): 1 for a browser-held device, whose
+    -- old iPod hard drive drops off USB under parallel writes, 4 for local.
+    max_parallel_copies INTEGER,
     vbr_enabled BOOLEAN NOT NULL DEFAULT 0,
     -- 'local' is a folder on the machine running the sync; 'web' is a folder
     -- held open in a browser tab and reached over the device RPC. The column

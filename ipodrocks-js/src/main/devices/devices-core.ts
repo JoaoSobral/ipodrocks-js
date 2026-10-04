@@ -44,6 +44,7 @@ interface DeviceRow {
   skip_album_artwork: number;
   artwork_max_dimension: number;
   capacity_gb: number | null;
+  max_parallel_copies: number | null;
   rockbox_smart_playlists: number;
   dev_mode: number;
   auto_podcasts_enabled: number;
@@ -59,7 +60,7 @@ const DEVICES_QUERY = `
          d.audiobook_folder, d.playlist_folder, d.description, d.last_sync_date, d.total_synced_items, d.last_sync_count,
          d.default_transfer_mode_id, d.default_codec_config_id, d.model_id,
          d.override_bitrate, d.override_quality, d.override_bits,
-         d.partial_sync_enabled, d.skip_playback_log, d.skip_album_artwork, d.artwork_max_dimension, d.capacity_gb, d.rockbox_smart_playlists, d.dev_mode,
+         d.partial_sync_enabled, d.skip_playback_log, d.skip_album_artwork, d.artwork_max_dimension, d.capacity_gb, d.max_parallel_copies, d.rockbox_smart_playlists, d.dev_mode,
          d.auto_podcasts_enabled, d.vbr_enabled, d.source_library_type, d.shadow_library_id,
          d.transport, d.usb_vendor_id, d.usb_product_id, d.usb_serial,
          dtm.name as transfer_mode_name,
@@ -96,6 +97,7 @@ const ALLOWED_UPDATE_FIELDS = new Set([
   "skip_album_artwork",
   "artwork_max_dimension",
   "capacity_gb",
+  "max_parallel_copies",
   "rockbox_smart_playlists",
   "dev_mode",
   "auto_podcasts_enabled",
@@ -142,6 +144,7 @@ const FIELD_MAP: Record<string, string> = {
   skipAlbumArtwork: "skip_album_artwork",
   artworkMaxDimension: "artwork_max_dimension",
   capacityGb: "capacity_gb",
+  maxParallelCopies: "max_parallel_copies",
   rockboxSmartPlaylists: "rockbox_smart_playlists",
   devMode: "dev_mode",
   autoPodcastsEnabled: "auto_podcasts_enabled",
@@ -198,6 +201,40 @@ export function sanitizeCapacityGb(value: unknown): number | null {
     throw new Error("Capacity must be a positive number of GB");
   }
   return Math.round(n * 1e4) / 1e4;
+}
+
+/** The most files a sync writes to one device at once. */
+export const MAX_PARALLEL_COPIES = 4;
+
+/**
+ * A device's parallel-copy setting, as stored. Null (or empty) is "use the
+ * default"; anything else must be a whole number from 1 to 4.
+ */
+export function sanitizeParallelCopies(value: unknown): number | null {
+  if (value === null || value === undefined) return null;
+  if (typeof value === "string" && value.trim() === "") return null;
+  const n = typeof value === "number" ? value : Number(String(value).trim());
+  if (!Number.isInteger(n) || n < 1 || n > MAX_PARALLEL_COPIES) {
+    throw new Error(`Parallel copies must be a whole number from 1 to ${MAX_PARALLEL_COPIES}`);
+  }
+  return n;
+}
+
+/**
+ * How many files a sync writes to this device at once.
+ *
+ * A remote device defaults to one. It is almost always an old iPod's hard
+ * drive on a laptop's USB port, and several files written at once is
+ * seeking and power draw — the usual reason such an iPod drops off USB in the
+ * middle of a sync. A local device keeps the four it always had.
+ */
+export function effectiveParallelCopies(profile: {
+  maxParallelCopies?: number | null;
+  transport?: string;
+}): number {
+  const stored = profile.maxParallelCopies;
+  if (typeof stored === "number" && stored >= 1 && stored <= MAX_PARALLEL_COPIES) return stored;
+  return profile.transport === "web" ? 1 : MAX_PARALLEL_COPIES;
 }
 
 /** The profile columns that name a folder *inside* the device. */
@@ -346,9 +383,9 @@ export class DevicesCore {
          (name, mount_path, music_folder, podcast_folder, audiobook_folder, playlist_folder,
           default_transfer_mode_id, default_codec_config_id, description,
           model_id, source_library_type, shadow_library_id, skip_playback_log, rockbox_smart_playlists, dev_mode, vbr_enabled,
-          skip_album_artwork, artwork_max_dimension, capacity_gb, transport, web_owner_subject,
+          skip_album_artwork, artwork_max_dimension, capacity_gb, max_parallel_copies, transport, web_owner_subject,
           usb_vendor_id, usb_product_id, usb_serial)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         config.name,
@@ -370,6 +407,7 @@ export class DevicesCore {
         config.skipAlbumArtwork ? 1 : 0,
         sanitizeArtworkMaxDimension(config.artworkMaxDimension),
         sanitizeCapacityGb(config.capacityGb),
+        sanitizeParallelCopies(config.maxParallelCopies),
         transport,
         // Only a web device gets one, and only from the handler's own session:
         // whoever registered the player is the only browser allowed to attach
@@ -462,7 +500,9 @@ export class DevicesCore {
       // Only an explicit null clears the capacity. Electron IPC keeps
       // `undefined` keys (JSON over the web drops them), and a form payload
       // that merely omits the field must not erase what the user entered.
-      if (dbField === "capacity_gb" && value === undefined) continue;
+      if ((dbField === "capacity_gb" || dbField === "max_parallel_copies") && value === undefined) {
+        continue;
+      }
 
       // A browser-held device's mount path is not a setting: it is the
       // synthetic `webDeviceRoot(id)`, which exists on no filesystem and is
@@ -495,6 +535,8 @@ export class DevicesCore {
           ? sanitizeArtworkMaxDimension(value)
           : dbField === "capacity_gb"
           ? sanitizeCapacityGb(value)
+          : dbField === "max_parallel_copies"
+          ? sanitizeParallelCopies(value)
           : dbField === "partial_sync_enabled" || dbField === "skip_playback_log" || dbField === "skip_album_artwork" || dbField === "rockbox_smart_playlists" || dbField === "dev_mode" || dbField === "auto_podcasts_enabled" || dbField === "vbr_enabled"
           ? (value ? 1 : 0)
           : value;
@@ -602,6 +644,7 @@ export class DevicesCore {
       skipAlbumArtwork: !!(row.skip_album_artwork ?? 0),
       artworkMaxDimension: sanitizeArtworkMaxDimension(row.artwork_max_dimension),
       capacityGb: row.capacity_gb ?? null,
+      maxParallelCopies: row.max_parallel_copies ?? null,
       rockboxSmartPlaylists: !!(row.rockbox_smart_playlists ?? 0),
       devMode: !!(row.dev_mode ?? 0),
       autoPodcastsEnabled: !!(row.auto_podcasts_enabled ?? 0),

@@ -155,8 +155,14 @@ it, exactly like the card.
   Finder will show a slightly larger number for the same disk. Free space is an
   estimate: the filesystem's own overhead is not in the file sizes. You can also
   ask Rocksy to set it.
+- **If the iPod drops off USB mid-sync, plug it back in.** The sync waits for
+  it, rather than failing every file, and continues from the file it was on.
+  Press **Reconnect iPod** in the sync window if it does not pick up by itself.
+  A remote device writes **one file at a time** by default (the **Parallel
+  copies** setting), because several parallel writes are what make an old iPod's
+  hard drive drop off. See [Sync](./sync.md#when-the-device-disconnects-mid-sync).
 - **Big files take a while to show up as copied.** Several files travel at once,
-  so on a slow link the first one can take a minute to finish. The sync window
+  so on a slow link the first one can take a minute to finish (with Parallel copies above 1). The sync window
   lists the files in progress with how much of each has arrived, and the bar
   follows the bytes, not the file count.
 - **Modification times are not set on the device.** The File System Access API

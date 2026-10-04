@@ -33,6 +33,7 @@ export class AppDatabase {
     this.migrateDeviceSkipAlbumArtwork();
     this.migrateDeviceArtworkMaxDimension();
     this.migrateDeviceCapacity();
+    this.migrateDeviceParallelCopies();
     this.migrateVbrEnabled();
     this.migrateDeviceUsbIdentity();
     this.migrateDeviceTransport();
@@ -308,6 +309,24 @@ export class AppDatabase {
       }
     } catch (err) {
       console.error("[db] migration failed (migrateDeviceCapacity):", err);
+    }
+  }
+
+  /**
+   * Add devices.max_parallel_copies. NULL (the transport's default) for every
+   * existing row, so nothing about an existing local device changes.
+   */
+  private migrateDeviceParallelCopies(): void {
+    if (!this.db) return;
+    try {
+      const rows = this.db
+        .prepare("PRAGMA table_info(devices)")
+        .all() as { name: string }[];
+      if (!new Set(rows.map((r) => r.name)).has("max_parallel_copies")) {
+        this.db.prepare("ALTER TABLE devices ADD COLUMN max_parallel_copies INTEGER").run();
+      }
+    } catch (err) {
+      console.error("[db] migration failed (migrateDeviceParallelCopies):", err);
     }
   }
 

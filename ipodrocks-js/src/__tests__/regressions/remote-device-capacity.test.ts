@@ -83,6 +83,32 @@ describe("capacity_gb migration on an existing database", () => {
   });
 });
 
+describe("max_parallel_copies migration on an existing database", () => {
+  it("adds the column to a database from before it existed", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ipr-parallel-migration-"));
+    const dbPath = path.join(dir, "ipodrock.db");
+    try {
+      const legacy = new Database(dbPath);
+      legacy.exec(SCHEMA_SQL);
+      legacy.prepare("ALTER TABLE devices DROP COLUMN max_parallel_copies").run();
+      legacy.close();
+
+      const app = new AppDatabase(dbPath);
+      expect(() => app.initialize()).not.toThrow();
+      app.close();
+
+      const db = new Database(dbPath, { readonly: true });
+      const cols = (db.prepare("PRAGMA table_info(devices)").all() as { name: string }[]).map(
+        (r) => r.name
+      );
+      db.close();
+      expect(cols).toContain("max_parallel_copies");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 /** A browser-held device's filesystem, reduced to what the space read uses. */
 function remoteFs(files: number[], opts: { detached?: boolean } = {}): DeviceFs {
   return {

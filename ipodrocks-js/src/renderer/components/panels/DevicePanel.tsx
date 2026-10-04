@@ -195,6 +195,8 @@ export function DevicePanel() {
   const [artworkMaxDimension, setArtworkMaxDimension] = useState(300);
   /** A remote device's capacity in GB, as typed. Empty means "not set". */
   const [capacityGb, setCapacityGb] = useState("");
+  /** "" is the transport's default (1 remote, 4 local); otherwise "1".."4". */
+  const [parallelCopies, setParallelCopies] = useState("");
   const [vbrEnabled, setVbrEnabled] = useState(false);
   const [devMode, setDevMode] = useState(false);
   const [musicFolder, setMusicFolder] = useState("Music");
@@ -302,6 +304,7 @@ export function DevicePanel() {
     setSkipAlbumArtwork(false);
     setArtworkMaxDimension(300);
     setCapacityGb("");
+    setParallelCopies("");
     setVbrEnabled(false);
     setDevMode(false);
     setMusicFolder("Music");
@@ -325,6 +328,7 @@ export function DevicePanel() {
     setMountPath(device.mountPath);
     setWebTransport(device.transport === "web");
     setCapacityGb(device.capacityGb != null ? String(device.capacityGb) : "");
+    setParallelCopies(device.maxParallelCopies != null ? String(device.maxParallelCopies) : "");
     setDescription(device.description ?? "");
     setIsDefault(defaultDeviceId === device.id);
     setMusicFolder(device.musicFolder ?? "Music");
@@ -521,6 +525,7 @@ export function DevicePanel() {
       artworkMaxDimension,
       // Only a remote device has one; a local device's size comes off the disk.
       ...(webTransport ? { capacityGb: capacityGb.trim() === "" ? null : Number(capacityGb) } : {}),
+      maxParallelCopies: parallelCopies === "" ? null : Number(parallelCopies),
       vbrEnabled: transferMode === "transcode" ? vbrEnabled : false,
       rockboxSmartPlaylists,
       devMode,
@@ -1447,6 +1452,27 @@ export function DevicePanel() {
                 </select>
               </label>
             )}
+            <label className="flex items-center gap-2.5">
+              <span className="text-sm text-foreground flex items-center gap-1">
+                Parallel copies
+                <InfoTooltip text="How many files are written to the device at once. 1 is gentlest on an iPod's hard drive and the usual fix for an iPod that drops off USB during a sync; a flash-modded iPod can take 4. Transcodes are always written one at a time." />
+              </span>
+              <select
+                className="text-sm bg-input border border-border rounded px-2 py-1"
+                value={parallelCopies}
+                onChange={(e) => setParallelCopies(e.target.value)}
+                aria-label="Parallel copies"
+                data-testid="device-parallel-copies"
+              >
+                <option value="">
+                  Default ({webTransport ? "1 — remote device" : "4"})
+                </option>
+                <option value="1">1 (gentlest)</option>
+                <option value="2">2</option>
+                <option value="3">3</option>
+                <option value="4">4 (fastest)</option>
+              </select>
+            </label>
             <label className="flex items-center gap-2.5 cursor-pointer opacity-60">
               <input
                 type="checkbox"

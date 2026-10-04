@@ -347,3 +347,50 @@ test("a remote device's capacity takes four decimals and no more", async ({
     await invoke(request, "device:remove", device.id);
   }
 });
+
+test("a remote device writes one file at a time unless told otherwise", async ({
+  page,
+  request,
+}) => {
+  await signIn(request);
+  const models = await invoke<Array<{ id: number }>>(request, "device:getModels");
+  const device = await invoke<{ id: number; maxParallelCopies?: number | null }>(
+    request,
+    "device:add",
+    { name: "E2E Parallel Remote", transport: "web", modelId: models[0]?.id ?? null }
+  );
+
+  try {
+    // Unset: the default, which for a remote device is one at a time — an old
+    // iPod's hard drive drops off USB under several parallel writes.
+    expect(device.maxParallelCopies ?? null).toBeNull();
+
+    await openDevices(page);
+    const card = page
+      .getByRole("heading", { name: "E2E Parallel Remote" })
+      .locator('xpath=ancestor::*[.//button[normalize-space()="Edit"]][1]');
+    await card.getByRole("button", { name: "Edit" }).click();
+    const dialog = page.getByRole("dialog").filter({ hasText: "Parallel copies" });
+    const select = dialog.getByTestId("device-parallel-copies");
+    await expect(select).toHaveValue("");
+    await expect(select.locator("option").first()).toHaveText(/Default \(1/);
+
+    await select.selectOption("3");
+    await dialog.getByRole("button", { name: "Update Device" }).click();
+    await expect(dialog).toBeHidden();
+
+    const list = await invoke<Array<{ id: number; maxParallelCopies?: number | null }>>(
+      request,
+      "device:list"
+    );
+    expect(list.find((d) => d.id === device.id)?.maxParallelCopies).toBe(3);
+
+    // And the server refuses what the select cannot produce.
+    const bad = await invoke<{ error?: string }>(request, "device:update", device.id, {
+      maxParallelCopies: 9,
+    });
+    expect(bad?.error).toMatch(/1 to 4/);
+  } finally {
+    await invoke(request, "device:remove", device.id);
+  }
+});

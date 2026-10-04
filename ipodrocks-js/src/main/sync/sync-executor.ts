@@ -8,6 +8,7 @@ import { findOnDisk } from "../utils/normalize-path";
 import { ConversionSettings, convertWithCodec, convertWithFfmpeg, updateExtension } from "./sync-conversion";
 import { appendSyncError } from "./sync-error-log";
 import { devLog } from "../utils/dev-log";
+import { isDeviceUnplugged, type DevicePresence } from "./device-presence";
 import {
   AdaptiveConcurrency,
   isDeviceGone,
@@ -57,6 +58,13 @@ export interface CopyToDeviceOptions {
   startCallback?: (srcPath: string, size: number | null) => void;
   /** A copy is about to be retried after a link failure. */
   retryCallback?: (info: CopyRetryInfo) => void;
+  /**
+   * Tells a failed file apart from an unplugged device. Without it an iPod
+   * dropping off USB mid-sync is recorded as one error per remaining file.
+   */
+  presence?: DevicePresence;
+  /** Files written at once; capped at {@link MAX_COPY_WORKERS}. */
+  maxWorkers?: number;
 }
 
 /**
@@ -167,6 +175,8 @@ export async function copyToDevice(
     bytesCallback,
     retryCallback,
     startCallback,
+    presence,
+    maxWorkers,
   } = options;
 
   await deviceFs.mkdir(deviceFolder, { recursive: true });
@@ -231,6 +241,9 @@ export async function copyToDevice(
       bytesCallback,
       retryCallback,
       startCallback,
+      presence,
+      maxWorkers,
+      probePath: deviceFolder,
     });
   }
 
@@ -239,54 +252,68 @@ export async function copyToDevice(
     // A transcode's output size is unknown until it exists.
     startCallback?.(job.src, null);
 
-    const conversionLog: string[] = [];
-    const logWithCapture = (line: string): void => {
-      conversionLog.push(line);
-      logCallback?.(line);
-    };
+    const dest =
+      job.hasCodec && job.settings ? updateExtension(job.dest, job.settings.codec!) : job.dest;
 
-    if (job.hasCodec && job.settings) {
-      const dest = updateExtension(job.dest, job.settings.codec!);
+    for (;;) {
+      const conversionLog: string[] = [];
+      const logWithCapture = (line: string): void => {
+        conversionLog.push(line);
+        logCallback?.(line);
+      };
+
+      let failure: string | null = null;
       try {
-        const success = await convertWithCodec(
-          job.src,
-          dest,
-          job.settings,
-          logWithCapture,
-          cancelSignal,
-          deviceFs
-        );
-        if (!success) {
-          appendSyncError(job.src, dest, "Conversion failed", conversionLog);
-          progressCallback?.({ srcPath: job.src, destPath: dest, status: "error" });
+        if (job.hasCodec && job.settings) {
+          const success = await convertWithCodec(
+            job.src,
+            dest,
+            job.settings,
+            logWithCapture,
+            cancelSignal,
+            deviceFs
+          );
+          if (!success) failure = "Conversion failed";
         } else {
-          await copyMtimeToDevice(deviceFs, job.src, dest);
-          progressCallback?.({ srcPath: job.src, destPath: dest, status: "converted" });
+          await convertWithFfmpeg(
+            job.src,
+            job.dest,
+            job.profile,
+            logWithCapture,
+            cancelSignal,
+            deviceFs
+          );
         }
       } catch (err) {
-        const msg = String(err);
-        appendSyncError(job.src, dest, msg, conversionLog);
-        logCallback?.(`Failed to convert ${path.basename(job.src)}: ${msg}`);
-        progressCallback?.({ srcPath: job.src, destPath: dest, status: "error" });
+        if (isDeviceGone(err)) throw new DeviceGoneError(err);
+        failure = String(err);
       }
-    } else {
-      try {
-        await convertWithFfmpeg(
-          job.src,
-          job.dest,
-          job.profile,
-          logWithCapture,
-          cancelSignal,
-          deviceFs
-        );
-        await copyMtimeToDevice(deviceFs, job.src, job.dest);
-        progressCallback?.({ srcPath: job.src, destPath: job.dest, status: "converted" });
-      } catch (err) {
-        const msg = String(err);
-        appendSyncError(job.src, job.dest, msg, conversionLog);
-        logCallback?.(`Failed to convert ${path.basename(job.src)}: ${msg}`);
-        progressCallback?.({ srcPath: job.src, destPath: job.dest, status: "error" });
+
+      if (failure === null) {
+        await copyMtimeToDevice(deviceFs, job.src, dest);
+        progressCallback?.({ srcPath: job.src, destPath: dest, status: "converted" });
+        break;
       }
+
+      // The encode is on the server; only the device can vanish under it.
+      // Wait for it and encode this track again rather than failing it and
+      // every track after it.
+      if (presence && !cancelSignal?.aborted && (await presence.isGone(deviceFolder))) {
+        try {
+          await presence.waitForReturn(deviceFolder);
+        } catch (err) {
+          if (isDeviceUnplugged(err)) throw err;
+          return; // cancelled while waiting
+        }
+        continue;
+      }
+
+      appendSyncError(job.src, dest, failure, conversionLog);
+      if (failure !== "Conversion failed") {
+        logCallback?.(`Failed to convert ${path.basename(job.src)}: ${failure}`);
+      }
+      progressCallback?.({ srcPath: job.src, destPath: dest, status: "error" });
+      break;
     }
   }
 }
@@ -320,15 +347,32 @@ async function runParallelCopies(
     bytesCallback?: CopyToDeviceOptions["bytesCallback"];
     retryCallback?: (info: CopyRetryInfo) => void;
     startCallback?: CopyToDeviceOptions["startCallback"];
+    presence?: DevicePresence;
+    maxWorkers?: number;
+    /** A folder that exists while the device is present (the one being copied into). */
+    probePath: string;
   }
 ): Promise<void> {
-  const { progressCallback, logCallback, cancelSignal, bytesCallback, retryCallback, startCallback } =
-    opts;
+  const {
+    progressCallback,
+    logCallback,
+    cancelSignal,
+    bytesCallback,
+    retryCallback,
+    startCallback,
+    presence,
+    maxWorkers,
+    probePath,
+  } = opts;
   // Over a network the worker count follows how the link is coping; on a
   // local mount it stays where it always was.
   const adaptive = deviceFs.capabilities.overNetwork === true;
-  const limiter = new AdaptiveConcurrency(MAX_COPY_WORKERS);
+  const limiter = new AdaptiveConcurrency(clampWorkers(maxWorkers));
   let deviceGone: unknown = null;
+  /** Set when an unplugged device did not come back: thrown once, at the end. */
+  let unplugged: unknown = null;
+  /** Cancelled while waiting for an unplugged device: stop quietly. */
+  let stopped = false;
 
   const doCopy = async (job: CopyJob): Promise<CopyProgress> => {
     // Progress is reported per attempt as a running total; turning it into
@@ -360,6 +404,7 @@ async function runParallelCopies(
         }
       },
     };
+    for (;;) {
     try {
       const ok = await withTransientRetry(
         () => {
@@ -413,6 +458,13 @@ async function runParallelCopies(
         deviceGone = err;
         return { srcPath: job.src, destPath: job.dest, status: "error" };
       }
+      // Not this file's fault if the device itself has gone: wait for it,
+      // then try the same file again. Nothing is recorded as an error.
+      if (presence && !cancelSignal?.aborted && (await presence.isGone(probePath))) {
+        const outcome = await waitOutUnplug(job);
+        if (outcome === "retry") continue;
+        return { srcPath: job.src, destPath: job.dest, status: "error" };
+      }
       if (adaptive && isTransientDeviceError(err)) limiter.onTransientFailure();
       const msg = String(err);
       if (adaptive) {
@@ -422,6 +474,27 @@ async function runParallelCopies(
       logCallback?.(`Failed to copy ${path.basename(job.src)}: ${msg}`);
       return { srcPath: job.src, destPath: job.dest, status: "error" };
     }
+    }
+  };
+
+  /** Waits for an unplugged device. "retry" when it is back; "stop" otherwise. */
+  const waitOutUnplug = async (job: CopyJob): Promise<"retry" | "stop"> => {
+    try {
+      await presence!.waitForReturn(probePath);
+    } catch (err) {
+      if (isDeviceUnplugged(err)) unplugged = err;
+      else stopped = true;
+      return "stop";
+    }
+    // An interrupted browser write leaves `<name>.crswap` beside the file.
+    if (deviceFs.capabilities.overNetwork) {
+      try {
+        await deviceFs.unlink(`${job.dest}.crswap`);
+      } catch {
+        /* usually not there */
+      }
+    }
+    return "retry";
   };
 
   let nextIndex = 0;
@@ -430,7 +503,7 @@ async function runParallelCopies(
   const start = (job: CopyJob): void => {
     const task = doCopy(job).then((result) => {
       running.delete(task);
-      if (deviceGone) return;
+      if (deviceGone || unplugged || stopped) return;
       if (result.status === "error") {
         logCallback?.(`Failed to copy ${path.basename(result.srcPath)}`);
       }
@@ -444,7 +517,9 @@ async function runParallelCopies(
       nextIndex < jobs.length &&
       running.size < limiter.limit &&
       !cancelSignal?.aborted &&
-      !deviceGone
+      !deviceGone &&
+      !unplugged &&
+      !stopped
     ) {
       start(jobs[nextIndex++]);
     }
@@ -453,6 +528,13 @@ async function runParallelCopies(
   }
 
   if (deviceGone) throw new DeviceGoneError(deviceGone);
+  if (unplugged) throw unplugged;
+}
+
+/** The configured worker count, within 1..{@link MAX_COPY_WORKERS}. */
+function clampWorkers(n: number | undefined): number {
+  if (n === undefined || !Number.isFinite(n)) return MAX_COPY_WORKERS;
+  return Math.max(1, Math.min(MAX_COPY_WORKERS, Math.floor(n)));
 }
 
 /**
