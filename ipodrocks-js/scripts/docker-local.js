@@ -139,8 +139,11 @@ async function test(flavour) {
   } finally {
     docker(["rm", "-f", name], { capture: true, allowFail: true });
   }
-  const size = docker(["image", "inspect", imageTag(flavour), "--format", "{{.Size}}"], { capture: true });
-  console.log(`  image size: ${(Number(size.stdout) / 1e6).toFixed(0)} MB`);
+  // What `docker image ls` shows — unpacked, on disk. (`image inspect`'s Size is
+  // the compressed content under the containerd store, which reads as a
+  // quarter of this and is not what anyone compares against.)
+  const size = docker(["image", "ls", imageTag(flavour), "--format", "{{.Size}}"], { capture: true });
+  console.log(`  image size: ${size.stdout.trim()} on disk`);
   return !results.includes(false);
 }
 
