@@ -57,14 +57,31 @@ docker run -d --name ipodrocks \
   jpsobral/ipodrocks-server:latest
 ```
 
+### Two flavours
+
+The same server comes in two images, and you only need one. Both run the same
+code, include ffmpeg and the Musepack encoder, run as a non-root user and come
+in amd64 and arm64.
+
+| Flavour | Tags | Pick it if… |
+|---|---|---|
+| **Distroless** (default) | `latest`, `3.1.0`, `3.1` | You just want it to run. Built on Google's distroless image: Node.js and nothing else — no shell, no package manager. |
+| **Alpine** | `alpine`, `3.1.0-alpine`, `3.1-alpine` | You want a shell inside the container (`docker exec -it ipodrocks sh`) or simply prefer Alpine. |
+
+Both keep the operating system to the minimum the server needs, which is also
+what keeps security scanners quiet.
+
 | Tag | Meaning |
 |---|---|
-| `latest` | The newest full release. |
-| `3.0.1` | That exact release. Pin this if you want upgrades to be a decision. |
-| `3.0` | The newest patch release of 3.0. |
-| `3.1.0-beta` | A pre-release. Betas are published only under their own tag and **never move `latest`**. |
+| `latest` / `alpine` | The newest full release. |
+| `3.1.0` / `3.1.0-alpine` | That exact release. Pin this if you want upgrades to be a decision. |
+| `3.1` / `3.1-alpine` | The newest patch release of 3.1. |
+| `3.2.0-beta` / `3.2.0-beta-alpine` | A pre-release. Published only under its own tag; it **never moves `latest` or `alpine`**. |
 
-The image contains the daemon and nothing else — it never runs Electron.
+The image contains the daemon and nothing else — it never runs Electron. The
+distroless flavour has no shell, so `docker exec -it ipodrocks sh` does not
+work there; `docker exec -it ipodrocks node …` (the [password recovery
+command](#troubleshooting), for one) works in both.
 
 ### Upgrading
 
@@ -117,8 +134,11 @@ default in a container — the Node host resolves *everything* it writes from it
 `getFfmpegPath()` falls back to it whenever the app is not a packaged Electron
 build, which a daemon never is. Nothing further is needed.
 
-`mpcenc` is bundled by nothing. The image installs Debian's `musepack-tools`.
-Without it, **Musepack shadow-library profiles are unavailable** — the daemon
+`mpcenc` is bundled by nothing, so both images bring their own: the
+distroless one copies Debian's build in, and the Alpine one — Alpine does not
+package it — compiles it from the official Musepack source while the image is
+built. Every published image has passed a real Musepack encode before it is
+tagged. Outside the images (a bare-metal install), without it **Musepack shadow-library profiles are unavailable** — the daemon
 says so at startup:
 
 ```

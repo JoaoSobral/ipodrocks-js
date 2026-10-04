@@ -1,15 +1,21 @@
 name: Publish server image to Docker Hub
 
-# Builds ipodrocks-js/Dockerfile (the headless daemon, never Electron) for
-# amd64 and arm64 on native runners, smoke-tests it, and pushes one multi-arch
-# manifest to Docker Hub.
+# Builds ipodrocks-js/Dockerfile (the headless daemon, never Electron) in two
+# flavours, each for amd64 and arm64 on native runners, smoke-tests both, and
+# pushes one multi-arch manifest per flavour to Docker Hub.
 #
 # Kept apart from release-build.yml on purpose: a broken desktop build must not
 # hold back the image, nor the other way round.
 #
+# Flavours (Dockerfile `--target`):
+#   distroless  the default; plain tags
+#   alpine      the same app on Alpine; every tag carries `-alpine`
+#
 # Tags:
 #   full release  v3.1.0       -> 3.1.0, 3.1, latest
-#   pre-release   v3.1.0-beta  -> 3.1.0-beta only; `latest` never moves
+#                                 3.1.0-alpine, 3.1-alpine, alpine
+#   pre-release   v3.1.0-beta  -> 3.1.0-beta, 3.1.0-beta-alpine only;
+#                                 `latest` and `alpine` never move
 # A release ticked "Set as a pre-release" in GitHub is treated as one even when
 # its tag looks stable.
 #
@@ -26,10 +32,10 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Git tag to build and publish (e.g. v3.0.1)"
+        description: "Git tag to build and publish (e.g. v3.1.0)"
         required: true
       latest:
-        description: "Also move :latest and :X.Y"
+        description: "Also move :latest / :alpine and :X.Y"
         type: boolean
         default: false
 
@@ -46,17 +52,19 @@ env:
 
 jobs:
   build:
-    name: Build ${{ matrix.platform }}
+    name: Build ${{ matrix.flavour }} ${{ matrix.platform }}
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: true
       matrix:
+        flavour: [distroless, alpine]
+        platform: [linux/amd64, linux/arm64]
         include:
-          - runner: ubuntu-latest
-            platform: linux/amd64
+          - platform: linux/amd64
+            runner: ubuntu-latest
             pair: linux-amd64
-          - runner: ubuntu-24.04-arm
-            platform: linux/arm64
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
             pair: linux-arm64
     steps:
       - name: Checkout
@@ -82,7 +90,7 @@ jobs:
           tags: |
             type=semver,pattern={{version}},value=${{ env.GIT_REF }}
           labels: |
-            org.opencontainers.image.title=iPodRocks server
+            org.opencontainers.image.title=iPodRocks server (${{ matrix.flavour }})
             org.opencontainers.image.description=Headless iPodRocks daemon: sync Rockbox players from a browser
             org.opencontainers.image.licenses=GPL-3.0-only
 
@@ -93,11 +101,12 @@ jobs:
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: ipodrocks-js
+          target: ${{ matrix.flavour }}
           platforms: ${{ matrix.platform }}
           labels: ${{ steps.meta.outputs.labels }}
           outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
-          cache-from: type=gha,scope=${{ matrix.pair }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.pair }}
+          cache-from: type=gha,scope=${{ matrix.flavour }}-${{ matrix.pair }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.flavour }}-${{ matrix.pair }}
 
       - name: Export digest
         run: |
@@ -108,15 +117,25 @@ jobs:
       - name: Upload digest
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: digest-${{ matrix.pair }}
+          name: digest-${{ matrix.flavour }}-${{ matrix.pair }}
           path: ${{ runner.temp }}/digests/*
           if-no-files-found: error
           retention-days: 1
 
   merge:
-    name: Smoke-test and publish manifest
+    name: Smoke-test and publish ${{ matrix.flavour }}
     runs-on: ubuntu-latest
     needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - flavour: distroless
+            suffix: ""
+            floating: latest
+          - flavour: alpine
+            suffix: "-alpine"
+            floating: alpine
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -127,13 +146,13 @@ jobs:
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           path: ${{ runner.temp }}/digests
-          pattern: digest-*
+          pattern: digest-${{ matrix.flavour }}-*
           merge-multiple: true
 
       - name: Download amd64 digest for the smoke test
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: digest-linux-amd64
+          name: digest-${{ matrix.flavour }}-linux-amd64
           path: ${{ runner.temp }}/amd64
 
       - name: Set up Buildx
@@ -145,8 +164,8 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      # Stable = may move :latest and :X.Y. On a release that is "not marked
-      # pre-release"; on a manual run it is the `latest` input. A semver
+      # Stable = may move the floating tag and :X.Y. On a release that is "not
+      # marked pre-release"; on a manual run it is the `latest` input. A semver
       # pre-release tag (v3.1.0-beta) is never stable either way — the semver
       # rules below skip it on their own.
       - name: Decide stability
@@ -162,6 +181,8 @@ jobs:
             [ "$INPUT_LATEST" = "true" ] && echo "value=true" >> "$GITHUB_OUTPUT" || echo "value=false" >> "$GITHUB_OUTPUT"
           fi
 
+      # The suffix is applied by hand rather than through `flavor: suffix=`,
+      # which would also have turned the floating tag into `latest-alpine`.
       - name: Compute tags
         id: meta
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
@@ -170,12 +191,15 @@ jobs:
           flavor: |
             latest=false
           tags: |
-            type=semver,pattern={{version}},value=${{ env.GIT_REF }}
-            type=semver,pattern={{major}}.{{minor}},value=${{ env.GIT_REF }},enable=${{ steps.stable.outputs.value }}
-            type=raw,value=latest,enable=${{ steps.stable.outputs.value == 'true' && !contains(env.GIT_REF, '-') }}
+            type=semver,pattern={{version}}${{ matrix.suffix }},value=${{ env.GIT_REF }}
+            type=semver,pattern={{major}}.{{minor}}${{ matrix.suffix }},value=${{ env.GIT_REF }},enable=${{ steps.stable.outputs.value }}
+            type=raw,value=${{ matrix.floating }},enable=${{ steps.stable.outputs.value == 'true' && !contains(env.GIT_REF, '-') }}
 
       # Run the amd64 build exactly as a user would, and wait for the same
-      # unauthenticated route the Dockerfile HEALTHCHECK uses.
+      # unauthenticated route the Dockerfile HEALTHCHECK uses. Then prove the
+      # encoders the daemon reports are really there: a Musepack encode inside
+      # the container is the one thing each flavour gets differently (Debian's
+      # mpcenc in distroless, one compiled from source in alpine).
       - name: Smoke-test amd64 image
         working-directory: ${{ runner.temp }}/amd64
         run: |
@@ -184,12 +208,23 @@ jobs:
           docker run -d --name smoke -p 127.0.0.1:8780:8780 "$ref"
           for i in $(seq 1 60); do
             if curl -fsS http://127.0.0.1:8780/api/auth/status; then
-              echo; echo "daemon answered after ${i}s"; docker rm -f smoke; exit 0
+              echo; echo "daemon answered after ${i}s"; break
             fi
+            if [ "$i" = 60 ]; then docker logs smoke; exit 1; fi
             sleep 1
           done
-          docker logs smoke
-          exit 1
+          docker logs smoke 2>&1 | grep -q "mpcenc: found" || { docker logs smoke; echo "daemon did not find mpcenc"; exit 1; }
+          docker exec smoke node -e '
+            const { spawnSync } = require("child_process");
+            const ff = require("@ffmpeg-installer/ffmpeg").path;
+            const wav = spawnSync(ff, ["-loglevel", "error", "-y", "-f", "lavfi", "-i", "sine=duration=2", "-ac", "2", "-ar", "44100", "/tmp/t.wav"]);
+            if (wav.status !== 0) { console.error("ffmpeg failed", String(wav.stderr)); process.exit(1); }
+            const mpc = spawnSync("mpcenc", ["--silent", "--standard", "/tmp/t.wav", "/tmp/t.mpc"]);
+            const magic = mpc.status === 0 && require("fs").readFileSync("/tmp/t.mpc").subarray(0, 4).toString();
+            if (magic !== "MPCK") { console.error("mpcenc failed", mpc.status, String(mpc.stderr)); process.exit(1); }
+            console.log("ffmpeg -> mpcenc encode ok");
+          '
+          docker rm -f smoke
 
       - name: Create and push manifest
         working-directory: ${{ runner.temp }}/digests
@@ -204,9 +239,9 @@ jobs:
         run: docker buildx imagetools inspect "${IMAGE}:${{ steps.meta.outputs.version }}"
 
       # Cosmetic: keeps the Docker Hub page in step with the repo. Never fails a
-      # release — the image is already published by this point.
+      # release — the image is already published by this point. Once per run.
       - name: Sync Docker Hub description
-        if: steps.stable.outputs.value == 'true'
+        if: steps.stable.outputs.value == 'true' && matrix.flavour == 'distroless'
         continue-on-error: true
         uses: peter-evans/dockerhub-description@1b9a80c056b620d92cedb9d9b5a223409c68ddfa # v5.0.0
         with:

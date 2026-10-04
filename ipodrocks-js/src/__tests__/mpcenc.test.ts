@@ -19,7 +19,6 @@ const isWindows = process.platform === "win32";
 const okResult = { status: 0, error: undefined, stdout: "", stderr: "", pid: 1, output: [], signal: null };
 const noentResult = { status: null, error: new Error("ENOENT"), stdout: "", stderr: "", pid: 0, output: [], signal: null };
 const nonZeroResult = { status: 1, error: undefined, stdout: "", stderr: "", pid: 1, output: [], signal: null };
-const whichOkResult = { status: 0, error: undefined, stdout: "/opt/homebrew/bin/mpcenc\n", stderr: "", pid: 2, output: [], signal: null };
 
 describe("isMpcencAvailable", () => {
   it("returns true when mpcenc --version exits 0", async () => {
@@ -34,11 +33,14 @@ describe("isMpcencAvailable", () => {
     expect(isMpcencAvailable()).toBe(false);
   });
 
-  it("falls back to which/where when mpcenc exits non-zero and which succeeds", async () => {
-    spawnSyncMock.mockReturnValueOnce(nonZeroResult).mockReturnValueOnce(whichOkResult);
+  // mpcenc 1.30.1 exits 1 for --version. The old fallback then ran `which`,
+  // which the distroless server image does not have, and reported a working
+  // mpcenc as missing.
+  it("returns true when mpcenc exits non-zero, without asking which/where", async () => {
+    spawnSyncMock.mockReturnValue(nonZeroResult);
     const { isMpcencAvailable } = await import("../main/utils/mpcenc");
     expect(isMpcencAvailable()).toBe(true);
-    expect(spawnSyncMock).toHaveBeenCalledTimes(2);
+    expect(spawnSyncMock).toHaveBeenCalledTimes(1);
   });
 
   // getEncoderEnv() only prepends macOS/Linux paths; on Windows PATH is passed through as-is.

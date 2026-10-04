@@ -241,9 +241,12 @@ docker run -d --name ipodrocks \
   jpsobral/ipodrocks-server:latest
 ```
 
-Tags: `latest` is the newest full release, `3.0.1` / `3.0` pin a release, and
-betas are published only under their own tag (e.g. `3.1.0-beta`) — they never
-move `latest`. To upgrade, pull and recreate the container; everything lives in
+Two flavours, same server: the default **distroless** image (`latest`, `3.1.0`
+— Node.js and nothing else, no shell) and an **Alpine** one (`alpine`,
+`3.1.0-alpine` — has a shell). Both include ffmpeg and the Musepack encoder.
+`latest` / `alpine` are the newest full release, `3.1.0` / `3.1` pin a release,
+and betas are published only under their own tag (e.g. `3.2.0-beta`) — they
+never move `latest`. To upgrade, pull and recreate the container; everything lives in
 the `/data` volume.
 
 Or use [`ipodrocks-js/docker-compose.yml`](ipodrocks-js/docker-compose.yml)
