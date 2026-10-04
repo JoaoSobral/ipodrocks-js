@@ -48,6 +48,11 @@ the moment the connection hiccuped. Now a sync rides it out.
   `docker compose pull && docker compose up -d`.
 - Fixed two problems that stopped the image from building and from starting
   on a fresh data volume.
+- **Two flavours, both lean.** The default image is *distroless* — Node.js
+  and nothing else, no shell or package manager — and an Alpine one is tagged
+  `alpine` / `3.1.0-alpine` for anyone who wants a shell inside. Both include
+  the Musepack encoder and carry only what the server needs, so the security
+  warnings Docker Hub showed for the first alpha are gone.
 
 ### 🔑 Easier sign-in for the web server
 

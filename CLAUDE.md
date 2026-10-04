@@ -1538,9 +1538,31 @@ native dependency in `dependencies`.
 
 `mpcenc` is the thing a container genuinely does not get for free — nothing
 bundles it, unlike ffmpeg, which `getFfmpegPath()` falls back to
-`@ffmpeg-installer/ffmpeg` for whenever `isPackaged()` is false. The image
-installs Debian's `musepack-tools`; `daemon.ts` reports both encoders at startup
-so a missing one reads as a missing package rather than a broken app.
+`@ffmpeg-installer/ffmpeg` for whenever `isPackaged()` is false. `daemon.ts`
+reports both encoders at startup so a missing one reads as a missing package
+rather than a broken app.
+
+**Two runtime flavours, one Dockerfile** (`--target distroless`, the default and
+last stage, and `--target alpine`), published as `:<v>` and `:<v>-alpine`.
+
+- **Distroless has no shell, so nothing the daemon runs may need one.** The
+  `mpcenc` probe used to fall back to `which` when `mpcenc --version` exited
+  non-zero — which 1.30.1 always does — and so read a working encoder as
+  missing. A spawn without `error` is the answer now. Anything new that shells
+  out, or execs a coreutil, breaks this flavour only.
+- **`mpcenc` reaches each flavour differently.** Distroless copies Debian's
+  binary (it links only libc/libm, asserted by `ldd` in the `encoders` stage);
+  Alpine compiles r475 from source with three musl/GCC 14 workarounds explained
+  in the Dockerfile. The release workflow's smoke test runs a real encode in
+  both, because "the daemon said found" is not the same as "it encodes".
+- **One `node_modules` serves both**, built on Debian: `better-sqlite3` ships
+  `linuxmusl-*` prebuilds beside the glibc ones, and the `@ffmpeg-installer`
+  binary is fully static. A future native dependency without musl prebuilds
+  would load on distroless and fail on Alpine — the smoke test's database open
+  is what catches it.
+- **`node` is not on distroless's PATH** (`/nodejs/bin/node`); the `encoders`
+  stage ships a symlink into `/usr/local/bin` so `docker exec … node
+  dist/main/server/cli.js` works in both.
 
 ## Hazard: the host adapter must never auto-detect its way to the real user data
 

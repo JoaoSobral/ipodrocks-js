@@ -10,19 +10,17 @@ const SPAWN_OPTS = {
 
 /**
  * Checks if the mpcenc (Musepack encoder) binary is available on the system PATH.
- * Uses shell for lookup when needed so Linux/Electron sees the same PATH as the user.
+ *
+ * A spawn that did not fail *is* the answer: Node reports a missing binary as
+ * `error` (ENOENT), never as an exit status. mpcenc 1.30 exits 1 for
+ * `--version`, which is why this does not insist on 0 — and why it no longer
+ * falls back to `which`, which is absent from the distroless server image and
+ * read a perfectly good mpcenc there as "not found".
  */
 export function isMpcencAvailable(): boolean {
   try {
     const result = spawnSync("mpcenc", ["--version"], SPAWN_OPTS);
-    if (result.status === 0) return true;
-    if (result.error) return false;
-    // Some mpcenc builds exit non-zero for --version; try resolving via PATH
-    const which =
-      process.platform === "win32"
-        ? spawnSync("where", ["mpcenc"], SPAWN_OPTS)
-        : spawnSync("which", ["mpcenc"], SPAWN_OPTS);
-    return which.status === 0 && (which.stdout?.trim()?.length ?? 0) > 0;
+    return !result.error;
   } catch {
     return false;
   }

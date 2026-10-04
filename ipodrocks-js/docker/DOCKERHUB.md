@@ -23,14 +23,17 @@ Open `http://127.0.0.1:8780` and sign in with the token. Do not publish the port
 to a network over plain HTTP — put it behind TLS, a reverse proxy or a
 Cloudflare Tunnel.
 
-## Tags
+## Flavours
 
-| Tag | Meaning |
-|---|---|
-| `latest` | Newest full release |
-| `3.0.1` | That exact release |
-| `3.0` | Newest patch of 3.0 |
-| `3.1.0-beta` | A pre-release; betas never move `latest` |
+| Flavour | Tags | |
+|---|---|---|
+| **Distroless** (default) | `latest`, `3.1.0`, `3.1` | Node.js and nothing else — no shell, no package manager |
+| **Alpine** | `alpine`, `3.1.0-alpine`, `3.1-alpine` | Alpine Linux, with a shell |
+
+Both are the same server, include ffmpeg and the Musepack encoder (`mpcenc`),
+run as a non-root user, and are built for amd64 and arm64.
+Pre-releases (e.g. `3.2.0-beta`, `3.2.0-beta-alpine`) never move `latest` or
+`alpine`.
 
 ## Volumes
 
