@@ -9,6 +9,9 @@ import {
 import { AUDIO_EXTENSIONS, isMacosMetadataFile } from "../utils/audio-extensions";
 import { createDeviceFs, type DeviceFs } from "./fs";
 
+/** The app's GB everywhere: `formatGb()`, `DiskSpace.totalGb`, the capacity field. */
+const GIB = 1024 ** 3;
+
 interface GetTracksOptions {
   cancelSignal?: AbortSignal;
   progressCallback?: (filePath: string, count: number) => void;
@@ -75,16 +78,57 @@ export class Device {
   }
 
   /**
-   * Total/free bytes, or zeroes when the device cannot report them.
+   * Total, free and used bytes.
    *
-   * A browser-held device has no equivalent of `statfs`, and this figure is a
-   * UI label and nothing more — no decision anywhere depends on it — so it
-   * degrades to zeroes rather than making the device unusable.
+   * A local mount asks the filesystem. A browser-held device has no
+   * equivalent of `statfs` — the File System Access API cannot read a disk's
+   * size at all — so used space is *measured* by summing every file on it, and
+   * the total is the capacity the user entered in the device profile. Without
+   * one the result is used-only. Never `navigator.storage.estimate()`: that is
+   * the browser's own origin quota, not the device.
+   *
+   * A UI label and nothing more — no decision anywhere depends on it — so a
+   * failure degrades to zeroes rather than making the device unusable.
    */
   async getAvailableSpace(): Promise<DiskSpace> {
     const empty: DiskSpace = { totalBytes: 0, freeBytes: 0, totalGb: 0, freeGb: 0 };
-    if (!this.fs.capabilities.freeSpace) return empty;
-    return (await this.fs.freeSpace()) ?? empty;
+    if (this.fs.capabilities.freeSpace) {
+      const s = await this.fs.freeSpace();
+      if (!s) return empty;
+      const usedBytes = Math.max(0, s.totalBytes - s.freeBytes);
+      return { ...s, usedBytes, usedGb: usedBytes / GIB, source: "filesystem" };
+    }
+
+    let usedBytes = 0;
+    try {
+      await this.fs.listTree(this.mountPath, {
+        includeDirectories: false,
+        onEntry: (entry) => {
+          usedBytes += entry.size;
+        },
+      });
+    } catch (err) {
+      // "The tab went away" is not an answer about the device, here or in any
+      // other reader.
+      if ((err as { code?: string })?.code === "EDEVICEDETACHED") throw err;
+      return empty;
+    }
+
+    const capacityGb = this.profile.capacityGb;
+    if (capacityGb == null || !(capacityGb > 0)) {
+      return { ...empty, usedBytes, usedGb: usedBytes / GIB, source: "used-only" };
+    }
+    const totalBytes = Math.round(capacityGb * GIB);
+    const freeBytes = Math.max(0, totalBytes - usedBytes);
+    return {
+      totalBytes,
+      freeBytes,
+      totalGb: totalBytes / GIB,
+      freeGb: freeBytes / GIB,
+      usedBytes,
+      usedGb: usedBytes / GIB,
+      source: "estimated",
+    };
   }
 
   // Walks the device's content folder through the device filesystem so the main

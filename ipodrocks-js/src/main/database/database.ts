@@ -32,6 +32,7 @@ export class AppDatabase {
     this.migrateDeviceAlbumGrouping();
     this.migrateDeviceSkipAlbumArtwork();
     this.migrateDeviceArtworkMaxDimension();
+    this.migrateDeviceCapacity();
     this.migrateVbrEnabled();
     this.migrateDeviceUsbIdentity();
     this.migrateDeviceTransport();
@@ -289,6 +290,24 @@ export class AppDatabase {
       }
     } catch (err) {
       console.error("[db] migration failed (migrateDeviceArtworkMaxDimension):", err);
+    }
+  }
+
+  /**
+   * Add devices.capacity_gb — the user-entered size of a remote device, which a
+   * browser cannot detect. NULL (unset) for every existing row.
+   */
+  private migrateDeviceCapacity(): void {
+    if (!this.db) return;
+    try {
+      const rows = this.db
+        .prepare("PRAGMA table_info(devices)")
+        .all() as { name: string }[];
+      if (!new Set(rows.map((r) => r.name)).has("capacity_gb")) {
+        this.db.prepare("ALTER TABLE devices ADD COLUMN capacity_gb REAL").run();
+      }
+    } catch (err) {
+      console.error("[db] migration failed (migrateDeviceCapacity):", err);
     }
   }
 

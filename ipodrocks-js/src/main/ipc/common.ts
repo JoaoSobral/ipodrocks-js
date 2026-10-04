@@ -6,6 +6,7 @@ import { deviceAdminBlock, deviceLocalityBlock } from "../../shared/device-local
 import { getAllowedPathPrefixes, pathMatchesAllowedPrefix } from "../path-allowlist";
 import { subjectForSessionId } from "../../server/auth/sessions";
 import { Library } from "../library/library";
+import type { ShadowTrackRef } from "../library/shadow-library";
 import { DevicesCore } from "../devices/devices-core";
 import { PlaylistCore } from "../playlists/playlist-core";
 
@@ -159,17 +160,32 @@ export function buildLibraryTrackMaps(lib: Library): {
  * library path. Tracks with no shadow entry are dropped. Used by both the
  * device-check preview and the actual sync when a device sources from a shadow
  * library.
+ *
+ * **The size must be the shadow file's, not the source's.** A shadow sync is a
+ * direct copy, so `buildLibraryDestMap()` takes `fileSize` as the exact size
+ * the device file should have. Left as the source FLAC's, no transcode ever
+ * matched on size, and the compare fell back to mtime — which a local copy
+ * stamps and a browser-held device cannot (`capabilities.setMtime` is false),
+ * so on a remote device every transcoded track read as "to sync" on every
+ * check and was re-copied on every sync. A shadow row from before the size
+ * column carries 0, which the compare reads as "judge by mtime alone".
  */
 export function remapTrackMapToShadow(
   trackMap: Record<string, Record<string, unknown>>,
-  shadowTrackMap: Map<number, string>
+  shadowTrackMap: Map<number, ShadowTrackRef>
 ): Record<string, Record<string, unknown>> {
   const remapped: Record<string, Record<string, unknown>> = {};
   for (const [, info] of Object.entries(trackMap)) {
     const trackId = info.id as number;
-    const shadowPath = shadowTrackMap.get(trackId);
-    if (shadowPath) {
-      remapped[shadowPath] = { ...info, path: shadowPath };
+    const shadow = shadowTrackMap.get(trackId);
+    if (shadow) {
+      const fileSize = shadow.fileSize ?? 0;
+      remapped[shadow.path] = {
+        ...info,
+        path: shadow.path,
+        fileSize,
+        file_size: fileSize,
+      };
     }
   }
   return remapped;

@@ -7,6 +7,7 @@ import { findOnDisk } from "../utils/normalize-path";
 
 import { ConversionSettings, convertWithCodec, convertWithFfmpeg, updateExtension } from "./sync-conversion";
 import { appendSyncError } from "./sync-error-log";
+import { devLog } from "../utils/dev-log";
 import {
   AdaptiveConcurrency,
   isDeviceGone,
@@ -43,8 +44,17 @@ export interface CopyToDeviceOptions {
   progressCallback?: (progress: CopyProgress) => void;
   logCallback?: (line: string) => void;
   cancelSignal?: AbortSignal;
-  /** Bytes moved since the last call, across every copy in flight. */
-  bytesCallback?: (deltaBytes: number) => void;
+  /**
+   * Bytes moved since the last call, plus where that copy now stands, so a
+   * caller can show each file in flight. `total` is null until known.
+   */
+  bytesCallback?: (deltaBytes: number, srcPath: string, done: number, total: number | null) => void;
+  /**
+   * A file was picked up by a worker. Without it a slow link shows nothing
+   * at all until a whole file lands: four large files sharing a few MB/s can
+   * take a minute before the first `progressCallback`.
+   */
+  startCallback?: (srcPath: string, size: number | null) => void;
   /** A copy is about to be retried after a link failure. */
   retryCallback?: (info: CopyRetryInfo) => void;
 }
@@ -156,6 +166,7 @@ export async function copyToDevice(
     cancelSignal,
     bytesCallback,
     retryCallback,
+    startCallback,
   } = options;
 
   await deviceFs.mkdir(deviceFolder, { recursive: true });
@@ -219,11 +230,14 @@ export async function copyToDevice(
       cancelSignal,
       bytesCallback,
       retryCallback,
+      startCallback,
     });
   }
 
   for (const job of convertJobs) {
     if (cancelSignal?.aborted) return;
+    // A transcode's output size is unknown until it exists.
+    startCallback?.(job.src, null);
 
     const conversionLog: string[] = [];
     const logWithCapture = (line: string): void => {
@@ -303,11 +317,13 @@ async function runParallelCopies(
     progressCallback?: (progress: CopyProgress) => void;
     logCallback?: (line: string) => void;
     cancelSignal?: AbortSignal;
-    bytesCallback?: (deltaBytes: number) => void;
+    bytesCallback?: CopyToDeviceOptions["bytesCallback"];
     retryCallback?: (info: CopyRetryInfo) => void;
+    startCallback?: CopyToDeviceOptions["startCallback"];
   }
 ): Promise<void> {
-  const { progressCallback, logCallback, cancelSignal, bytesCallback, retryCallback } = opts;
+  const { progressCallback, logCallback, cancelSignal, bytesCallback, retryCallback, startCallback } =
+    opts;
   // Over a network the worker count follows how the link is coping; on a
   // local mount it stays where it always was.
   const adaptive = deviceFs.capabilities.overNetwork === true;
@@ -319,11 +335,27 @@ async function runParallelCopies(
     // deltas here is what lets several copies in flight share one counter.
     let reported = 0;
     let size: number | undefined;
+    try {
+      size = (await fsp.stat(job.src)).size;
+    } catch {
+      /* the copy itself will report what went wrong */
+    }
+    const startedAt = Date.now();
+    startCallback?.(job.src, size ?? null);
+    if (adaptive) {
+      devLog(
+        "copy",
+        () =>
+          `start ${path.basename(job.src)} (${size ?? "?"} B), ` +
+          // By now `start()` has added this task to `running`.
+          `${running.size} in flight of limit ${limiter.limit}`
+      );
+    }
     const copyOpts: CopyOptions = {
       onProgress: (bytes, total) => {
         if (total !== null) size = total;
         if (bytes > reported) {
-          bytesCallback?.(bytes - reported);
+          bytesCallback?.(bytes - reported, job.src, bytes, size ?? null);
           reported = bytes;
         }
       },
@@ -359,8 +391,16 @@ async function runParallelCopies(
         }
       }
       if (size > reported) {
-        bytesCallback?.(size - reported);
+        bytesCallback?.(size - reported, job.src, size, size);
         reported = size;
+      }
+      if (adaptive) {
+        devLog(
+          "copy",
+          () =>
+            `done ${path.basename(job.src)} (${size} B) in ${Date.now() - startedAt} ms` +
+            (ok ? "" : " — skipped")
+        );
       }
       return {
         srcPath: job.src,
@@ -375,6 +415,9 @@ async function runParallelCopies(
       }
       if (adaptive && isTransientDeviceError(err)) limiter.onTransientFailure();
       const msg = String(err);
+      if (adaptive) {
+        devLog("copy", () => `failed ${path.basename(job.src)} after ${Date.now() - startedAt} ms: ${msg}`);
+      }
       appendSyncError(job.src, job.dest, msg);
       logCallback?.(`Failed to copy ${path.basename(job.src)}: ${msg}`);
       return { srcPath: job.src, destPath: job.dest, status: "error" };

@@ -49,7 +49,7 @@ import {
   isRemoteDevice,
 } from "@shared/device-locality";
 import { restoreWebDevices } from "../../device";
-import { formatCodecLabel, formatGb } from "../../utils/format";
+import { describeDiskSpace, formatCodecLabel, formatGb } from "../../utils/format";
 import {
   getTranscodableCodecConfigs,
   isVbrCapableCodec,
@@ -117,6 +117,23 @@ function parseUsbKey(key: string): {
 }
 
 /** Best-effort display name; many devices report no product string at all. */
+/**
+ * Why a typed capacity is not acceptable, or null when it is (empty included —
+ * the field is optional). Up to four decimals, positive, and in the server's
+ * range (`sanitizeCapacityGb`), so the form refuses what the server would.
+ */
+function capacityError(raw: string): string | null {
+  const v = raw.trim();
+  if (v === "") return null;
+  if (!/^\d+(\.\d{1,4})?$/.test(v)) {
+    return "Enter the capacity in GB, with up to 4 decimals (e.g. 74.5341).";
+  }
+  const n = Number(v);
+  if (!(n > 0)) return "The capacity must be more than 0 GB.";
+  if (n > 100_000) return "That is more than 100,000 GB — check the number.";
+  return null;
+}
+
 function usbLabel(device: UsbDeviceInfo): string {
   const base = device.ipodModel || device.productName || device.vendorName || "Unknown device";
   return device.serial ? base : `${base} (no serial)`;
@@ -176,6 +193,8 @@ export function DevicePanel() {
     useState<FileSystemDirectoryHandle | null>(null);
   const [skipAlbumArtwork, setSkipAlbumArtwork] = useState(false);
   const [artworkMaxDimension, setArtworkMaxDimension] = useState(300);
+  /** A remote device's capacity in GB, as typed. Empty means "not set". */
+  const [capacityGb, setCapacityGb] = useState("");
   const [vbrEnabled, setVbrEnabled] = useState(false);
   const [devMode, setDevMode] = useState(false);
   const [musicFolder, setMusicFolder] = useState("Music");
@@ -282,6 +301,7 @@ export function DevicePanel() {
     setPendingFolder(null);
     setSkipAlbumArtwork(false);
     setArtworkMaxDimension(300);
+    setCapacityGb("");
     setVbrEnabled(false);
     setDevMode(false);
     setMusicFolder("Music");
@@ -304,6 +324,7 @@ export function DevicePanel() {
     setModelId(device.modelId ?? null);
     setMountPath(device.mountPath);
     setWebTransport(device.transport === "web");
+    setCapacityGb(device.capacityGb != null ? String(device.capacityGb) : "");
     setDescription(device.description ?? "");
     setIsDefault(defaultDeviceId === device.id);
     setMusicFolder(device.musicFolder ?? "Music");
@@ -457,7 +478,12 @@ export function DevicePanel() {
   async function handleSaveDevice() {
     // A web device has no mount path to give: the folder is picked in the
     // browser afterwards, and the synthetic root is minted by `addDevice`.
-    if (!name.trim() || (!webTransport && !mountPath.trim()) || modelId == null) {
+    if (
+      !name.trim() ||
+      (!webTransport && !mountPath.trim()) ||
+      modelId == null ||
+      (webTransport && capacityError(capacityGb) !== null)
+    ) {
       setFormSubmitted(true);
       return;
     }
@@ -493,6 +519,8 @@ export function DevicePanel() {
       skipRuntimeData: !runtimeDataEnabled,
       skipAlbumArtwork,
       artworkMaxDimension,
+      // Only a remote device has one; a local device's size comes off the disk.
+      ...(webTransport ? { capacityGb: capacityGb.trim() === "" ? null : Number(capacityGb) } : {}),
       vbrEnabled: transferMode === "transcode" ? vbrEnabled : false,
       rockboxSmartPlaylists,
       devMode,
@@ -762,6 +790,14 @@ export function DevicePanel() {
                         : "Direct Copy (Primary)"}
                     </span>
                   </div>
+                  {d?.transport === "web" && (
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Capacity</span>
+                      <span className="text-muted-foreground" data-testid="device-capacity-value">
+                        {d.capacityGb != null ? `${d.capacityGb} GB` : "Not set"}
+                      </span>
+                    </div>
+                  )}
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Last sync date</span>
                     <span className="text-muted-foreground">
@@ -791,20 +827,35 @@ export function DevicePanel() {
 
                 {cr && !cr.offline && (
                   <div className="mb-4 p-3 rounded-lg bg-muted/30 space-y-2">
-                    {cr.disk != null && (
-                      <>
-                        <div className="flex justify-between text-xs">
-                          <span className="text-muted-foreground">Storage</span>
-                          <span className="text-muted-foreground">
-                            {formatGb((cr.disk.totalGb ?? 0) - (cr.disk.freeGb ?? 0))} / {formatGb(cr.disk.totalGb ?? 0)}
-                          </span>
+                    {cr.disk != null && (() => {
+                      const space = describeDiskSpace(cr.disk);
+                      return space.hasTotal ? (
+                        <div data-testid="device-storage">
+                          <div className="flex justify-between text-xs">
+                            <span className="text-muted-foreground">Storage</span>
+                            <span className="text-muted-foreground">
+                              {formatGb(space.usedGb)} / {formatGb(space.totalGb)}
+                              {space.estimated && " (estimated)"}
+                            </span>
+                          </div>
+                          <ProgressBar
+                            value={space.usedPct}
+                            color={space.freeGb < 1 ? "var(--destructive)" : undefined}
+                          />
                         </div>
-                        <ProgressBar
-                          value={(cr.disk.totalGb ?? 0) > 0 ? (((cr.disk.totalGb ?? 0) - (cr.disk.freeGb ?? 0)) / (cr.disk.totalGb ?? 1)) * 100 : 0}
-                          color={(cr.disk.freeGb ?? 0) < 1 ? "var(--destructive)" : undefined}
-                        />
-                      </>
-                    )}
+                      ) : (
+                        <div data-testid="device-storage">
+                          <div className="flex justify-between text-xs">
+                            <span className="text-muted-foreground">Storage</span>
+                            <span className="text-muted-foreground">{formatGb(space.usedGb)} used</span>
+                          </div>
+                          <p className="text-[10px] text-muted-foreground mt-0.5">
+                            A browser can&apos;t read the device&apos;s size. Add its capacity in the
+                            device profile to see free space.
+                          </p>
+                        </div>
+                      );
+                    })()}
                     {cr.music != null && (
                       <div className="flex justify-between text-xs">
                         <span className="text-muted-foreground">Music</span>
@@ -1078,6 +1129,37 @@ export function DevicePanel() {
                 Device folder
               </div>
               <WebDeviceLink deviceId={editingDeviceId} />
+            </div>
+          )}
+
+          {/* Capacity — remote devices only. The File System Access API cannot
+              read a disk's size, so the user tells us; used space is measured. */}
+          {webTransport && (
+            <div>
+              <Label>
+                <span className="inline-flex items-center gap-1">
+                  Capacity (GB)
+                  <InfoTooltip text="A browser can't read a disk's size, so iPodRocks can't detect it for a remote device. Enter your iPod's capacity to see free space — up to 4 decimals (e.g. 74.5341). Use GB as Windows shows it; macOS Finder shows a slightly larger number for the same disk." />
+                </span>
+              </Label>
+              <input
+                className="w-full rounded-lg bg-input border border-border px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/25 transition-colors"
+                value={capacityGb}
+                onChange={(e) => setCapacityGb(e.target.value)}
+                inputMode="decimal"
+                placeholder="Optional, e.g. 74.5341"
+                aria-label="Capacity (GB)"
+                data-testid="device-capacity"
+              />
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                Used space is measured from the device&apos;s files; the capacity can&apos;t be
+                read in a browser, so it comes from here.
+              </p>
+              {formSubmitted && capacityError(capacityGb) && (
+                <p className="mt-1 text-xs text-blue-500" data-testid="device-capacity-error">
+                  {capacityError(capacityGb)}
+                </p>
+              )}
             </div>
           )}
 

@@ -12,6 +12,7 @@ import { SettingsPanel } from "./components/panels/SettingsPanel";
 import { announceLinkResult } from "./components/panels/SignInMethodsCard";
 import { FloatChat } from "./components/assistant/FloatChat";
 import { ServerFolderPicker } from "./components/web/ServerFolderPicker";
+import { DevConsole } from "./components/common/DevConsole";
 import { ThemeToggle } from "./components/common/ThemeToggle";
 import { BuyMeACoffeeButton } from "./components/common/BuyMeACoffeeButton";
 import { PlayerBar } from "./components/player/PlayerBar";
@@ -330,6 +331,10 @@ export function App() {
       {/* Registers itself as `pickFolder()`'s fallback and only ever opens on a
           host with no native dialogs — so under Electron it renders nothing. */}
       <ServerFolderPicker />
+
+      {/* Renders nothing unless the server runs with IPODROCKS_DEV_LOGS=1 and
+          this caller is its owner. */}
+      <DevConsole />
 
       <Toaster theme={theme === "dark" ? "dark" : "light"} richColors />
     </div>

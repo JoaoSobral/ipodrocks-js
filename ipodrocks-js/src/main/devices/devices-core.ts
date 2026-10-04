@@ -43,6 +43,7 @@ interface DeviceRow {
   skip_playback_log: number;
   skip_album_artwork: number;
   artwork_max_dimension: number;
+  capacity_gb: number | null;
   rockbox_smart_playlists: number;
   dev_mode: number;
   auto_podcasts_enabled: number;
@@ -58,7 +59,7 @@ const DEVICES_QUERY = `
          d.audiobook_folder, d.playlist_folder, d.description, d.last_sync_date, d.total_synced_items, d.last_sync_count,
          d.default_transfer_mode_id, d.default_codec_config_id, d.model_id,
          d.override_bitrate, d.override_quality, d.override_bits,
-         d.partial_sync_enabled, d.skip_playback_log, d.skip_album_artwork, d.artwork_max_dimension, d.rockbox_smart_playlists, d.dev_mode,
+         d.partial_sync_enabled, d.skip_playback_log, d.skip_album_artwork, d.artwork_max_dimension, d.capacity_gb, d.rockbox_smart_playlists, d.dev_mode,
          d.auto_podcasts_enabled, d.vbr_enabled, d.source_library_type, d.shadow_library_id,
          d.transport, d.usb_vendor_id, d.usb_product_id, d.usb_serial,
          dtm.name as transfer_mode_name,
@@ -94,6 +95,7 @@ const ALLOWED_UPDATE_FIELDS = new Set([
   "skip_playback_log",
   "skip_album_artwork",
   "artwork_max_dimension",
+  "capacity_gb",
   "rockbox_smart_playlists",
   "dev_mode",
   "auto_podcasts_enabled",
@@ -139,6 +141,7 @@ const FIELD_MAP: Record<string, string> = {
   skipRuntimeData: "skip_playback_log",
   skipAlbumArtwork: "skip_album_artwork",
   artworkMaxDimension: "artwork_max_dimension",
+  capacityGb: "capacity_gb",
   rockboxSmartPlaylists: "rockbox_smart_playlists",
   devMode: "dev_mode",
   autoPodcastsEnabled: "auto_podcasts_enabled",
@@ -178,6 +181,24 @@ function sanitizeArtworkMaxDimension(value: unknown): number {
     : DEFAULT_ARTWORK_MAX_DIMENSION;
 }
 
+/** 100 TB: nothing that syncs over a browser is bigger, and it bounds typos. */
+const MAX_CAPACITY_GB = 100_000;
+
+/**
+ * A remote device's capacity in GB, as the user entered it.
+ *
+ * Empty clears it. Anything else must be a positive finite number, kept to
+ * four decimals — the precision the form offers.
+ */
+export function sanitizeCapacityGb(value: unknown): number | null {
+  if (value === null || value === undefined) return null;
+  if (typeof value === "string" && value.trim() === "") return null;
+  const n = typeof value === "number" ? value : Number(String(value).trim());
+  if (!Number.isFinite(n) || n <= 0 || n > MAX_CAPACITY_GB) {
+    throw new Error("Capacity must be a positive number of GB");
+  }
+  return Math.round(n * 1e4) / 1e4;
+}
 
 /** The profile columns that name a folder *inside* the device. */
 const CONTENT_FOLDER_FIELDS = new Set([
@@ -325,9 +346,9 @@ export class DevicesCore {
          (name, mount_path, music_folder, podcast_folder, audiobook_folder, playlist_folder,
           default_transfer_mode_id, default_codec_config_id, description,
           model_id, source_library_type, shadow_library_id, skip_playback_log, rockbox_smart_playlists, dev_mode, vbr_enabled,
-          skip_album_artwork, artwork_max_dimension, transport, web_owner_subject,
+          skip_album_artwork, artwork_max_dimension, capacity_gb, transport, web_owner_subject,
           usb_vendor_id, usb_product_id, usb_serial)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         config.name,
@@ -348,6 +369,7 @@ export class DevicesCore {
         config.vbrEnabled ? 1 : 0,
         config.skipAlbumArtwork ? 1 : 0,
         sanitizeArtworkMaxDimension(config.artworkMaxDimension),
+        sanitizeCapacityGb(config.capacityGb),
         transport,
         // Only a web device gets one, and only from the handler's own session:
         // whoever registered the player is the only browser allowed to attach
@@ -437,6 +459,10 @@ export class DevicesCore {
       if (USB_IDENTITY_KEYS.has(key)) continue;
       const dbField = FIELD_MAP[key];
       if (!dbField || !ALLOWED_UPDATE_FIELDS.has(dbField)) continue;
+      // Only an explicit null clears the capacity. Electron IPC keeps
+      // `undefined` keys (JSON over the web drops them), and a form payload
+      // that merely omits the field must not erase what the user entered.
+      if (dbField === "capacity_gb" && value === undefined) continue;
 
       // A browser-held device's mount path is not a setting: it is the
       // synthetic `webDeviceRoot(id)`, which exists on no filesystem and is
@@ -467,6 +493,8 @@ export class DevicesCore {
           ? sanitizeMountPath(value)
           : dbField === "artwork_max_dimension"
           ? sanitizeArtworkMaxDimension(value)
+          : dbField === "capacity_gb"
+          ? sanitizeCapacityGb(value)
           : dbField === "partial_sync_enabled" || dbField === "skip_playback_log" || dbField === "skip_album_artwork" || dbField === "rockbox_smart_playlists" || dbField === "dev_mode" || dbField === "auto_podcasts_enabled" || dbField === "vbr_enabled"
           ? (value ? 1 : 0)
           : value;
@@ -573,6 +601,7 @@ export class DevicesCore {
       skipRuntimeData: !!(row.skip_playback_log ?? 0),
       skipAlbumArtwork: !!(row.skip_album_artwork ?? 0),
       artworkMaxDimension: sanitizeArtworkMaxDimension(row.artwork_max_dimension),
+      capacityGb: row.capacity_gb ?? null,
       rockboxSmartPlaylists: !!(row.rockbox_smart_playlists ?? 0),
       devMode: !!(row.dev_mode ?? 0),
       autoPodcastsEnabled: !!(row.auto_podcasts_enabled ?? 0),

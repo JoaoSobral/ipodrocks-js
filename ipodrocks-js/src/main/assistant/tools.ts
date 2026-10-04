@@ -653,6 +653,47 @@ async function pushToCaller(
 }
 
 /**
+ * The developer log's newest lines (`utils/dev-log.ts`). Owner-only for the
+ * same reason the `app:devLog:read` channel is: it carries every device's
+ * diagnostics and the server's paths.
+ */
+const dev_log_read: AiTool = {
+  name: "dev_log_read",
+  description:
+    "Read the newest lines of the developer log — the diagnostics a device check and a sync write when the server runs with IPODROCKS_DEV_LOGS=1 (or the daemon with --dev-logs): what was found on the device, why each track counts as synced or to-sync, and every device request that failed. Use when the user asks why a check or sync reported what it did, or asks to see the dev log. If it reports the log is off, tell them how to turn it on.",
+  parameters: {
+    type: "object",
+    properties: {
+      count: {
+        type: "number",
+        description: "How many of the newest lines to return (default 200, max 1000).",
+      },
+    },
+    required: [],
+  },
+  kind: "read",
+  summarize: () => "Read the developer log",
+  async run(args, ctx) {
+    const denied = await ownerGate(ctx, "Only the server's owner can read the developer log.");
+    if (denied) return denied;
+    const { isDevLogEnabled, tailDevLog } = await import("../utils/dev-log");
+    if (!isDevLogEnabled()) {
+      return {
+        enabled: false,
+        hint: "Start the server with IPODROCKS_DEV_LOGS=1, or the daemon with --dev-logs, then repeat the check or sync.",
+      };
+    }
+    const count = typeof args.count === "number" ? args.count : 200;
+    return {
+      enabled: true,
+      lines: tailDevLog(count).map(
+        (e) => `${new Date(e.at).toISOString()} [${e.scope}] ${e.message}`
+      ),
+    };
+  },
+};
+
+/**
  * Web server. Three tools rather than one, because "tell me about it", "change
  * where it listens" and "turn it on" have genuinely different risk: starting a
  * listener exposes the library to the network, so it gets a confirm gate, while
@@ -1578,7 +1619,7 @@ const device_eject: AiTool = {
 const device_update_settings: AiTool = {
   name: "device_update_settings",
   description:
-    "Update a device's sync settings. Supports toggling album-artwork generation (skip_album_artwork) and choosing the generated cover.jpg size (artwork_max_dimension: 200, 300, 500, or 750 px; 300 is recommended for iPods so they stay responsive).",
+    "Update a device's sync settings. Supports toggling album-artwork generation (skip_album_artwork) and choosing the generated cover.jpg size (artwork_max_dimension: 200, 300, 500, or 750 px; 300 is recommended for iPods so they stay responsive), and setting a remote (browser-held) device's capacity (capacity_gb, in GB with up to 4 decimals, or 0 to clear) — a browser cannot read a disk's size, so free space on a remote device comes from this number.",
   parameters: {
     type: "object",
     properties: {
@@ -1586,6 +1627,11 @@ const device_update_settings: AiTool = {
       skip_album_artwork: {
         type: "boolean",
         description: "When true, no album artwork is generated for this device during sync.",
+      },
+      capacity_gb: {
+        type: "number",
+        description:
+          "Remote devices only: the device's capacity in GB (1 GB = 1024^3 bytes, as the app displays it), up to 4 decimals. 0 clears it.",
       },
       artwork_max_dimension: {
         type: "number",
@@ -1600,6 +1646,9 @@ const device_update_settings: AiTool = {
     const parts: string[] = [];
     if (a.skip_album_artwork !== undefined) parts.push(`skip artwork = ${a.skip_album_artwork}`);
     if (a.artwork_max_dimension !== undefined) parts.push(`artwork size = ${a.artwork_max_dimension}px`);
+    if (a.capacity_gb !== undefined) {
+      parts.push(Number(a.capacity_gb) === 0 ? "clear capacity" : `capacity = ${a.capacity_gb} GB`);
+    }
     return `Update device #${a.device_id} settings (${parts.join(", ") || "no changes"})`;
   },
   async run(args, ctx) {
@@ -1620,6 +1669,17 @@ const device_update_settings: AiTool = {
         throw new Error("artwork_max_dimension must be one of 200, 300, 500, 750");
       }
       updates.artworkMaxDimension = dim;
+    }
+    if (args.capacity_gb !== undefined) {
+      if (device.profile.transport !== "web") {
+        throw new Error(
+          "capacity_gb applies only to a remote device; a local device's size is read from its disk"
+        );
+      }
+      // 0 (or null) clears it. Anything else is validated by updateDevice's
+      // sanitizeCapacityGb, the same check the channel gets.
+      const cap = args.capacity_gb === null ? 0 : Number(args.capacity_gb);
+      updates.capacityGb = cap === 0 ? null : cap;
     }
     if (Object.keys(updates).length === 0) {
       throw new Error("No settings provided to update");
@@ -2340,6 +2400,7 @@ export const AI_TOOLS: AiTool[] = [
   playlist_list_broken,
   playlist_repair,
   playlist_delete,
+  dev_log_read,
   web_server_status,
   web_server_configure,
   web_server_set_enabled,

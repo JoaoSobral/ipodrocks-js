@@ -121,6 +121,13 @@ interface ShadowLibraryRow {
   track_count: number;
 }
 
+/** One synced shadow file, as a device sync sees it. */
+export interface ShadowTrackRef {
+  path: string;
+  /** Size of the shadow file as last written/verified; NULL predates the column. */
+  fileSize: number | null;
+}
+
 interface ShadowTrackRow {
   id: number;
   shadow_library_id: number;
@@ -1280,19 +1287,21 @@ export class ShadowLibraryManager {
   }
 
   /**
-   * Look up shadow track paths for a given shadow library, keyed by
-   * source track ID.
+   * Look up shadow tracks for a given shadow library, keyed by source track ID.
+   *
+   * The size is the *transcode's*, which is what a device sourcing from this
+   * shadow library actually receives — see `remapTrackMapToShadow()`.
    */
   getShadowTrackMap(
     shadowLibId: number
-  ): Map<number, string> {
+  ): Map<number, ShadowTrackRef> {
     const rows = this.stmtGetShadowTracksByLib.all(
       shadowLibId
     ) as ShadowTrackRow[];
-    const map = new Map<number, string>();
+    const map = new Map<number, ShadowTrackRef>();
     for (const r of rows) {
       if (r.status === "synced") {
-        map.set(r.source_track_id, r.shadow_path);
+        map.set(r.source_track_id, { path: r.shadow_path, fileSize: r.file_size });
       }
     }
     return map;

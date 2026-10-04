@@ -146,6 +146,19 @@ it, exactly like the card.
   so nothing iPodRocks runs can unmount it. Use your own file manager.
 - **There is no USB Device dropdown.** That list is the *server's* USB bus,
   which says nothing about the device in your hand.
+- **You enter the device's capacity yourself.** A browser cannot read a disk's
+  size, so iPodRocks measures how much space is *used* by adding up the files on
+  the device, and asks you for the total. Set **Capacity (GB)** in the device's
+  profile, with up to 4 decimals (for example `74.5341`); until you do, the
+  storage line shows only what is used. The GB is the same one the app shows
+  everywhere — 1 GB is 1,073,741,824 bytes, as Windows counts it — so macOS
+  Finder will show a slightly larger number for the same disk. Free space is an
+  estimate: the filesystem's own overhead is not in the file sizes. You can also
+  ask Rocksy to set it.
+- **Big files take a while to show up as copied.** Several files travel at once,
+  so on a slow link the first one can take a minute to finish. The sync window
+  lists the files in progress with how much of each has arrived, and the bar
+  follows the bytes, not the file count.
 - **Modification times are not set on the device.** The File System Access API
   cannot set them, so the sync compares file sizes instead — which it already
   tried first. iPodRocks also measures the difference between your browser's

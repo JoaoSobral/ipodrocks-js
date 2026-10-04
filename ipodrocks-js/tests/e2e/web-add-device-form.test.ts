@@ -282,3 +282,68 @@ test("the Edit form of a remote device offers its folder, however it was added",
     await invoke(request, "device:remove", device.id);
   }
 });
+
+test("the Add form asks for a remote device's capacity, and says why", async ({ page }) => {
+  await openDevices(page);
+  await page.getByRole("button", { name: "+ Add Remote Device" }).first().click();
+
+  const dialog = page.getByRole("dialog").filter({ hasText: "Add Remote Device" });
+  // A browser cannot read a disk's size, so this is the only source of the
+  // total — and the form has to say so, or the field reads as busywork.
+  await expect(dialog.getByTestId("device-capacity")).toBeVisible();
+  await expect(dialog.getByText("Capacity (GB)")).toBeVisible();
+  await expect(dialog).toContainText("capacity can't be read in a browser");
+});
+
+test("a remote device's capacity takes four decimals and no more", async ({
+  page,
+  request,
+}) => {
+  await signIn(request);
+  const models = await invoke<Array<{ id: number }>>(request, "device:getModels");
+  const device = await invoke<{ id: number }>(request, "device:add", {
+    name: "E2E Capacity Remote",
+    transport: "web",
+    // The form refuses to save a device with no model, so give it one.
+    modelId: models[0]?.id ?? null,
+  });
+
+  try {
+    await openDevices(page);
+    const card = page
+      .getByRole("heading", { name: "E2E Capacity Remote" })
+      .locator('xpath=ancestor::*[.//button[normalize-space()="Edit"]][1]');
+    await expect(card.getByTestId("device-capacity-value")).toHaveText("Not set");
+    await card.getByRole("button", { name: "Edit" }).click();
+
+    const dialog = page.getByRole("dialog").filter({ hasText: "Capacity (GB)" });
+    const field = dialog.getByTestId("device-capacity");
+    await expect(field).toHaveValue("");
+
+    // Five decimals: refused in the form, before the server sees it.
+    await field.fill("1.23456");
+    await dialog.getByRole("button", { name: "Update Device" }).click();
+    await expect(dialog.getByTestId("device-capacity-error")).toContainText("up to 4 decimals");
+    await expect(dialog).toBeVisible();
+
+    await field.fill("1.2345");
+    await dialog.getByRole("button", { name: "Update Device" }).click();
+    await expect(dialog).toBeHidden();
+
+    // Stored exactly, and shown on the card.
+    const list = await invoke<Array<{ id: number; capacityGb?: number | null }>>(
+      request,
+      "device:list"
+    );
+    expect(list.find((d) => d.id === device.id)?.capacityGb).toBe(1.2345);
+    await expect(card.getByTestId("device-capacity-value")).toHaveText("1.2345 GB");
+
+    // And it round-trips into the Edit form.
+    await card.getByRole("button", { name: "Edit" }).click();
+    await expect(
+      page.getByRole("dialog").filter({ hasText: "Capacity (GB)" }).getByTestId("device-capacity")
+    ).toHaveValue("1.2345");
+  } finally {
+    await invoke(request, "device:remove", device.id);
+  }
+});

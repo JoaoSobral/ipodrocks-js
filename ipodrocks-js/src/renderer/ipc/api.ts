@@ -35,6 +35,7 @@ import type {
   PodcastSearchResult,
   FeedCandidate,
   PodcastFeedPreview,
+  DiskSpace,
 } from "@shared/types";
 import { isWebMode } from "./web-transport";
 
@@ -96,7 +97,7 @@ export interface CheckResult {
   podcasts: { fileCount: number; totalGb: number };
   audiobooks?: { fileCount: number; totalGb: number };
   playlists?: { fileCount: number; totalGb: number };
-  disk: { totalBytes: number; freeBytes: number; totalGb: number; freeGb: number };
+  disk: DiskSpace;
   musicSyncedWithLibrary?: number;
   musicOrphans?: number;
   musicCodecMismatch?: number;
@@ -1444,4 +1445,34 @@ export async function listServerDirectory(
   path?: string | null
 ): Promise<DirectoryListing> {
   return window.api.invoke("app:listDirectory", path ?? null) as Promise<DirectoryListing>;
+}
+
+export interface DevLogEntry {
+  seq: number;
+  at: number;
+  scope: string;
+  message: string;
+}
+
+/** True only when the server runs with the developer log on *and* the caller
+ *  is its owner — the console renders nothing otherwise. */
+export async function getDevLogStatus(): Promise<boolean> {
+  try {
+    const r = (await window.api.invoke("app:devLog:status")) as { enabled?: boolean } | null;
+    return r?.enabled === true;
+  } catch {
+    return false;
+  }
+}
+
+export async function readDevLog(
+  afterSeq: number
+): Promise<{ enabled: boolean; entries: DevLogEntry[]; lastSeq: number } | { error: string }> {
+  return window.api.invoke("app:devLog:read", afterSeq) as Promise<
+    { enabled: boolean; entries: DevLogEntry[]; lastSeq: number } | { error: string }
+  >;
+}
+
+export async function clearDevLog(): Promise<void> {
+  await window.api.invoke("app:devLog:clear");
 }

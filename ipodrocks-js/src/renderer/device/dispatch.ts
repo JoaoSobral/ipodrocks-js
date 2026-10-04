@@ -13,7 +13,6 @@ import type { DeviceRpcVerb } from "@shared/device-rpc";
 
 import {
   DeviceOpError,
-  opFreeSpace,
   opListTree,
   opMkdir,
   opPatch,
@@ -97,8 +96,6 @@ export async function dispatchDeviceRpc(
       );
     case "rename":
       return opRename(root, String(args[0]), String(args[1]));
-    case "freeSpace":
-      return opFreeSpace();
     case "pull":
       return opPull(root, String(args[0]), String(args[1]), onProgress);
     case "push":

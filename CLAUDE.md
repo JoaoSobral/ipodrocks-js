@@ -838,6 +838,41 @@ implementations now" below.
 
 Pinned in `src/__tests__/regressions/device-fs-boundary.test.ts`.
 
+## Hazard: a shadow-sourced device must be compared on the *shadow's* size
+
+`remapTrackMapToShadow()` (`ipc/common.ts`) used to copy the library record
+whole, `fileSize` included, so a shadow sync, which is a direct copy, took the
+**source FLAC's** size as the exact size the device file should have. No
+transcode ever matched, and the compare fell back to mtime. A local copy stamps
+the mtime, so the desktop never noticed. A browser-held device cannot
+(`capabilities.setMtime` is false). So a remote shadow device reported "0 synced,
+N to sync, 0 orphans" on every check and re-copied every transcode on every sync.
+`getShadowTrackMap()` now returns `{ path, fileSize }` from
+`shadow_tracks.file_size`, and the remap writes it into both `fileSize` and
+`file_size`. A NULL (a pre-column row) becomes 0, which the compare reads as
+"judge by mtime alone".
+
+**An e2e for this must backdate the shadow files.** A shadow built seconds
+before the sync is within the mtime fallback's 2.5 s tolerance of the copy, so
+the bug hides. `tests/e2e/web-device-shadow-sync.test.ts` sets them a week old,
+and without that it passed against the unfixed code.
+
+### The developer log
+
+`IPODROCKS_DEV_LOGS=1` (or the daemon's `--dev-logs`) turns on
+`utils/dev-log.ts`: a bounded ring, echoed to stdout, served by
+`app:devLog:{status,read,clear}` and Rocksy's `dev_log_read`, and rendered by
+`DevConsole`. **All of it is owner-only**: it holds every device's diagnostics
+and the server's paths. A guest's `status` says "off" and its `read` is
+refused. `logCompareDiagnostics()` (`sync/compare-diagnostics.ts`) runs after
+every check and sync compare and says, for a sample of to-sync tracks, whether
+each was missing or found and refused, and on what. `RemoteDeviceFs.call()` logs
+every failed device RPC, because its readers degrade failures to `[]`/`null`. A
+disabled log must cost a branch: pass a function for anything expensive to
+format. The `web` Playwright project runs with the flag on, so every web spec
+exercises the instrumentation. Pinned in
+`regressions/dev-log-diagnostics.test.ts` and e2e `web-dev-log`.
+
 ## Hazard: a handler that takes a path from the client mints capabilities with it
 
 `player:prepare` took the whole `Track` the renderer was holding and used
@@ -937,7 +972,7 @@ on POSIX, `C:\ipodrocks-web\<id>` on Windows — that exists on no filesystem.
   the attach verdicts are all scoped the same way — closing one of two tabs
   must not take the other tab's device down with it.
 
-### The three things the File System Access API does not do
+### The four things the File System Access API does not do
 
 - **It has no NFC/NFD forgiveness.** `getDirectoryHandle("Album")` matches one
   exact name; macOS and Windows resolve either form for you and this does not.
@@ -963,6 +998,30 @@ on POSIX, `C:\ipodrocks-web\<id>` on Windows — that exists on no filesystem.
   index backup matters *more* here, not less. A tab dying mid-write also leaves
   `.crswap` junk on the device: `Device.getTracks` filters on `AUDIO_EXTENSIONS`
   so it never sees them, but Rockbox will.
+- **It cannot read a disk's size.** `navigator.storage.estimate()` is the
+  *origin's* quota, and reporting it made a remote iPod read "0.0 GB / 10.0 GB".
+  `REMOTE_CAPABILITIES.freeSpace` is false and there is no `freeSpace` RPC any
+  more. `Device.getAvailableSpace()` measures used space with one `listTree` of
+  the device root, and takes the total from `devices.capacity_gb`: user-entered,
+  in the app's GB (1024³), up to 4 decimals (`sanitizeCapacityGb()`). The result
+  is tagged with `DiskSpace.source` (`filesystem` / `estimated` / `used-only`),
+  and the UI shows no bar and no "free" for `used-only`. Without that, free
+  space read as 0 and every remote device rendered red. Pinned in
+  `regressions/remote-device-capacity.test.ts` and e2e `web-device-capacity`.
+
+### Hazard: a slow link makes a working sync look hung
+
+Four copies share the link, so on a few MB/s nothing *finishes* for a minute.
+`copy` is emitted on completion only, so the modal used to show "0 / N copied, 0%"
+over a sync moving data the whole time. The sync's phase lines also went into a
+`statusMessages` list that nothing rendered. Now the executor emits
+`copy_start` and per-file progress (`bytes.inflight`), `copyMissingTracks()`
+announces `total_bytes` for direct copies so the bar follows bytes, and the
+Progress box is one feed of log and file lines. `sync:status` carries
+`totalBytes`/`inflight` so a re-joining tab sees the same. **A transcode emits
+no `total_bytes`**, because its output size is unknown, and the bar falls back
+to the count. Pinned in `regressions/sync-progress-inflight.test.ts`,
+`sync-progress-modal.test.tsx` and e2e `web-sync-progress`.
 
 ### Hazard: the browser's clock is not the server's
 

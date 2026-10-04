@@ -6,7 +6,7 @@ import { ErrorBox } from "./ErrorBox";
 import { ProgressBar } from "./ProgressBar";
 import { Spinner } from "./Spinner";
 import { checkDevice } from "../../ipc/api";
-import { formatGb } from "../../utils/format";
+import { describeDiskSpace, formatGb } from "../../utils/format";
 import type { CheckResult } from "../../ipc/api";
 
 /**
@@ -177,14 +177,23 @@ export function DeviceStatusCard({ deviceId, refreshKey = 0 }: DeviceStatusCardP
     .join(" · ");
 
   const disk = result?.disk;
-  const totalGb = disk?.totalGb ?? 0;
-  const freeGb = disk?.freeGb ?? 0;
-  const usedGb = totalGb - freeGb;
-  const usedPct = totalGb > 0 ? (usedGb / totalGb) * 100 : 0;
+  const space = disk ? describeDiskSpace(disk) : null;
+  const totalGb = space?.totalGb ?? 0;
+  const freeGb = space?.freeGb ?? 0;
+  const usedGb = space?.usedGb ?? 0;
+  const usedPct = space?.usedPct ?? 0;
   // A nearly-full device is the one thing here that can make a sync fail
   // halfway, so it escalates all the way to red rather than stopping at amber.
-  const diskTone: "ok" | "warn" | "crit" =
-    freeGb < 1 || usedPct >= 95 ? "crit" : usedPct >= 80 ? "warn" : "ok";
+  // With no known total (a remote device, no capacity entered) there is no
+  // "nearly full" to judge — reading free as 0 used to paint every remote
+  // device red.
+  const diskTone: "ok" | "warn" | "crit" = !space?.hasTotal
+    ? "ok"
+    : freeGb < 1 || usedPct >= 95
+      ? "crit"
+      : usedPct >= 80
+        ? "warn"
+        : "ok";
   const diskBarColor = {
     ok: "var(--success)",
     warn: "var(--warning)",
@@ -321,15 +330,31 @@ export function DeviceStatusCard({ deviceId, refreshKey = 0 }: DeviceStatusCardP
                   <span className={`text-sm font-semibold tabular-nums ${diskTextClass}`}>
                     {formatGb(usedGb)}
                     <span className="text-muted-foreground font-normal">
-                      {" / "}
-                      {formatGb(totalGb)}
+                      {space?.hasTotal ? (
+                        <>
+                          {" / "}
+                          {formatGb(totalGb)}
+                        </>
+                      ) : (
+                        " used"
+                      )}
                     </span>
                   </span>
                 </div>
-                <ProgressBar className="mt-2" value={usedPct} color={diskBarColor} />
-                <p className="mt-1.5 text-[10px] text-muted-foreground">
-                  {formatGb(freeGb)} free · {Math.round(usedPct)}% used
-                </p>
+                {space?.hasTotal ? (
+                  <>
+                    <ProgressBar className="mt-2" value={usedPct} color={diskBarColor} />
+                    <p className="mt-1.5 text-[10px] text-muted-foreground">
+                      {formatGb(freeGb)} free{space.estimated ? " (estimated)" : ""} ·{" "}
+                      {Math.round(usedPct)}% used
+                    </p>
+                  </>
+                ) : (
+                  <p className="mt-1.5 text-[10px] text-muted-foreground">
+                    A browser can&apos;t read the device&apos;s size. Add its capacity in the
+                    device profile to see free space.
+                  </p>
+                )}
               </div>
             )}
           </div>

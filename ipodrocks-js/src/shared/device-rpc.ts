@@ -61,7 +61,6 @@ export type DeviceRpcVerb =
   | "rm"
   | "rmMany"
   | "rename"
-  | "freeSpace"
   | "pull"
   | "push";
 
@@ -158,11 +157,6 @@ export interface RpcStat {
   isDirectory: boolean;
 }
 
-export interface RpcFreeSpace {
-  totalBytes: number;
-  freeBytes: number;
-}
-
 /**
  * How long the server waits for one control-plane reply.
  *
@@ -209,7 +203,6 @@ export const RETRYABLE_DEVICE_VERBS: ReadonlySet<DeviceRpcVerb> = new Set<Device
   "rmdir",
   "rm",
   "rmMany",
-  "freeSpace",
   "pull",
   "push",
 ]);
