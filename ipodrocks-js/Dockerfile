@@ -79,7 +79,7 @@ RUN npm run build
 FROM debian:trixie-slim AS encoders
 RUN apt-get update \
  && apt-get install -y --no-install-recommends musepack-tools \
- && ldd /usr/bin/mpcenc | awk '$1 !~ /^(linux-vdso|libm|libc|\/lib64\/ld-linux|ld-linux)/ { bad=1; print "unexpected dependency: " $0 } END { exit bad }' \
+ && ldd /usr/bin/mpcenc | awk '$1 !~ /^(linux-vdso|libm|libc|\/lib(64)?\/ld-linux|ld-linux)/ { bad=1; print "unexpected dependency: " $0 } END { exit bad }' \
  && mkdir -p /out/bin /out/data /out/music \
  && cp /usr/bin/mpcenc /out/bin/mpcenc \
  && ln -s /nodejs/bin/node /out/bin/node \
