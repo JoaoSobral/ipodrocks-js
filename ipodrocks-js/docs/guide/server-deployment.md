@@ -301,6 +301,7 @@ Server when the desktop app is hosting; the environment always wins.
 | `IPODROCKS_FACEBOOK_CLIENT_ID` / `_SECRET` | — | Facebook sign-in. |
 | `IPODROCKS_CF_ACCESS_TEAM_DOMAIN` / `_AUD` | — | Verify Cloudflare Access assertions. |
 | `IPODROCKS_RESET_OWNER` | — | `1` prints a one-time owner password-reset token at boot. Remove it once used — see [Forgot your password](/guide/server-setup#forgot-your-password). |
+| `IPODROCKS_DEV_LOGS` | — | `1` turns on the developer log (same as `npm run server -- --dev-logs`). A device check and a sync then explain themselves: what was found on the device, why each track is synced or to-sync, and every device request that failed. It goes to stdout and to a **dev log** console in the app, which only the owner sees. It records library and device paths, so leave it off when you are not debugging. |
 
 OAuth client secrets are environment-only on purpose. They belong to someone
 else's console and have no business in a file the app rewrites on every settings
@@ -318,6 +319,13 @@ the target machine rather than copying `node_modules` across.
 `node dist/main/server/cli.js password <username>` on the server
 (`docker exec -it` in a container), or boot once with
 `IPODROCKS_RESET_OWNER=1`. See [Forgot your password](/guide/server-setup#forgot-your-password).
+
+**A device check or sync reports numbers you don't believe** (e.g. "0 synced" for
+a player that holds the songs, or everything re-copying every time). Restart with
+`IPODROCKS_DEV_LOGS=1`, repeat the check, and open **dev log** in the app's
+bottom-left corner (or read stdout). For every track still to sync, the
+`check:music` lines say whether it was missing from the device or found and
+refused, and on what: size or mtime. You can also ask Rocksy to read the dev log.
 
 **Everyone is logged out after a restart.** `IPODROCKS_SESSION_SECRET` is unset,
 so a random one was generated at boot.

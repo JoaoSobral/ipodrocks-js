@@ -207,7 +207,9 @@ describe("NodeDeviceFs and RemoteDeviceFs agree", () => {
     });
     expect(remoteFs().capabilities).toEqual({
       setMtime: false,
-      freeSpace: true,
+      // A browser cannot read a disk's size; `Device.getAvailableSpace()`
+      // measures used space and takes the total from the entered capacity.
+      freeSpace: false,
       eject: false,
       // Not a missing ability but a fact the copy loop adapts to: every call
       // crosses a network, so its concurrency follows how the link copes.

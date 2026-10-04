@@ -32,7 +32,6 @@ import type { DiskSpace } from "../../../shared/types";
 import {
   RM_MANY_CHUNK,
   type RpcDirent,
-  type RpcFreeSpace,
   type RpcRemoveResult,
   type RpcStat,
   type RpcTreeEntry,
@@ -52,6 +51,7 @@ import {
   type RemoveResult,
 } from "./device-fs";
 import type { DeviceRpcTransport } from "./device-transport";
+import { devLog } from "../../utils/dev-log";
 
 /**
  * What a browser-held device cannot do.
@@ -64,7 +64,9 @@ import type { DeviceRpcTransport } from "./device-transport";
  */
 const REMOTE_CAPABILITIES: DeviceFsCapabilities = {
   setMtime: false,
-  freeSpace: true,
+  // The API cannot read a disk's size. `Device.getAvailableSpace()` measures
+  // used space and takes the total from the user-entered capacity instead.
+  freeSpace: false,
   eject: false,
   overNetwork: true,
 };
@@ -193,6 +195,14 @@ export class RemoteDeviceFs implements DeviceFs {
       return await this.transport.call<T>(verb, args);
     } catch (err) {
       const e = err as { message?: string; code?: string };
+      // Most readers degrade a failure to `null` or `[]` on purpose, so a
+      // failing device is otherwise indistinguishable from an empty one.
+      devLog(
+        "device-rpc",
+        () =>
+          `${verb} ${JSON.stringify(typeof args[0] === "string" ? args[0] : "")} failed: ` +
+          `${e?.code ?? "no code"} ${e?.message ?? String(err)}`
+      );
       throw new RemoteFsError(e?.message ?? String(err), e?.code);
     }
   }
@@ -255,6 +265,7 @@ export class RemoteDeviceFs implements DeviceFs {
       // One call for the whole tree. Four hundred files is four hundred round
       // trips done one at a time and one frame done properly.
       entries = await this.call<RpcTreeEntry[]>("listTree", [baseRel]);
+      devLog("device-rpc", () => `listTree ${JSON.stringify(baseRel)}: ${entries.length} entr(ies)`);
     } catch (err) {
       this.rethrowIfDetached(err);
       return [];
@@ -432,18 +443,12 @@ export class RemoteDeviceFs implements DeviceFs {
     );
   }
 
+  /**
+   * Always null: a browser cannot read a disk's size. The old answer here was
+   * `navigator.storage.estimate()` — the browser's own origin quota, which
+   * rendered as a "10 GB" iPod. See `Device.getAvailableSpace()`.
+   */
   async freeSpace(): Promise<DiskSpace | null> {
-    try {
-      const s = await this.call<RpcFreeSpace | null>("freeSpace", []);
-      if (!s) return null;
-      return {
-        totalBytes: s.totalBytes,
-        freeBytes: s.freeBytes,
-        totalGb: s.totalBytes / 1024 ** 3,
-        freeGb: s.freeBytes / 1024 ** 3,
-      };
-    } catch {
-      return null;
-    }
+    return null;
   }
 }

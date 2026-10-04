@@ -11,6 +11,7 @@ import { registerIpcHandlers } from "../main/ipc";
 import { ensureServerStarted, stopServerIfRunning } from "./index";
 import { getFfmpegPath } from "../main/utils/ffmpeg-path";
 import { isMpcencAvailable } from "../main/utils/mpcenc";
+import { isDevLogEnabled } from "../main/utils/dev-log";
 
 /**
  * Says which encoders this process actually found.
@@ -39,6 +40,14 @@ function reportEncoders(): void {
 }
 
 async function main(): Promise<void> {
+  // `--dev-logs` is the same switch as `IPODROCKS_DEV_LOGS=1`, spelled for a
+  // command line (`npm run server -- --dev-logs`). Set before anything reads it.
+  if (process.argv.includes("--dev-logs")) process.env.IPODROCKS_DEV_LOGS = "1";
+  if (isDevLogEnabled()) {
+    console.log(
+      "[server] developer log: ON — diagnostics go to stdout and to the owner's in-app console"
+    );
+  }
   setHost(createNodeHost());
   registerIpcHandlers();
   reportEncoders();

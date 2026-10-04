@@ -258,6 +258,10 @@ CREATE TABLE IF NOT EXISTS devices (
     dev_mode BOOLEAN NOT NULL DEFAULT 0,
     skip_album_artwork BOOLEAN NOT NULL DEFAULT 0,
     artwork_max_dimension INTEGER NOT NULL DEFAULT 300,
+    -- A remote (browser-held) device's capacity in GB (1024^3), entered by the
+    -- user: the File System Access API cannot read a disk's size. NULL when
+    -- unset, and on every local device, which reads the real figure off statfs.
+    capacity_gb REAL,
     vbr_enabled BOOLEAN NOT NULL DEFAULT 0,
     -- 'local' is a folder on the machine running the sync; 'web' is a folder
     -- held open in a browser tab and reached over the device RPC. The column

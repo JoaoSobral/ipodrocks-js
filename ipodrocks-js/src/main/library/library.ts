@@ -2,7 +2,7 @@ import { LibraryFolder, ShadowBuildProgress, ShadowLibrary, Track } from "../../
 import { AppDatabase } from "../database/database";
 import { ContentHash, HashManager } from "./hash-manager";
 import { LibraryCore } from "./library-core";
-import { ShadowLibraryManager } from "./shadow-library";
+import { ShadowLibraryManager, type ShadowTrackRef } from "./shadow-library";
 
 type ContentType = "music" | "podcast" | "audiobook";
 
@@ -319,7 +319,7 @@ export class Library {
     }
   }
 
-  getShadowTrackMap(shadowLibId: number): Map<number, string> {
+  getShadowTrackMap(shadowLibId: number): Map<number, ShadowTrackRef> {
     return this.shadowManager.getShadowTrackMap(shadowLibId);
   }
 

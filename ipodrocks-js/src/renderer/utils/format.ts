@@ -63,3 +63,37 @@ export function formatShadowSize(bytes: number): string {
 export function formatGb(gb: number): string {
   return `${gb.toFixed(1)} GB`;
 }
+
+/**
+ * A device's storage, read the same way by every panel that shows it.
+ *
+ * `hasTotal` is false for a remote device with no capacity entered: the
+ * browser cannot read a disk's size, so only the used figure is real and a
+ * bar or a "free" number would be invented.
+ */
+export function describeDiskSpace(disk: {
+  totalGb?: number;
+  freeGb?: number;
+  usedGb?: number;
+  source?: "filesystem" | "estimated" | "used-only";
+}): {
+  usedGb: number;
+  totalGb: number;
+  freeGb: number;
+  usedPct: number;
+  hasTotal: boolean;
+  estimated: boolean;
+} {
+  const totalGb = disk.totalGb ?? 0;
+  const freeGb = disk.freeGb ?? 0;
+  const usedGb = disk.usedGb ?? Math.max(0, totalGb - freeGb);
+  const hasTotal = disk.source !== "used-only" && totalGb > 0;
+  return {
+    usedGb,
+    totalGb,
+    freeGb,
+    usedPct: hasTotal ? Math.min(100, (usedGb / totalGb) * 100) : 0,
+    hasTotal,
+    estimated: disk.source === "estimated",
+  };
+}

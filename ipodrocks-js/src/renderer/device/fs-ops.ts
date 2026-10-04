@@ -359,30 +359,6 @@ export async function opRename(
   }
 }
 
-/**
- * What the browser can say about free space.
- *
- * `navigator.storage.estimate()` describes the *origin's* quota, not the
- * removable volume, so it is only meaningful for an OPFS-backed device. For a
- * real picked folder there is no API at all and the answer is null, which
- * `Device.getAvailableSpace` degrades to zeroes — it is a UI label and nothing
- * decides anything from it.
- */
-export async function opFreeSpace(): Promise<{
-  totalBytes: number;
-  freeBytes: number;
-} | null> {
-  try {
-    const estimate = await navigator.storage?.estimate?.();
-    if (!estimate || estimate.quota === undefined) return null;
-    const total = estimate.quota;
-    const used = estimate.usage ?? 0;
-    return { totalBytes: total, freeBytes: Math.max(0, total - used) };
-  } catch {
-    return null;
-  }
-}
-
 /** Bytes moved so far on one transfer. */
 export type ProgressFn = (bytes: number, total: number | null) => void;
 

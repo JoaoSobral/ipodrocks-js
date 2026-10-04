@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import type { Dispatch, MutableRefObject, SetStateAction } from "react";
-import type { SyncOptions, SyncProgress, SyncStatusSnapshot } from "@shared/types";
+import type { InflightFile, SyncOptions, SyncProgress, SyncStatusSnapshot } from "@shared/types";
 import { startSync, cancelSync, onSyncProgress, getSyncStatus } from "@renderer/ipc/api";
 import { getWebTransport, isWebMode } from "@renderer/ipc/web-transport";
 import { useKeepTabAlive } from "@renderer/device/keep-alive";
@@ -15,6 +15,18 @@ interface RecentItem {
   event: string;
   status: SyncProgress["status"];
 }
+
+/**
+ * One line of the Progress box: either something the sync said ("Comparing
+ * library with device…") or a file that finished. Both used to exist, but only
+ * the files were rendered — so for the whole of a long preparing phase, and
+ * until the first file of a slow copy landed, the box said "Preparing…" while
+ * the sync was busily explaining itself into a list nobody could see.
+ */
+type FeedInput =
+  | { kind: "log"; text: string }
+  | { kind: "file"; path: string; event: string; status: SyncProgress["status"] };
+type FeedEntry = FeedInput & { id: number };
 
 export interface SyncCompleteResult {
   synced: number;
@@ -107,6 +119,8 @@ function appendCappedLog(
 }
 
 const LOG_BUFFER_CAP = 200;
+/** Lines kept in the Progress box. */
+const FEED_CAP = 200;
 
 const EMPTY_SKIP_BREAKDOWN = {
   music: 0,
@@ -151,6 +165,11 @@ export function SyncProgressModal({
 }: SyncProgressModalProps) {
   const [progress, setProgress] = useState<SyncProgress | null>(null);
   const [recentItems, setRecentItems] = useState<RecentItem[]>([]);
+  const [feed, setFeed] = useState<FeedEntry[]>([]);
+  /** Files on their way right now, by source path. */
+  const [inflight, setInflight] = useState<Map<string, InflightFile>>(() => new Map());
+  /** What the direct copies will move in all; 0 when unknown (transcodes). */
+  const [totalBytes, setTotalBytes] = useState(0);
   const [statusMessages, setStatusMessages] = useState<LogEntry[]>([]);
   const [logLines, setLogLines] = useState<LogEntry[]>([]);
   const [totalItems, setTotalItems] = useState(0);
@@ -182,6 +201,7 @@ export function SyncProgressModal({
   const rateSamplesRef = useRef<{ t: number; total: number }[]>([]);
 
   const listRef = useRef<HTMLDivElement>(null);
+  const feedIdRef = useRef(0);
   const logRef = useRef<HTMLDivElement>(null);
   const itemIdRef = useRef(0);
   const logIdRef = useRef(0);
@@ -210,13 +230,46 @@ export function SyncProgressModal({
   const summaryCopied = Math.max(copiedItems, reportedSynced ?? 0);
   const summaryProcessed = Math.max(processedItems, summaryCopied);
   const didSomething = summaryProcessed > 0;
-  const rawPct = totalItems > 0 ? Math.round((processedItems / totalItems) * 100) : 0;
+  // Bytes when the total is known (direct copies), so the bar moves as data
+  // does; a count-based bar sits at 0% until the first whole file lands, which
+  // on a slow link is long enough to read as a hung sync. Never behind the
+  // count, which also covers artwork and playlists the byte total does not.
+  const countPct = totalItems > 0 ? (processedItems / totalItems) * 100 : 0;
+  const bytePct = totalBytes > 0 ? (bytesTotal / totalBytes) * 100 : 0;
+  const rawPct = Math.round(Math.max(countPct, bytePct));
   // On a clean finish the bar should read 100% even when the backend's pre-count
   // (totalItems) ended up higher than the number of items actually copied.
   const pct = finished && !error && !cancelled ? 100 : Math.min(rawPct, 100);
 
+  const pushFeed = useCallback((entry: FeedInput) => {
+    setFeed((prev) => {
+      const next: FeedEntry[] = [...prev, { ...entry, id: ++feedIdRef.current }];
+      return next.length > FEED_CAP ? next.slice(-FEED_CAP) : next;
+    });
+  }, []);
+
   const handleProgress = useCallback((p: SyncProgress) => {
+    if (p.event === "copy_start") {
+      setInflight((prev) => {
+        const next = new Map(prev);
+        next.set(p.path, { path: p.path, done: 0, total: p.bytes ?? null });
+        return next;
+      });
+      return;
+    }
+
+    if (p.event === "total_bytes") {
+      setTotalBytes((n) => n + (Number(p.bytes) || 0));
+      return;
+    }
+
     if (p.event === "bytes") {
+      if (Array.isArray(p.inflight)) {
+        // The server's view of what is in flight is complete, so it replaces
+        // ours rather than merging — a file whose `copy` frame was lost does
+        // not linger as "copying" for ever.
+        setInflight(new Map(p.inflight.map((f) => [f.path, f])));
+      }
       const total = bytesTotalRef.current + (Number(p.bytes) || 0);
       bytesTotalRef.current = total;
       setBytesTotal(total);
@@ -234,6 +287,7 @@ export function SyncProgressModal({
       setWaitingReason(p.state === "waiting" ? (p.message ?? "Waiting for the device…") : null);
       if (p.message) {
         appendCappedLog(setStatusMessages, statusIdRef, p.message, LOG_BUFFER_CAP);
+        pushFeed({ kind: "log", text: p.message });
       }
       return;
     }
@@ -241,7 +295,9 @@ export function SyncProgressModal({
     setProgress(p);
 
     if (p.event === "log") {
-      appendCappedLog(setStatusMessages, statusIdRef, p.message ?? p.path ?? "", LOG_BUFFER_CAP);
+      const text = p.message ?? p.path ?? "";
+      appendCappedLog(setStatusMessages, statusIdRef, text, LOG_BUFFER_CAP);
+      if (text) pushFeed({ kind: "log", text });
       return;
     }
 
@@ -258,6 +314,13 @@ export function SyncProgressModal({
     }
 
     if (p.event === "copy") {
+      setInflight((prev) => {
+        if (!prev.has(p.path)) return prev;
+        const next = new Map(prev);
+        next.delete(p.path);
+        return next;
+      });
+      pushFeed({ kind: "file", path: p.path, event: p.event, status: p.status });
       setProcessedItems((n) => {
         const next = n + 1;
         processedItemsRef.current = next;
@@ -291,7 +354,7 @@ export function SyncProgressModal({
       setFinished(true);
     }
     if (p.status === "error") setError(p.path || p.message || "Sync failed");
-  }, []);
+  }, [pushFeed]);
 
   useEffect(() => {
     if (finished && elapsedInterval.current) {
@@ -338,6 +401,9 @@ export function SyncProgressModal({
 
     setProgress(null);
     setRecentItems([]);
+    setFeed([]);
+    setInflight(new Map());
+    setTotalBytes(0);
     setStatusMessages([]);
     setLogLines([]);
     setTotalItems(0);
@@ -463,9 +529,14 @@ export function SyncProgressModal({
     copiedItemsRef.current = snap.synced;
     bytesTotalRef.current = snap.bytes;
     setBytesTotal(snap.bytes);
+    setTotalBytes(snap.totalBytes ?? 0);
+    setInflight(new Map((snap.inflight ?? []).map((f) => [f.path, f])));
     setWaitingReason(snap.state === "waiting" ? (snap.reason ?? "Waiting for the device…") : null);
     if (snap.log.length > 0) {
       setStatusMessages(snap.log.map((text) => ({ id: ++statusIdRef.current, text })));
+      // A rejoined modal has no file history to show, but it can show what the
+      // sync has been saying.
+      setFeed(snap.log.map((text) => ({ id: ++feedIdRef.current, kind: "log" as const, text })));
     }
   }
 
@@ -487,7 +558,7 @@ export function SyncProgressModal({
 
   useEffect(() => {
     if (listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight;
-  }, [recentItems]);
+  }, [feed]);
 
   useEffect(() => {
     if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
@@ -538,9 +609,11 @@ export function SyncProgressModal({
             <span className="truncate max-w-[50%]">
               {progress?.event === "log" && progress?.message
                 ? progress.message
-                : progress?.path
-                  ? pathBasename(progress.path)
-                  : "Preparing…"}
+                : inflight.size > 0
+                  ? `Copying ${pathBasename([...inflight.keys()][inflight.size - 1])}`
+                  : progress?.path
+                    ? pathBasename(progress.path)
+                    : "Preparing…"}
             </span>
             <div className="flex gap-4 tabular-nums shrink-0">
               <span className="text-success font-medium">{copiedItems} / {totalItems || "?"} copied</span>
@@ -558,11 +631,13 @@ export function SyncProgressModal({
             <span>{formatBytes(bytesTotal)} transferred</span>
             <span>
               {formatRate(rate)}
-              {rate > 0 && copiedItems > 0 && totalItems > processedItems
-                ? ` · ${formatEta(
-                    ((totalItems - processedItems) * (bytesTotal / copiedItems)) / rate
-                  )}`
-                : ""}
+              {rate > 0 && totalBytes > bytesTotal
+                ? ` · ${formatEta((totalBytes - bytesTotal) / rate)}`
+                : rate > 0 && copiedItems > 0 && totalItems > processedItems
+                  ? ` · ${formatEta(
+                      ((totalItems - processedItems) * (bytesTotal / copiedItems)) / rate
+                    )}`
+                  : ""}
             </span>
           </div>
         )}
@@ -574,6 +649,31 @@ export function SyncProgressModal({
             className="rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-warning"
           >
             {waitingReason}
+          </div>
+        )}
+
+        {!finished && inflight.size > 0 && (
+          <div className="flex flex-col gap-1.5" data-testid="sync-inflight">
+            <span className="text-xs font-medium text-muted-foreground">In progress</span>
+            {[...inflight.values()].map((f) => (
+              <div key={f.path} className="text-xs" data-testid="sync-inflight-file">
+                <div className="flex justify-between gap-2 text-muted-foreground">
+                  <span className="truncate">⏳ {pathBasename(f.path)}</span>
+                  <span className="shrink-0 tabular-nums">
+                    {formatBytes(f.done)}
+                    {f.total != null ? ` / ${formatBytes(f.total)}` : ""}
+                  </span>
+                </div>
+                {f.total != null && f.total > 0 && (
+                  <div className="mt-0.5 h-1 rounded bg-muted">
+                    <div
+                      className="h-1 rounded bg-primary/60"
+                      style={{ width: `${Math.min(100, (f.done / f.total) * 100)}%` }}
+                    />
+                  </div>
+                )}
+              </div>
+            ))}
           </div>
         )}
 
@@ -593,29 +693,48 @@ export function SyncProgressModal({
           ref={listRef}
           className="h-40 overflow-y-auto rounded-lg border border-border bg-muted/30 p-3 text-xs font-mono"
         >
-          {recentItems.length === 0 && (
-            <p className={finished ? "text-sm font-bold text-foreground" : "text-muted-foreground"}>
-              {finished
-                ? cancelled
-                  ? "Sync was cancelled."
-                  : didSomething
-                    ? // The per-file lines never arrived, but the sync itself
-                      // reported what it did. Saying "nothing to sync" here is
-                      // the one wrong answer: it reads as data loss to anyone
-                      // who just watched an album go across.
-                      `Synced ${summaryCopied} item${summaryCopied === 1 ? "" : "s"}.`
-                    : "Nothing to sync — device up to date."
-                : hasReceivedTotalRef.current && totalItems > 0
-                  ? "Preparing files for sync…"
-                  : "Waiting for sync…"}
+          {feed.length === 0 && !finished && (
+            <p className="text-muted-foreground">
+              {hasReceivedTotalRef.current && totalItems > 0
+                ? "Preparing files for sync…"
+                : "Waiting for sync…"}
             </p>
           )}
-          {recentItems.map((item) => (
-            <div key={item.id} className="flex items-start gap-2 py-0.5 text-muted-foreground">
-              <span className="shrink-0">{itemStatusIcon(item.status, item.event)}</span>
-              <span className="truncate">{item.path}</span>
-            </div>
-          ))}
+          {feed.map((item) =>
+            item.kind === "log" ? (
+              <div
+                key={item.id}
+                className="py-0.5 text-muted-foreground/80 whitespace-pre-wrap break-words"
+                data-testid="sync-feed-log"
+              >
+                {item.text}
+              </div>
+            ) : (
+              <div
+                key={item.id}
+                className="flex items-start gap-2 py-0.5 text-muted-foreground"
+                data-testid="sync-feed-file"
+              >
+                <span className="shrink-0">{itemStatusIcon(item.status, item.event)}</span>
+                <span className="truncate">{item.path}</span>
+              </div>
+            )
+          )}
+          {/* The verdict, when no per-file line says it already. After the
+              feed rather than instead of it: the phase lines stay readable. */}
+          {finished && !feed.some((f) => f.kind === "file") && (
+            <p className="text-sm font-bold text-foreground pt-1">
+              {cancelled
+                ? "Sync was cancelled."
+                : didSomething
+                  ? // The per-file lines never arrived, but the sync itself
+                    // reported what it did. Saying "nothing to sync" here is
+                    // the one wrong answer: it reads as data loss to anyone
+                    // who just watched an album go across.
+                    `Synced ${summaryCopied} item${summaryCopied === 1 ? "" : "s"}.`
+                  : "Nothing to sync — device up to date."}
+            </p>
+          )}
         </div>
 
         {/* Conversion log */}

@@ -36,6 +36,8 @@ import { logActivity } from "../activity/activity-logger";
 import { invalidateAssistantCache } from "../assistant/assistantChat";
 import type { AddDeviceConfig } from "../../shared/types";
 import { callerSubject } from "../../server/auth/sessions";
+import { logCompareDiagnostics } from "../sync/compare-diagnostics";
+import { devLog, isDevLogEnabled } from "../utils/dev-log";
 
 export function registerDeviceHandlers(): void {
   bridgeHandle(
@@ -314,7 +316,14 @@ export function registerDeviceHandlers(): void {
           device.profile.shadowLibraryId
         );
 
+        const unshadowed = Object.keys(libraryMusicMap).length;
         libraryMusicMap = remapTrackMapToShadow(libraryMusicMap, shadowTrackMap);
+        devLog(
+          "check",
+          () =>
+            `shadow #${device.profile.shadowLibraryId}: ${Object.keys(libraryMusicMap).length} of ` +
+            `${unshadowed} library music track(s) have a finished transcode; the rest are not compared`
+        );
         libraryPodcastMap = remapTrackMapToShadow(libraryPodcastMap, shadowTrackMap);
         libraryAudiobookMap = remapTrackMapToShadow(libraryAudiobookMap, shadowTrackMap);
 
@@ -407,6 +416,38 @@ export function registerDeviceHandlers(): void {
           libraryExpectedMtimes: audiobookDest.expectedMtimes,
         }
       );
+
+      if (isDevLogEnabled()) {
+        devLog(
+          "check",
+          `device ${deviceId} "${device.name}" transport ${device.profile.transport ?? "local"}, ` +
+            `source ${device.profile.sourceLibraryType ?? "primary"}` +
+            (device.profile.shadowLibraryId != null
+              ? ` (shadow #${device.profile.shadowLibraryId})`
+              : "") +
+            `, codec ${codecName}, layout ${preserveFolderStructure ? "mirror" : albumGrouping}; ` +
+            `device fs: setMtime ${device.fs.capabilities.setMtime}, overNetwork ${device.fs.capabilities.overNetwork}; ` +
+            `space ${space.source ?? "unknown"}: used ${space.usedBytes ?? "?"} B, total ${space.totalBytes} B` +
+            (device.profile.capacityGb != null ? ` (capacity ${device.profile.capacityGb} GB entered)` : "")
+        );
+        const sections = [
+          ["music", musicDest, musicCompare, deviceMusicMap],
+          ["podcast", podcastDest, podcastCompare, devicePodcastMap],
+          ["audiobook", audiobookDest, audiobookCompare, deviceAudiobookMap],
+        ] as const;
+        for (const [type, dest, result, deviceMap] of sections) {
+          logCompareDiagnostics({
+            label: `check:${type}`,
+            destMap: dest.destMap,
+            expectedSizes: dest.expectedSizes,
+            expectedMtimes: dest.expectedMtimes,
+            deviceContentPath: device.getContentPath(type),
+            deviceFilesMap: deviceMap,
+            result,
+            profileCodecExt,
+          });
+        }
+      }
 
       const playlistFolder = device.getContentPath("playlist");
       let playlistOrphans: string[] = [];

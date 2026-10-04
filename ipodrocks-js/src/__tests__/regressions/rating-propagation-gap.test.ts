@@ -418,7 +418,7 @@ describe("the sync selection a shadow-backed device propagates against", () => {
         "/music/a.flac": { id: 7, path: "/music/a.flac", title: "A" },
         "/music/b.flac": { id: 8, path: "/music/b.flac", title: "B" },
       },
-      new Map([[7, "/shadow/a.mpc"]])
+      new Map([[7, { path: "/shadow/a.mpc", fileSize: 1234 }]])
     );
 
     expect(Object.keys(remapped)).toEqual(["/shadow/a.mpc"]);

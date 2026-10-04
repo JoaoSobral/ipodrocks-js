@@ -284,4 +284,69 @@ describe("SyncProgressModal album-artwork failures", () => {
     expect(onComplete.mock.calls[0][0]).toMatchObject({ status: "warning", artworkErrors: 0 });
     expect(screen.queryByText(/Album artwork failed/i)).toBeNull();
   });
+
+});
+
+// A remote sync over a few MB/s used to look hung: four large files share
+// the link, nothing *finishes* for a minute, and the modal only ever showed
+// finished files and a count-based percentage — "0 / 2921 copied, 0%" with
+// "Preparing files for sync…" over a sync that was moving data the whole
+// time, and every phase message it sent was kept in a list nobody rendered.
+describe("progress before the first file lands", () => {
+  it("renders what the sync says, not just the files", async () => {
+    render(<SyncProgressModal open onClose={() => {}} syncOptions={SYNC_OPTIONS} />);
+    emit({ event: "log", message: "Comparing library with device (music)..." });
+    emit({ event: "log", message: "Found 3 track(s) to sync, 0 already on device." });
+
+    // In the Progress box — the status line also shows the newest one.
+    await waitFor(() => expect(screen.getAllByTestId("sync-feed-log")).toHaveLength(2));
+    const lines = screen.getAllByTestId("sync-feed-log").map((el) => el.textContent);
+    expect(lines).toEqual([
+      "Comparing library with device (music)...",
+      "Found 3 track(s) to sync, 0 already on device.",
+    ]);
+    expect(screen.queryByText("Waiting for sync…")).not.toBeInTheDocument();
+  });
+
+  it("lists files in flight with their bytes, and drops them when they land", async () => {
+    render(<SyncProgressModal open onClose={() => {}} syncOptions={SYNC_OPTIONS} />);
+    emit({ event: "total", path: "2" });
+    emit({ event: "copy_start", path: "/lib/A/01 Big.flac", bytes: 30 * 1024 * 1024 });
+    emit({ event: "copy_start", path: "/lib/A/02 Bigger.flac", bytes: 40 * 1024 * 1024 });
+    emit({
+      event: "bytes",
+      bytes: 12 * 1024 * 1024,
+      inflight: [
+        { path: "/lib/A/01 Big.flac", done: 12 * 1024 * 1024, total: 30 * 1024 * 1024 },
+        { path: "/lib/A/02 Bigger.flac", done: 0, total: 40 * 1024 * 1024 },
+      ],
+    });
+
+    await waitFor(() => expect(screen.getAllByTestId("sync-inflight-file")).toHaveLength(2));
+    expect(screen.getByText(/01 Big\.flac/)).toBeInTheDocument();
+    expect(screen.getByText("12 MB / 30 MB")).toBeInTheDocument();
+
+    emit({ event: "copy", path: "/lib/A/01 Big.flac", status: "copied", contentType: "music" });
+    await waitFor(() => expect(screen.getAllByTestId("sync-inflight-file")).toHaveLength(1));
+  });
+
+  it("moves the bar with the bytes while nothing has finished", async () => {
+    render(<SyncProgressModal open onClose={() => {}} syncOptions={SYNC_OPTIONS} />);
+    emit({ event: "total", path: "4" });
+    emit({ event: "total_bytes", bytes: 100 * 1024 * 1024 });
+    emit({ event: "bytes", bytes: 25 * 1024 * 1024, inflight: [] });
+
+    await waitFor(() => expect(screen.getByText("25%")).toBeInTheDocument());
+    // ...and no file has been counted as copied.
+    expect(screen.getByText("0 / 4 copied")).toBeInTheDocument();
+  });
+
+  it("falls back to the count when the byte total is unknown (transcodes)", async () => {
+    render(<SyncProgressModal open onClose={() => {}} syncOptions={SYNC_OPTIONS} />);
+    emit({ event: "total", path: "4" });
+    emit({ event: "bytes", bytes: 25 * 1024 * 1024 });
+    emit({ event: "copy", path: "a.mpc", status: "converted", contentType: "music" });
+
+    await waitFor(() => expect(screen.getByText("25%")).toBeInTheDocument());
+  });
 });

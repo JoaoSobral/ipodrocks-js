@@ -44,12 +44,14 @@ import type {
   DeviceSyncPreferences,
   ContentType,
   SyncStatusSnapshot,
+  InflightFile,
 } from "../../shared/types";
 import { onDeviceLinkStateChange } from "../devices/fs";
 import type { SyncProgressPayload } from "../sync/sync-core";
 import { albumLabelsForTrack } from "../../shared/album-label";
 import { subjectForSessionId } from "../../server/auth/sessions";
 import type { HandlerContext } from "../host/bridge";
+import { devLog, isDevLogEnabled } from "../utils/dev-log";
 
 /**
  * The sync running on each device, if any.
@@ -147,7 +149,22 @@ function recordProgress(entry: StatusEntry, ev: SyncProgressPayload): void {
     case "total_add":
       snap.total += Number(ev.path) || 0;
       break;
+    case "copy_start":
+      // Replaced wholesale by the next `bytes` frame; this only bridges the gap
+      // so a snapshot taken between the two still names the file.
+      if (!snap.inflight.some((f) => f.path === ev.path)) {
+        snap.inflight.push({
+          path: String(ev.path),
+          done: 0,
+          total: typeof ev.bytes === "number" ? ev.bytes : null,
+        });
+      }
+      break;
+    case "total_bytes":
+      snap.totalBytes += Number(ev.bytes) || 0;
+      break;
     case "copy":
+      snap.inflight = snap.inflight.filter((f) => f.path !== ev.path);
       snap.processed++;
       if (ev.status === "copied" || ev.status === "converted") snap.synced++;
       else if (ev.status === "error") snap.errors++;
@@ -157,6 +174,7 @@ function recordProgress(entry: StatusEntry, ev: SyncProgressPayload): void {
       break;
     case "bytes":
       snap.bytes += Number(ev.bytes) || 0;
+      if (Array.isArray(ev.inflight)) snap.inflight = ev.inflight as InflightFile[];
       break;
     case "state":
       snap.state = ev.state === "waiting" ? "waiting" : "running";
@@ -168,6 +186,22 @@ function recordProgress(entry: StatusEntry, ev: SyncProgressPayload): void {
   if ((ev.event === "log" || ev.event === "state") && typeof ev.message === "string") {
     snap.log.push(ev.message);
     if (snap.log.length > STATUS_LOG_LINES) snap.log.splice(0, snap.log.length - STATUS_LOG_LINES);
+  }
+}
+
+/** Mirrors what the sync modal shows, plus per-file failures, into the
+ *  developer log. Costs a branch while the log is off. */
+function logSyncEvent(deviceId: number, ev: SyncProgressPayload): void {
+  if (!isDevLogEnabled()) return;
+  if ((ev.event === "log" || ev.event === "state") && typeof ev.message === "string") {
+    devLog(`sync:${deviceId}`, ev.message);
+  } else if (ev.event === "copy" && ev.status === "error") {
+    devLog(
+      `sync:${deviceId}`,
+      `copy failed: ${String(ev.path ?? "?")}` +
+        (typeof ev.message === "string" ? ` — ${ev.message}` : "") +
+        (typeof ev.error === "string" ? ` — ${ev.error}` : "")
+    );
   }
 }
 
@@ -257,6 +291,8 @@ export function registerSyncHandlers(): void {
           errors: 0,
           removed: 0,
           bytes: 0,
+          totalBytes: 0,
+          inflight: [],
           log: [],
         },
       };
@@ -376,7 +412,14 @@ export function registerSyncHandlers(): void {
           device.profile.shadowLibraryId
         );
 
+        const unshadowed = Object.keys(musicLibraryTracks).length;
         musicLibraryTracks = remapTrackMapToShadow(musicLibraryTracks, shadowTrackMap);
+        devLog(
+          `sync:${opts.deviceId}`,
+          () =>
+            `shadow #${device.profile.shadowLibraryId}: ${Object.keys(musicLibraryTracks).length} of ` +
+            `${unshadowed} selected music track(s) have a finished transcode; the rest are skipped`
+        );
         podcastLibraryTracks = remapTrackMapToShadow(podcastLibraryTracks, shadowTrackMap);
         audiobookLibraryTracks = remapTrackMapToShadow(audiobookLibraryTracks, shadowTrackMap);
 
@@ -411,6 +454,7 @@ export function registerSyncHandlers(): void {
         profileCodecExtOverride: profileCodecExtOverride ?? undefined,
         progressCallback: (progressEvent) => {
           recordProgress(statusEntry, progressEvent);
+          logSyncEvent(opts.deviceId, progressEvent);
           if (!event.sender.isDestroyed()) {
             event.sender.send("sync:progress", progressEvent);
           }

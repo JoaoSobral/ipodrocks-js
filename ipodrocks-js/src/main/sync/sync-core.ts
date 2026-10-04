@@ -1,7 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
 
-import { Track, SyncProgressEventName, AlbumGrouping } from "../../shared/types";
+import { Track, SyncProgressEventName, AlbumGrouping, type InflightFile } from "../../shared/types";
 import { albumArtistOf } from "../../shared/album-label";
 import {
   folderRelativePath,
@@ -27,6 +27,7 @@ import {
   findAlbumArtSource,
   generateRockboxCover,
 } from "./rockbox-cover";
+import { logCompareDiagnostics } from "./compare-diagnostics";
 
 // Re-exported: these moved to utils/device-path so the Rockbox runtime matcher
 // can build its lookup keys with the same code that lays the files out.
@@ -427,6 +428,17 @@ export function analyzeContentType(
     throw err;
   }
 
+  logCompareDiagnostics({
+    label: `sync:${contentType}`,
+    destMap,
+    expectedSizes,
+    expectedMtimes,
+    deviceContentPath,
+    deviceFilesMap,
+    result,
+    profileCodecExt,
+  });
+
   let { missingTracks, tracksToSkip } = result;
 
   if (
@@ -555,7 +567,28 @@ export async function copyMissingTracks(
 
   const stats = { synced: 0, errors: 0 };
 
+  // What is on its way right now, keyed by the source path the executor
+  // reports (`findOnDisk`'s spelling — the same one `copy` events carry).
+  const inflight = new Map<string, InflightFile>();
+
+  // A count-based percentage sits at 0% until the first whole file lands,
+  // which over a slow link reads as a hung sync. For direct copies the bytes
+  // are known up front, so the modal can follow those instead. A transcode's
+  // output size is not, so it contributes nothing and the count is used.
+  if (!needsConversion) {
+    let totalBytes = 0;
+    for (const tp of existingPaths) {
+      try {
+        totalBytes += fs.statSync(findOnDisk(tp)).size;
+      } catch {
+        /* reported as missing by the copy itself */
+      }
+    }
+    if (totalBytes > 0) progressCallback?.({ event: "total_bytes", bytes: totalBytes });
+  }
+
   const progressAdapter = (cp: CopyProgress): void => {
+    inflight.delete(cp.srcPath);
     if (cp.status === "copied" || cp.status === "converted") stats.synced++;
     else if (cp.status === "error") stats.errors++;
     progressCallback?.({
@@ -577,7 +610,7 @@ export async function copyMissingTracks(
     const now = Date.now();
     if (pendingBytes === 0 || (!force && now - lastBytesEmit < BYTES_EVENT_INTERVAL_MS)) return;
     lastBytesEmit = now;
-    progressCallback?.({ event: "bytes", bytes: pendingBytes });
+    progressCallback?.({ event: "bytes", bytes: pendingBytes, inflight: [...inflight.values()] });
     pendingBytes = 0;
   };
 
@@ -590,7 +623,16 @@ export async function copyMissingTracks(
     logCallback: (line: string) =>
       progressCallback?.({ event: "convert_log", message: line }),
     cancelSignal,
-    bytesCallback: (delta) => {
+    startCallback: (srcPath, size) => {
+      inflight.set(srcPath, { path: srcPath, done: 0, total: size });
+      progressCallback?.({ event: "copy_start", path: srcPath, bytes: size ?? undefined, contentType });
+    },
+    bytesCallback: (delta, srcPath, done, total) => {
+      const entry = inflight.get(srcPath);
+      if (entry) {
+        entry.done = done;
+        if (total !== null) entry.total = total;
+      }
       pendingBytes += delta;
       flushBytes(false);
     },

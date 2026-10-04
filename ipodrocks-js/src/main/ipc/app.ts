@@ -24,8 +24,39 @@ import {
   checkRateLimit,
 } from "../utils/update-checker";
 import { extractChangelogSection, isChangelogVersion } from "../utils/changelog-parser";
+import { clearDevLog, isDevLogEnabled, readDevLog } from "../utils/dev-log";
+import { denyIfNotOwner } from "../../server/auth/sessions";
+
+const DEV_LOG_OWNER_ONLY = "Only the server's owner can read the developer log.";
 
 export function registerAppHandlers(): void {
+  // The developer log (`utils/dev-log.ts`). Owner-only over the web: it holds
+  // server paths and every device's diagnostics, not just the caller's. A
+  // guest is told it is off rather than refused, so the console simply never
+  // appears for them.
+  bridgeHandle(
+    "app:devLog:status",
+    safe("app:devLog:status", async (event) => ({
+      enabled: isDevLogEnabled() && denyIfNotOwner(event.sessionId) === null,
+    }))
+  );
+  bridgeHandle(
+    "app:devLog:read",
+    safe("app:devLog:read", async (event, afterSeq?: number, limit?: number) => {
+      const denied = denyIfNotOwner(event.sessionId, DEV_LOG_OWNER_ONLY);
+      if (denied) return denied;
+      return readDevLog(Number(afterSeq) || 0, limit === undefined ? undefined : Number(limit));
+    })
+  );
+  bridgeHandle(
+    "app:devLog:clear",
+    safe("app:devLog:clear", async (event) => {
+      const denied = denyIfNotOwner(event.sessionId, DEV_LOG_OWNER_ONLY);
+      if (denied) return denied;
+      clearDevLog();
+      return { cleared: true };
+    })
+  );
   bridgeHandle(
     "app:isMpcencAvailable",
     safe("app:isMpcencAvailable", async () => ({ available: isMpcencAvailable() }))

@@ -138,6 +138,12 @@ export interface DeviceProfile extends Device {
   skipAlbumArtwork?: boolean;
   /** Max dimension (px) for the Rockbox cover.jpg generated on sync. */
   artworkMaxDimension?: number;
+  /**
+   * A remote device's capacity in GB (1024^3), entered by the user because a
+   * browser cannot read a disk's size. Null when unset; unused on a local
+   * device, whose real figures come from the filesystem.
+   */
+  capacityGb?: number | null;
   rockboxSmartPlaylists?: boolean;
   devMode?: boolean;
   autoPodcastsEnabled?: boolean;
@@ -171,6 +177,17 @@ export interface DiskSpace {
   freeBytes: number;
   totalGb: number;
   freeGb: number;
+  /** Bytes in use. Measured by summing the device's files when the
+   *  filesystem cannot say (`source` is not "filesystem"). */
+  usedBytes?: number;
+  usedGb?: number;
+  /**
+   * Where the figures came from:
+   * - `filesystem`: the OS reported total and free (a local mount).
+   * - `estimated`: used is measured, total is the user-entered capacity.
+   * - `used-only`: used is measured; capacity unknown, so total/free are 0.
+   */
+  source?: "filesystem" | "estimated" | "used-only";
 }
 
 export interface ContentStats {
@@ -210,6 +227,8 @@ export interface AddDeviceConfig {
   vbrEnabled?: boolean;
   skipAlbumArtwork?: boolean;
   artworkMaxDimension?: number;
+  /** See DeviceProfile.capacityGb. Null clears it. */
+  capacityGb?: number | null;
   /**
    * Optional USB hardware identity. When set, this device is matched by the
    * physical USB unit rather than by mount path alone. All three move together:
@@ -467,6 +486,10 @@ export type SyncProgressEventName =
   | "complete"
   /** Bytes moved onto the device since the previous `bytes` event. */
   | "bytes"
+  /** A file was picked up for copying; `path` is the source, `bytes` its size when known. */
+  | "copy_start"
+  /** Adds `bytes` to the sync's expected total (direct copies only — a transcode's size is unknown). */
+  | "total_bytes"
   /** The sync is waiting on the link (`waiting`) or running again (`running`). */
   | "state";
 
@@ -481,6 +504,16 @@ export interface SyncProgress {
   bytes?: number;
   /** `state` only. */
   state?: SyncRunState;
+  /** `bytes` only: every file being copied right now, and how far it has got. */
+  inflight?: InflightFile[];
+}
+
+/** One file on its way to the device. */
+export interface InflightFile {
+  path: string;
+  done: number;
+  /** Null while the size is unknown (a transcode). */
+  total: number | null;
 }
 
 /** Whether a running sync is moving files or waiting on its connection. */
@@ -506,6 +539,10 @@ export interface SyncStatusSnapshot {
   removed: number;
   /** Bytes moved onto the device so far. */
   bytes: number;
+  /** Bytes the direct copies are expected to move in all; 0 when unknown. */
+  totalBytes: number;
+  /** Files being copied right now. */
+  inflight: InflightFile[];
   /** The most recent log lines, oldest first. */
   log: string[];
   /** The handler's own return value, once finished. */
