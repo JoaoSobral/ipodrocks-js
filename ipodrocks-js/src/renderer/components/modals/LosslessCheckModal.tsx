@@ -75,7 +75,10 @@ export function LosslessCheckModal({ onLibraryChanged, autoStart, onAutoStartCon
   const cancel = useLosslessStore((s) => s.cancel);
   const bumpReport = useLosslessStore((s) => s.bumpReport);
 
-  const [view, setView] = useState<"setup" | "results">("setup");
+  // Which step shows is derived, not tracked: a run shows progress, and
+  // otherwise the results whenever there are any — unless the user asked for
+  // a new check. Tracking it in effects raced the run's own completion.
+  const [forceSetup, setForceSetup] = useState(false);
   const [scope, setScope] = useState<"unchecked" | "all">("unchecked");
   const [deep, setDeep] = useState(true);
   const [report, setReport] = useState<LosslessReportRow[]>([]);
@@ -92,6 +95,7 @@ export function LosslessCheckModal({ onLibraryChanged, autoStart, onAutoStartCon
     if (!autoStart) return;
     onAutoStartConsumed?.();
     setOpen(true);
+    setForceSetup(false);
     if (!running) void start(autoStart);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoStart]);
@@ -105,18 +109,11 @@ export function LosslessCheckModal({ onLibraryChanged, autoStart, onAutoStartCon
   useEffect(() => {
     if (!open) return;
     getLosslessReport()
-      .then((rows) => {
-        setReport(rows);
-        if (!running && rows.length > 0 && (result || view === "results")) setView("results");
-      })
+      .then(setReport)
       .catch((err) => setActionError(err instanceof Error ? err.message : String(err)));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, reportVersion]);
 
-  // A finished run lands on its results.
-  useEffect(() => {
-    if (result && !running) setView("results");
-  }, [result, running]);
+  const view: "setup" | "results" = forceSetup || (report.length === 0 && !result) ? "setup" : "results";
 
   const visible = useMemo(() => {
     if (filter === "all") return report;
@@ -284,7 +281,7 @@ export function LosslessCheckModal({ onLibraryChanged, autoStart, onAutoStartCon
             {runError && <ErrorBox>{runError}</ErrorBox>}
             <div className="flex justify-end gap-2">
               {report.length > 0 && (
-                <Button size="sm" onClick={() => setView("results")}>
+                <Button size="sm" onClick={() => setForceSetup(false)}>
                   View last results
                 </Button>
               )}
@@ -292,7 +289,10 @@ export function LosslessCheckModal({ onLibraryChanged, autoStart, onAutoStartCon
                 variant="primary"
                 size="sm"
                 data-testid="lossless-start"
-                onClick={() => void start({ scope, deep })}
+                onClick={() => {
+                  setForceSetup(false);
+                  void start({ scope, deep });
+                }}
               >
                 Start check
               </Button>
@@ -486,7 +486,7 @@ export function LosslessCheckModal({ onLibraryChanged, autoStart, onAutoStartCon
                 >
                   Delete selected…
                 </Button>
-                <Button size="sm" variant="primary" onClick={() => setView("setup")}>
+                <Button size="sm" variant="primary" onClick={() => setForceSetup(true)}>
                   New check
                 </Button>
               </div>

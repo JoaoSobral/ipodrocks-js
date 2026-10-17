@@ -765,10 +765,10 @@ type LosslessProgress = import("@shared/types").LosslessProgress;
 type LosslessReportRow = import("@shared/types").LosslessReportRow;
 type LosslessVerdictT = import("@shared/types").LosslessVerdict;
 
+/** A refusal is `{ error: string }`; a result may carry other fields beside it. */
 function throwOnError<T>(result: T | { error: string }): T {
-  if (result && typeof result === "object" && "error" in (result as object)) {
-    throw new Error((result as { error: string }).error);
-  }
+  const error = result && typeof result === "object" ? (result as { error?: unknown }).error : undefined;
+  if (typeof error === "string" && error) throw new Error(error);
   return result as T;
 }
 

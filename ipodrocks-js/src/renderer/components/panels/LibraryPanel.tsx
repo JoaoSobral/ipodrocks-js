@@ -627,7 +627,7 @@ export function LibraryPanel() {
         {losslessRunning && !losslessModalOpen && (
           <button
             type="button"
-            className="text-[11px] px-2 py-1 rounded-full border border-primary/30 bg-primary/10 text-primary tabular-nums"
+            className="w-40 text-center text-[11px] px-2 py-1 rounded-full border border-primary/30 bg-primary/10 text-primary tabular-nums truncate"
             onClick={() => setLosslessModalOpen(true)}
             title="Lossless check running — click to show"
             data-testid="lossless-chip"

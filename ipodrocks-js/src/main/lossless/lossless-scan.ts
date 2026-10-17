@@ -189,7 +189,11 @@ export async function runLosslessScan(
       suspects: suspects.length,
       message: error,
     });
-    return { checked, deepChecked, counts, cancelled: phase === "cancelled", error };
+    // No `error` key at all on success: structured clone keeps an undefined
+    // property, and a client testing `"error" in result` would read failure.
+    const result: LosslessScanResult = { checked, deepChecked, counts, cancelled: phase === "cancelled" };
+    if (error) result.error = error;
+    return result;
   };
 
   try {
