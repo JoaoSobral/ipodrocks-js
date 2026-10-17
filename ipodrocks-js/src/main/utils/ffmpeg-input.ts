@@ -151,3 +151,111 @@ export function runQuietFfmpeg(
     proc.on("close", (code) => finish({ kind: "exited", code: code ?? 1, stderrTail: tail.trim() }));
   });
 }
+
+export type PcmDecodeOutcome =
+  | { kind: "ok"; samples: Float32Array }
+  | { kind: "too-large" }
+  | Exclude<QuietFfmpegOutcome, { kind: "exited"; code: 0 }>;
+
+/**
+ * Decode audio to mono 32-bit float PCM, read straight off ffmpeg's stdout.
+ *
+ * The same guarantees as `runQuietFfmpeg()` — stderr drained, a hard time
+ * limit, killed on abort, never rejects — plus a byte cap on stdout: a decode
+ * that would exceed `maxBytes` is killed and reported as `too-large` rather
+ * than silently truncated, so a caller never judges half a window as the
+ * whole. `args` go between the input and the output and normally pick the
+ * window (`-ss`, `-t`) and the rate (`-ar`); `-ac 1 -f f32le pipe:1` is added
+ * here. The output protocol is `pipe:`, which `-protocol_whitelist file` does
+ * not restrict — that option binds the input only.
+ */
+export function decodePcmF32(
+  ffmpegPath: string,
+  input: { filePath: string; seekSeconds?: number },
+  args: string[],
+  opts: { timeoutMs: number; maxBytes: number; signal?: AbortSignal; env?: NodeJS.ProcessEnv }
+): Promise<PcmDecodeOutcome> {
+  return new Promise((resolve) => {
+    if (opts.signal?.aborted) {
+      resolve({ kind: "aborted" });
+      return;
+    }
+    const seek = input.seekSeconds && input.seekSeconds > 0 ? ["-ss", input.seekSeconds.toFixed(3)] : [];
+    let proc: ChildProcess;
+    try {
+      proc = spawn(
+        ffmpegPath,
+        [
+          ...FFMPEG_QUIET_ARGS,
+          ...seek,
+          ...ffmpegInputArgs(input.filePath),
+          "-vn",
+          ...args,
+          "-ac", "1",
+          "-f", "f32le",
+          "pipe:1",
+        ],
+        { stdio: ["ignore", "pipe", "pipe"], env: opts.env ?? process.env }
+      );
+    } catch (err) {
+      resolve({ kind: "spawn-error", error: err instanceof Error ? err : new Error(String(err)) });
+      return;
+    }
+
+    const chunks: Buffer[] = [];
+    let bytes = 0;
+    let settled = false;
+    let tail = "";
+    const finish = (outcome: PcmDecodeOutcome): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      opts.signal?.removeEventListener("abort", onAbort);
+      resolve(outcome);
+    };
+    const kill = (): void => {
+      try {
+        proc.kill("SIGKILL");
+      } catch {
+        // Already gone.
+      }
+    };
+    const onAbort = (): void => {
+      kill();
+      finish({ kind: "aborted" });
+    };
+    opts.signal?.addEventListener("abort", onAbort, { once: true });
+    const timer = setTimeout(() => {
+      kill();
+      finish({ kind: "timeout" });
+    }, opts.timeoutMs);
+
+    proc.stdout?.on("data", (chunk: Buffer) => {
+      if (settled) return;
+      bytes += chunk.length;
+      if (bytes > opts.maxBytes) {
+        kill();
+        chunks.length = 0;
+        finish({ kind: "too-large" });
+        return;
+      }
+      chunks.push(chunk);
+    });
+    proc.stderr?.on("data", (chunk: Buffer) => {
+      tail = (tail + chunk.toString("utf8")).slice(-STDERR_TAIL_BYTES);
+    });
+    proc.on("error", (error) => finish({ kind: "spawn-error", error }));
+    proc.on("close", (code) => {
+      if (code !== 0) {
+        finish({ kind: "exited", code: code ?? 1, stderrTail: tail.trim() });
+        return;
+      }
+      const buf = Buffer.concat(chunks);
+      const usable = buf.byteLength - (buf.byteLength % 4);
+      // A fresh, aligned buffer the caller can transfer to a worker.
+      const samples = new Float32Array(usable / 4);
+      new Uint8Array(samples.buffer).set(buf.subarray(0, usable));
+      finish({ kind: "ok", samples });
+    });
+  });
+}

@@ -78,6 +78,8 @@ const OPERATION_LABELS: Record<string, string> = {
   playlist_generated: "Playlist generated",
   shadow_prune: "Shadow library pruned",
   mpc_tag_repair: "Musepack tags repaired",
+  lossless_check: "Lossless check",
+  lossless_delete: "Lossy-sourced files deleted",
 };
 
 function formatActivityTime(iso: string): string {

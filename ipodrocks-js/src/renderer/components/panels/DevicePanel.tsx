@@ -64,6 +64,7 @@ import type {
   UsbDeviceInfo,
 } from "@shared/types";
 import type { SelectOption } from "../common/Select";
+import { downloadTextFile, toCsv } from "../../utils/download";
 
 function downloadOrphansCsv(cr: CheckResult): void {
   const rows: string[][] = [["type", "device_path"]];
@@ -79,14 +80,7 @@ function downloadOrphansCsv(cr: CheckResult): void {
   for (const p of cr.orphansPlaylistPaths ?? []) {
     rows.push(["playlist", p]);
   }
-  const csv = rows.map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(",")).join("\n");
-  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `orphans-${cr.name.replace(/[^a-zA-Z0-9-_]/g, "_")}.csv`;
-  a.click();
-  URL.revokeObjectURL(url);
+  downloadTextFile(`orphans-${cr.name.replace(/[^a-zA-Z0-9-_]/g, "_")}.csv`, "text/csv", toCsv(rows));
 }
 
 const checkboxClass =

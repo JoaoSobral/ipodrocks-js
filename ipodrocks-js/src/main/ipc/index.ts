@@ -13,6 +13,7 @@ import { registerPlayerHandlers } from "./player";
 import { registerPodcastHandlers } from "./podcasts";
 import { registerAudiobookHandlers } from "./audiobooks";
 import { registerServerHandlers } from "./server";
+import { registerLosslessHandlers } from "./lossless";
 
 export { getLibraryDb, resumeInterruptedShadowBuilds };
 
@@ -39,4 +40,5 @@ export function registerIpcHandlers(): void {
   registerPodcastHandlers();
   registerAudiobookHandlers();
   registerServerHandlers();
+  registerLosslessHandlers();
 }

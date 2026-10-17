@@ -53,7 +53,10 @@ import {
 import { MpcUnavailableModal } from "../modals/MpcUnavailableModal";
 import { RatingConflictsModal } from "../RatingConflictsModal";
 import type { CodecConfig } from "../../ipc/api";
-import type { DeviceProfile, Playlist, ShadowLibrary, ShadowBuildProgress } from "@shared/types";
+import type { DeviceProfile, Playlist, ShadowLibrary, ShadowBuildProgress, LosslessVerdict, Track } from "@shared/types";
+import { LosslessCheckModal } from "../modals/LosslessCheckModal";
+import { LosslessBadge, losslessTooltip } from "../common/LosslessBadge";
+import { useLosslessStore } from "../../stores/lossless-store";
 
 type SortField =
   | "title"
@@ -65,7 +68,8 @@ type SortField =
   | "bitrate"
   | "bitsPerSample"
   | "contentType"
-  | "rating";
+  | "rating"
+  | "lossless";
 type SortDir = "asc" | "desc";
 
 /**
@@ -97,7 +101,26 @@ const columns: { field: SortField; label: string; width: string; minW?: string }
   { field: "bitrate", label: "Bitrate", width: "w-20", minW: "64px" },
   { field: "bitsPerSample", label: "Bit", width: "w-12", minW: "36px" },
   { field: "contentType", label: "Type", width: "w-16", minW: "56px" },
+  { field: "lossless", label: "Lossless", width: "w-20", minW: "72px" },
 ];
+
+/** Worst first when sorting the Lossless column; unchecked last. */
+const LOSSLESS_RANK: Record<LosslessVerdict, number> = {
+  lossy_strong: 6,
+  lossy: 5,
+  upsampled: 4,
+  possibly_lossy: 3,
+  inconclusive: 2,
+  genuine: 1,
+};
+
+function losslessRank(t: Track): number {
+  if (!t.losslessVerdict) return 0;
+  if (t.losslessOverride) return 0.5;
+  return LOSSLESS_RANK[t.losslessVerdict];
+}
+
+const FLAGGED_FILTER = new Set<string>(["lossy_strong", "lossy", "upsampled", "possibly_lossy"]);
 
 export function LibraryPanel() {
   const tracks = useLibraryStore((s) => s.tracks);
@@ -126,6 +149,15 @@ export function LibraryPanel() {
   const [syncedPaths, setSyncedPaths] = useState<Set<string>>(new Set());
   const [typeFilter, setTypeFilter] = useState<string>("all");
   const [syncFilter, setSyncFilter] = useState<string>("all");
+  const [losslessFilter, setLosslessFilter] = useState<string>("all");
+  const losslessRunning = useLosslessStore((s) => s.running);
+  const losslessProgress = useLosslessStore((s) => s.progress);
+  const losslessModalOpen = useLosslessStore((s) => s.modalOpen);
+  const setLosslessModalOpen = useLosslessStore((s) => s.setModalOpen);
+  const initLossless = useLosslessStore((s) => s.init);
+  const losslessReportVersion = useLosslessStore((s) => s.reportVersion);
+  const pendingLosslessCheck = useUIStore((s) => s.pendingLosslessCheck);
+  const setPendingLosslessCheck = useUIStore((s) => s.setPendingLosslessCheck);
   const [cacheCleared, setCacheCleared] = useState<number | null>(null);
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
   const [selectedPlaylistId, setSelectedPlaylistId] = useState<number | null>(null);
@@ -303,9 +335,16 @@ export function LibraryPanel() {
     if (playlistTrackIds != null) {
       base = base.filter((t) => playlistTrackIds.has(t.id));
     }
+    if (losslessFilter !== "all") {
+      base = base.filter((t) => {
+        const v = t.losslessOverride ? "ok" : t.losslessVerdict ?? "unchecked";
+        if (losslessFilter === "flagged") return FLAGGED_FILTER.has(v);
+        return v === losslessFilter;
+      });
+    }
     return [...base].sort((a, b) => {
-      const av = a[sortField];
-      const bv = b[sortField];
+      const av = sortField === "lossless" ? losslessRank(a) : a[sortField];
+      const bv = sortField === "lossless" ? losslessRank(b) : b[sortField];
       let cmp: number;
       if (typeof av === "string" || typeof bv === "string") {
         cmp = String(av ?? "").localeCompare(String(bv ?? ""));
@@ -317,7 +356,20 @@ export function LibraryPanel() {
       }
       return sortDir === "asc" ? cmp : -cmp;
     });
-  }, [tracks, search, sortField, sortDir, typeFilter, syncFilter, selectedDeviceId, syncedPaths, playlistTrackIds]);
+  }, [tracks, search, sortField, sortDir, typeFilter, syncFilter, selectedDeviceId, syncedPaths, playlistTrackIds, losslessFilter]);
+
+  // The lossless check's store listens for the app's lifetime; re-read the
+  // tracks whenever a run or a delete changes verdicts.
+  useEffect(() => {
+    initLossless();
+  }, [initLossless]);
+  useEffect(() => {
+    if (losslessReportVersion > 0) {
+      fetchTracks(undefined, { silent: true });
+      fetchStats();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [losslessReportVersion]);
 
   function toggleSort(field: SortField) {
     if (sortField === field) {
@@ -563,6 +615,29 @@ export function LibraryPanel() {
         <Button size="sm" onClick={handleScan} disabled={folders.length === 0}>
           ⟳ Scan Library
         </Button>
+        <Button
+          size="sm"
+          onClick={() => setLosslessModalOpen(true)}
+          disabled={folders.length === 0}
+          title="Find lossless files converted from MP3/AAC, or upsampled hi-res"
+          data-testid="lossless-open"
+        >
+          Check lossless…
+        </Button>
+        {losslessRunning && !losslessModalOpen && (
+          <button
+            type="button"
+            className="text-[11px] px-2 py-1 rounded-full border border-primary/30 bg-primary/10 text-primary tabular-nums"
+            onClick={() => setLosslessModalOpen(true)}
+            title="Lossless check running — click to show"
+            data-testid="lossless-chip"
+          >
+            Lossless check{" "}
+            {losslessProgress && losslessProgress.total > 0
+              ? `${losslessProgress.phase === "deep" ? "deep " : ""}${Math.round((losslessProgress.processed / losslessProgress.total) * 100)}%`
+              : "…"}
+          </button>
+        )}
         <Button
           variant="danger"
           size="sm"
@@ -927,6 +1002,26 @@ export function LibraryPanel() {
                 testId="playlist-filter"
               />
             </div>
+            <div className="flex items-center gap-2">
+              <Label className="mb-0 shrink-0">Lossless:</Label>
+              <Select
+                options={[
+                  { value: "all", label: "All" },
+                  { value: "flagged", label: "Any flag" },
+                  { value: "lossy_strong", label: "Lossy-sourced (strong)" },
+                  { value: "lossy", label: "Lossy-sourced" },
+                  { value: "upsampled", label: "Upsampled" },
+                  { value: "possibly_lossy", label: "Possibly lossy-sourced" },
+                  { value: "genuine", label: "Genuine" },
+                  { value: "ok", label: "Marked OK" },
+                  { value: "unchecked", label: "Not checked" },
+                ]}
+                value={losslessFilter}
+                onChange={(v) => setLosslessFilter(v)}
+                className="w-44"
+                testId="lossless-filter"
+              />
+            </div>
           </div>
 
           {/* Table with horizontal scroll — contained so list and scrollbar stay inside card */}
@@ -1008,6 +1103,20 @@ export function LibraryPanel() {
                         <span className="w-16 min-w-[56px] text-muted-foreground text-xs capitalize">
                           {t.contentType || "—"}
                         </span>
+                        <span className="w-20 min-w-[72px] shrink-0" data-testid="lossless-cell">
+                          {t.losslessVerdict ? (
+                            <LosslessBadge
+                              verdict={t.losslessVerdict}
+                              override={t.losslessOverride}
+                              title={losslessTooltip(t.losslessVerdict, {
+                                cutoffHz: t.losslessCutoffHz,
+                                source: t.losslessSource,
+                                confidence: t.losslessConfidence,
+                                override: t.losslessOverride,
+                              })}
+                            />
+                          ) : null}
+                        </span>
                         <span className="w-16 min-w-[56px] text-right text-success">
                           {selectedDeviceId != null && syncedPaths.has(t.path) ? "✓" : "—"}
                         </span>
@@ -1025,6 +1134,15 @@ export function LibraryPanel() {
         </Card>
         </div>
       )}
+
+      <LosslessCheckModal
+        onLibraryChanged={() => {
+          fetchTracks(undefined, { silent: true });
+          fetchStats();
+        }}
+        autoStart={pendingLosslessCheck}
+        onAutoStartConsumed={() => setPendingLosslessCheck(null)}
+      />
 
       {/* Add Folder Modal */}
       <Modal open={showAddFolder} onClose={() => { setShowAddFolder(false); setFolderSubmitted(false); }} title="Add Library Folder">

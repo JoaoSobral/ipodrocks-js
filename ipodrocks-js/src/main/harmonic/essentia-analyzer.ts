@@ -26,7 +26,12 @@ import { Worker } from "worker_threads";
 import { getFfmpegPath } from "../utils/ffmpeg-path";
 import { getEncoderEnv } from "../utils/encoder-env";
 import { ffmpegInputArgs, runQuietFfmpeg } from "../utils/ffmpeg-input";
-import type { EssentiaWorkerRequest, EssentiaWorkerResponse } from "./essentia-worker";
+import type {
+  EssentiaBandsRequest,
+  EssentiaBandsResponse,
+  EssentiaWorkerRequest,
+  EssentiaWorkerResponse,
+} from "./essentia-worker";
 
 export interface EssentiaFeatures {
   key: string | null;
@@ -144,11 +149,16 @@ function removeQuietly(file: string): void {
   }
 }
 
-/** Run one analysis on the worker, bounded by the time limit and the signal. */
-function analyzeOnWorker(
-  wavPath: string,
-  signal?: AbortSignal
-): Promise<EssentiaFeatures | null> {
+/**
+ * Run one request on the worker, bounded by the time limit and the signal.
+ * Resolves the response's `result`, or null when the worker was terminated
+ * (time limit, cancel) — the next request gets a fresh worker.
+ */
+function requestOnWorker<Res extends { id: number; result: unknown; unavailable?: boolean }>(
+  build: (id: number) => object,
+  signal?: AbortSignal,
+  transfer: ArrayBuffer[] = []
+): Promise<Res["result"] | null> {
   let w: Worker;
   try {
     w = getWorker();
@@ -168,7 +178,7 @@ function analyzeOnWorker(
       w.off("exit", onExit);
       fn();
     };
-    const onMessage = (msg: EssentiaWorkerResponse): void => {
+    const onMessage = (msg: Res): void => {
       if (msg?.id !== id) return;
       if (msg.unavailable) {
         done(() => reject(new EssentiaUnavailableError("essentia.js could not be loaded")));
@@ -203,9 +213,52 @@ function analyzeOnWorker(
       return;
     }
     signal?.addEventListener("abort", onAbort, { once: true });
-    const req: EssentiaWorkerRequest = { id, wavPath };
-    w.postMessage(req);
+    w.postMessage(build(id), transfer);
   });
+}
+
+function analyzeOnWorker(
+  wavPath: string,
+  signal?: AbortSignal
+): Promise<EssentiaFeatures | null> {
+  return requestOnWorker<EssentiaWorkerResponse>(
+    (id): EssentiaWorkerRequest => ({ id, wavPath }),
+    signal
+  );
+}
+
+export type EssentiaFrameBands = NonNullable<EssentiaBandsResponse["result"]>;
+
+/**
+ * Banded magnitude spectrum per frame of `samples` (mono PCM), for the
+ * lossless check. The samples' buffer is transferred to the worker, so the
+ * caller must not use it afterwards.
+ *
+ * @returns null when the audio is too short to frame, the analysis timed out,
+ *   or it was cancelled.
+ * @throws EssentiaUnavailableError when Essentia cannot run at all.
+ */
+export function computeFrameBandsWithEssentia(
+  samples: Float32Array,
+  sampleRate: number,
+  opts: { bandHz: number; overlap: boolean; signal?: AbortSignal }
+): Promise<EssentiaFrameBands | null> {
+  const transferable =
+    samples.byteOffset === 0 && samples.byteLength === samples.buffer.byteLength
+      ? samples
+      : samples.slice();
+  return requestOnWorker<EssentiaBandsResponse>(
+    (id): EssentiaBandsRequest => ({
+      kind: "bands",
+      id,
+      samples: transferable,
+      sampleRate,
+      bandHz: opts.bandHz,
+      overlap: opts.overlap,
+    }),
+    opts.signal,
+    [transferable.buffer as ArrayBuffer]
+  );
 }
 
 /**

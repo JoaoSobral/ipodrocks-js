@@ -32,6 +32,97 @@ export interface Track {
   ratingUpdatedAt: string | null;
   /** Monotonically-incrementing Lamport counter — used as a tiebreaker in 3-way merge. */
   ratingVersion: number;
+  /** Lossless check verdict (what the audio shows, not where it came from); null = never checked. */
+  losslessVerdict?: LosslessVerdict | null;
+  losslessConfidence?: number | null;
+  losslessCutoffHz?: number | null;
+  losslessSource?: string | null;
+  /** The user overruled the verdict ("Mark as OK"); re-checks leave the track alone. */
+  losslessOverride?: boolean;
+}
+
+/**
+ * Lossless check — see `src/main/lossless/spectral-verdict.ts`. A verdict says
+ * what the audio shows (a lossy encoder's cutoff), never that a file or its
+ * seller is fake.
+ */
+export type LosslessVerdict =
+  | "genuine"
+  | "possibly_lossy"
+  | "lossy"
+  | "lossy_strong"
+  | "upsampled"
+  | "inconclusive";
+
+export const LOSSLESS_VERDICT_LABELS: Record<LosslessVerdict, string> = {
+  genuine: "Genuine",
+  possibly_lossy: "Possibly lossy-sourced",
+  lossy: "Lossy-sourced",
+  lossy_strong: "Lossy-sourced (strong)",
+  upsampled: "Upsampled (not true hi-res)",
+  inconclusive: "Inconclusive",
+};
+
+/** Verdicts that may be offered for deletion — never genuine/inconclusive. */
+export const LOSSLESS_FLAGGED_VERDICTS: readonly LosslessVerdict[] = [
+  "lossy_strong",
+  "lossy",
+  "upsampled",
+  "possibly_lossy",
+];
+
+export interface LosslessScanOptions {
+  /** "unchecked" skips tracks that already have a verdict. */
+  scope: "unchecked" | "all";
+  /** Run the deep pass on light-pass suspects (default true). */
+  deep?: boolean;
+}
+
+export interface LosslessProgress {
+  phase: "light" | "deep" | "complete" | "cancelled" | "error";
+  processed: number;
+  total: number;
+  /** Suspects found so far by the light pass. */
+  suspects: number;
+  path?: string;
+  verdict?: LosslessVerdict;
+  message?: string;
+}
+
+export interface LosslessReportRow {
+  trackId: number;
+  title: string;
+  artist: string;
+  album: string;
+  path: string;
+  codec: string;
+  verdict: LosslessVerdict;
+  confidence: number | null;
+  cutoffHz: number | null;
+  source: string | null;
+  stage: "light" | "deep" | null;
+  /** Wall height (dB), depth below reference (dB), share of frames empty above the cutoff. */
+  cliffDb: number | null;
+  depthDb: number | null;
+  emptyShare: number | null;
+  override: boolean;
+  checkedAt: string | null;
+}
+
+export interface LosslessScanResult {
+  checked: number;
+  deepChecked: number;
+  counts: Partial<Record<LosslessVerdict, number>>;
+  cancelled: boolean;
+  /** Set when Essentia could not run at all. */
+  error?: string;
+}
+
+export interface LosslessDeleteResult {
+  deleted: number;
+  trashed: number;
+  permanent: number;
+  failed: { trackId: number; path: string; error: string }[];
 }
 
 export type DeviceRatingChange = {

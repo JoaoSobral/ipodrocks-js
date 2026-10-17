@@ -9,6 +9,7 @@ import {
 import { MarkdownContent } from "../common/MarkdownContent";
 import { ErrorBox } from "../common/ErrorBox";
 import { useUIStore } from "../../stores/ui-store";
+import type { LosslessScanOptions } from "@shared/types";
 
 const OPENING_MESSAGE =
   "Hey! I'm Rocksy. How can I help? 😊 I know your library, understand iPodrocks, and can craft playlists in seconds.";
@@ -46,10 +47,15 @@ export function FloatChat() {
         useUIStore.getState().setPendingShadowRebuildId(payload.shadowLibraryId);
       }
     );
+    const unsubLossless = window.api.on("assistant:triggerLosslessCheck", (...args: unknown[]) => {
+      const opts = (args[0] ?? { scope: "unchecked" }) as LosslessScanOptions;
+      useUIStore.getState().setPendingLosslessCheck(opts);
+    });
     return () => {
       unsubSync();
       unsubScan();
       unsubShadow();
+      unsubLossless();
     };
   }, []);
 

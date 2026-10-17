@@ -127,7 +127,7 @@ function requireShadowOwner(event: HandlerContext): { error: string } | null {
  * logged and swallowed: reconciliation is a tidy-up pass, and a problem here
  * must not fail the scan that just succeeded.
  */
-function reconcilePlaylistsAfterLibraryChange(context: string) {
+export function reconcilePlaylistsAfterLibraryChange(context: string) {
   try {
     const summary = getPlaylistCore().reconcileAllPlaylists();
     if (summary.prunedItems > 0 || summary.rebuiltSmart > 0) {
@@ -143,6 +143,11 @@ function reconcilePlaylistsAfterLibraryChange(context: string) {
     console.error("[ipc] Playlist reconciliation error:", err);
     return { prunedItems: 0, prunedPlaylists: 0, rebuiltSmart: 0 };
   }
+}
+
+/** True while a library scan runs — the lossless delete waits for it to finish. */
+export function isLibraryScanActive(): boolean {
+  return activeScan !== null;
 }
 
 export function registerLibraryHandlers(): void {

@@ -78,6 +78,13 @@ interface TrackUpsertData {
 const ESSENTIA_FAILED = 2;
 
 /**
+ * Inside the upsert's DO UPDATE, a bare column is the *old* row's value (every
+ * right-hand side reads the row as it was), so this compares old to new.
+ */
+const LOSSLESS_FILE_CHANGED =
+  "(excluded.file_size IS NOT file_size OR excluded.file_hash IS NOT file_hash)";
+
+/**
  * Scans a folder tree for audio files, extracts metadata, and upserts tracks
  * into the database. Supports hash-based change detection, cancellation via
  * AbortSignal, and progress reporting through a callback.
@@ -174,7 +181,18 @@ export class LibraryScanner {
         -- has rated the track yet. Once rating is non-null — from a device
         -- sync, an in-app edit, or a prior tag read — the file tag must never
         -- fight it; see mergeRating() in sync/rating-merge.ts.
-        rating        = CASE WHEN rating IS NULL THEN excluded.rating ELSE rating END
+        rating        = CASE WHEN rating IS NULL THEN excluded.rating ELSE rating END,
+        -- A lossless-check verdict describes the bytes it measured. A file
+        -- whose size or hash changed was replaced, so its verdict (and any
+        -- "mark as OK" the user gave the old file) no longer applies.
+        lossless_verdict    = CASE WHEN ${LOSSLESS_FILE_CHANGED} THEN NULL ELSE lossless_verdict END,
+        lossless_confidence = CASE WHEN ${LOSSLESS_FILE_CHANGED} THEN NULL ELSE lossless_confidence END,
+        lossless_cutoff_hz  = CASE WHEN ${LOSSLESS_FILE_CHANGED} THEN NULL ELSE lossless_cutoff_hz END,
+        lossless_source     = CASE WHEN ${LOSSLESS_FILE_CHANGED} THEN NULL ELSE lossless_source END,
+        lossless_stage      = CASE WHEN ${LOSSLESS_FILE_CHANGED} THEN NULL ELSE lossless_stage END,
+        lossless_details    = CASE WHEN ${LOSSLESS_FILE_CHANGED} THEN NULL ELSE lossless_details END,
+        lossless_checked_at = CASE WHEN ${LOSSLESS_FILE_CHANGED} THEN NULL ELSE lossless_checked_at END,
+        lossless_override   = CASE WHEN ${LOSSLESS_FILE_CHANGED} THEN 0 ELSE lossless_override END
     `);
 
     this.loadMtimesStmt = db.prepare(
@@ -459,6 +477,21 @@ export class LibraryScanner {
    * the same shape of bug as the codec_configurations orphaning in
    * cleanupOrphanedEntities() below.
    */
+  /**
+   * Remove tracks the app itself deleted from disk (the lossless check's
+   * "delete"), with exactly the cleanup a scan gives a vanished file — every
+   * dependent table, the orphaned artists/albums/genres, and the shadow paths
+   * to unlink. Do not reach for `LibraryCore.deleteTrack()` instead: it skips
+   * `playlist_items`, `shadow_tracks` and `content_hashes`.
+   */
+  removeTracksByPath(paths: string[]): {
+    filesRemoved: number;
+    removedTrackIds: number[];
+    removedShadowPaths: string[];
+  } {
+    return this.deleteRemovedTracks(paths);
+  }
+
   private deleteRemovedTracks(
     paths: string[]
   ): {

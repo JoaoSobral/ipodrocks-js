@@ -158,6 +158,9 @@ export async function setupIpcSession(opts: IpcSessionOptions): Promise<IpcSessi
     },
     shell: {
       openExternal: async () => ({ opened: true }),
+      // Like the daemon: no trash, so a delete is permanent.
+      trashItem: async () => ({ trashed: false }),
+      hasTrash: false,
     },
     dialogs: {
       available: true,

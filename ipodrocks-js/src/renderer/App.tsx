@@ -190,6 +190,7 @@ export function App() {
   const setNavigateTo = useUIStore((s) => s.setNavigateTo);
   const pendingSyncDeviceId = useUIStore((s) => s.pendingSyncDeviceId);
   const pendingLibraryScan = useUIStore((s) => s.pendingLibraryScan);
+  const pendingLosslessCheck = useUIStore((s) => s.pendingLosslessCheck);
 
   useEffect(() => {
     setOpenSettings(() => setSettingsOpen(true));
@@ -208,6 +209,10 @@ export function App() {
   useEffect(() => {
     if (pendingLibraryScan) setActive("library");
   }, [pendingLibraryScan]);
+
+  useEffect(() => {
+    if (pendingLosslessCheck) setActive("library");
+  }, [pendingLosslessCheck]);
 
   useEffect(() => {
     getAppVersion().then(({ version }) => setAppVersion(version));

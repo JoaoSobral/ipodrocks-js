@@ -2002,6 +2002,150 @@ const library_scan: AiTool = {
   },
 };
 
+const LOSSLESS_VERDICT_ENUM = ["lossy_strong", "lossy", "upsampled", "possibly_lossy"];
+
+const lossless_check: AiTool = {
+  name: "lossless_check",
+  description:
+    "Check the library's lossless files (FLAC/ALAC/WAV/AIFF) for lossy-sourced audio — files transcoded from MP3/AAC, or hi-res files upsampled from CD quality. A light spectral pass over every file, then a deep pass over the suspects. Opens the Lossless Check window in the Library panel and starts it; it runs in the background.",
+  parameters: {
+    type: "object",
+    properties: {
+      scope: {
+        type: "string",
+        enum: ["unchecked", "all"],
+        description: "'unchecked' (default) checks only files never checked; 'all' re-checks everything except files the user marked OK.",
+      },
+      deep: { type: "boolean", description: "Run the deep pass on suspects (default true)." },
+    },
+  },
+  kind: "write-destructive",
+  summarize: (args) =>
+    `Check ${args.scope === "all" ? "all" : "unchecked"} lossless files for lossy-sourced audio`,
+  async run(args, ctx) {
+    const denied = await ownerGate(ctx, "Only the server's owner can run the lossless check.");
+    if (denied) return denied;
+    const opts = { scope: args.scope === "all" ? "all" : "unchecked", deep: args.deep !== false };
+    const unreachable = await pushToCaller(ctx, "assistant:triggerLosslessCheck", opts);
+    if (unreachable) return { error: unreachable };
+    return {
+      ok: true,
+      message:
+        "Lossless check started — it's open in the Library panel and runs in the background. Ask me for the results when it's done.",
+    };
+  },
+};
+
+const lossless_report: AiTool = {
+  name: "lossless_report",
+  description:
+    "Results of the lossless check: counts per verdict and the flagged tracks (id, title, artist, album, path, verdict, confidence, cutoff, likely source). Verdicts describe the audio, not the seller: lossy_strong = unmistakable lossy encoder cutoff (e.g. MP3 128 → FLAC); lossy = clear but nearer the edge; upsampled = hi-res file with only CD-quality content; possibly_lossy = a wall that is not consistent; genuine; inconclusive (too quiet to judge).",
+  parameters: {
+    type: "object",
+    properties: {
+      verdicts: {
+        type: "array",
+        items: { type: "string", enum: [...LOSSLESS_VERDICT_ENUM, "genuine", "inconclusive"] },
+        description: "Only list these verdicts (default: the four flagged ones).",
+      },
+      limit: { type: "number", description: "Max rows to list (default 50)." },
+    },
+  },
+  kind: "read",
+  summarize: () => "Read lossless check results",
+  async run(args, ctx) {
+    const { getLosslessReport } = await import("../lossless/lossless-scan");
+    const all = getLosslessReport(ctx.db);
+    const counts: Record<string, number> = {};
+    for (const r of all) counts[r.verdict] = (counts[r.verdict] ?? 0) + 1;
+    const wanted = new Set(
+      Array.isArray(args.verdicts) && args.verdicts.length ? (args.verdicts as string[]) : LOSSLESS_VERDICT_ENUM
+    );
+    const limit = Math.max(1, Math.min(500, Number(args.limit) || 50));
+    const rows = all.filter((r) => wanted.has(r.verdict) && !r.override);
+    return {
+      counts,
+      markedOk: all.filter((r) => r.override).length,
+      total: rows.length,
+      tracks: rows.slice(0, limit).map((r) => ({
+        id: r.trackId,
+        title: r.title,
+        artist: r.artist,
+        album: r.album,
+        path: r.path,
+        verdict: r.verdict,
+        confidence: r.confidence,
+        cutoffHz: r.cutoffHz,
+        likelySource: r.source,
+      })),
+    };
+  },
+};
+
+const lossless_mark_ok: AiTool = {
+  name: "lossless_mark_ok",
+  description:
+    "Overrule the lossless check for tracks the user says are fine ('Mark as OK'): they stop showing as flagged and re-checks skip them. Pass ok: false to undo.",
+  parameters: {
+    type: "object",
+    properties: {
+      trackIds: { type: "array", items: { type: "number" }, description: "Track ids from lossless_report." },
+      ok: { type: "boolean", description: "true (default) marks OK; false removes the mark." },
+    },
+    required: ["trackIds"],
+  },
+  kind: "write-safe",
+  summarize: (args) =>
+    `${args.ok === false ? "Unmark" : "Mark"} ${Array.isArray(args.trackIds) ? args.trackIds.length : 0} track(s) as OK in the lossless check`,
+  async run(args, ctx) {
+    const denied = await ownerGate(ctx, "Only the server's owner can change lossless check results.");
+    if (denied) return denied;
+    const ids = (Array.isArray(args.trackIds) ? args.trackIds : []).filter(
+      (id): id is number => Number.isInteger(id) && (id as number) > 0
+    );
+    const { setLosslessOverride } = await import("../lossless/lossless-scan");
+    return { ok: true, changed: setLosslessOverride(ctx.db, ids, args.ok !== false) };
+  },
+};
+
+const lossless_delete_flagged: AiTool = {
+  name: "lossless_delete_flagged",
+  description:
+    "Delete lossy-sourced files the lossless check flagged, from disk and from the library. Pass explicit trackIds (from lossless_report) or verdicts (e.g. ['lossy_strong']) — never guess. Only flagged tracks the user has not marked OK can be deleted. The desktop app moves files to the OS trash; a headless server deletes them permanently.",
+  parameters: {
+    type: "object",
+    properties: {
+      trackIds: { type: "array", items: { type: "number" } },
+      verdicts: { type: "array", items: { type: "string", enum: LOSSLESS_VERDICT_ENUM } },
+    },
+  },
+  kind: "write-destructive",
+  summarize: (args) => {
+    if (Array.isArray(args.trackIds) && args.trackIds.length) return `Delete ${args.trackIds.length} lossy-sourced file(s) from disk`;
+    if (Array.isArray(args.verdicts) && args.verdicts.length) return `Delete every file flagged ${(args.verdicts as string[]).join(" / ")} from disk`;
+    return "Delete lossy-sourced files (none selected)";
+  },
+  async run(args, ctx) {
+    const denied = await ownerGate(ctx, "Only the server's owner can delete files from the library.");
+    if (denied) return denied;
+    let ids = (Array.isArray(args.trackIds) ? args.trackIds : []).filter(
+      (id): id is number => Number.isInteger(id) && (id as number) > 0
+    );
+    if (ids.length === 0 && Array.isArray(args.verdicts) && args.verdicts.length) {
+      const verdicts = (args.verdicts as string[]).filter((v) => LOSSLESS_VERDICT_ENUM.includes(v));
+      const { getLosslessReport } = await import("../lossless/lossless-scan");
+      ids = getLosslessReport(ctx.db, verdicts as never)
+        .filter((r) => !r.override)
+        .map((r) => r.trackId);
+    }
+    if (ids.length === 0) return { ok: false, error: "No flagged tracks selected — pass trackIds or verdicts." };
+    const { deleteLosslessFlagged } = await import("../ipc/lossless");
+    const result = await deleteLosslessFlagged(ids);
+    if ("error" in result) return { ok: false, error: result.error };
+    return { ok: true, ...result };
+  },
+};
+
 const shadow_list: AiTool = {
   name: "shadow_list",
   description:
@@ -2432,6 +2576,10 @@ export const AI_TOOLS: AiTool[] = [
   web_server_approve_access_request,
   web_server_dismiss_access_request,
   web_server_remove_link,
+  lossless_check,
+  lossless_report,
+  lossless_mark_ok,
+  lossless_delete_flagged,
 ];
 
 export function getToolByName(name: string): AiTool | undefined {

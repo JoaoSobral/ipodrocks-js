@@ -217,9 +217,14 @@ class NodeSecrets implements HostSecrets {
 }
 
 class NodeShell implements HostShell {
+  readonly hasTrash = false;
   async openExternal(_url: string): Promise<{ opened: boolean }> {
     // There is no browser here — the client's browser opens it instead.
     return { opened: false };
+  }
+  async trashItem(_filePath: string): Promise<{ trashed: boolean }> {
+    // A daemon has no desktop trash; the caller deletes permanently and says so.
+    return { trashed: false };
   }
 }
 

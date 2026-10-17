@@ -17,6 +17,7 @@ import {
 } from "../savant/savantPlaylistChat";
 import { logActivity } from "../activity/activity-logger";
 import { denyIfNotOwner } from "../../server/auth/sessions";
+import { claimEssentiaJob, releaseEssentiaJob } from "../harmonic/essentia-jobs";
 import type { SavantIntent, BackfillProgress } from "../../shared/types";
 
 /**
@@ -144,6 +145,8 @@ export function registerSavantHandlers(): void {
       const denied = denyIfNotOwner(event.sessionId, OWNER_ONLY_BACKFILL_MESSAGE);
       if (denied) return denied;
       if (activeBackfill) return { error: BACKFILL_ALREADY_RUNNING };
+      const busy = claimEssentiaJob("harmonic analysis");
+      if (busy) return { error: `A ${busy} is using the audio analyser. Wait for it to finish or cancel it first.` };
       const run = { abort: new AbortController() };
       activeBackfill = run;
       const signal = run.abort.signal;
@@ -192,7 +195,10 @@ export function registerSavantHandlers(): void {
         const cancelled = signal.aborted;
         return { processed, cancelled };
       } finally {
-        if (activeBackfill === run) activeBackfill = null;
+        if (activeBackfill === run) {
+          activeBackfill = null;
+          releaseEssentiaJob("harmonic analysis");
+        }
       }
     })
   );
