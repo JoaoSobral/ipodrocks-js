@@ -1696,6 +1696,48 @@ implementation a real directory only via `IPODROCKS_DATA_DIR`, never a
 hardcoded home-relative default reachable without it. Pinned in
 `src/__tests__/regressions/host-adapter.test.ts`.
 
+## The lossless check (3.2.0) — the rules it depends on
+
+`lossless/` finds FLAC/ALAC/WAV/AIFF whose audio came from a lossy encoder: a
+brick-wall cutoff with nothing above it. ffmpeg decodes (`decodePcmF32()` in
+`utils/ffmpeg-input.ts`, the bounded stdout sibling of `runQuietFfmpeg`),
+Essentia measures (a `kind: "bands"` request on the *one* worker in
+`harmonic/essentia-worker.ts`), and `lossless/spectral-verdict.ts` decides —
+pure arithmetic, tested on synthetic spectra.
+
+- **A verdict describes the audio, never the seller.** The verdicts are
+  `lossy_strong` / `lossy` / `upsampled` / `possibly_lossy` / `genuine` /
+  `inconclusive`, never "fake": a legitimately bought edit made from a
+  compressed bounce shows the same wall (a purchased "sped up" ALAC did, in
+  testing). Keep that wording in UI, docs and Rocksy's prompt.
+- **The per-frame "empty above the cutoff" test compares against the median
+  frame, not the averaged spectrum.** When a few frames carry content above the
+  cutoff they are the only energy there and would set the very floor they are
+  measured against — every crossing then reads as "empty".
+- **One Essentia job at a time** (`harmonic/essentia-jobs.ts`). The harmonic
+  backfill and the check share the worker and each terminates it to end a slow
+  track; running both kills each other's tracks. A new Essentia job claims it.
+- **Delete takes ids and re-resolves the path from a row whose stored verdict
+  is flagged and not overruled** — never a client path — and removes rows
+  through `LibraryScanner.removeTracksByPath()` (the scan's own cleanup), not
+  `LibraryCore.deleteTrack()`, which skips `playlist_items`/`shadow_tracks`/
+  `content_hashes`. Desktop trashes (`HostShell.trashItem`); the daemon has no
+  trash and unlinks, and `HostShell.hasTrash` lets the confirm say which.
+- **A replaced file loses its verdict and its "Mark as OK"**: the scanner's
+  upsert clears the `lossless_*` columns when size or hash changes.
+- **The run's client state lives in `stores/lossless-store.ts`, not the
+  modal**, so "−" / minimise / leaving the panel never loses progress, and
+  `lossless:status` hands a re-opened modal the live run.
+- **A success result has no `error` key at all.** Electron's structured clone
+  keeps an `undefined`-valued key, and `"error" in result` then reads a finished
+  run as a failure with an empty message — which is exactly what the first e2e
+  run caught.
+
+Pinned in `src/__tests__/lossless-verdict.test.ts`,
+`regressions/lossless-check-pipeline` (real ffmpeg, real worker, real DB),
+`regressions/lossless-ipc-guards`, `regressions/lossless-check-migration`, and
+e2e `lossless-check` / `web-lossless-check`.
+
 ## Hazard: `foreign_keys = OFF` during track deletion
 
 `LibraryScanner.deleteRemovedTracks()` (`src/main/library/library-scanner.ts`) wraps its deletes in `PRAGMA foreign_keys = OFF`, so **no `ON DELETE CASCADE` declared in the schema fires there**. Every dependent table must be deleted by hand inside that transaction (`playback_logs`, `playback_stats`, `shadow_tracks`, `content_hashes`, `playlist_items`). The same applies to `cleanupOrphanedEntities()` in the same file.

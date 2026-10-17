@@ -121,6 +121,13 @@ If you really like iPodRocks and want to keep it caffeinated, you can buy me a c
 - **Rockbox-compatible album art** — Generates a single baseline-JPEG `cover.jpg` per album folder, resized to a per-device maximum (default 300 px, which keeps older players responsive), so artwork loads reliably on Rockbox. Uses folder art or embedded artwork as the source; no extra software required
 - Live progress feedback
 
+### Lossless Check — spot fake FLACs
+- **Finds lossless files made from lossy ones** — an MP3 or AAC converted to FLAC/ALAC keeps the encoder's frequency cutoff, and iPodRocks finds it with Essentia: a quick pass over every lossless file, then a deep, whole-track check of the suspects
+- **Graded verdicts** — *Lossy-sourced (strong)* for the unmistakable cases (an MP3 128 → FLAC), *Lossy-sourced* and *Possibly lossy-sourced* nearer the edge, and *Upsampled* for "hi-res" files that only hold CD-quality audio. Each comes with the cutoff, a likely source ("MP3 ~128 kbps") and a confidence. Verdicts describe the audio, never the seller
+- **Report** — export to **CSV or Markdown** with title, album and the file's path; a **Lossless** column and filter in the Library
+- **Mark as OK or delete** — overrule a verdict, or delete the files you choose (to the Trash on the desktop)
+- **Runs in the background** — minimise it and keep using the app
+
 ### Harmonic Mixing
 - **Key & BPM detection** — from existing tags or automatic audio analysis
 - Camelot wheel compatibility for DJ-style flow
@@ -325,6 +332,7 @@ and no browser grants folder access on an insecure origin.
 - Scan to extract metadata and build the catalog
 - View tracks with search, sort, and filters
 - Create shadow libraries for pre-transcoded sync
+- **Check lossless…** finds FLAC/ALAC files whose audio came from an MP3 or AAC. Run it, minimise it if you like, then export the report or delete what you don't want. Files you know are fine can be marked OK
 
 ### Devices
 

@@ -47,6 +47,12 @@ Common issues and how to fix them.
 - **Symptom:** Prompt when selecting Musepack as codec.
 - **Fix:** Install `musepack-tools` (or equivalent) for your platform. See [Installation](/guide/installation#musepack-mpcenc). Add `mpcenc` to your PATH. You can use other codecs (MP3, AAC, Opus) without it.
 
+## Lossless Check flags a file I know is genuine
+
+A verdict says what the audio shows: a sharp cutoff with nothing above it, the way a lossy encoder leaves it. A genuine file can show that too: a track mastered with a steep low-pass, or an edit (sped up, remixed) that the label made from a compressed source. Hover the cutoff in the results to see the measurements. If you trust the file, select it and click **Mark as OK**; later checks leave it alone. Check results describe the audio, never the seller.
+
+The opposite also happens: a very-high-quality VBR MP3 that kept the full frequency band has nothing missing to detect, and passes as genuine.
+
 ## Database or config location
 
 iPodRocks stores its database and preferences in the app's user data directory:

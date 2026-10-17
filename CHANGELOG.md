@@ -1,5 +1,23 @@
 # Changelog
 
+## [3.2.0] — 2026-10
+
+### 🔍 Lossless Check
+
+**Library → Check lossless…** detects FLAC, ALAC, WAV and AIFF files whose audio came from a lossy source (MP3, AAC).
+
+- Quick pass over every lossless file, then a deep pass over suspects. Uses Essentia.
+- Verdicts: *Lossy-sourced (strong)*, *Lossy-sourced*, *Possibly lossy-sourced*, *Upsampled* (hi-res files with only CD-quality content), *Genuine*, *Inconclusive*. Flagged files show the cutoff frequency, likely source and confidence.
+- Export results as CSV or Markdown (title, artist, album, path).
+- New **Lossless** column and filter in the Library.
+- **Mark as OK** excludes a file from later checks.
+- Delete selected files: to the Trash on desktop, permanently on a headless server.
+- Runs in the background; a toolbar chip shows progress.
+- Rocksy tools: `lossless_check`, `lossless_report`, `lossless_mark_ok`, `lossless_delete_flagged`.
+- Web server: running the check, marking OK and deleting are owner-only.
+- A replaced file is re-checked after the next library scan.
+- Limitation: MP3s encoded without a low-pass filter cannot be detected.
+
 ## [3.1.0] — 2026-10
 
 ### 📶 Syncs that survive a bad connection
