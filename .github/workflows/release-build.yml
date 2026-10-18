@@ -67,7 +67,9 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: ipodrocks-${{ matrix.target }}-${{ github.ref_name }}
+          # A manual run from a branch like `fix/x` has a `/` in ref_name, which an
+          # artifact name may not contain; such runs are named by run id instead.
+          name: ipodrocks-${{ matrix.target }}-${{ github.event_name == 'release' && github.ref_name || github.run_id }}
           path: ipodrocks-js/out/
           if-no-files-found: error
 
