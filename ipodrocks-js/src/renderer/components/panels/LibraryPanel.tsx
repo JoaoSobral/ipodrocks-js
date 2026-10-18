@@ -674,7 +674,7 @@ export function LibraryPanel() {
             )}
             {harmonicKeyData.coveragePct < 100 && (
               <span className="text-muted-foreground">
-                {" — Enable harmonic extraction in Settings and re-scan"}
+                {" — with Analyze with Essentia.js on (Settings → Library), the next scan analyses the rest"}
               </span>
             )}
           </span>

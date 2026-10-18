@@ -36,6 +36,70 @@ export const BACKFILL_ALREADY_RUNNING =
 export const OWNER_ONLY_BACKFILL_MESSAGE =
   "Only the server's owner can run or cancel harmonic analysis.";
 
+/**
+ * The "analyze on scan" half of Settings → Harmonic Analysis, run as the last
+ * phase of every library scan (`runLibraryScan`).
+ *
+ * The file pass only *reads* key and BPM tags, and skips every file it has
+ * seen before. So with "Analyze with Essentia.js" on, a track whose file
+ * carries no key tag used to be analysed by nothing but the Backfill button on
+ * the Savant tab — while the setting's tooltip promised the scan would do it,
+ * and the Library banner told users to "re-scan", which could never help. This
+ * analyses the tracks still missing key data — the diff, never the whole
+ * library — limited to "Analyze % of library" of them.
+ *
+ * It takes the same slot and Essentia claim as the Backfill button, so it never
+ * runs alongside that or the lossless check: if either is busy it is skipped
+ * (the next scan picks the tracks up). The scan's own signal cancels it.
+ */
+export async function analyzeMissingKeysDuringScan(
+  signal: AbortSignal,
+  onProgress?: (p: BackfillProgress) => void
+): Promise<{ processed: number } | { skipped: string }> {
+  const harmonic = getHarmonicPrefs();
+  if (!harmonic.scanHarmonicData || !harmonic.analyzeWithEssentia) {
+    return { skipped: "Essentia analysis is off" };
+  }
+  const db = getLibrary().getConnection();
+  const counts = db
+    .prepare(
+      `SELECT COUNT(*) AS total,
+              SUM(camelot IS NULL AND COALESCE(features_scanned, 0) != 2) AS missing
+         FROM tracks WHERE content_type = 'music'`
+    )
+    .get() as { total: number; missing: number | null };
+  const missing = counts.missing ?? 0;
+  if (missing === 0) return { skipped: "nothing to analyse" };
+  if (activeBackfill) return { skipped: BACKFILL_ALREADY_RUNNING };
+  const busy = claimEssentiaJob("harmonic analysis");
+  if (busy) return { skipped: `the audio analyser is busy with a ${busy}` };
+  const run = { abort: new AbortController() };
+  activeBackfill = run;
+  // Cancelled by the scan's Cancel, or by the Savant tab's backfill cancel.
+  const onAbort = () => run.abort.abort();
+  signal.addEventListener("abort", onAbort, { once: true });
+  try {
+    const share = Math.min(100, Math.max(1, harmonic.analyzePercent ?? 10));
+    const target = Math.max(1, Math.ceil((missing * share) / 100));
+    // `backfillFeaturesWithEssentia` takes a share of the whole library and
+    // samples only tracks without key data, so this asks for exactly `target`.
+    const percentOfLibrary = Math.min(100, (target * 100) / counts.total);
+    const scanner = new LibraryScanner(db);
+    const processed = await scanner.backfillFeaturesWithEssentia(
+      percentOfLibrary,
+      onProgress,
+      run.abort.signal
+    );
+    return { processed };
+  } finally {
+    signal.removeEventListener("abort", onAbort);
+    if (activeBackfill === run) {
+      activeBackfill = null;
+      releaseEssentiaJob("harmonic analysis");
+    }
+  }
+}
+
 const SESSION_TTL_MS = 30 * 60 * 1000; // 30 minutes
 const SESSION_CAP = 20; // F6: reduced from 50 — single-user desktop app
 

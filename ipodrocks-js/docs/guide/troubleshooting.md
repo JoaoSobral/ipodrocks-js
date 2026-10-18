@@ -43,9 +43,15 @@ Common issues and how to fix them.
 - **Symptom:** Savant playlists or Rocksy fail or return errors.
 - **Fix:** Add your OpenRouter API key in **Settings** → OpenRouter API. Test the connection before saving. Ensure you have credits and the selected model is available. Check your network for API errors.
 
+## Some tracks never get key data, however often I rescan
+
+- **Symptom:** The Library says e.g. *2869/2968 tracks have key data* and a rescan does not change it.
+- **Cause:** A scan reads key and BPM from tags, and those tracks have none (most `.m4a` files do not).
+- **Fix:** Turn on **Analyze with Essentia.js** in **Settings → Library** and scan. The scan then analyses the audio of every track still missing key data as its last step (*Analyzing key/BPM* in the scan dialog). Versions before 3.2.0 only did this from a Backfill button on the Savant tab.
+
 ## Harmonic analysis fails after many tracks
 
-- **Symptom:** Essentia backfill stops or crashes after ~100 tracks.
+- **Symptom:** Essentia analysis stops or crashes after ~100 tracks.
 - **Fix:** This was fixed in v1.0.4. Update to the latest version. The engine now frees memory correctly and resets periodically.
 
 ## Album artwork not on device

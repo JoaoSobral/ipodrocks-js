@@ -36,16 +36,20 @@ function schedDb(): Database.Database {
   db.exec(`
     CREATE TABLE app_settings (key TEXT PRIMARY KEY, value TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
     CREATE TABLE activity_log (id INTEGER PRIMARY KEY, operation TEXT, detail TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
-    CREATE TABLE library_folders (id INTEGER PRIMARY KEY, name TEXT, path TEXT, content_type TEXT);
+    CREATE TABLE library_folders (id INTEGER PRIMARY KEY, name TEXT, path TEXT, content_type TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
   `);
   return db;
 }
 
 describe.skipIf(!canRunDbTests)("scan schedule", () => {
-  it("is quiet with no folders, and due for a library never scanned", () => {
+  it("is quiet with no folders, and due for a library never scanned once it is 10 days old", () => {
     const db = schedDb();
     expect(scanReminder(db, {}).due).toBe(false);
+    // Just added: its first scan is under way, not overdue. Asking here raced
+    // that scan and put the dialog over whatever the user was doing.
     db.prepare("INSERT INTO library_folders (name, path, content_type) VALUES ('m', '/m', 'music')").run();
+    expect(scanReminder(db, {})).toEqual({ due: false, lastScanAt: null });
+    db.prepare("UPDATE library_folders SET created_at = datetime('now', '-11 days')").run();
     expect(scanReminder(db, {})).toEqual({ due: true, lastScanAt: null });
   });
 
@@ -193,5 +197,26 @@ describe.skipIf(!canRunDbTests)("scan reminder over IPC", () => {
     expect(refused.error).toMatch(/owner/i);
     expect(await tool.run({ enabled: true }, ctx)).toMatchObject({ ok: true, scanOnStartup: true });
     expect(prefs.getLibraryPrefs().scanOnStartup).toBe(true);
+  });
+
+  it("Rocksy reads and changes the harmonic analysis switches, owner-gated", async () => {
+    const { getToolByName } = await import("../../main/assistant/tools");
+    const tool = getToolByName("library_set_harmonic_analysis")!;
+    expect(tool.kind).toBe("write-safe");
+    const ctx = { db: common.getLibrary().getConnection() } as Parameters<typeof tool.run>[1];
+    expect(await tool.run({}, ctx)).toMatchObject({ analyzeWithEssentia: false, musicTracks: 0 });
+    const refused = (await tool.run({ analyze_with_essentia: true }, { ...ctx, sessionId: "sid-guest" })) as {
+      error?: string;
+    };
+    expect(refused.error).toMatch(/owner/i);
+    expect(prefs.getHarmonicPrefs().analyzeWithEssentia).toBe(false);
+    expect(await tool.run({ analyze_with_essentia: true, analyze_percent: 100 }, ctx)).toMatchObject({
+      ok: true,
+      analyzeWithEssentia: true,
+      analyzePercent: 100,
+    });
+    expect((await tool.run({ analyze_percent: 0 }, ctx)) as { error?: string }).toMatchObject({
+      error: expect.stringMatching(/1-100/),
+    });
   });
 });

@@ -78,8 +78,23 @@ one sync history, one set of ratings and one set of settings.
 - Auto Podcasts keep working on a hybrid device, through its local mount.
 - Rocksy tool: `device_set_connections`.
 
+### 🗂️ Settings, by topic
+
+Settings is wider and split into tabs: **General** (Rocksy and Savant's AI),
+**Library** (startup scan, ratings, key/BPM), **Podcasts** and **Remote** (web
+server and sign-in). One **Save** still saves everything.
+
 ### 🐛 Fixes
 
+- **Key/BPM analysis now runs during the library scan.** With **Analyze with
+  Essentia.js** on, tracks whose files carry no key tag (most `.m4a` files)
+  were only ever analysed by a Backfill button on the Savant tab — a rescan
+  could not fill them, although the setting and the Library banner said it
+  would. Every scan now analyses the tracks still missing key data as its last
+  step (*Analyzing key/BPM* in the scan dialog; Cancel stops it). The Backfill
+  button is gone: the Savant tab just says when key data is missing and points
+  to Settings — Savant works without it, but its playlists won't flow as well.
+  Rocksy tool: `library_set_harmonic_analysis`.
 - **Album covers reach the player resized again.** A cover with a large
   EXIF/ICC/comment block, which is most real-world artwork, was refused by the
   ffmpeg input guard added in 3.0.1, and the sync quietly copied the original

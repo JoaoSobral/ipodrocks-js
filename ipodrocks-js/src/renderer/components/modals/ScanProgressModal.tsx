@@ -32,6 +32,8 @@ function StatusIcon({ status }: { status: ScanProgress["status"] }) {
       return <span className="text-warning" title="Skipped">◐</span>;
     case "error":
       return <span className="text-destructive" title="Error">✕</span>;
+    case "analyzed":
+      return <span className="text-primary" title="Key/BPM analysed">♫</span>;
     case "complete":
     case "cancelled":
       return <span className="text-muted-foreground">✓</span>;
@@ -128,7 +130,11 @@ export function ScanProgressModal({ open, onClose, folders }: ScanProgressModalP
 
         <div className="flex items-center justify-between text-xs text-muted-foreground">
           <span className="truncate max-w-[60%]">
-            {progress?.file ? `Scanning: ${progress.file}` : "Preparing…"}
+            {progress?.phase === "keys"
+              ? `Analyzing key/BPM: ${progress.file || "…"}`
+              : progress?.file
+                ? `Scanning: ${progress.file}`
+                : "Preparing…"}
           </span>
           <span className="tabular-nums shrink-0">
             {progress ? `${progress.processed}/${progress.total}` : "—"}
@@ -182,6 +188,11 @@ export function ScanProgressModal({ open, onClose, folders }: ScanProgressModalP
                 <p className="text-xs text-muted-foreground">Skipped</p>
               </div>
             </div>
+            {(result.keysAnalyzed ?? 0) > 0 && (
+              <p className="mt-2 text-center text-xs text-muted-foreground" data-testid="scan-keys-analyzed">
+                Key/BPM analysed for {result.keysAnalyzed} track(s) without key tags
+              </p>
+            )}
             {result.cancelled && (
               <p className="mt-2 text-center text-xs text-warning">Scan was cancelled</p>
             )}

@@ -54,7 +54,8 @@ export interface ScanReminder {
 /**
  * Should the user be asked to scan? Never when the startup scan is on (it
  * keeps the library current by itself) or when there is nothing to scan.
- * A library that has folders but was never scanned is due.
+ * A library that has folders but was never scanned is due once its oldest
+ * folder is 10 days old.
  */
 export function scanReminder(
   db: Database.Database,
@@ -65,7 +66,15 @@ export function scanReminder(
   const lastScanAt = last === null ? null : new Date(last).toISOString();
   if (prefs.scanOnStartup) return { due: false, lastScanAt };
   if ((prefs.scanReminderSnoozeUntil ?? 0) > now) return { due: false, lastScanAt };
-  const folders = db.prepare("SELECT COUNT(*) AS n FROM library_folders").get() as { n: number };
+  const folders = db
+    .prepare("SELECT COUNT(*) AS n, MIN(created_at) AS oldest FROM library_folders")
+    .get() as { n: number; oldest: string | null };
   if (folders.n === 0) return { due: false, lastScanAt };
-  return { due: last === null || now - last >= SCAN_REMINDER_INTERVAL_MS, lastScanAt };
+  if (last !== null) return { due: now - last >= SCAN_REMINDER_INTERVAL_MS, lastScanAt };
+  // Never scanned: only once the library has existed for the same 10 days. A
+  // folder added a moment ago is not "stale" — and asking then raced the
+  // folder's own first scan, putting the dialog over the screen the user was
+  // just working in.
+  const since = folders.oldest ? parseSqliteUtc(folders.oldest) : null;
+  return { due: since === null || now - since >= SCAN_REMINDER_INTERVAL_MS, lastScanAt };
 }

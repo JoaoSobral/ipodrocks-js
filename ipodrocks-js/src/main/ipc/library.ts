@@ -11,6 +11,7 @@ import {
 } from "../library/scan-schedule";
 import { logActivity, getRecentActivity } from "../activity/activity-logger";
 import { invalidateAssistantCache } from "../assistant/assistantChat";
+import { analyzeMissingKeysDuringScan } from "./savant";
 
 /**
  * The running library scan and the session that started it.
@@ -233,6 +234,35 @@ export async function runLibraryScan(
       }
     }
 
+    // Last phase: Essentia on the tracks the tags gave no key — when
+    // Settings → Harmonic Analysis asks for it. Shown in the same progress
+    // dialog and stopped by the same Cancel.
+    const analysis = await analyzeMissingKeysDuringScan(scan.controller.signal, (p) => {
+      opts.onProgress?.({
+        file: p.path ? p.path.split(/[\\/]/).pop() : "",
+        processed: p.processed,
+        total: p.total,
+        status: p.status === "analyzing" ? (p.success ? "analyzed" : "analyzing") : p.status,
+        phase: "keys",
+      });
+    });
+    if ("skipped" in analysis && /busy|already running/.test(analysis.skipped)) {
+      allWarnings.push(`Key/BPM analysis skipped: ${analysis.skipped}. The next scan will catch up.`);
+    }
+    const keysAnalyzed = "processed" in analysis ? analysis.processed : 0;
+    if (scan.controller.signal.aborted) {
+      return {
+        filesAdded: totalAdded,
+        filesProcessed: totalProcessed,
+        filesRemoved: totalRemoved,
+        cancelled: true,
+        errors: allErrors,
+        warnings: allWarnings,
+        duplicateFilesDetected: totalDuplicateFiles,
+        keysAnalyzed,
+      };
+    }
+
     if (
       allAdded.length > 0 ||
       allUpdated.length > 0 ||
@@ -260,8 +290,10 @@ export async function runLibraryScan(
     // Keep playlists honest: drop songs that no longer exist and re-resolve
     // smart playlists so they also pick up whatever this scan just added.
     const playlistSummary = reconcilePlaylistsAfterLibraryChange("library scan");
+    recordLibraryScan(lib.getConnection());
 
     return {
+      keysAnalyzed,
       filesAdded: totalAdded,
       filesProcessed: totalProcessed,
       filesRemoved: totalRemoved,

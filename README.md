@@ -132,7 +132,7 @@ If you really like iPodRocks and want to keep it caffeinated, you can buy me a c
 ### Harmonic Mixing
 - **Key & BPM detection** — from existing tags or automatic audio analysis
 - Camelot wheel compatibility for DJ-style flow
-- Optional backfill with genre-based sampling
+- Tracks without key tags are analysed during the library scan
 
 ### Optional: the AI extras
 

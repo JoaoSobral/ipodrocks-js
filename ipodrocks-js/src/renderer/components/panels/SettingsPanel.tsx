@@ -31,6 +31,17 @@ interface SettingsPanelProps {
   onClose: () => void;
 }
 
+type SettingsTab = "general" | "library" | "podcasts" | "remote";
+
+/** One tab per topic. Every panel stays mounted (just hidden), so Save still
+ *  writes every section at once and nothing reloads when switching. */
+const SETTINGS_TABS: { id: SettingsTab; label: string; hint: string }[] = [
+  { id: "general", label: "General", hint: "AI assistant & Savant" },
+  { id: "library", label: "Library", hint: "Scans, ratings, key/BPM" },
+  { id: "podcasts", label: "Podcasts", hint: "Search & auto-download" },
+  { id: "remote", label: "Remote", hint: "Web server & sign-in" },
+];
+
 export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
   const [apiKey, setApiKey] = useState("");
   const [model, setModel] = useState("anthropic/claude-sonnet-4.6");
@@ -44,6 +55,8 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
   const [testError, setTestError] = useState<string | null>(null);
   const [keyData, setKeyData] = useState<SavantKeyData | null>(null);
   const [saving, setSaving] = useState(false);
+  // Kept while the app runs, so reopening Settings returns to the same section.
+  const [tab, setTab] = useState<SettingsTab>("general");
   // A server refusal from Save, shown as a sentence beside the button. Over
   // the web the server-wide setters are owner-only, so a signed-in guest who
   // presses Save gets this instead of a modal that closes having saved nothing.
@@ -244,13 +257,46 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
       open={open}
       onClose={onClose}
       title="Settings"
-      width="max-w-3xl"
+      width="max-w-5xl"
       closeOnBackdropClick
     >
       <div className="space-y-5">
-        <div className="grid grid-cols-2 gap-5 items-start">
-          {/* Left column */}
-          <div className="space-y-5">
+        <div className="flex gap-5 items-start">
+          <div
+            role="tablist"
+            aria-label="Settings sections"
+            aria-orientation="vertical"
+            className="flex flex-col gap-1 w-36 shrink-0 sticky top-0"
+          >
+            {SETTINGS_TABS.map((t) => (
+              <button
+                key={t.id}
+                type="button"
+                role="tab"
+                id={`settings-tab-${t.id}`}
+                aria-selected={tab === t.id}
+                aria-controls={`settings-panel-${t.id}`}
+                onClick={() => setTab(t.id)}
+                className={`text-left px-3 py-2 rounded-md text-sm font-medium transition-colors cursor-default ${
+                  tab === t.id
+                    ? "bg-primary/15 text-primary"
+                    : "text-muted-foreground hover:bg-muted/40 hover:text-foreground"
+                }`}
+              >
+                {t.label}
+                <span className="block text-[10px] font-normal text-muted-foreground">{t.hint}</span>
+              </button>
+            ))}
+          </div>
+
+          <div className="flex-1 min-w-0">
+          <div
+            role="tabpanel"
+            id="settings-panel-general"
+            aria-labelledby="settings-tab-general"
+            hidden={tab !== "general"}
+            className="space-y-5"
+          >
             <Card
               title="OpenRouter API"
               subtitle="Connect to AI models via OpenRouter for Savant playlists."
@@ -329,82 +375,14 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
                 </div>
               </div>
             </Card>
-
-            <Card
-              title="Harmonic Analysis"
-              subtitle="Configure key/BPM detection for harmonic mixing."
-            >
-              <div className="space-y-5">
-                {keyData && (
-                  <p className="text-xs text-muted-foreground">
-                    {keyData.keyedCount} / {keyData.totalCount} tracks have key data (
-                    {keyData.coveragePct}%).
-                    {keyData.bpmOnlyCount > 0 && (
-                      <> {keyData.bpmOnlyCount} have BPM only.</>
-                    )}
-                  </p>
-                )}
-
-                <div className="flex items-start justify-between gap-4">
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm font-medium text-foreground">
-                      Extract harmonic data on scan
-                    </p>
-                    <p className="text-xs text-muted-foreground mt-0.5">
-                      Read key and BPM from file tags during library scan.
-                    </p>
-                  </div>
-                  <Switch
-                    checked={scanHarmonicData}
-                    onChange={setScanHarmonicData}
-                    className="shrink-0"
-                  />
-                </div>
-
-                <div className="flex items-start justify-between gap-4">
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm font-medium text-foreground">
-                      Analyze with Essentia.js
-                    </p>
-                    <p className="text-xs text-muted-foreground mt-0.5">
-                      Detect key/BPM from audio waveform (slower, more accurate).
-                    </p>
-                  </div>
-                  <Switch
-                    checked={analyzeWithEssentia}
-                    onChange={setAnalyzeWithEssentia}
-                    className="shrink-0"
-                  />
-                </div>
-
-                {analyzeWithEssentia && (
-                  <Input
-                    label="Analyze % of library"
-                    tooltip="When scanning new tracks, limit Essentia key/BPM detection to this percentage to control CPU usage."
-                    type="number"
-                    min={1}
-                    max={100}
-                    value={String(analyzePercent)}
-                    onChange={(e) =>
-                      setAnalyzePercent(parseInt(e.target.value, 10) || 10)
-                    }
-                  />
-                )}
-
-                <Input
-                  label="Backfill: process up to % of library"
-                  tooltip="Run key and BPM detection on tracks that are missing harmonic data, up to this percentage of your total library."
-                  type="number"
-                  min={1}
-                  max={100}
-                  value={String(backfillPercent)}
-                  onChange={(e) =>
-                    setBackfillPercent(parseInt(e.target.value, 10) || 100)
-                  }
-                />
-              </div>
-            </Card>
-
+          </div>
+          <div
+            role="tabpanel"
+            id="settings-panel-library"
+            aria-labelledby="settings-tab-library"
+            hidden={tab !== "library"}
+            className="space-y-5"
+          >
             <Card
               title="Library"
               subtitle="Keep the library in step with the files on disk."
@@ -460,10 +438,79 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
               </div>
             </Card>
 
-          </div>
+            <Card
+              title="Harmonic Analysis"
+              subtitle="Configure key/BPM detection for harmonic mixing."
+            >
+              <div className="space-y-5">
+                {keyData && (
+                  <p className="text-xs text-muted-foreground">
+                    {keyData.keyedCount} / {keyData.totalCount} tracks have key data (
+                    {keyData.coveragePct}%).
+                    {keyData.bpmOnlyCount > 0 && (
+                      <> {keyData.bpmOnlyCount} have BPM only.</>
+                    )}
+                  </p>
+                )}
 
-          {/* Right column */}
-          <div className="space-y-5">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium text-foreground">
+                      Extract harmonic data on scan
+                    </p>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      Read key and BPM from file tags during library scan.
+                    </p>
+                  </div>
+                  <Switch
+                    checked={scanHarmonicData}
+                    onChange={setScanHarmonicData}
+                    className="shrink-0"
+                  />
+                </div>
+
+                <div className="flex items-start justify-between gap-4">
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium text-foreground">
+                      Analyze with Essentia.js
+                    </p>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      Detect key/BPM from the audio itself for tracks whose tags have
+                      none. Runs as the last step of every library scan, only on tracks
+                      still missing key data (slower, more accurate).
+                    </p>
+                  </div>
+                  <Switch
+                    checked={analyzeWithEssentia}
+                    onChange={setAnalyzeWithEssentia}
+                    className="shrink-0"
+                  />
+                </div>
+
+                {analyzeWithEssentia && (
+                  <Input
+                    label="Analyze % of tracks missing key data"
+                    tooltip="Each scan analyses at most this percentage of the tracks still missing key data, to control CPU usage. 100 analyses all of them."
+                    type="number"
+                    min={1}
+                    max={100}
+                    value={String(analyzePercent)}
+                    onChange={(e) =>
+                      setAnalyzePercent(parseInt(e.target.value, 10) || 10)
+                    }
+                  />
+                )}
+
+              </div>
+            </Card>
+          </div>
+          <div
+            role="tabpanel"
+            id="settings-panel-podcasts"
+            aria-labelledby="settings-tab-podcasts"
+            hidden={tab !== "podcasts"}
+            className="space-y-5"
+          >
           <Card
             title="Auto Podcasts"
             subtitle="Configure the Podcast Index API for podcast search and auto-download."
@@ -597,9 +644,17 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
               )}
             </div>
           </Card>
-
-          {isWebMode() && <SignInMethodsCard open={open} />}
-          <WebServerCard open={open} />
+          </div>
+          <div
+            role="tabpanel"
+            id="settings-panel-remote"
+            aria-labelledby="settings-tab-remote"
+            hidden={tab !== "remote"}
+            className="space-y-5"
+          >
+            {isWebMode() && <SignInMethodsCard open={open} />}
+            <WebServerCard open={open} />
+          </div>
           </div>
         </div>
 

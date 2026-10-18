@@ -600,7 +600,9 @@ export interface ScanProgress {
   file: string;
   processed: number;
   total: number;
-  status: "scanning" | "added" | "skipped" | "complete" | "error" | "cancelled";
+  status: "scanning" | "added" | "skipped" | "complete" | "error" | "cancelled" | "analyzing" | "analyzed";
+  /** "keys" while the scan's last phase analyses key/BPM with Essentia. */
+  phase?: "files" | "keys";
 }
 
 export type SyncProgressEventName =
@@ -920,6 +922,8 @@ export interface ScanResult {
   warnings?: string[];
   /** Number of distinct-hash groups that had more than one copy on disk. */
   duplicateFilesDetected?: number;
+  /** Tracks given key/BPM by Essentia in the scan's last phase. */
+  keysAnalyzed?: number;
   addedTrackPaths?: string[];
   removedTrackPaths?: string[];
   removedTrackIds?: number[];

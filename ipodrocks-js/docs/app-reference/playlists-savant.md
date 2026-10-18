@@ -6,7 +6,7 @@ Savant playlists are AI-generated from your mood and intent. They use OpenRouter
 
 - **Quick mode** — Short mood presets (e.g. "Chill", "Workout", "Focus"). Click to generate.
 - **Chat mode** — Describe your vibe in plain English. The AI picks tracks and can discuss options.
-- **Harmonic coverage** — Shows how many tracks have key data. Links to Settings and Backfill if coverage is low.
+- **Harmonic coverage** — When some tracks have no key/BPM data, a note says how many and links to Settings. Savant works without it, but its playlists won't flow as well.
 - **Generate** — Creates a playlist. You can regenerate with different prompts.
 - **Save** — Save as a playlist with a name.
 
@@ -19,7 +19,7 @@ Savant playlists are AI-generated from your mood and intent. They use OpenRouter
 ## How to work with it
 
 1. **Add OpenRouter API key** in Settings. Test the connection before saving.
-2. **Improve harmonic coverage** — Enable "Extract harmonic data" and "Analyze with Essentia" in Settings, then scan or run Backfill. More key data = better harmonic ordering.
+2. **Improve harmonic coverage** — Enable "Extract harmonic data" and "Analyze with Essentia.js" in Settings → Library, then scan the library: tracks without key tags are analysed as the scan's last step. More key data = better harmonic ordering.
 3. **Quick mode** — Use for fast playlists with common moods.
 4. **Chat mode** — Use for specific requests ("late night jazz", "upbeat indie for a run"). Refine with follow-up messages.
 5. **Save** when you are happy with the result. Savant playlists are static once saved; regenerate for a fresh mix.

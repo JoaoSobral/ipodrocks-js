@@ -170,7 +170,7 @@ Rating-aware — candidate tracks include star ratings; Savant gives extra weigh
 The AI avoids tracks you consistently leave unfinished (from Rockbox's runtime data when available).
 
 How to use: add OpenRouter key in Settings → Quick or Chat mode → Generate → Save. Savant playlists are static once saved; regenerate for a fresh mix.
-Improve harmonic coverage: enable "Extract harmonic data" and "Analyze with Essentia" in Settings, then scan or run Backfill.
+Improve harmonic coverage: enable "Extract harmonic data" and "Analyze with Essentia.js" in Settings → Library, then scan the library.
 
 ---
 
@@ -229,10 +229,9 @@ Controls key/BPM detection for Savant harmonic ordering and Library banners.
 
 Extract harmonic data on scan — reads TKEY/TBPM from file tags. Fast, but requires tags.
 Analyze with Essentia — detects key/BPM from the audio waveform. More accurate, CPU-intensive. A single WASM instance is reused to avoid memory leaks.
-Backfill % (tag extraction) — percentage of library to process in one run.
-Analyze % (Essentia) — percentage to analyze per run (genre-sampled).
-Run Backfill from Settings or the Savant tab. Only processes tracks that don't yet have key data.
-After enabling "Extract harmonic data", run a full library scan to pick up the setting.
+Lives in Settings → Library. Essentia runs as the last step of every library scan, only on music tracks still missing key data (so a plain rescan fills in tracks with no key tags, e.g. most .m4a files). Shown as "Analyzing key/BPM" in the scan dialog; Cancel stops it.
+Analyze % — how many of the tracks still missing key data one scan analyses (100 = all).
+There is no separate Backfill button any more. If a user asks why tracks have no key data or how to "backfill", tell them to turn on Analyze with Essentia.js and scan the library. Savant works without key data, but its playlists won't flow as well.
 
 ---
 

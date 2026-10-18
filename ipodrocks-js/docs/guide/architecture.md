@@ -182,7 +182,6 @@ One per primary tab in the sidebar.
 |---|---|
 | **ScanProgressModal** | File-by-file scan progress; captures `folders` in a ref to prevent restart on re-render. |
 | **SyncProgressModal** | Copy progress; uses `useRef` counters to avoid stale-closure bugs in the `onComplete` callback. |
-| **BackfillProgressModal** | Harmonic backfill progress. |
 | **AddDeviceModal / AddFolderModal** | Forms for new devices and library folders. |
 | **PodcastSearchModal / PodcastEpisodeModal** | Discover (keyword **Search** or **Add by URL** tabs) and inspect podcasts. |
 | **AudiobookSearchModal / AudiobookDetailModal / AudiobookCoverPickerModal** | Search LibriVox, inspect a book's chapters, and pick a cover. |

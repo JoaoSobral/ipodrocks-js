@@ -24,6 +24,17 @@ consequences worth keeping:
 anything else** — `node_modules` can sit well behind `package-lock.json`, and
 CI's `npm ci` never does. `npm ci` locally reproduces it exactly.
 
+**The e2e suite runs in parallel, except the web project.** The electron
+project spreads files across workers (`workers` in `playwright.config.ts`:
+half the cores locally, 2 on CI, `E2E_WORKERS` to override); each launch gets
+its own user-data *and* temp directory (`TMPDIR` in `electron-launcher.ts`),
+because the app empties machine-wide scratch — the preview player's
+transcodes — at startup. A new spec must not touch a fixed path another spec
+could use. The web project is pinned to one worker: every web spec drives one
+long-lived daemon. **Never run `npm run dev` or `npm run build` while a suite
+runs** — both delete `dist/`, and the failures read as "Built app not found"
+or launch timeouts scattered over unrelated specs.
+
 The e2e suite runs the app **hidden**: `tests/e2e/electron-launcher.ts` sets
 `IPODROCKS_HEADLESS=1`, which `src/main/index.ts` turns into `show: false` plus
 `backgroundThrottling: false` on the `BrowserWindow`, and `app.dock.hide()` on
@@ -617,6 +628,19 @@ server-side that reads `transport` (podcast scheduler, auto-audiobooks,
 Pinned in `regressions/hybrid-device.test.ts` and e2e `hybrid-device` /
 `web-hybrid-device` (whose load-bearing assertion is that the server's mount is
 still empty after the browser's sync).
+
+## Key/BPM analysis is the scan's last phase
+
+`runLibraryScan()` (`ipc/library.ts`) ends with `analyzeMissingKeysDuringScan()`
+(`ipc/savant.ts`) when *Extract harmonic data* and *Analyze with Essentia.js*
+are both on: Essentia over music tracks with `camelot IS NULL` that are not
+marked failed (`features_scanned = 2`), capped at `analyzePercent` **of those
+tracks**. It must not depend on the file pass — that skips unchanged files, which
+is exactly why a rescan used to leave tagless `.m4a` files at no key forever.
+It shares `activeBackfill` and `claimEssentiaJob()` with `savant:backfillFeatures`
+(still registered, no UI) and is skipped, with a scan warning, when the lossless
+check holds Essentia. Pinned in `regressions/scan-essentia-phase` (real worker)
+and e2e `harmonic-scan`.
 
 ## Rocksy reads the docs through a generated bundle
 

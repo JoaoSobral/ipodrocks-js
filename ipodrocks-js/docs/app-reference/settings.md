@@ -5,7 +5,7 @@ Settings is a modal opened from the gear icon (top right). It has sections for *
 ## What it does
 
 - **OpenRouter API** — API key and model for Savant playlists and Rocksy. Test connection before saving.
-- **Harmonic Analysis** — Key/BPM extraction on scan, Essentia analysis, backfill percentage. Affects Library and Savant.
+- **Harmonic Analysis** — Key/BPM from tags, and Essentia analysis of tracks without them during every library scan. Affects Library and Savant.
 - **Library** — "Scan library at startup" (off by default). With it off you are reminded to scan once the library has gone 10 days without one. See [Keeping the library current](/app-reference/library#keeping-the-library-current).
 - **Ratings** — "Library tags always win", which makes a scan take each track's rating from the file's own tag. See [Ratings](/app-reference/ratings).
 - **Auto Podcasts** — Podcast Index API credentials, auto-refresh and the download folder. See [Auto Podcasts](/app-reference/autopodcasts).

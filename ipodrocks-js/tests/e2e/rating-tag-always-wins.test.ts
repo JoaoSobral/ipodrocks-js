@@ -82,6 +82,7 @@ function ratingsAlwaysWinSwitch(window: Page) {
 
 async function setTagRatingAlwaysWins(window: Page, enabled: boolean): Promise<void> {
   await window.getByRole("button", { name: "Settings" }).click();
+  await window.getByRole("tab", { name: /^Library/ }).click();
   const toggle = ratingsAlwaysWinSwitch(window);
   await toggle.waitFor({ timeout: 10_000 });
   const isChecked = (await toggle.getAttribute("aria-checked")) === "true";

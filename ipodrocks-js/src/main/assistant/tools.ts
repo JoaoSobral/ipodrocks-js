@@ -54,7 +54,14 @@ import {
 } from "../playlists/genius-engine";
 import { ingestRuntimeDataForDevice } from "../rockbox/runtime-ingest";
 import { deviceForClient } from "../devices/device-view";
-import { getRatingPrefs, setRatingPrefs, getLibraryPrefs, setLibraryPrefs } from "../utils/prefs";
+import {
+  getRatingPrefs,
+  setRatingPrefs,
+  getLibraryPrefs,
+  setLibraryPrefs,
+  getHarmonicPrefs,
+  setHarmonicPrefs,
+} from "../utils/prefs";
 import type { HandlerSender } from "../host/bridge";
 import { PROVIDERS, isProvider } from "../../shared/auth-providers";
 import { listDocsPages, readDocsPage, searchDocs } from "./appDocsSearch";
@@ -642,6 +649,63 @@ const library_set_scan_on_startup: AiTool = {
       message: enabled
         ? "The library will now be scanned every time iPodRocks starts."
         : "Startup scans are off. You'll be asked to scan once the library has gone 10 days without one.",
+    };
+  },
+};
+
+const library_set_harmonic_analysis: AiTool = {
+  name: "library_set_harmonic_analysis",
+  description:
+    "Read or change Settings → Library → Harmonic Analysis: 'extract_tags' reads key/BPM from file tags during a scan; 'analyze_with_essentia' detects key/BPM from the audio itself, as the last step of every library scan, for tracks still missing key data (e.g. .m4a files with no key tag); 'analyze_percent' is how many of those tracks one scan analyses (1-100). There is no separate backfill: after turning Essentia on, offer to scan the library (library_scan). Call with no arguments to report the settings and how many tracks have key data.",
+  parameters: {
+    type: "object",
+    properties: {
+      extract_tags: { type: "boolean", description: "Read key/BPM tags during scans." },
+      analyze_with_essentia: { type: "boolean", description: "Analyse tracks without key tags during scans." },
+      analyze_percent: { type: "number", description: "1-100: share of the tracks missing key data analysed per scan." },
+    },
+    required: [],
+  },
+  // Only the setting: the analysis itself runs in the next library_scan,
+  // which has its own confirm gate.
+  kind: "write-safe",
+  summarize: (a) =>
+    a.extract_tags === undefined && a.analyze_with_essentia === undefined && a.analyze_percent === undefined
+      ? "Check the harmonic analysis settings"
+      : "Change the harmonic analysis settings",
+  async run(args, ctx) {
+    const changing =
+      args.extract_tags !== undefined ||
+      args.analyze_with_essentia !== undefined ||
+      args.analyze_percent !== undefined;
+    if (changing) {
+      // Server-wide, owner-gated like `settings:setHarmonicPrefs`.
+      const { OWNER_ONLY_SETTINGS_MESSAGE } = await import("../../server/auth/sessions");
+      const denied = await ownerGate(ctx, OWNER_ONLY_SETTINGS_MESSAGE);
+      if (denied) return denied;
+      const next: Parameters<typeof setHarmonicPrefs>[0] = {};
+      if (typeof args.extract_tags === "boolean") next.scanHarmonicData = args.extract_tags;
+      if (typeof args.analyze_with_essentia === "boolean") next.analyzeWithEssentia = args.analyze_with_essentia;
+      if (args.analyze_percent !== undefined) {
+        const n = Math.round(Number(args.analyze_percent));
+        if (!Number.isFinite(n) || n < 1 || n > 100) return { error: "analyze_percent must be 1-100" };
+        next.analyzePercent = n;
+      }
+      setHarmonicPrefs(next);
+    }
+    const prefs = getHarmonicPrefs();
+    const cov = ctx.db
+      .prepare(
+        "SELECT COUNT(*) AS total, SUM(camelot IS NOT NULL) AS keyed FROM tracks WHERE content_type = 'music'"
+      )
+      .get() as { total: number; keyed: number | null };
+    return {
+      ...(changing ? { ok: true } : {}),
+      extractTags: prefs.scanHarmonicData,
+      analyzeWithEssentia: prefs.analyzeWithEssentia,
+      analyzePercent: prefs.analyzePercent,
+      tracksWithKeyData: cov.keyed ?? 0,
+      musicTracks: cov.total,
     };
   },
 };
@@ -2715,6 +2779,7 @@ export const AI_TOOLS: AiTool[] = [
   ratings_resolve_conflicts,
   ratings_set_tag_priority,
   library_set_scan_on_startup,
+  library_set_harmonic_analysis,
   device_read_runtime_data,
   sync_status,
   playlist_create_classic,

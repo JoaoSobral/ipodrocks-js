@@ -15,6 +15,7 @@
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
+import Database from "better-sqlite3";
 import { test, expect, type Page } from "@playwright/test";
 import { launchApp, type LaunchedApp } from "./electron-launcher";
 
@@ -53,9 +54,19 @@ function invoke<T = unknown>(window: Page, channel: string, ...args: unknown[]):
   ) as Promise<T>;
 }
 
-/** A library folder that has never been scanned, then "open the app again". */
+/**
+ * A library folder added 11 days ago and never scanned, then "open the app
+ * again". A folder added just now is not overdue — its first scan is still
+ * coming — so the age is set straight in the database.
+ */
 async function unscannedLibraryAndReopen(window: Page): Promise<void> {
   await invoke(window, "library:addFolder", { name: "Reminder Lib", path: musicDir, contentType: "music" });
+  const db = new Database(path.join(launched.userDataDir, "ipodrock.db"));
+  try {
+    db.prepare("UPDATE library_folders SET created_at = datetime('now', '-11 days')").run();
+  } finally {
+    db.close();
+  }
   await window.reload();
   await readyWindow();
 }
@@ -63,6 +74,13 @@ async function unscannedLibraryAndReopen(window: Page): Promise<void> {
 test("a library never scanned is met with the reminder; No keeps it quiet", async () => {
   const window = await readyWindow();
   // No folders yet: nothing to ask about.
+  await expect(window.getByTestId("scan-reminder")).toHaveCount(0);
+  // Nor about a folder added a moment ago, on the next start.
+  await invoke(window, "library:addFolder", { name: "Fresh Lib", path: musicDir, contentType: "music" });
+  await window.reload();
+  await readyWindow();
+  await expect(window.getByRole("button", { name: "Sync", exact: true })).toBeVisible();
+  expect((await invoke<{ due: boolean }>(window, "library:getScanReminder")).due).toBe(false);
   await expect(window.getByTestId("scan-reminder")).toHaveCount(0);
 
   await unscannedLibraryAndReopen(window);
@@ -101,6 +119,15 @@ test("with 'Scan library at startup' on, opening the app scans and does not ask"
   await invoke(window, "library:addFolder", { name: "Reminder Lib", path: musicDir, contentType: "music" });
 
   await window.getByRole("button", { name: "Settings" }).click();
+  // Settings is split by topic; it opens on General, and other sections are
+  // hidden until their tab is chosen.
+  const tabs = window.getByRole("tab");
+  await expect(tabs).toHaveCount(4);
+  await expect(window.getByRole("tab", { name: /^General/ })).toHaveAttribute("aria-selected", "true");
+  await expect(window.getByText("OpenRouter API", { exact: true })).toBeVisible();
+  await expect(window.getByTestId("scan-on-startup")).toBeHidden();
+  await window.getByRole("tab", { name: /^Library/ }).click();
+  await expect(window.getByText("OpenRouter API", { exact: true })).toBeHidden();
   const toggle = window.getByTestId("scan-on-startup");
   await expect(toggle).toHaveAttribute("aria-checked", "false");
   await toggle.click();

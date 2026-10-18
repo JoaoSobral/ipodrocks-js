@@ -68,6 +68,7 @@ test("the desktop creates the owner, adds an account, resets its password and re
   expect(started.running, started.lastError).toBe(true);
 
   await window.getByRole("button", { name: "Settings" }).click();
+  await window.getByRole("tab", { name: /^Remote/ }).click();
   const claim = window.getByTestId("claim-owner");
   await claim.waitFor({ timeout: 10_000 });
   await claim.locator("#owner-username").fill("Desk Owner");
