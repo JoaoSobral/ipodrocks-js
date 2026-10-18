@@ -23,12 +23,15 @@ import { getToolByName } from "../../main/assistant/tools";
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const bundler = require("../../../scripts/bundle-docs.js") as {
   render(): string;
+  pageContent(raw: string): string;
   OUT: string;
 };
 
 describe("app docs bundle", () => {
   it("matches docs/ exactly — re-run scripts/bundle-docs.js if this fails", () => {
-    expect(fs.readFileSync(bundler.OUT, "utf8")).toBe(bundler.render());
+    // A Windows checkout may give the generated file CRLF line endings; the
+    // bundle's content is what matters, not how git wrote it to disk.
+    expect(fs.readFileSync(bundler.OUT, "utf8").replace(/\r\n/g, "\n")).toBe(bundler.render());
   });
 
   it("holds every page of the docs site", () => {
@@ -38,6 +41,12 @@ describe("app docs bundle", () => {
     expect(paths).toContain("guide/server-deployment.md");
     expect(paths.every((p) => !p.startsWith(".vitepress"))).toBe(true);
     expect(path.basename(bundler.OUT)).toBe("docsCorpus.generated.ts");
+  });
+
+  it("strips CRLF frontmatter too — what a Windows checkout gives the build", () => {
+    const lf = "---\nlayout: home\n---\n# Title\n\nBody\n";
+    expect(bundler.pageContent(lf)).toBe("# Title\n\nBody\n");
+    expect(bundler.pageContent(lf.replace(/\n/g, "\r\n"))).toBe("# Title\n\nBody\n");
   });
 });
 
