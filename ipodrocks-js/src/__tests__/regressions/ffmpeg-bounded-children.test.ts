@@ -62,6 +62,7 @@ let dir: string;
 let fifo: string;
 let realMp3: string;
 let taggedFlac: string;
+let savedTmpdir: string | undefined;
 
 function ffmpegChildrenOn(p: string): number {
   const r = spawnSync("pgrep", ["-f", p], { encoding: "utf8" });
@@ -117,9 +118,18 @@ beforeAll(async () => {
     logLevel: "silent",
   });
   setEssentiaWorkerScriptForTests(outfile);
+
+  // A private temp dir for everything below. The "no temp WAV left behind"
+  // assertions diff a directory listing, and vitest runs other suites that do
+  // real Essentia decodes (lossless-check-pipeline, scan-essentia-phase) in
+  // parallel — in the shared os.tmpdir() their in-flight WAVs read as ours.
+  savedTmpdir = process.env.TMPDIR;
+  process.env.TMPDIR = fs.mkdtempSync(path.join(dir, "tmp-"));
 });
 
 afterAll(() => {
+  if (savedTmpdir === undefined) delete process.env.TMPDIR;
+  else process.env.TMPDIR = savedTmpdir;
   setEssentiaWorkerScriptForTests(null);
   setPlayerTranscodeTimeoutForTests(undefined);
   setEssentiaTimeoutsForTests({});

@@ -31,7 +31,10 @@ its own user-data *and* temp directory (`TMPDIR` in `electron-launcher.ts`),
 because the app empties machine-wide scratch — the preview player's
 transcodes — at startup. A new spec must not touch a fixed path another spec
 could use. The web project is pinned to one worker: every web spec drives one
-long-lived daemon. **Never run `npm run dev` or `npm run build` while a suite
+long-lived daemon. **Electron 43 downloads its binary on first
+`require("electron")`, not at install**, so `tests/e2e/global-setup.ts` resolves
+it once before the workers start — without it, a fresh checkout (every CI run)
+has two workers downloading into one `dist/` and fails with `spawn ETXTBSY`. **Never run `npm run dev` or `npm run build` while a suite
 runs** — both delete `dist/`, and the failures read as "Built app not found"
 or launch timeouts scattered over unrelated specs.
 

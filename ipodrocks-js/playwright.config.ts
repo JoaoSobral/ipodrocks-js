@@ -43,6 +43,8 @@ function e2eWorkers(): number | string {
 export default defineConfig({
   testDir: "./tests/e2e",
   testMatch: /.*\.test\.ts/,
+  // Downloads the Electron binary once, before the workers can race it.
+  globalSetup: "./tests/e2e/global-setup.ts",
   fullyParallel: false,
   // **The electron project runs in parallel; the web project does not.** Each
   // electron test launches its own app with its own user-data and temp
