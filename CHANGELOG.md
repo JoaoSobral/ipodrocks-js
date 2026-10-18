@@ -22,7 +22,7 @@
 
 A new **Build Rockbox database** option in the Sync tab: iPodRocks writes the
 player's Rockbox database at the end of the sync, so new music is browsable as
-soon as you unplug — no more **Database → Update now** on the iPod after every
+soon as you unplug — no more **Database → Update now** on the Device after every
 sync.
 
 - Off by default; tick it once per device and it is remembered.
