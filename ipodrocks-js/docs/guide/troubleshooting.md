@@ -22,6 +22,17 @@ Common issues and how to fix them.
 - **Symptom:** Sync progress modal stalls or shows errors.
 - **Fix:** Check that the device has enough free space. Use "Check Device" in Devices first to see synced vs to-sync counts. If transcoding, ensure FFmpeg is available (it is bundled). For Musepack, ensure `mpcenc` is on PATH. Cancel and retry; if it persists, try a smaller custom sync (e.g. one album) to isolate the problem.
 
+## New music does not show in the player's Database menu
+
+- **Symptom:** After a sync the files are on the player (visible under **Files**), but Artists / Albums in the **Database** menu do not list them.
+- **Fix:** Rockbox only lists what its database knows. Either run **Database → Update now** on the player, or tick **Build Rockbox database** in the Sync tab so iPodRocks writes the database at the end of every sync. If the option is ticked and the sync log says *Rockbox database not built*, the line says why: no `.rockbox` folder (not a Rockbox player), or a Rockbox older than 4.0. Restart the player after a sync if it was running — Rockbox reads its database at startup.
+
+## The player asks "Database is not ready — Initialize now?"
+
+- **Symptom:** After a sync with **Build Rockbox database** ticked, the new music shows up, but a later restart of the player opens the Database menu with *Database is not ready* and offers to initialize it.
+- **Cause:** Rockbox marks its database as not ready while it merges an update, and only clears that mark when the merge finishes. With **Settings → Database → Auto update** on, the player rescans at startup and merges anything it believes has changed. Turning the player off, or plugging it in, during that merge leaves the mark in place. iPodRocks 3.2.0 pre-releases wrote file times off by your time zone on Linux, where FAT stores UTC, which made the player believe *every* file had changed, so that merge took minutes.
+- **Fix:** Answer **Yes** once, or sync again with the current version: the rebuilt database carries file times the player agrees with, and the startup scan finds nothing to merge. Let the player finish any *Committing database* screen before turning it off.
+
 ## Genius playlists: "No playback history"
 
 - **Symptom:** Genius tab says no playback data or no matched plays.
@@ -32,9 +43,15 @@ Common issues and how to fix them.
 - **Symptom:** Savant playlists or Rocksy fail or return errors.
 - **Fix:** Add your OpenRouter API key in **Settings** → OpenRouter API. Test the connection before saving. Ensure you have credits and the selected model is available. Check your network for API errors.
 
+## Some tracks never get key data, however often I rescan
+
+- **Symptom:** The Library says e.g. *2869/2968 tracks have key data* and a rescan does not change it.
+- **Cause:** A scan reads key and BPM from tags, and those tracks have none (most `.m4a` files do not).
+- **Fix:** Turn on **Analyze with Essentia.js** in **Settings → Library** and scan. The scan then analyses the audio of every track still missing key data as its last step (*Analyzing key/BPM* in the scan dialog). Versions before 3.2.0 only did this from a Backfill button on the Savant tab.
+
 ## Harmonic analysis fails after many tracks
 
-- **Symptom:** Essentia backfill stops or crashes after ~100 tracks.
+- **Symptom:** Essentia analysis stops or crashes after ~100 tracks.
 - **Fix:** This was fixed in v1.0.4. Update to the latest version. The engine now frees memory correctly and resets periodically.
 
 ## Album artwork not on device
@@ -46,6 +63,12 @@ Common issues and how to fix them.
 
 - **Symptom:** Prompt when selecting Musepack as codec.
 - **Fix:** Install `musepack-tools` (or equivalent) for your platform. See [Installation](/guide/installation#musepack-mpcenc). Add `mpcenc` to your PATH. You can use other codecs (MP3, AAC, Opus) without it.
+
+## Lossless Check flags a file I know is genuine
+
+A verdict says what the audio shows: a sharp cutoff with nothing above it, the way a lossy encoder leaves it. A genuine file can show that too: a track mastered with a steep low-pass, or an edit (sped up, remixed) that the label made from a compressed source. Hover the cutoff in the results to see the measurements. If you trust the file, select it and click **Mark as OK**; later checks leave it alone. Check results describe the audio, never the seller.
+
+The opposite also happens: a very-high-quality VBR MP3 that kept the full frequency band has nothing missing to detect, and passes as genuine.
 
 ## Database or config location
 

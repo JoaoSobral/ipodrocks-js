@@ -8,20 +8,24 @@ import logoSrcTransp from "@assets/ipodRocks_transp.png?url";
 import logoSrcBlack from "@assets/ipodRocks_black.png?url";
 
 const FEATURES: { icon: string; label: string; description: string }[] = [
-  { icon: "📤", label: "Sync", description: "Full or custom sync by album, artist, genre, or playlist." },
+  { icon: "📤", label: "Sync", description: "Full or custom sync by album, artist, genre, or playlist, with live progress." },
+  { icon: "🗄️", label: "Rockbox database built for you", description: "Optional, per device: the sync writes the player's database, so new music is browsable the moment you unplug — no Database → Update on the iPod." },
   { icon: "🌍", label: "Sync from anywhere", description: "Run iPodRocks as a server and reach it from a browser. Your player plugs into the machine you are sitting at, not the one holding your music." },
+  { icon: "🔀", label: "Hybrid devices", description: "One player, two ways in: synced through USB on the server's machine and from a browser holding its folder — same history, ratings and settings." },
   { icon: "📱", label: "Multiple devices", description: "Each device has its own codec, folder layout, and artwork settings — plus USB identity, so two identical iPods never get confused." },
-  { icon: "📚", label: "Library & shadows", description: "Music, podcasts, LibriVox audiobooks; FLAC→MPC mirrors that adopt already-transcoded files instead of re-encoding." },
-  { icon: "📋", label: "Playlists", description: "Classic (hand-picked & editable), Smart, and Genius — plus broken-playlist detection & repair." },
-  { icon: "🧠", label: "Genius", description: "Auto-generated from real playback history: Most Played, Favorites, Hidden Gems, Top Genre, Top Artist, Top Album, Finish the Album, Deep Dive, and more." },
-  { icon: "⭐", label: "Star ratings", description: "5-star (half-star), synced both ways with Rockbox and merged three ways when they disagree." },
-  { icon: "📊", label: "Listening stats", description: "Top tracks, artists, and total listening time from device playback history — All Time, This Year, or This Month — right in the Dashboard." },
+  { icon: "📚", label: "Library & shadows", description: "Music, podcasts, LibriVox audiobooks; FLAC→MPC mirrors. Scan at startup, or get a reminder after 10 days without a scan." },
+  { icon: "🔍", label: "Lossless Check", description: "Finds FLAC, ALAC, WAV and AIFF files whose audio came from an MP3 or AAC, or hi-res files holding only CD-quality audio." },
+  { icon: "🎹", label: "Harmonic mixing", description: "Key/BPM from tags, and from the audio itself during every scan for tracks without them — mapped onto the Camelot wheel." },
+  { icon: "📋", label: "Playlists", description: "Classic (hand-picked & editable), Smart, Genius and Savant — plus broken-playlist detection & repair." },
+  { icon: "🧠", label: "Genius", description: "Auto-generated from real playback history: Most Played, Favorites, Hidden Gems, Top Genre, Top Artist, Finish the Album, Deep Dive, and more." },
+  { icon: "🎯", label: "Savant (optional)", description: "AI playlists from a chat about your mood, ordered for harmonic flow when key data is available." },
+  { icon: "⭐", label: "Star ratings", description: "5-star (half-star), synced both ways with Rockbox — new tracks reach the player already rated — and merged three ways when they disagree." },
+  { icon: "📊", label: "Listening stats", description: "Top tracks, artists, and total listening time from device playback history — All Time, This Year, or This Month — in the Dashboard." },
   { icon: "🎙️", label: "Podcasts", description: "Search via Podcast Index, paste any RSS feed URL, or auto-subscribe with scheduled downloads." },
   { icon: "📻", label: "Rockbox-native smart playlists", description: "Per-device opt-in: written as live, auto-updating tagnavi tagtree entries instead of frozen .m3u snapshots." },
   { icon: "🔄", label: "Conversion & codecs", description: "MP3, AAC, Musepack, Opus via FFmpeg — with ReplayGain and Rockbox-ready album art." },
-  { icon: "🎹", label: "Harmonic mixing", description: "Key/BPM detection and Camelot wheel." },
   { icon: "🖥️", label: "Headless daemon", description: "Run the library on a NAS or home server with no screen and no Electron. Ships with a container image, a compose file and a systemd unit." },
-  { icon: "💬", label: "Rocksy (optional)", description: "An AI chat that can act on your behalf rather than only answer. Needs an OpenRouter key; everything it does has a button elsewhere in the app." },
+  { icon: "💬", label: "Rocksy (optional)", description: "An AI chat that acts on your behalf and answers from the full manual. Needs an OpenRouter key; everything it does has a button elsewhere in the app." },
 ];
 
 type UpdateState =
@@ -160,14 +164,13 @@ export function WelcomePanel() {
       <Card title="Get started" subtitle="Use the sidebar to navigate">
         <ul className="text-sm text-muted-foreground space-y-2 list-none">
           <li><strong className="text-foreground">Dashboard</strong> — library, device, and shadow-library overview, recent activity, and your Listening Stats (top tracks/artists, plays, listening time).</li>
-          <li><strong className="text-foreground">Library</strong> — add folders and scan your music; manage shadow libraries (pre-transcoded mirrors) and playlist repair from here too.</li>
-          <li><strong className="text-foreground">Playlists</strong> — hand-pick a Classic playlist, build a multi-select Smart one, or generate a Genius playlist from your listening history.</li>
+          <li><strong className="text-foreground">Library</strong> — add folders and scan your music; check lossless files are really lossless; manage shadow libraries (pre-transcoded mirrors) and playlist repair.</li>
+          <li><strong className="text-foreground">Playlists</strong> — hand-pick a Classic playlist, build a multi-select Smart one, generate a Genius playlist from your listening history, or ask Savant for one.</li>
           <li><strong className="text-foreground">Auto Podcasts</strong> — search Podcast Index, paste any RSS/website URL, and set auto-download rules per subscription.</li>
           <li><strong className="text-foreground">Extra Audiobooks</strong> — browse and subscribe to free, public-domain audiobooks from LibriVox; chapters download the first time you sync a device that includes the book.</li>
-          <li><strong className="text-foreground">Devices</strong> — add as many Rockbox or mountable devices as you want, each with its own codec, folder layout, and artwork settings.</li>
-          <li><strong className="text-foreground">Web Server</strong> (in Settings) — serve iPodRocks to a browser, so a player plugged into another machine syncs from the library on this one.</li>
-          <li><strong className="text-foreground">Sync</strong> — full or custom sync (by album, artist, genre, or playlist) with live progress feedback.</li>
-          <li><strong className="text-foreground">Settings</strong> (gear icon) — web server, ratings, podcasts, harmonic analysis. Optionally an OpenRouter API key, which unlocks Savant playlists and the Rocksy chat; everything else works without one.</li>
+          <li><strong className="text-foreground">Devices</strong> — add as many Rockbox or mountable devices as you want, each with its own codec, folder layout, and artwork settings; plugged in here, held in a browser, or both (hybrid).</li>
+          <li><strong className="text-foreground">Sync</strong> — full or custom sync (by album, artist, genre, or playlist) with live progress; optionally builds the Rockbox database so the player is ready the moment you unplug.</li>
+          <li><strong className="text-foreground">Settings</strong> (gear icon) — tabs for General (OpenRouter key for Savant and Rocksy — everything else works without one), Library (startup scan, ratings, key/BPM analysis), Podcasts, and Remote (web server and sign-in).</li>
         </ul>
       </Card>
 

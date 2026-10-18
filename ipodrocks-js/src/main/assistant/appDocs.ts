@@ -2,6 +2,10 @@
  * Static snapshot of the iPodRocks app documentation.
  * Injected into Rocksy's system prompt so she can answer how-to questions.
  * Update this when docs change.
+ *
+ * This is the summary that rides in every request. The full docs are searched
+ * on demand through the `app_docs_search` tool (appDocsSearch.ts), which reads
+ * the bundle `scripts/bundle-docs.js` generates from docs/.
  */
 export const APP_DOCS = `
 ## iPodRocks App Reference
@@ -34,6 +38,7 @@ Manages music catalog: folders, scans, shadow libraries, track list.
 Add Folder — adds a root folder for music, podcasts, or audiobooks. Scans recursively for MP3, FLAC, AAC, M4A, OGG, Opus, WAV, AIFF.
 Scan Library — re-scans all folders. Uses content hashes to skip unchanged files.
 Clear scan cache — forces a full re-scan next time (use when tags changed outside iPodRocks).
+Scan library at startup — Settings → Library, OFF by default. On: every folder is scanned when the app opens (a web server scans when it starts). Off: the owner is asked "You haven't scanned your library since …, scan it now?" once 10 days pass without a scan (dialog on desktop, notification in a browser; No asks again in 10 days). Rocksy tool: library_set_scan_on_startup.
 Shadow Libraries — pre-transcoded mirrors (e.g. FLAC → MPC). Create once, sync fast to multiple devices that need a specific codec. Shadow libraries hold audio files and artwork only — no play counts, ratings, or listening history.
 Rebuild (the ⟳ button on a shadow library row) — adopts files that are already correctly encoded rather than re-encoding them. It never re-opens a file that already exists, so it cannot fix a file an older version wrote badly; for that, delete the shadow library *with* its files and create it again, which re-encodes everything.
 Tracks / Playlists — switch between track list and library playlists. Search, sort, filter by device, type, sync status.
@@ -51,6 +56,7 @@ Check Device — compare device vs library. Shows synced, codec mismatch, to-syn
 Set as default — used as default device for sync and Genius.
 Eject — unmount the device from inside iPodRocks so it can be unplugged, instead of using Finder. macOS and Linux only; the button is hidden on Windows. Refused while a sync is running, for dev-mode devices, and when the path is not a mounted volume. Rocksy tool: device_eject (confirms first).
 
+Connections — each device card says whether a device is Local (plugged into this machine), Remote (a folder held in a browser) or Hybrid (both: the desktop syncs it through its mount, a browser through its folder; one device, shared history and ratings). Desktop: "Also allow browser use" / "Stop browser use" on a local device, "Add local connection" (mount path + USB device) on a remote one. Browser (server owner only): "Use from this browser", then Connect folder. A hybrid device must have a USB device set. Rocksy tool: device_set_connections.
 Codec options: Direct Copy (no conversion), MP3, AAC, Musepack (MPC), Opus, OGG.
 Use shadow libraries for pre-transcoded sync (faster, avoids on-the-fly conversion).
 
@@ -75,6 +81,7 @@ Orphan & Reset Policy — what to do about content on the device this sync does 
   Prompt — report what was found instead of deleting it.
   A device that had the old "Remove all" saved loads as "Remove orphans", so no one inherits a wipe from the rename.
 Album artwork — copied by default (cover.jpg, folder.png, etc.). Uncheck "Skip album artwork" to disable.
+Build Rockbox database — checkbox in the Sync panel, OFF by default, remembered per device. When ticked, the end of every sync writes the player's Rockbox database (.rockbox/database_idx.tcd + database_*.tcd) so new music is browsable immediately — no Database → Update now / Initialize now on the player. Keeps play counts, play time and ratings already in the player's database; tracks copied this sync go in with their library rating. Indexes every audio file on the player (honouring database.ignore), including hand-copied ones (on a remote/browser-held player, hand-copied files unknown to the library are left out). Needs Rockbox 4.0+ and a .rockbox folder; otherwise skipped with a log line. Previous index backed up as database_idx.tcd.ipodrocks-bak. Restart the player if it was running. Rocksy tool: device_set_sync_preferences with build_rockbox_database true/false.
 Device Status — the card at the bottom of the Sync panel shows what is on the target device right now: songs, podcasts and audiobooks synced (and how many are still to sync), playlist files, orphans, and space used (e.g. 30.0 / 300.0 GB). It runs the same check as Devices → Check Device, once per device, and refreshes itself after a sync. Press Refresh to re-run it.
 
 Sync does NOT write play counts or metadata to the device. Ratings sync separately, straight into Rockbox's own database (see Ratings section).
@@ -163,7 +170,7 @@ Rating-aware — candidate tracks include star ratings; Savant gives extra weigh
 The AI avoids tracks you consistently leave unfinished (from Rockbox's runtime data when available).
 
 How to use: add OpenRouter key in Settings → Quick or Chat mode → Generate → Save. Savant playlists are static once saved; regenerate for a fresh mix.
-Improve harmonic coverage: enable "Extract harmonic data" and "Analyze with Essentia" in Settings, then scan or run Backfill.
+Improve harmonic coverage: enable "Extract harmonic data" and "Analyze with Essentia.js" in Settings → Library, then scan the library.
 
 ---
 
@@ -222,10 +229,9 @@ Controls key/BPM detection for Savant harmonic ordering and Library banners.
 
 Extract harmonic data on scan — reads TKEY/TBPM from file tags. Fast, but requires tags.
 Analyze with Essentia — detects key/BPM from the audio waveform. More accurate, CPU-intensive. A single WASM instance is reused to avoid memory leaks.
-Backfill % (tag extraction) — percentage of library to process in one run.
-Analyze % (Essentia) — percentage to analyze per run (genre-sampled).
-Run Backfill from Settings or the Savant tab. Only processes tracks that don't yet have key data.
-After enabling "Extract harmonic data", run a full library scan to pick up the setting.
+Lives in Settings → Library. Essentia runs as the last step of every library scan, only on music tracks still missing key data (so a plain rescan fills in tracks with no key tags, e.g. most .m4a files). Shown as "Analyzing key/BPM" in the scan dialog; Cancel stops it.
+Analyze % — how many of the tracks still missing key data one scan analyses (100 = all).
+There is no separate Backfill button any more. If a user asks why tracks have no key data or how to "backfill", tell them to turn on Analyze with Essentia.js and scan the library. Savant works without key data, but its playlists won't flow as well.
 
 ---
 

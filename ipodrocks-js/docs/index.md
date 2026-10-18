@@ -70,12 +70,14 @@ behind a Cloudflare Tunnel that opens no inbound port at all.
 - **Shadow libraries** — Pre-transcoded mirrors (e.g. FLAC → MPC) for fast sync, and a faithful one: rename or delete an album and the shadow follows
 - **Mirror library folder structure** — A per-device sync toggle (on by default) that copies your music to the device using the *exact* source folder layout — album folders keep their original names, year and all (`Avicii/Levels (2011)/…`). With it off, the device path is rebuilt from the artist/album tags (so `Levels (2011)` becomes `Levels`). Keep it on if you export M3U playlists from Plex, beets, or similar and need the device paths to match 1:1.
 - **Classic, Smart and Genius playlists** — Hand-picked, rule-based, or built from the play counts and listening time Rockbox records itself. All of them drop deleted songs automatically on the next library scan
+- **Lossless Check** — Finds FLAC/ALAC files made from MP3s or AACs, and "hi-res" files upsampled from CD quality, with a CSV/Markdown report, a Library column and an optional delete. Runs in the background
 - **Star ratings, both ways** — Rate a track in iPodRocks and it appears on the player; rate it on the player and it appears in your library, with real conflict resolution rather than a last-writer-wins guess
 - **Listening stats** — Top tracks, artists and total listening time, imported from the device's own playback history
 - **Auto Podcasts** — Subscribe by keyword or RSS/website URL, auto-download episodes, and sync to devices in the background
 - **Extra Audiobooks** — Subscribe to free public-domain audiobooks from LibriVox; chapters download on sync
 - **Harmonic mixing** — Key and BPM detection, Camelot wheel compatibility
 - **Rockbox-native smart playlists** — Per-device opt-in: live, auto-updating tagnavi entries instead of frozen `.m3u` snapshots
+- **[Rockbox database built during sync](/app-reference/sync#building-the-rockbox-database)** — Per-device opt-in: the sync writes the player's database, so new music is browsable without **Database → Update now**, with play counts and ratings kept
 
 **All of the above works offline, with no account and no API key.**
 
@@ -89,7 +91,8 @@ key of your own. Leave it blank and nothing else changes.
   type; Classic, Smart and Genius need no key.
 - **[Rocksy](/app-reference/assistant)** — A chat assistant that can act rather
   than only answer: build playlists, subscribe to podcasts, check and sync
-  devices, manage the web server's allowlist. Convenient, never required —
+  devices, manage the web server's allowlist — and answer questions from this
+  whole manual, which it can search. Convenient, never required —
   everything it does has a button somewhere.
 
 ## Next steps

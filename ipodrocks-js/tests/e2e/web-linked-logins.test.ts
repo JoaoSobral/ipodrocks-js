@@ -230,6 +230,7 @@ test("Settings shows who is waiting, and approving takes them off the list", asy
     await signIn(page.request);
     await page.goto("/");
     await page.getByRole("button", { name: "Settings" }).click();
+    await page.getByRole("tab", { name: /^Remote/ }).click();
 
     // Web mode, so the self-service card is there too.
     await expect(page.getByTestId("sign-in-methods")).toBeVisible();

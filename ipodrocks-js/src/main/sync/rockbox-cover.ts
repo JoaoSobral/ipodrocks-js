@@ -137,6 +137,8 @@ export function buildCoverFfmpegArgs(
   return [
     getFfmpegPath(),
     "-y",
+    // Its stderr goes into the sync log: errors only, no version banner.
+    "-hide_banner", "-loglevel", "error",
     // An image, and only that image — see utils/ffmpeg-input.ts. `image2` is
     // deliberately not admitted: it expands a name into a glob or sequence.
     ...ffmpegInputArgs(src, "image"),

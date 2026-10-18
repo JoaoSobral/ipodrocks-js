@@ -1,6 +1,6 @@
 import Database from "better-sqlite3";
 import path from "path";
-import { LibraryFolder, Track } from "../../shared/types";
+import { LibraryFolder, LosslessVerdict, Track } from "../../shared/types";
 import { normalizePath } from "../utils/normalize-path";
 
 type ContentType = "music" | "podcast" | "audiobook";
@@ -37,6 +37,15 @@ interface TrackRow {
   rating_source_device_id: number | null;
   rating_updated_at: string | null;
   rating_version: number;
+  lossless_verdict: string | null;
+  lossless_confidence: number | null;
+  lossless_cutoff_hz: number | null;
+  lossless_source: string | null;
+  lossless_override: number | null;
+  year: number | null;
+  composer: string | null;
+  comment: string | null;
+  grouping: string | null;
 }
 
 interface LibraryFolderRow {
@@ -77,7 +86,10 @@ const BASE_TRACKS_QUERY = `
          COALESCE(c.name, 'Unknown Codec') as codec,
          t.metadata_hash,
          t.rating, t.rating_source_device_id, t.rating_updated_at,
-         COALESCE(t.rating_version, 0) as rating_version
+         COALESCE(t.rating_version, 0) as rating_version,
+         t.lossless_verdict, t.lossless_confidence, t.lossless_cutoff_hz,
+         t.lossless_source, t.lossless_override,
+         t.year, t.composer, t.comment, t.grouping
   FROM tracks t
   LEFT JOIN artists a ON t.artist_id = a.id
   LEFT JOIN albums al ON t.album_id = al.id
@@ -590,6 +602,15 @@ export class LibraryCore {
       ratingSourceDeviceId: row.rating_source_device_id ?? null,
       ratingUpdatedAt: row.rating_updated_at ?? null,
       ratingVersion: row.rating_version ?? 0,
+      losslessVerdict: (row.lossless_verdict as LosslessVerdict | null) ?? null,
+      losslessConfidence: row.lossless_confidence ?? null,
+      losslessCutoffHz: row.lossless_cutoff_hz ?? null,
+      losslessSource: row.lossless_source ?? null,
+      losslessOverride: row.lossless_override === 1,
+      year: row.year ?? null,
+      composer: row.composer ?? null,
+      comment: row.comment ?? null,
+      grouping: row.grouping ?? null,
     };
   }
 }

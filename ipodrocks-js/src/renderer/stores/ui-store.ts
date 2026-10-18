@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import type { LosslessScanOptions } from "@shared/types";
 
 interface UIState {
   openSettings: (() => void) | null;
@@ -11,6 +12,9 @@ interface UIState {
   setPendingLibraryScan: (v: boolean) => void;
   pendingShadowRebuildId: number | null;
   setPendingShadowRebuildId: (id: number | null) => void;
+  /** Rocksy asked for a lossless check; the Library panel opens and starts it. */
+  pendingLosslessCheck: LosslessScanOptions | null;
+  setPendingLosslessCheck: (opts: LosslessScanOptions | null) => void;
 }
 
 export const useUIStore = create<UIState>((set) => ({
@@ -24,4 +28,6 @@ export const useUIStore = create<UIState>((set) => ({
   setPendingLibraryScan: (v) => set({ pendingLibraryScan: v }),
   pendingShadowRebuildId: null,
   setPendingShadowRebuildId: (id) => set({ pendingShadowRebuildId: id }),
+  pendingLosslessCheck: null,
+  setPendingLosslessCheck: (opts) => set({ pendingLosslessCheck: opts }),
 }));

@@ -49,9 +49,14 @@ class ElectronSecrets implements HostSecrets {
 }
 
 class ElectronShell implements HostShell {
+  readonly hasTrash = true;
   async openExternal(url: string): Promise<{ opened: boolean }> {
     await shell.openExternal(url);
     return { opened: true };
+  }
+  async trashItem(filePath: string): Promise<{ trashed: boolean }> {
+    await shell.trashItem(filePath);
+    return { trashed: true };
   }
 }
 

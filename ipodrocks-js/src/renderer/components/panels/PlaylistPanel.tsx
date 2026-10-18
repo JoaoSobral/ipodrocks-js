@@ -6,7 +6,6 @@ import { InfoTooltip } from "../common/InfoTooltip";
 import { Input } from "../common/Input";
 import { Select } from "../common/Select";
 import { Modal } from "../common/Modal";
-import { BackfillProgressModal } from "../modals/BackfillProgressModal";
 import { SavantInlineChat } from "../savant/SavantInlineChat";
 import { ClassicPlaylistForm } from "../playlists/ClassicPlaylistForm";
 import { EmptyState } from "../common/EmptyState";
@@ -37,7 +36,6 @@ import {
   generateSavantPlaylist,
   checkSavantKeyData,
   getOpenRouterConfig,
-  getHarmonicPrefs,
   getBrokenPlaylists,
   repairPlaylist,
   rebuildPlaylist,
@@ -187,7 +185,6 @@ export function PlaylistPanel() {
   const [savantResultTracks, setSavantResultTracks] = useState<
     PlaylistTrack[] | null
   >(null);
-  const [showBackfillModal, setShowBackfillModal] = useState(false);
 
   const [brokenPlaylists, setBrokenPlaylists] = useState<{ id: number; name: string; typeName: string; missingCount: number; totalCount: number }[]>([]);
 
@@ -555,24 +552,6 @@ export function PlaylistPanel() {
   async function handleSavantViewPlaylist(id: number) {
     closeCreateModal();
     await handleSelect(id);
-  }
-
-  const [backfillOpts, setBackfillOpts] = useState<{ percent?: number } | undefined>();
-
-  async function handleSavantBackfill() {
-    const harmonic = await getHarmonicPrefs();
-    const percent = harmonic.analyzeWithEssentia
-      ? harmonic.analyzePercent
-      : harmonic.backfillPercent;
-    setBackfillOpts({ percent: percent ?? 100 });
-    setShowBackfillModal(true);
-  }
-
-  async function handleBackfillComplete() {
-    setShowBackfillModal(false);
-    setBackfillOpts(undefined);
-    const keyData = await checkSavantKeyData();
-    setSavantKeyData(keyData);
   }
 
   /** Display name without the storage prefix (`classic_My Mix` → `My Mix`). */
@@ -1215,7 +1194,6 @@ export function PlaylistPanel() {
     const keyedCount = savantKeyData?.keyedCount ?? 0;
     const totalCount = savantKeyData?.totalCount ?? 0;
     const coveragePct = savantKeyData?.coveragePct ?? 0;
-    const bpmOnlyCount = savantKeyData?.bpmOnlyCount ?? 0;
 
     if (savantResult) {
       const tracks = savantResultTracks ?? [];
@@ -1291,57 +1269,32 @@ export function PlaylistPanel() {
         {savantError && (
           <ErrorBox className="px-4 py-3">{savantError}</ErrorBox>
         )}
+        {/* Key/BPM data is the library's job now (Settings → Library →
+            Analyze with Essentia.js runs during every scan), so Savant only
+            says how much it has to work with. */}
+        {totalCount > 0 && coveragePct < 100 && (
+          <div
+            className="flex items-center gap-3 rounded-lg border border-border bg-muted/30 px-3 py-2 text-xs"
+            data-testid="savant-key-notice"
+          >
+            <span className="text-primary shrink-0">♫</span>
+            <p className="flex-1 min-w-0 text-muted-foreground">
+              {keyedCount === 0
+                ? "No key/BPM data found. "
+                : `Key/BPM data for ${keyedCount} of ${totalCount} tracks (${coveragePct}%). `}
+              Turn on <span className="text-foreground">Analyze with Essentia.js</span> in
+              Settings → Library and rescan the library to improve Savant playlists. Savant
+              still works without it, but its playlists won't flow as well.
+            </p>
+            {openSettings && (
+              <Button size="sm" variant="secondary" onClick={openSettings}>
+                Open Settings
+              </Button>
+            )}
+          </div>
+        )}
         <div className="flex gap-5">
-          <Card title="1. Backfill" className="flex-1 min-w-0">
-            <div className="space-y-3">
-              <p className="text-sm text-muted-foreground">
-                Savant uses AI to build a playlist tailored to your mood.
-              </p>
-              <p className="text-xs text-muted-foreground">
-                {keyedCount} / {totalCount} tracks have key data ({coveragePct}%)
-                {bpmOnlyCount > 0 && (
-                  <> · {bpmOnlyCount} have BPM only</>
-                )}
-                .
-              </p>
-              {coveragePct < 100 && totalCount > 0 && (
-                <p className="text-xs text-muted-foreground">
-                  Most files only have BPM tags. Enable Essentia analysis in
-                  Settings and run Backfill to detect keys from audio waveforms.
-                </p>
-              )}
-              {totalCount > 0 && (
-                <>
-                  <div className="flex gap-2">
-                    <Button
-                      size="sm"
-                      variant="primary"
-                      disabled={showBackfillModal}
-                      onClick={handleSavantBackfill}
-                    >
-                      Backfill Key Data
-                    </Button>
-                    {openSettings && coveragePct < 100 && (
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        onClick={openSettings}
-                      >
-                        Open Settings
-                      </Button>
-                    )}
-                  </div>
-                  <BackfillProgressModal
-                    open={showBackfillModal}
-                    onClose={handleBackfillComplete}
-                    backfillOpts={backfillOpts}
-                  />
-                </>
-              )}
-            </div>
-          </Card>
-
-          <Card title="2. Max Songs" className="flex-1 min-w-0">
+          <Card title="1. Max Songs" className="flex-1 min-w-0">
             <div>
               <Label>
                 Track count: {savantTargetCount}
@@ -1361,7 +1314,7 @@ export function PlaylistPanel() {
           </Card>
         </div>
 
-        <Card title="3. Talk to Savant">
+        <Card title="2. Talk to Savant">
           <div className="flex gap-1 p-1 rounded-lg bg-muted/30 w-fit mb-4">
             {(["quick", "chat"] as const).map((mode) => (
               <button

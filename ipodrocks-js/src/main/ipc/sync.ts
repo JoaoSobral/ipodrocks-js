@@ -6,6 +6,7 @@ import {
   blockWrongLocality,
   getLibrary,
   getDevicesCore,
+  getDeviceForCaller,
   getPlaylistCore,
   buildLibraryTrackMaps,
   remapTrackMapToShadow,
@@ -21,6 +22,7 @@ import {
   getProfileCodecExt,
   removeExtraTracks,
   SyncCancelled,
+  buildLibraryDestMap,
 } from "../sync/sync-core";
 import {
   devicePlaylistStem,
@@ -37,6 +39,13 @@ import {
 } from "../sync/rating-merge";
 import { propagateRatingsForDevice } from "../sync/rating-propagate";
 import { ingestRuntimeDataForDevice } from "../rockbox/runtime-ingest";
+import {
+  buildDeviceTagcache,
+  buildLibraryDeviceIndex,
+  isBuildCancelled,
+} from "../rockbox/tagcache-sync";
+import { toMountRelative } from "../rockbox/device-path-match";
+import { markRatingsPropagated } from "../sync/rating-merge";
 import { logActivity } from "../activity/activity-logger";
 import { resetDeviceContent } from "../sync/device-reset";
 import type {
@@ -261,11 +270,13 @@ function unplugWaitMs(): number {
   return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_UNPLUG_WAIT_MS;
 }
 
+/** The content types the Rockbox database build indexes library tracks for. */
+type IndexedContentType = "music" | "podcast" | "audiobook";
+
 export function registerSyncHandlers(): void {
   const runStartSync = safe("sync:start", async (event, opts: SyncOptions) => {
       const lib = getLibrary();
-      const dc = getDevicesCore();
-      const device = dc.getDeviceById(opts.deviceId);
+      const device = getDeviceForCaller(event, opts.deviceId);
       if (!device) return { error: `Device ${opts.deviceId} not found` };
       // A player is plugged into exactly one machine. Refused here and not
       // only in the UI, because a greyed-out button is a courtesy and this is
@@ -273,7 +284,7 @@ export function registerSyncHandlers(): void {
       // otherwise run a whole sync against the wrong filesystem, and the
       // desktop window reaching a browser-held one dies inside
       // `DetachedDeviceFs` with an error that names neither.
-      const wrongMachine = blockWrongLocality(event, device.profile.transport);
+      const wrongMachine = blockWrongLocality(event, device.profile);
       if (wrongMachine) return wrongMachine;
       // Locality says "is this player on my machine"; it does not say "is this
       // player mine". Without the second question any allowlisted account
@@ -291,11 +302,13 @@ export function registerSyncHandlers(): void {
         includePlaylists: opts.includePlaylists !== false,
         preserveFolderStructure: opts.preserveFolderStructure !== false,
         albumGrouping: opts.albumGrouping ?? "album-artist",
+        buildRockboxDatabase: opts.buildRockboxDatabase === true,
         selections: opts.selections ?? emptySelections(),
       } satisfies DeviceSyncPreferences);
 
       const preserveFolderStructure = opts.preserveFolderStructure !== false;
       const albumGrouping = opts.albumGrouping ?? "album-artist";
+      const buildRockboxDatabase = opts.buildRockboxDatabase === true;
 
       // A second sync of the *same* device would still clobber this entry, but
       // that is already refused upstream; two different devices no longer
@@ -424,6 +437,16 @@ export function registerSyncHandlers(): void {
         if (includeAudiobooks) audiobookLibraryTracks = { ...audiobookMap };
       }
 
+      // Every library track, not only this sync's selection: a track left on
+      // the device by an earlier sync still deserves its library tags in the
+      // Rockbox database. Replaced by the shadow remap below when the device
+      // is fed by a shadow library.
+      let deviceIndexMaps: Record<IndexedContentType, Record<string, Record<string, unknown>>> = {
+        music: musicMap,
+        podcast: podcastMap,
+        audiobook: audiobookMap,
+      };
+
       let codecName = device.profile.codecName ?? "copy";
       let profileCodecExtOverride: string | null = null;
       const folders = lib.getLibraryFolders();
@@ -443,6 +466,14 @@ export function registerSyncHandlers(): void {
         const shadowTrackMap = lib.getShadowTrackMap(
           device.profile.shadowLibraryId
         );
+
+        if (buildRockboxDatabase) {
+          deviceIndexMaps = {
+            music: remapTrackMapToShadow(musicMap, shadowTrackMap),
+            podcast: remapTrackMapToShadow(podcastMap, shadowTrackMap),
+            audiobook: remapTrackMapToShadow(audiobookMap, shadowTrackMap),
+          };
+        }
 
         const unshadowed = Object.keys(musicLibraryTracks).length;
         musicLibraryTracks = remapTrackMapToShadow(musicLibraryTracks, shadowTrackMap);
@@ -648,6 +679,9 @@ export function registerSyncHandlers(): void {
       // Set when Phase 1 detects a rebuild, so Phase 3's log describes a
       // repair rather than routine propagation.
       let rebuildRepairPending = false;
+      // Phase 3's "waiting for the device's database" count, reported only if
+      // the Rockbox database build does not make it moot.
+      let pendingNotInDbCount = 0;
 
       // Phase 1: INGEST — merge the device's ratings into the canonical DB
       try {
@@ -987,14 +1021,11 @@ export function registerSyncHandlers(): void {
           // have its ratings written, because Rockbox does not know the files
           // exist until its database is updated. Saying nothing made that look
           // like ratings being dropped (issue #138).
+          // Held back while the database build below is pending: when it
+          // succeeds, those tracks are in the new database with their ratings,
+          // and the instruction would send the user to do something already done.
           if (report.notInDeviceDb > 0) {
-            syncOpts.progressCallback?.({
-              event: "log",
-              message:
-                `${report.notInDeviceDb} rating(s) are waiting for the device's database — ` +
-                "those tracks aren't in it yet. On the player, run Database → Update now " +
-                "(or restart it with Auto Update on), then sync again.",
-            });
+            pendingNotInDbCount = report.notInDeviceDb;
           }
 
           if (report.unavailable > 0) {
@@ -1017,6 +1048,85 @@ export function registerSyncHandlers(): void {
         }
       } catch (err) {
         console.error("[ipc] Rating propagation failed (non-fatal):", err);
+      }
+
+      // Rockbox database. After Phase 3 on purpose: the ratings it just wrote
+      // into the old index are what the rebuild carries over, and the index
+      // ids it was handed stay valid until it has finished. See
+      // rockbox/tagcache-sync.ts.
+      let databaseBuilt = false;
+      if (buildRockboxDatabase && !syncSignal.aborted) {
+        try {
+          syncOpts.progressCallback?.({ event: "log", message: "Building Rockbox database…" });
+          const placements = (["music", "podcast", "audiobook"] as IndexedContentType[]).map((ct) => ({
+            contentFolderRel: toMountRelative(device.getContentPath(ct), device.mountPath),
+            tracks: deviceIndexMaps[ct],
+            destMap: buildLibraryDestMap(deviceIndexMaps[ct], ct, codecName, {
+              libraryFolderPaths,
+              preserveFolderStructure,
+              albumGrouping,
+              preloadedMtimes,
+            }).destMap,
+          }));
+          const built = await buildDeviceTagcache(
+            { fs: device.fs, mountPath: device.mountPath },
+            {
+              library: buildLibraryDeviceIndex(placements),
+              signal: syncSignal,
+              log: (message) => syncOpts.progressCallback?.({ event: "log", message }),
+            }
+          );
+          if (built.state === "built") {
+            databaseBuilt = true;
+            markRatingsPropagated(lib.getConnection(), opts.deviceId, built.seededTrackIds);
+            const extra: string[] = [];
+            if (built.carried > 0) extra.push(`play statistics kept for ${built.carried}`);
+            if (built.seededTrackIds.length > 0)
+              extra.push(`${built.seededTrackIds.length} new rating(s) included`);
+            if (built.omitted > 0) extra.push(`${built.omitted} file(s) left out`);
+            syncOpts.progressCallback?.({
+              event: "log",
+              message:
+                `Rockbox database ready: ${built.entries} track(s)` +
+                (extra.length ? ` (${extra.join(", ")})` : "") +
+                ". No Database → Update needed on the player.",
+            });
+            if (built.omitted > 0) {
+              syncOpts.progressCallback?.({
+                event: "log",
+                message:
+                  device.fs.capabilities.overNetwork === true
+                    ? `${built.omitted} file(s) on the device are not in your library and can't be read ` +
+                      "through the browser, so they are not in the database. Database → Update now on the player adds them."
+                    : `${built.omitted} file(s) on the device could not be read (or have a path too long ` +
+                      "for Rockbox), so they are not in the database.",
+              });
+            }
+          } else {
+            syncOpts.progressCallback?.({ event: "log", message: built.message });
+          }
+        } catch (err) {
+          if (!isBuildCancelled(err)) {
+            console.error("[ipc] Rockbox database build failed (non-fatal):", err);
+            syncOpts.progressCallback?.({
+              event: "log",
+              message:
+                `Warning: could not build the Rockbox database (${(err as Error).message}). ` +
+                "The player's previous database is unchanged; run Database → Update now on it.",
+            });
+          }
+        }
+      }
+
+      if (pendingNotInDbCount > 0 && !databaseBuilt) {
+        syncOpts.progressCallback?.({
+          event: "log",
+          message:
+            `${pendingNotInDbCount} rating(s) are waiting for the device's database — ` +
+            "those tracks aren't in it yet. On the player, run Database → Update now " +
+            "(or restart it with Auto Update on), then sync again. Turning on " +
+            "\"Build Rockbox database\" in the Sync tab does this for you.",
+        });
       }
 
       activeSyncAborts.delete(opts.deviceId);
@@ -1123,9 +1233,9 @@ export function registerSyncHandlers(): void {
         if (typeof deviceId !== "number") return { error: "Invalid device id" };
         const running = activeSyncAborts.get(deviceId);
         if (event.sessionId !== undefined) {
-          const device = getDevicesCore().getDeviceById(deviceId);
+          const device = getDeviceForCaller(event, deviceId);
           if (device) {
-            const wrongMachine = blockWrongLocality(event, device.profile.transport);
+            const wrongMachine = blockWrongLocality(event, device.profile);
             if (wrongMachine) return wrongMachine;
             const notYours = blockWrongDeviceOwner(event, deviceId);
             if (notYours) return notYours;

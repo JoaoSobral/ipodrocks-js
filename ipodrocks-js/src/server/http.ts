@@ -364,15 +364,16 @@ export async function startServer(
       try {
         const row = getLibraryDb()
           .prepare(
-            "SELECT transport, web_owner_subject FROM devices WHERE id = ?"
+            "SELECT transport, remote_enabled, web_owner_subject FROM devices WHERE id = ?"
           )
           .get(deviceId) as
-          | { transport?: string; web_owner_subject?: string | null }
+          | { transport?: string; remote_enabled?: number | null; web_owner_subject?: string | null }
           | undefined;
         if (!row) return null;
         return {
           transport: row.transport === "web" ? "web" : "local",
           webOwnerSubject: row.web_owner_subject ?? null,
+          remoteEnabled: row.remote_enabled === 1,
         };
       } catch {
         return null;

@@ -33,11 +33,26 @@ if (process.env.TEST_WORKER_INDEX === undefined) {
 }
 fs.mkdirSync(WEB_DATA_DIR, { recursive: true });
 
+/** `E2E_WORKERS=12` or `E2E_WORKERS=75%`; Playwright refuses a bare number as a string. */
+function e2eWorkers(): number | string {
+  const raw = process.env.E2E_WORKERS?.trim();
+  if (raw) return /^\d+$/.test(raw) ? Number(raw) : raw;
+  return process.env.CI ? 2 : "100%";
+}
+
 export default defineConfig({
   testDir: "./tests/e2e",
   testMatch: /.*\.test\.ts/,
   fullyParallel: false,
-  workers: 1,
+  // **The electron project runs in parallel; the web project does not.** Each
+  // electron test launches its own app with its own user-data and temp
+  // directories (`electron-launcher.ts`), so files are independent and spread
+  // across workers (tests inside one file still run in order). Every web spec
+  // drives one long-lived daemon whose state they share — the first-run owner
+  // claim, the allowlist, the library — so that project is pinned to a single
+  // worker below. Locally every core (16 ran the electron project clean, 1.2 min
+  // against 1.8 at 8); `E2E_WORKERS` overrides the total.
+  workers: e2eWorkers(),
   timeout: 60_000,
   reporter: process.env.CI ? "github" : "list",
   use: {
@@ -51,6 +66,7 @@ export default defineConfig({
     {
       name: "web",
       testMatch: /web-.*\.test\.ts/,
+      workers: 1,
       use: {
         baseURL: WEB_ORIGIN,
       },

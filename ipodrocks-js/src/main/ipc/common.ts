@@ -1,13 +1,18 @@
 import * as fs from "fs";
 import * as path from "path";
 import type { HandlerContext } from "../host/bridge";
-import type { DeviceTransport } from "../../shared/types";
-import { deviceAdminBlock, deviceLocalityBlock } from "../../shared/device-locality";
+import {
+  deviceAdminBlock,
+  deviceLocalityBlock,
+  type DeviceReach,
+} from "../../shared/device-locality";
 import { getAllowedPathPrefixes, pathMatchesAllowedPrefix } from "../path-allowlist";
-import { subjectForSessionId } from "../../server/auth/sessions";
+import { denyIfNotOwner, subjectForSessionId } from "../../server/auth/sessions";
 import { Library } from "../library/library";
 import type { ShadowTrackRef } from "../library/shadow-library";
 import { DevicesCore } from "../devices/devices-core";
+import type { Device } from "../devices/device";
+import { deviceForClient } from "../devices/device-view";
 import { PlaylistCore } from "../playlists/playlist-core";
 
 // ---------------------------------------------------------------------------
@@ -43,6 +48,17 @@ export function getDevicesCore(): DevicesCore {
     devicesCore = new DevicesCore(lib.getConnection());
   }
   return devicesCore;
+}
+
+/**
+ * The device `deviceId` names, as this caller reaches it. For a hybrid device
+ * that is the local side for the desktop app and the browser side for a web
+ * client (see `devices/device-view.ts`); anything else comes back unchanged.
+ * Every handler that operates on a device looks it up through this.
+ */
+export function getDeviceForCaller(ctx: HandlerContext, deviceId: number): Device | undefined {
+  const device = getDevicesCore().getDeviceById(deviceId);
+  return device ? deviceForClient(device, ctx.sessionId !== undefined) : undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -207,9 +223,9 @@ export function remapTrackMapToShadow(
  */
 export function blockWrongLocality(
   ctx: HandlerContext,
-  transport: DeviceTransport | undefined
+  device: DeviceReach
 ): { error: string } | null {
-  const reason = deviceLocalityBlock(transport, ctx.sessionId !== undefined);
+  const reason = deviceLocalityBlock(device, ctx.sessionId !== undefined);
   return reason ? { error: reason } : null;
 }
 
@@ -272,18 +288,29 @@ export function deviceOwnerBlock(
   deviceId: number
 ): string | null {
   if (sessionId === undefined) return null;
-  let row: { transport?: string; web_owner_subject?: string | null } | undefined;
+  let row:
+    | { transport?: string; remote_enabled?: number | null; web_owner_subject?: string | null }
+    | undefined;
   try {
     row = getLibrary()
       .getConnection()
-      .prepare("SELECT transport, web_owner_subject FROM devices WHERE id = ?")
+      .prepare("SELECT transport, remote_enabled, web_owner_subject FROM devices WHERE id = ?")
       .get(deviceId) as typeof row;
   } catch {
     return null; // pre-migration column; the locality guards still apply
   }
-  if (!row || row.transport !== "web") return null;
+  // A hybrid device's browser side belongs to one account exactly as a remote
+  // device does.
+  if (!row || (row.transport !== "web" && row.remote_enabled !== 1)) return null;
   const owner = row.web_owner_subject ?? null;
-  if (owner === null) return null;
+  if (owner === null) {
+    // A hybrid device with no owner recorded was opened to browsers from the
+    // desktop app: it is the server's own player, so its owner's alone.
+    if (row.transport !== "web" && denyIfNotOwner(sessionId) !== null) {
+      return "Only the server's owner can use this device from a browser.";
+    }
+    return null;
+  }
   if (owner === subjectForSessionId(sessionId)) return null;
   return (
     "That device belongs to a different account. Only the account that " +
@@ -300,8 +327,9 @@ export function deviceOwnerBlock(
  */
 export function blockWrongAdmin(
   ctx: HandlerContext,
-  transport: DeviceTransport | undefined
+  device: DeviceReach,
+  op: "edit" | "remove" = "edit"
 ): { error: string } | null {
-  const reason = deviceAdminBlock(transport, ctx.sessionId !== undefined);
+  const reason = deviceAdminBlock(device, ctx.sessionId !== undefined, op);
   return reason ? { error: reason } : null;
 }

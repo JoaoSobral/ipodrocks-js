@@ -32,6 +32,105 @@ export interface Track {
   ratingUpdatedAt: string | null;
   /** Monotonically-incrementing Lamport counter — used as a tiebreaker in 3-way merge. */
   ratingVersion: number;
+  /** Lossless check verdict (what the audio shows, not where it came from); null = never checked. */
+  losslessVerdict?: LosslessVerdict | null;
+  losslessConfidence?: number | null;
+  losslessCutoffHz?: number | null;
+  losslessSource?: string | null;
+  /** The user overruled the verdict ("Mark as OK"); re-checks leave the track alone. */
+  losslessOverride?: boolean;
+  /**
+   * Year, composer, comment and grouping tags. Only the Rockbox database the
+   * sync writes reads them; null when untagged or not yet backfilled.
+   */
+  year?: number | null;
+  composer?: string | null;
+  comment?: string | null;
+  grouping?: string | null;
+}
+
+/**
+ * Lossless check — see `src/main/lossless/spectral-verdict.ts`. A verdict says
+ * what the audio shows (a lossy encoder's cutoff), never that a file or its
+ * seller is fake.
+ */
+export type LosslessVerdict =
+  | "genuine"
+  | "possibly_lossy"
+  | "lossy"
+  | "lossy_strong"
+  | "upsampled"
+  | "inconclusive";
+
+export const LOSSLESS_VERDICT_LABELS: Record<LosslessVerdict, string> = {
+  genuine: "Genuine",
+  possibly_lossy: "Possibly lossy-sourced",
+  lossy: "Lossy-sourced",
+  lossy_strong: "Lossy-sourced (strong)",
+  upsampled: "Upsampled (not true hi-res)",
+  inconclusive: "Inconclusive",
+};
+
+/** Verdicts that may be offered for deletion — never genuine/inconclusive. */
+export const LOSSLESS_FLAGGED_VERDICTS: readonly LosslessVerdict[] = [
+  "lossy_strong",
+  "lossy",
+  "upsampled",
+  "possibly_lossy",
+];
+
+export interface LosslessScanOptions {
+  /** "unchecked" skips tracks that already have a verdict. */
+  scope: "unchecked" | "all";
+  /** Run the deep pass on light-pass suspects (default true). */
+  deep?: boolean;
+}
+
+export interface LosslessProgress {
+  phase: "light" | "deep" | "complete" | "cancelled" | "error";
+  processed: number;
+  total: number;
+  /** Suspects found so far by the light pass. */
+  suspects: number;
+  path?: string;
+  verdict?: LosslessVerdict;
+  message?: string;
+}
+
+export interface LosslessReportRow {
+  trackId: number;
+  title: string;
+  artist: string;
+  album: string;
+  path: string;
+  codec: string;
+  verdict: LosslessVerdict;
+  confidence: number | null;
+  cutoffHz: number | null;
+  source: string | null;
+  stage: "light" | "deep" | null;
+  /** Wall height (dB), depth below reference (dB), share of frames empty above the cutoff. */
+  cliffDb: number | null;
+  depthDb: number | null;
+  emptyShare: number | null;
+  override: boolean;
+  checkedAt: string | null;
+}
+
+export interface LosslessScanResult {
+  checked: number;
+  deepChecked: number;
+  counts: Partial<Record<LosslessVerdict, number>>;
+  cancelled: boolean;
+  /** Set when Essentia could not run at all. */
+  error?: string;
+}
+
+export interface LosslessDeleteResult {
+  deleted: number;
+  trashed: number;
+  permanent: number;
+  failed: { trackId: number; path: string; error: string }[];
 }
 
 export type DeviceRatingChange = {
@@ -99,6 +198,20 @@ export interface Device {
  */
 export type DeviceTransport = "local" | "web";
 
+/**
+ * Which machines can reach a device, derived from `transport` and
+ * `remoteEnabled`:
+ *
+ * - `local` — only the machine running the sync engine (mount path, USB);
+ * - `remote` — only the browser holding its folder (`transport: "web"`);
+ * - `hybrid` — both. Stored as `transport: "local"` plus `remoteEnabled`, so
+ *   everything server-side (the podcast scheduler, auto-audiobooks) keeps
+ *   treating it as the server's own device. Each client uses the side it can
+ *   reach — see `deviceForClient()` in `src/main/devices/device-view.ts`.
+ *   A hybrid device always has a USB identity.
+ */
+export type DeviceConnection = "local" | "remote" | "hybrid";
+
 export interface DeviceProfile extends Device {
   /**
    * Local, or held open in a browser tab. Set once when the device is added
@@ -108,6 +221,14 @@ export interface DeviceProfile extends Device {
    * filesystem.
    */
   transport: DeviceTransport;
+  /**
+   * A local device that a browser may also hold (a hybrid device). Like
+   * `transport`, never written by `device:update`; only `device:setConnections`
+   * changes it.
+   */
+  remoteEnabled: boolean;
+  /** Derived from `transport` + `remoteEnabled`. */
+  connection: DeviceConnection;
   description: string | null;
   lastSyncDate: string | null;
   totalSyncedItems: number;
@@ -479,7 +600,9 @@ export interface ScanProgress {
   file: string;
   processed: number;
   total: number;
-  status: "scanning" | "added" | "skipped" | "complete" | "error" | "cancelled";
+  status: "scanning" | "added" | "skipped" | "complete" | "error" | "cancelled" | "analyzing" | "analyzed";
+  /** "keys" while the scan's last phase analyses key/BPM with Essentia. */
+  phase?: "files" | "keys";
 }
 
 export type SyncProgressEventName =
@@ -629,6 +752,13 @@ export interface DeviceSyncPreferences {
   preserveFolderStructure: boolean;
   /** Issue #113: group albums (and non-mirrored device folders) by album artist or track artist. */
   albumGrouping: AlbumGrouping;
+  /**
+   * Write Rockbox's database (`.rockbox/database_*.tcd`) at the end of every
+   * sync, so the player is ready to browse without Database → Update now.
+   * Opt-in per device (off by default). Skipped on a device with no `.rockbox`
+   * folder.
+   */
+  buildRockboxDatabase: boolean;
   selections: CustomSelections;
 }
 
@@ -651,6 +781,8 @@ export interface SyncOptions {
   /** Issue #113: which artist keys the album list and the rebuilt device folder
    * layout used when preserveFolderStructure is false (default "album-artist"). */
   albumGrouping?: AlbumGrouping;
+  /** Build the Rockbox database on the device after copying (default false). */
+  buildRockboxDatabase?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -790,6 +922,8 @@ export interface ScanResult {
   warnings?: string[];
   /** Number of distinct-hash groups that had more than one copy on disk. */
   duplicateFilesDetected?: number;
+  /** Tracks given key/BPM by Essentia in the scan's last phase. */
+  keysAnalyzed?: number;
   addedTrackPaths?: string[];
   removedTrackPaths?: string[];
   removedTrackIds?: number[];

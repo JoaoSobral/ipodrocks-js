@@ -13,6 +13,7 @@ import { announceLinkResult } from "./components/panels/SignInMethodsCard";
 import { FloatChat } from "./components/assistant/FloatChat";
 import { ServerFolderPicker } from "./components/web/ServerFolderPicker";
 import { DevConsole } from "./components/common/DevConsole";
+import { ScanReminder } from "./components/modals/ScanReminder";
 import { ThemeToggle } from "./components/common/ThemeToggle";
 import { BuyMeACoffeeButton } from "./components/common/BuyMeACoffeeButton";
 import { PlayerBar } from "./components/player/PlayerBar";
@@ -190,6 +191,7 @@ export function App() {
   const setNavigateTo = useUIStore((s) => s.setNavigateTo);
   const pendingSyncDeviceId = useUIStore((s) => s.pendingSyncDeviceId);
   const pendingLibraryScan = useUIStore((s) => s.pendingLibraryScan);
+  const pendingLosslessCheck = useUIStore((s) => s.pendingLosslessCheck);
 
   useEffect(() => {
     setOpenSettings(() => setSettingsOpen(true));
@@ -208,6 +210,10 @@ export function App() {
   useEffect(() => {
     if (pendingLibraryScan) setActive("library");
   }, [pendingLibraryScan]);
+
+  useEffect(() => {
+    if (pendingLosslessCheck) setActive("library");
+  }, [pendingLosslessCheck]);
 
   useEffect(() => {
     getAppVersion().then(({ version }) => setAppVersion(version));
@@ -335,6 +341,9 @@ export function App() {
       {/* Renders nothing unless the server runs with IPODROCKS_DEV_LOGS=1 and
           this caller is its owner. */}
       <DevConsole />
+
+      {/* Startup scan, or the 10-day "scan your library?" reminder (owner only). */}
+      <ScanReminder />
 
       <Toaster theme={theme === "dark" ? "dark" : "light"} richColors />
     </div>

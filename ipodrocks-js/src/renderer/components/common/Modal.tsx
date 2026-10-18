@@ -62,7 +62,7 @@ export function Modal({
             type="button"
             onClick={onClose}
             className="text-muted-foreground hover:text-foreground transition-colors text-lg leading-none w-8 h-8 flex items-center justify-center"
-            title={closeIcon === "−" ? "Minimize (build continues in background)" : "Close"}
+            title={closeIcon === "−" ? "Minimize (keeps running in the background)" : "Close"}
           >
             {closeIcon}
           </button>

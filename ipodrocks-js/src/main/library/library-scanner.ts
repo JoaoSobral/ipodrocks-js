@@ -13,7 +13,7 @@ import Database from "better-sqlite3";
 
 import { ScanProgress, ScanResult } from "../../shared/types";
 import { HashManager } from "./hash-manager";
-import { MetadataExtractor } from "./metadata-extractor";
+import { MetadataExtractor, type TagFields } from "./metadata-extractor";
 import {
   AUDIO_EXTENSIONS,
   isMacosMetadataFile,
@@ -28,6 +28,7 @@ import {
   backfillRatingTags,
   isRatingTagBackfillDone,
 } from "./rating-tag-backfill";
+import { backfillTagFields, isTagFieldsBackfillDone } from "./tag-fields-backfill";
 import { overwriteRatingsFromTags } from "./rating-tag-overwrite";
 import { escapeLike } from "../utils/sql-like";
 import {
@@ -65,6 +66,8 @@ interface TrackUpsertData {
   episodeNumber?: string;
   /** Issue #118: a rating read from the file's own tag, 0-10 scale. */
   rating: number | null;
+  /** Year, composer, comment, grouping — stored for the Rockbox database build. */
+  tagFields?: TagFields;
 }
 
 /**
@@ -76,6 +79,13 @@ interface TrackUpsertData {
  * as well, exactly as it skipped the `1` this used to write.
  */
 const ESSENTIA_FAILED = 2;
+
+/**
+ * Inside the upsert's DO UPDATE, a bare column is the *old* row's value (every
+ * right-hand side reads the row as it was), so this compares old to new.
+ */
+const LOSSLESS_FILE_CHANGED =
+  "(excluded.file_size IS NOT file_size OR excluded.file_hash IS NOT file_hash)";
 
 /**
  * Scans a folder tree for audio files, extracts metadata, and upserts tracks
@@ -104,6 +114,7 @@ export class LibraryScanner {
   private loadTrackPathsStmt: Database.Statement;
   private getTrackIdByPathStmt: Database.Statement;
   private updateTrackFeaturesStmt: Database.Statement;
+  private fillAlbumYearStmt: Database.Statement;
 
   constructor(db: Database.Database) {
     this.db = db;
@@ -144,12 +155,12 @@ export class LibraryScanner {
         path, filename, title, track_number, disc_number, duration, bitrate,
         bits_per_sample, file_size, content_type, library_folder_id,
         artist_id, album_id, genre_id, codec_id, file_hash, metadata_hash,
-        show_title, episode_number, rating
+        show_title, episode_number, rating, year, composer, comment, grouping
       ) VALUES (
         @path, @filename, @title, @trackNumber, @discNumber, @duration,
         @bitrate, @bitsPerSample, @fileSize, @contentType, @folderId,
         @artistId, @albumId, @genreId, @codecId, @fileHash, @metadataHash,
-        @showTitle, @episodeNumber, @rating
+        @showTitle, @episodeNumber, @rating, @year, @composer, @comment, @grouping
       )
       ON CONFLICT(path) DO UPDATE SET
         filename      = excluded.filename,
@@ -170,11 +181,26 @@ export class LibraryScanner {
         metadata_hash = excluded.metadata_hash,
         show_title    = excluded.show_title,
         episode_number = excluded.episode_number,
+        year          = excluded.year,
+        composer      = excluded.composer,
+        comment       = excluded.comment,
+        grouping      = excluded.grouping,
         -- Issue #118: seed a rating from the file's own tag only while nothing
         -- has rated the track yet. Once rating is non-null — from a device
         -- sync, an in-app edit, or a prior tag read — the file tag must never
         -- fight it; see mergeRating() in sync/rating-merge.ts.
-        rating        = CASE WHEN rating IS NULL THEN excluded.rating ELSE rating END
+        rating        = CASE WHEN rating IS NULL THEN excluded.rating ELSE rating END,
+        -- A lossless-check verdict describes the bytes it measured. A file
+        -- whose size or hash changed was replaced, so its verdict (and any
+        -- "mark as OK" the user gave the old file) no longer applies.
+        lossless_verdict    = CASE WHEN ${LOSSLESS_FILE_CHANGED} THEN NULL ELSE lossless_verdict END,
+        lossless_confidence = CASE WHEN ${LOSSLESS_FILE_CHANGED} THEN NULL ELSE lossless_confidence END,
+        lossless_cutoff_hz  = CASE WHEN ${LOSSLESS_FILE_CHANGED} THEN NULL ELSE lossless_cutoff_hz END,
+        lossless_source     = CASE WHEN ${LOSSLESS_FILE_CHANGED} THEN NULL ELSE lossless_source END,
+        lossless_stage      = CASE WHEN ${LOSSLESS_FILE_CHANGED} THEN NULL ELSE lossless_stage END,
+        lossless_details    = CASE WHEN ${LOSSLESS_FILE_CHANGED} THEN NULL ELSE lossless_details END,
+        lossless_checked_at = CASE WHEN ${LOSSLESS_FILE_CHANGED} THEN NULL ELSE lossless_checked_at END,
+        lossless_override   = CASE WHEN ${LOSSLESS_FILE_CHANGED} THEN 0 ELSE lossless_override END
     `);
 
     this.loadMtimesStmt = db.prepare(
@@ -191,6 +217,11 @@ export class LibraryScanner {
     );
     this.updateTrackFeaturesStmt = db.prepare(
       "UPDATE tracks SET key = ?, bpm = ?, camelot = ?, features_scanned = 1 WHERE id = ?"
+    );
+    // `albums.year` has existed since the first schema and nothing ever filled
+    // it. The first track of an album to carry a year names it.
+    this.fillAlbumYearStmt = db.prepare(
+      "UPDATE albums SET year = ? WHERE id = ? AND year IS NULL"
     );
   }
 
@@ -219,6 +250,7 @@ export class LibraryScanner {
     // would never re-read those tags, so repoint them once, up front.
     await this.runAlbumArtistBackfill(progressCallback, signal);
     await this.runRatingTagBackfill(progressCallback, signal);
+    await this.runTagFieldsBackfill(progressCallback, signal);
 
     // `folder` (raw, as resolved from the OS) is used for all filesystem I/O;
     // `folderKey` (NFC) is the canonical form used for every DB lookup so
@@ -345,6 +377,7 @@ export class LibraryScanner {
           showTitle: metadata.showTitle,
           episodeNumber: metadata.episodeNumber,
           rating: metadata.tagRating,
+          tagFields: metadata.tagFields,
         });
 
         const trackRow = this.getTrackIdByPathStmt.get(dbPath) as
@@ -459,6 +492,21 @@ export class LibraryScanner {
    * the same shape of bug as the codec_configurations orphaning in
    * cleanupOrphanedEntities() below.
    */
+  /**
+   * Remove tracks the app itself deleted from disk (the lossless check's
+   * "delete"), with exactly the cleanup a scan gives a vanished file — every
+   * dependent table, the orphaned artists/albums/genres, and the shadow paths
+   * to unlink. Do not reach for `LibraryCore.deleteTrack()` instead: it skips
+   * `playlist_items`, `shadow_tracks` and `content_hashes`.
+   */
+  removeTracksByPath(paths: string[]): {
+    filesRemoved: number;
+    removedTrackIds: number[];
+    removedShadowPaths: string[];
+  } {
+    return this.deleteRemovedTracks(paths);
+  }
+
   private deleteRemovedTracks(
     paths: string[]
   ): {
@@ -649,6 +697,36 @@ export class LibraryScanner {
       }
     } catch (err) {
       console.error("[scanner] rating-tag backfill failed:", err);
+    }
+  }
+
+  /**
+   * Run the one-shot year/composer/comment/grouping backfill if it has not run
+   * yet. Same contract as the two backfills above: a no-op after the first
+   * scan, and a failure is logged rather than allowed to abort the scan.
+   */
+  private async runTagFieldsBackfill(
+    progressCallback?: (progress: ScanProgress) => void,
+    signal?: AbortSignal
+  ): Promise<void> {
+    if (isTagFieldsBackfillDone(this.db)) return;
+    try {
+      const result = await backfillTagFields(this.db, this.metadataExtractor, {
+        cancelSignal: signal,
+        onProgress: (processed, total) => {
+          progressCallback?.({
+            file: `Reading year and composer tags (${processed}/${total})`,
+            processed,
+            total,
+            status: "skipped",
+          });
+        },
+      });
+      if (result.updated > 0) {
+        console.log(`[scanner] tag-fields backfill updated ${result.updated} track(s)`);
+      }
+    } catch (err) {
+      console.error("[scanner] tag-fields backfill failed:", err);
     }
   }
 
@@ -1158,6 +1236,13 @@ export class LibraryScanner {
       showTitle: data.showTitle ?? null,
       episodeNumber,
       rating: data.rating,
+      year: data.tagFields?.year ?? null,
+      composer: data.tagFields?.composer ?? null,
+      comment: data.tagFields?.comment ?? null,
+      grouping: data.tagFields?.grouping ?? null,
     });
+    if (data.tagFields?.year != null) {
+      this.fillAlbumYearStmt.run(data.tagFields.year, albumId);
+    }
   }
 }

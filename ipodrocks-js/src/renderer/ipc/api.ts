@@ -348,6 +348,27 @@ export async function addDevice(
   >;
 }
 
+export interface DeviceConnectionChange {
+  /** Add or change the local side (desktop app only); null drops it. */
+  local?: {
+    mountPath: string;
+    usbVendorId?: string | null;
+    usbProductId?: string | null;
+    usbSerial?: string | null;
+  } | null;
+  /** Allow or stop using the device from a browser. */
+  remote?: boolean;
+}
+
+export async function setDeviceConnections(
+  deviceId: number,
+  change: DeviceConnectionChange
+): Promise<DeviceProfile | { error: string }> {
+  return window.api.invoke("device:setConnections", deviceId, change) as Promise<
+    DeviceProfile | { error: string }
+  >;
+}
+
 export async function updateDevice(
   deviceId: number,
   updates: Record<string, unknown>
@@ -756,6 +777,92 @@ export function onBackfillProgress(
   return window.api.on("savant:backfillProgress", cb as (...args: unknown[]) => void);
 }
 
+// ---------------------------------------------------------------------------
+// Lossless check
+// ---------------------------------------------------------------------------
+
+type LosslessScanResult = import("@shared/types").LosslessScanResult;
+type LosslessProgress = import("@shared/types").LosslessProgress;
+type LosslessReportRow = import("@shared/types").LosslessReportRow;
+type LosslessVerdictT = import("@shared/types").LosslessVerdict;
+
+/** A refusal is `{ error: string }`; a result may carry other fields beside it. */
+function throwOnError<T>(result: T | { error: string }): T {
+  const error = result && typeof result === "object" ? (result as { error?: unknown }).error : undefined;
+  if (typeof error === "string" && error) throw new Error(error);
+  return result as T;
+}
+
+/** Resolves when the whole check is done; progress arrives via `onLosslessProgress`. */
+export async function startLosslessCheck(
+  opts: import("@shared/types").LosslessScanOptions
+): Promise<LosslessScanResult> {
+  return throwOnError(
+    (await window.api.invoke("lossless:scan", opts)) as LosslessScanResult | { error: string }
+  );
+}
+
+export async function cancelLosslessCheck(): Promise<void> {
+  throwOnError(await window.api.invoke("lossless:cancel"));
+}
+
+export async function getLosslessStatus(): Promise<{
+  running: boolean;
+  progress: LosslessProgress | null;
+  lastResult: LosslessScanResult | null;
+}> {
+  return throwOnError(
+    (await window.api.invoke("lossless:status")) as
+      | { running: boolean; progress: LosslessProgress | null; lastResult: LosslessScanResult | null }
+      | { error: string }
+  );
+}
+
+export async function getLosslessReport(verdicts?: LosslessVerdictT[]): Promise<LosslessReportRow[]> {
+  return throwOnError(
+    (await window.api.invoke("lossless:report", verdicts ? { verdicts } : undefined)) as
+      | LosslessReportRow[]
+      | { error: string }
+  );
+}
+
+export async function setLosslessOverride(trackIds: number[], ok: boolean): Promise<number> {
+  const r = throwOnError(
+    (await window.api.invoke("lossless:setOverride", { trackIds, ok })) as { changed: number } | { error: string }
+  );
+  return r.changed;
+}
+
+export async function clearLosslessVerdicts(trackIds?: number[]): Promise<number> {
+  const r = throwOnError(
+    (await window.api.invoke("lossless:clear", trackIds ? { trackIds } : undefined)) as
+      | { cleared: number }
+      | { error: string }
+  );
+  return r.cleared;
+}
+
+export async function deleteLosslessFlagged(
+  trackIds: number[]
+): Promise<import("@shared/types").LosslessDeleteResult> {
+  return throwOnError(
+    (await window.api.invoke("lossless:deleteFlagged", { trackIds })) as
+      | import("@shared/types").LosslessDeleteResult
+      | { error: string }
+  );
+}
+
+export async function losslessHostHasTrash(): Promise<boolean> {
+  const r = throwOnError(
+    (await window.api.invoke("lossless:hostHasTrash")) as { hasTrash: boolean } | { error: string }
+  );
+  return r.hasTrash;
+}
+
+export function onLosslessProgress(cb: (progress: LosslessProgress) => void): () => void {
+  return window.api.on("lossless:progress", cb as (...args: unknown[]) => void);
+}
+
 export async function startMoodChat(): Promise<
   | { sessionId: string; aiMessage: string }
   | { error: string }
@@ -927,6 +1034,32 @@ export async function getRatingPrefs(): Promise<RatingPrefs> {
 
 export async function setRatingPrefs(prefs: RatingPrefs): Promise<SettingsWriteResult> {
   return window.api.invoke("settings:setRatingPrefs", prefs) as Promise<SettingsWriteResult>;
+}
+
+export interface LibraryPrefs {
+  scanOnStartup: boolean;
+}
+
+export async function getLibraryPrefs(): Promise<LibraryPrefs> {
+  return window.api.invoke("settings:getLibraryPrefs") as Promise<LibraryPrefs>;
+}
+
+export async function setLibraryPrefs(prefs: LibraryPrefs): Promise<SettingsWriteResult> {
+  return window.api.invoke("settings:setLibraryPrefs", prefs) as Promise<SettingsWriteResult>;
+}
+
+export interface ScanReminder {
+  due: boolean;
+  /** ISO time of the last completed scan; null when there has never been one. */
+  lastScanAt: string | null;
+}
+
+export async function getScanReminder(): Promise<ScanReminder> {
+  return window.api.invoke("library:getScanReminder") as Promise<ScanReminder>;
+}
+
+export async function snoozeScanReminder(): Promise<{ ok?: boolean; error?: string }> {
+  return window.api.invoke("library:snoozeScanReminder") as Promise<{ ok?: boolean; error?: string }>;
 }
 
 // ---------------------------------------------------------------------------

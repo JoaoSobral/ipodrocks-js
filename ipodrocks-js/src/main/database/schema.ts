@@ -76,6 +76,18 @@ CREATE TABLE IF NOT EXISTS tracks (
     rating_source_device_id INTEGER REFERENCES devices(id),
     rating_updated_at TIMESTAMP,
     rating_version INTEGER NOT NULL DEFAULT 0,
+    lossless_verdict TEXT,
+    lossless_confidence REAL,
+    lossless_cutoff_hz INTEGER,
+    lossless_source TEXT,
+    lossless_stage TEXT,
+    lossless_details TEXT,
+    lossless_checked_at TIMESTAMP,
+    lossless_override INTEGER NOT NULL DEFAULT 0,
+    year INTEGER,
+    composer TEXT,
+    comment TEXT,
+    grouping TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (library_folder_id) REFERENCES library_folders (id),
     FOREIGN KEY (artist_id) REFERENCES artists (id),
@@ -283,6 +295,10 @@ CREATE TABLE IF NOT EXISTS devices (
     -- see ALLOWED_UPDATE_FIELDS, and the device-attach hazard in CLAUDE.md.
     -- No index — the only read is by device id, which is the primary key.
     web_owner_subject TEXT,
+    -- 1 on a hybrid device: transport='local' (real mount_path, USB identity
+    -- required) that a browser may also hold, under webDeviceRoot(id). Changed
+    -- only by device:setConnections, never by device:update. No index.
+    remote_enabled INTEGER NOT NULL DEFAULT 0,
     usb_vendor_id TEXT,
     usb_product_id TEXT,
     usb_serial TEXT,
@@ -357,6 +373,7 @@ CREATE TABLE IF NOT EXISTS device_sync_preferences (
     include_playlists INTEGER NOT NULL DEFAULT 1,
     preserve_folder_structure INTEGER NOT NULL DEFAULT 1,
     album_grouping TEXT NOT NULL DEFAULT 'album-artist',
+    build_rockbox_db INTEGER NOT NULL DEFAULT 0,
     custom_selections_json TEXT,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (device_id) REFERENCES devices (id) ON DELETE CASCADE

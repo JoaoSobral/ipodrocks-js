@@ -118,13 +118,21 @@ If you really like iPodRocks and want to keep it caffeinated, you can buy me a c
 - **Albums grouped by album artist** — Compilations show up once, under "Various Artists", instead of once per contributing track artist, so the custom-sync album list stays usable. The same choice decides the on-device folder layout when you are not mirroring your library structure, so a 20-artist compilation lands in one folder rather than twenty. Switch to **Track artist** per device if you prefer the old grouping.
 - **Mirror library folder structure** — Reproduce your library's folder tree on the device 1:1, album folder names and all, instead of rebuilding paths from tags
 - FFmpeg conversion with metadata preserved
+- **Rockbox database built for you** — Tick **Build Rockbox database** (per device, off by default) and the sync writes the player's Rockbox database itself, so new music is in Artists / Albums / Year / Composer the moment you unplug — no **Database → Update now** on the iPod. Play counts and ratings already on the player are kept, and newly copied tracks arrive with their ratings
 - **Rockbox-compatible album art** — Generates a single baseline-JPEG `cover.jpg` per album folder, resized to a per-device maximum (default 300 px, which keeps older players responsive), so artwork loads reliably on Rockbox. Uses folder art or embedded artwork as the source; no extra software required
 - Live progress feedback
+
+### Lossless Check — spot fake FLACs
+- **Finds lossless files made from lossy ones** — an MP3 or AAC converted to FLAC/ALAC keeps the encoder's frequency cutoff, and iPodRocks finds it with Essentia: a quick pass over every lossless file, then a deep, whole-track check of the suspects
+- **Graded verdicts** — *Lossy-sourced (strong)* for the unmistakable cases (an MP3 128 → FLAC), *Lossy-sourced* and *Possibly lossy-sourced* nearer the edge, and *Upsampled* for "hi-res" files that only hold CD-quality audio. Each comes with the cutoff, a likely source ("MP3 ~128 kbps") and a confidence. Verdicts describe the audio, never the seller
+- **Report** — export to **CSV or Markdown** with title, album and the file's path; a **Lossless** column and filter in the Library
+- **Mark as OK or delete** — overrule a verdict, or delete the files you choose (to the Trash on the desktop)
+- **Runs in the background** — minimise it and keep using the app
 
 ### Harmonic Mixing
 - **Key & BPM detection** — from existing tags or automatic audio analysis
 - Camelot wheel compatibility for DJ-style flow
-- Optional backfill with genre-based sampling
+- Tracks without key tags are analysed during the library scan
 
 ### Optional: the AI extras
 
@@ -142,13 +150,16 @@ type except Savant, every sync, every device feature works exactly the same.
   subscribe to podcasts and audiobooks, check and sync devices, manage the web
   server's allowlist. It runs a tool-calling loop over the same operations the
   UI exposes, pauses for **Confirm / Cancel** before anything destructive, and
-  remembers what you tell it between sessions. Convenient; never required —
-  every one of those things has a button.
+  remembers what you tell it between sessions. It can search and read every
+  page of the documentation too, so how-to and troubleshooting questions are
+  answered from the manual itself. Convenient; never required — every one of
+  those things has a button.
 
 ### More
 - **M3U8 export** — Playlists for any player
 - **Dark & light themes** — Gmail-like light mode
 - **Library scanning** — MP3, FLAC, AAC, OGG, Opus, WavPack, Musepack, WAV, AIFF, and more
+- **Scan at startup, or a reminder** — Optionally scan the library every time the app opens; otherwise you are asked once it has gone 10 days without a scan
 - **Unicode-safe scanning** — Handles accented and non-Latin filenames consistently, including on SMB/SAMBA network shares
 
 ---
@@ -302,6 +313,14 @@ because somebody has to be able to tidy up a browser that is never coming back.
 Auto Podcasts is unavailable for a remote device: the schedule runs on the
 server, and a remote device is only connected while its tab is open.
 
+**A device can also be both.** A *hybrid* device is plugged into the server's
+machine (by mount path and USB device) *and* usable from a browser holding its
+folder; each side syncs it through the connection it can reach, and it stays
+one device with one history. Switch it from the device card: **Also allow
+browser use** in the desktop app, **Use from this browser** for the server's
+owner in a browser, or **Add local connection** on a remote device. A hybrid
+device must have its USB device set.
+
 Remote devices need **Chrome, Edge or another Chromium browser on a desktop,
 over HTTPS** — Firefox and Safari do not implement the File System Access API,
 and no browser grants folder access on an insecure origin.
@@ -325,6 +344,7 @@ and no browser grants folder access on an insecure origin.
 - Scan to extract metadata and build the catalog
 - View tracks with search, sort, and filters
 - Create shadow libraries for pre-transcoded sync
+- **Check lossless…** finds FLAC/ALAC files whose audio came from an MP3 or AAC. Run it, minimise it if you like, then export the report or delete what you don't want. Files you know are fine can be marked OK
 
 ### Devices
 
@@ -366,6 +386,7 @@ and no browser grants folder access on an insecure origin.
 - **Custom sync** — Pick albums, artists, genres, playlists
 - **Mirror library folder structure** — On by default; keeps the device layout identical to your library, including album folders that carry the year (`Levels (2011)`). Turn it off to rebuild paths from tags as `Artist/Album/track.ext`
 - **Group albums by** — **Album artist** (default) keeps a compilation as one album in both the picker and the rebuilt folder layout; **Track artist** restores the older per-track-artist behaviour
+- **Build Rockbox database** — Off by default and remembered per device. Writes `.rockbox/database_*.tcd` at the end of the sync so the player needs no database update; needs Rockbox 4.0 or later
 - Live progress feedback
 
 ### Settings

@@ -31,6 +31,7 @@ export const ALLOWED_CHANNEL_PREFIXES = [
   "podcast:",
   "audiobook:",
   "server:",
+  "lossless:",
 ] as const;
 
 export function isAllowedChannel(channel: string): boolean {
@@ -57,6 +58,8 @@ export const PUSH_CHANNELS = [
   "assistant:triggerSync",
   "assistant:triggerLibraryScan",
   "assistant:triggerShadowRebuild",
+  "assistant:triggerLosslessCheck",
+  "lossless:progress",
 ] as const;
 
 export type PushChannel = (typeof PUSH_CHANNELS)[number];

@@ -7,10 +7,11 @@ The Library panel manages your music catalog: folders, scans, shadow libraries, 
 - **Add Folder** — Add a root folder for music, podcasts, or audiobooks. iPodRocks scans it recursively.
 - **Scan Library** — Re-scan all folders to pick up new or changed files. Uses content hashes to skip unchanged files.
 - **Clear scan cache** — Reset content hashes so the next scan re-processes all files (use when tags or files changed externally).
+- **Check lossless…** — Find lossless files (FLAC, ALAC, WAV, AIFF) whose audio came from a lossy source such as an MP3 or AAC, or hi-res files that only hold CD-quality audio. See [Lossless Check](#lossless-check) below.
 - **Harmonic data banner** — Shows how many tracks have key/BPM data. Links to Settings to enable extraction and Essentia analysis.
 - **Library Folders** — Compact list of added folders with remove option.
 - **Shadow Libraries** — Pre-transcoded mirrors (e.g. FLAC → MPC). Create, rebuild, or delete them.
-- **Track list** — Search, sort, and filter by device, type, sync status, and **playlist**. Selecting a playlist from the filter dropdown narrows the list to that playlist's tracks. (The separate Playlists tab was removed in 2.0.0; full playlist management lives in the [Playlists](./playlists.md) panel.)
+- **Track list** — Search, sort, and filter by device, type, sync status, **playlist** and **lossless check verdict**. The **Lossless** column shows each checked file's verdict. Selecting a playlist from the filter dropdown narrows the list to that playlist's tracks. (The separate Playlists tab was removed in 2.0.0; full playlist management lives in the [Playlists](./playlists.md) panel.)
 - **Broken-playlist banner** — If a re-scan removes tracks that playlists still reference, a warning banner appears here with a link to repair or delete the affected playlists.
 - **Preview tracks** — double-click a track to play it in the persistent player bar at the bottom of the window.
 
@@ -37,6 +38,66 @@ The Library panel manages your music catalog: folders, scans, shadow libraries, 
 4. **Shadow library larger than it should be?** If it holds albums you renamed or deleted long ago, open its **⚙** menu and run **Prune orphan files**. Run it once; after that the app keeps itself tidy.
 5. **Clear cache:** Only when you know files or tags changed outside iPodRocks and you want a full re-scan.
 
+## Keeping the library current
+
+iPodRocks only knows about files it has scanned, so music you add to a folder
+does not appear until the next scan. Two things help with that:
+
+- **Scan library at startup** (Settings → **Library**, off by default). With it
+  on, every library folder is scanned each time iPodRocks opens. A
+  [web server](./settings-web-server.md) scans when the server starts; opening
+  the app in a browser never starts a scan by itself.
+- **The 10-day reminder.** With the startup scan off, once the library has gone
+  **10 days** without a scan you are asked: *"You haven't scanned your library
+  since {date}. Do you wish to scan it now?"* **Yes** scans straight away; **No**
+  asks again in another 10 days. On the desktop it is a dialog; in a browser it
+  is a notification in the corner, so it never sits in front of your work. On a
+  shared server only the server's owner is asked, because the library is
+  everybody's and one person decides when it is rescanned.
+
+A scan you start yourself (Scan Library, adding a folder, or Rocksy) resets the
+10-day clock the same way; a scan you cancel does not.
+
+## Lossless Check
+
+A file can be a perfectly valid FLAC or ALAC and still hold audio that went through a lossy encoder first — an MP3 converted to FLAC, for example. Converting cannot bring back what the encoder threw away: above a certain frequency (about 16 kHz for a 128 kbps MP3, 19–20 kHz for 320 kbps or AAC) the file holds nothing at all, behind a sharp "wall". Real CD audio carries content up to about 22 kHz, or fades out gradually. The Lossless Check looks for that wall, using Essentia to measure each file's spectrum.
+
+### Running it
+
+1. In the Library toolbar, click **Check lossless…**.
+2. Choose **Only unchecked** (the default, which skips files already checked) or **Re-check all**, and leave **Deep check** on.
+3. Click **Start check**. A **quick pass** looks at 20 seconds from every lossless file. Files that look suspicious then get a **deep pass**: six 20-second windows spread across the whole track, checked frame by frame.
+
+**It runs in the background.** Press **Run in background** (or the **−** in the window's corner) and keep using iPodRocks, or minimise the window. A progress chip in the Library toolbar shows how far it has got; click it to bring the window back. Decoding runs in ffmpeg and the analysis on its own thread, so the app stays responsive. Only one check runs at a time, and it does not run alongside the harmonic (key/BPM) analysis, because both use the same analyser.
+
+### Verdicts
+
+A verdict describes **what the audio shows, not where the file came from.** A legitimately bought edit (a sped-up or remixed version, say) can be made from a compressed source and will show the same signature.
+
+| Verdict | Meaning |
+|---|---|
+| **Lossy-sourced (strong)** | Unmistakable. The band above the cutoff is empty in practically every moment of the track, and the cutoff is either a sheer wall (40 dB or more) or far below the format's range (≤ 16.5 kHz). An MP3 at 128–320 kbps converted to FLAC lands here. |
+| **Lossy-sourced** | The same pattern, closer to the edge: a softer wall, or one nearer the top of the range. |
+| **Upsampled (not true hi-res)** | A 88.2/96/192 kHz file whose content stops at CD bandwidth (about 22–24 kHz). It is lossless, but it is not hi-res. |
+| **Possibly lossy-sourced** | A wall that some moments of the track cross. This can be a natural roll-off. |
+| **Genuine** | No lossy cutoff found. |
+| **Inconclusive** | Too quiet to judge (mostly silence). |
+
+For a flagged file the report also shows the **cutoff** frequency and a **likely source**, such as "MP3 ~128 kbps". The likely source is an estimate from where the cutoff sits; on an edited track (sped up, slowed down) the cutoff has moved and the estimate is unreliable. Hover a cutoff to see the measurements behind it: how far the level drops at the wall, how far below the music the band above it sits, and the share of the track where it is empty.
+
+**What it cannot catch:** an MP3 encoded with no low-pass at all (some very-high-quality VBR settings keep the full band) passes as genuine, because nothing is missing from its spectrum. A genuine recording mastered with a steep digital low-pass reads as lossy-sourced; that is what **Mark as OK** is for.
+
+### Results, exports and deleting
+
+- **Filters**: Flagged (the default), each verdict on its own, or All checked.
+- **Export CSV / Export Markdown** saves the rows currently shown, with title, artist, album, verdict, confidence, cutoff, likely source and the file's path on disk.
+- **Mark as OK** overrules the verdict for the selected files. They drop out of the flagged list, show **OK (you)** in the Library, and later checks skip them. **Unmark** undoes it.
+- **Delete selected…** removes the selected flagged files from disk and from the library. Nothing is pre-selected, and genuine, inconclusive or marked-OK files are never deleted even if selected. The desktop app moves the files to the **Trash**; a headless server has no Trash, so there they are **deleted permanently**, and the confirmation says which will happen. Playlists drop the deleted tracks, and their shadow-library copies are removed too.
+
+A file that changes on disk (you replace a fake with a real rip, for instance) loses its verdict and any "OK" mark on the next library scan, so it is checked afresh.
+
+Over the web server, running the check, marking files OK and deleting are **owner-only**; any signed-in user can read the results.
+
 ## Music Preview Player
 
 Double-click any track in the library list to start playback in the player bar that appears at the bottom of the window.
@@ -60,5 +121,10 @@ Double-click any track in the library list to start playback in the player bar t
 - "Add `/Users/me/Music` as a library folder" → `library_add_folder` *(asks you to confirm first)*
 - "Remove that folder" → `library_remove_folder` *(asks you to confirm first)*
 - "Rescan my library" → `library_scan` *(asks you to confirm first)*
+- "Scan my library every time the app opens" / "when did I last scan?" → `library_set_scan_on_startup`
+- "Are my FLACs really lossless?" / "find fake FLACs" → `lossless_check` *(asks you to confirm first; then runs in the background)*
+- "Which files are lossy-sourced?" → `lossless_report`
+- "That one is fine, ignore it" → `lossless_mark_ok`
+- "Delete the strong ones" → `lossless_report`, then `lossless_delete_flagged` *(asks you to confirm first)*
 
 Read tools run immediately; anything that adds/removes folders or scans pauses for a **Confirm / Cancel** prompt.

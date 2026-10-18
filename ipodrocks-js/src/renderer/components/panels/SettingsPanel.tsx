@@ -13,6 +13,8 @@ import {
   setHarmonicPrefs,
   getRatingPrefs,
   setRatingPrefs,
+  getLibraryPrefs,
+  setLibraryPrefs,
   podcastGetSettings,
   podcastSetSettings,
   podcastBrowseDownloadDir,
@@ -29,6 +31,17 @@ interface SettingsPanelProps {
   onClose: () => void;
 }
 
+type SettingsTab = "general" | "library" | "podcasts" | "remote";
+
+/** One tab per topic. Every panel stays mounted (just hidden), so Save still
+ *  writes every section at once and nothing reloads when switching. */
+const SETTINGS_TABS: { id: SettingsTab; label: string; hint: string }[] = [
+  { id: "general", label: "General", hint: "AI assistant & Savant" },
+  { id: "library", label: "Library", hint: "Scans, ratings, key/BPM" },
+  { id: "podcasts", label: "Podcasts", hint: "Search & auto-download" },
+  { id: "remote", label: "Remote", hint: "Web server & sign-in" },
+];
+
 export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
   const [apiKey, setApiKey] = useState("");
   const [model, setModel] = useState("anthropic/claude-sonnet-4.6");
@@ -42,6 +55,8 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
   const [testError, setTestError] = useState<string | null>(null);
   const [keyData, setKeyData] = useState<SavantKeyData | null>(null);
   const [saving, setSaving] = useState(false);
+  // Kept while the app runs, so reopening Settings returns to the same section.
+  const [tab, setTab] = useState<SettingsTab>("general");
   // A server refusal from Save, shown as a sentence beside the button. Over
   // the web the server-wide setters are owner-only, so a signed-in guest who
   // presses Save gets this instead of a modal that closes having saved nothing.
@@ -66,17 +81,19 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
   const [analyzeWithEssentia, setAnalyzeWithEssentia] = useState(false);
   const [analyzePercent, setAnalyzePercent] = useState(10);
   const [tagRatingAlwaysWins, setTagRatingAlwaysWins] = useState(false);
+  const [scanOnStartup, setScanOnStartup] = useState(false);
 
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
     (async () => {
-      const [config, data, harmonic, ratingPrefs, podcastCfg] = await Promise.all([
+      const [config, data, harmonic, ratingPrefs, podcastCfg, libraryPrefs] = await Promise.all([
         getOpenRouterConfig(),
         checkSavantKeyData(),
         getHarmonicPrefs(),
         getRatingPrefs(),
         podcastGetSettings(),
+        getLibraryPrefs(),
       ]);
       if (!cancelled) {
         setApiKey(config?.apiKey ?? "");
@@ -88,6 +105,7 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
         setAnalyzeWithEssentia(harmonic.analyzeWithEssentia ?? false);
         setAnalyzePercent(harmonic.analyzePercent ?? 10);
         setTagRatingAlwaysWins(ratingPrefs.tagRatingAlwaysWins ?? false);
+        setScanOnStartup(libraryPrefs?.scanOnStartup === true);
         setPodcastSettings(podcastCfg);
         // Credentials are never sent to the renderer (F1); inputs stay blank
         // and the placeholder indicates whether a value is already stored.
@@ -175,6 +193,7 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
         analyzePercent: Math.min(100, Math.max(1, analyzePercent)),
       }));
       note(await setRatingPrefs({ tagRatingAlwaysWins }));
+      note(await setLibraryPrefs({ scanOnStartup }));
       const customDir = podcastDownloadDir.trim();
       const folderChanged = customDir !== podcastDownloadDirOriginal;
       // Only send credential fields when the user actually typed a value;
@@ -238,13 +257,46 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
       open={open}
       onClose={onClose}
       title="Settings"
-      width="max-w-3xl"
+      width="max-w-5xl"
       closeOnBackdropClick
     >
       <div className="space-y-5">
-        <div className="grid grid-cols-2 gap-5 items-start">
-          {/* Left column */}
-          <div className="space-y-5">
+        <div className="flex gap-5 items-start">
+          <div
+            role="tablist"
+            aria-label="Settings sections"
+            aria-orientation="vertical"
+            className="flex flex-col gap-1 w-36 shrink-0 sticky top-0"
+          >
+            {SETTINGS_TABS.map((t) => (
+              <button
+                key={t.id}
+                type="button"
+                role="tab"
+                id={`settings-tab-${t.id}`}
+                aria-selected={tab === t.id}
+                aria-controls={`settings-panel-${t.id}`}
+                onClick={() => setTab(t.id)}
+                className={`text-left px-3 py-2 rounded-md text-sm font-medium transition-colors cursor-default ${
+                  tab === t.id
+                    ? "bg-primary/15 text-primary"
+                    : "text-muted-foreground hover:bg-muted/40 hover:text-foreground"
+                }`}
+              >
+                {t.label}
+                <span className="block text-[10px] font-normal text-muted-foreground">{t.hint}</span>
+              </button>
+            ))}
+          </div>
+
+          <div className="flex-1 min-w-0">
+          <div
+            role="tabpanel"
+            id="settings-panel-general"
+            aria-labelledby="settings-tab-general"
+            hidden={tab !== "general"}
+            className="space-y-5"
+          >
             <Card
               title="OpenRouter API"
               subtitle="Connect to AI models via OpenRouter for Savant playlists."
@@ -323,6 +375,68 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
                 </div>
               </div>
             </Card>
+          </div>
+          <div
+            role="tabpanel"
+            id="settings-panel-library"
+            aria-labelledby="settings-tab-library"
+            hidden={tab !== "library"}
+            className="space-y-5"
+          >
+            <Card
+              title="Library"
+              subtitle="Keep the library in step with the files on disk."
+            >
+              <div className="flex items-start justify-between gap-4">
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium text-foreground">
+                    Scan library at startup
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Scan every library folder each time iPodRocks starts (on a
+                    server, when the server starts). With this off, you are asked
+                    once the library has gone 10 days without a scan.
+                  </p>
+                </div>
+                <Switch
+                  checked={scanOnStartup}
+                  onChange={setScanOnStartup}
+                  className="shrink-0"
+                  data-testid="scan-on-startup"
+                />
+              </div>
+            </Card>
+
+            <Card
+              title="Ratings"
+              subtitle="Control how a library scan reconciles ratings with the file's own tag."
+            >
+              <div className="space-y-5">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium text-foreground">
+                      Library tags always win
+                    </p>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      Normally, a rating tag (from Swinsian, Mp3tag, …) only fills in a
+                      track that has never been rated — once a device or this app has
+                      rated it, the tag is ignored from then on. Turn this on to make
+                      the next scan overwrite every track's rating from its file tag
+                      instead, including clearing tracks the file leaves untagged, and
+                      resolving any open rating conflicts in the library's favor. Use
+                      this to reset iPodRocks to match your library manager; turn it
+                      back off afterward, or every future scan will keep overwriting
+                      ratings you set on a device or in-app.
+                    </p>
+                  </div>
+                  <Switch
+                    checked={tagRatingAlwaysWins}
+                    onChange={setTagRatingAlwaysWins}
+                    className="shrink-0"
+                  />
+                </div>
+              </div>
+            </Card>
 
             <Card
               title="Harmonic Analysis"
@@ -361,7 +475,9 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
                       Analyze with Essentia.js
                     </p>
                     <p className="text-xs text-muted-foreground mt-0.5">
-                      Detect key/BPM from audio waveform (slower, more accurate).
+                      Detect key/BPM from the audio itself for tracks whose tags have
+                      none. Runs as the last step of every library scan, only on tracks
+                      still missing key data (slower, more accurate).
                     </p>
                   </div>
                   <Switch
@@ -373,8 +489,8 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
 
                 {analyzeWithEssentia && (
                   <Input
-                    label="Analyze % of library"
-                    tooltip="When scanning new tracks, limit Essentia key/BPM detection to this percentage to control CPU usage."
+                    label="Analyze % of tracks missing key data"
+                    tooltip="Each scan analyses at most this percentage of the tracks still missing key data, to control CPU usage. 100 analyses all of them."
                     type="number"
                     min={1}
                     max={100}
@@ -385,55 +501,16 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
                   />
                 )}
 
-                <Input
-                  label="Backfill: process up to % of library"
-                  tooltip="Run key and BPM detection on tracks that are missing harmonic data, up to this percentage of your total library."
-                  type="number"
-                  min={1}
-                  max={100}
-                  value={String(backfillPercent)}
-                  onChange={(e) =>
-                    setBackfillPercent(parseInt(e.target.value, 10) || 100)
-                  }
-                />
               </div>
             </Card>
-
-            <Card
-              title="Ratings"
-              subtitle="Control how a library scan reconciles ratings with the file's own tag."
-            >
-              <div className="space-y-5">
-                <div className="flex items-start justify-between gap-4">
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm font-medium text-foreground">
-                      Library tags always win
-                    </p>
-                    <p className="text-xs text-muted-foreground mt-0.5">
-                      Normally, a rating tag (from Swinsian, Mp3tag, …) only fills in a
-                      track that has never been rated — once a device or this app has
-                      rated it, the tag is ignored from then on. Turn this on to make
-                      the next scan overwrite every track's rating from its file tag
-                      instead, including clearing tracks the file leaves untagged, and
-                      resolving any open rating conflicts in the library's favor. Use
-                      this to reset iPodRocks to match your library manager; turn it
-                      back off afterward, or every future scan will keep overwriting
-                      ratings you set on a device or in-app.
-                    </p>
-                  </div>
-                  <Switch
-                    checked={tagRatingAlwaysWins}
-                    onChange={setTagRatingAlwaysWins}
-                    className="shrink-0"
-                  />
-                </div>
-              </div>
-            </Card>
-
           </div>
-
-          {/* Right column */}
-          <div className="space-y-5">
+          <div
+            role="tabpanel"
+            id="settings-panel-podcasts"
+            aria-labelledby="settings-tab-podcasts"
+            hidden={tab !== "podcasts"}
+            className="space-y-5"
+          >
           <Card
             title="Auto Podcasts"
             subtitle="Configure the Podcast Index API for podcast search and auto-download."
@@ -567,9 +644,17 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
               )}
             </div>
           </Card>
-
-          {isWebMode() && <SignInMethodsCard open={open} />}
-          <WebServerCard open={open} />
+          </div>
+          <div
+            role="tabpanel"
+            id="settings-panel-remote"
+            aria-labelledby="settings-tab-remote"
+            hidden={tab !== "remote"}
+            className="space-y-5"
+          >
+            {isWebMode() && <SignInMethodsCard open={open} />}
+            <WebServerCard open={open} />
+          </div>
           </div>
         </div>
 

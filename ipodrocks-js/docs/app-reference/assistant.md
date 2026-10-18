@@ -11,14 +11,15 @@ Rocksy is a floating chat that knows your library, playlists, and listening hist
 - **Create playlists** — Ask "Make me a rock playlist with 30 tracks" or "Create a late night favorites playlist from my listening history" for a Smart or Genius playlist. Name individual songs instead — "make me a playlist with Heroes, Starman and Life on Mars" — and Rocksy looks each one up and builds a **Classic** playlist.
 - **Edit Classic playlists** — "Add Ashes to Ashes to Road Trip" or "rename Road Trip to Long Drive". Editing replaces the whole track list, so it asks you to confirm first.
 - **Forget / correct** — Say "forget about that" or "actually my name is X" to update or remove memories.
+- **Knows the whole manual** — Rocksy can search and read every page of this documentation (`app_docs_search`), so a how-to, setup, server-deployment or troubleshooting question gets an answer from the docs themselves, with the page it came from.
 
 ## What Rocksy can do for you
 
 Rocksy's tools are grouped into three tiers by how risky they are:
 
-- **Read** *(run immediately)* — Look up data: search tracks, list albums / artists / genres, search and list podcasts and their episodes, search and list audiobooks, list devices, list connected USB devices, read the web server's status and who may sign in to it.
-- **Write-safe** *(run immediately)* — Non-destructive changes: create Classic, Smart, and Genius playlists, repair a broken playlist, subscribe to a podcast (by search **or by URL**), subscribe to a LibriVox audiobook, refresh an audiobook cover, change where the web server listens.
-- **Write-destructive** *(ask before running)* — Anything that deletes, syncs, scans, changes folders, **or changes what the outside world can reach**: delete a playlist, replace a Classic playlist's tracks, download or delete podcast episodes, unsubscribe from an audiobook, add or remove library folders, scan the library, check or sync a device, change a device's USB identity, start or stop the web server, and grant or revoke someone's access to it. Rocksy pauses and shows **Confirm / Cancel** buttons before these run.
+- **Read** *(run immediately)* — Look up data: search the documentation, search tracks, list albums / artists / genres, search and list podcasts and their episodes, search and list audiobooks, list devices, list connected USB devices, read the web server's status and who may sign in to it.
+- **Write-safe** *(run immediately)* — Non-destructive changes: change a device's sync settings (including **Build Rockbox database**), turn **Scan library at startup** on or off, create Classic, Smart, and Genius playlists, repair a broken playlist, mark a lossless-check result as OK, subscribe to a podcast (by search **or by URL**), subscribe to a LibriVox audiobook, refresh an audiobook cover, change where the web server listens.
+- **Write-destructive** *(ask before running)* — Anything that deletes, syncs, scans, changes folders, **or changes what the outside world can reach**: delete a playlist, replace a Classic playlist's tracks, download or delete podcast episodes, unsubscribe from an audiobook, add or remove library folders, scan the library, run the lossless check or delete the lossy-sourced files it found, check or sync a device, change a device's USB identity, make a device local, remote or hybrid, start or stop the web server, and grant or revoke someone's access to it. Rocksy pauses and shows **Confirm / Cancel** buttons before these run.
 
 ### The web server is the one place Rocksy answers to someone else
 
@@ -40,6 +41,11 @@ chat. It tells you where to find them instead.
 - "Find audiobooks by Jules Verne and subscribe to one" → searches and subscribes via LibriVox
 - "Which playlists have missing songs? Repair them." → lists broken playlists, then repairs
 - "Sync my player" → asks you to confirm, then runs the sync
+- "Build the Rockbox database when I sync my iPod" → turns on **Build Rockbox database** for that player
+- "Scan my library every time the app opens" → turns on **Scan library at startup**
+- "I want to sync this iPod from my laptop's browser too" → asks you to confirm, then makes it hybrid (you then connect its folder in that browser)
+- "How do I put the server behind a Cloudflare Tunnel?" → searches the docs and answers from the deployment guide
+- "Are any of my FLACs really MP3s?" → asks you to confirm, then runs the Lossless Check in the background; "which ones?" lists them
 - "Who can sign in to my server?" → lists the allowlist
 - "Is anyone connected right now?" → lists the live sessions
 - "Give my partner an account on the server" → asks you to confirm, then adds it

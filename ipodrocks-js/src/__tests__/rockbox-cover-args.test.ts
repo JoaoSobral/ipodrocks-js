@@ -42,6 +42,11 @@ describe("buildCoverFfmpegArgs", () => {
     expect(big).toContain("min(iw,750)");
   });
 
+  it("keeps the sync log quiet: no banner, errors only", () => {
+    expect(args).toContain("-hide_banner");
+    expect(args[args.indexOf("-loglevel") + 1]).toBe("error");
+  });
+
   it("strips metadata and audio", () => {
     expect(args).toContain("-map_metadata");
     expect(args).toContain("-1");

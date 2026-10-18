@@ -35,6 +35,7 @@ import {
 } from "../../ipc/api";
 import { MpcUnavailableModal } from "../modals/MpcUnavailableModal";
 import { WebDeviceLink } from "../web/WebDeviceLink";
+import { DeviceConnections } from "./DeviceConnections";
 import { isWebMode } from "../../ipc/web-transport";
 import {
   getDeviceClient,
@@ -57,6 +58,7 @@ import {
 } from "../../utils/codec";
 import { createDeviceIconResolver } from "../../utils/device-icon";
 import { DeviceIcon } from "../common/DeviceIcon";
+import { parseUsbKey, usbKeyOf, usbLabel } from "../../utils/usb-identity";
 import type { CheckResult, DeviceModel, CodecConfig } from "../../ipc/api";
 import type {
   DeviceProfile,
@@ -64,6 +66,7 @@ import type {
   UsbDeviceInfo,
 } from "@shared/types";
 import type { SelectOption } from "../common/Select";
+import { downloadTextFile, toCsv } from "../../utils/download";
 
 function downloadOrphansCsv(cr: CheckResult): void {
   const rows: string[][] = [["type", "device_path"]];
@@ -79,44 +82,12 @@ function downloadOrphansCsv(cr: CheckResult): void {
   for (const p of cr.orphansPlaylistPaths ?? []) {
     rows.push(["playlist", p]);
   }
-  const csv = rows.map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(",")).join("\n");
-  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `orphans-${cr.name.replace(/[^a-zA-Z0-9-_]/g, "_")}.csv`;
-  a.click();
-  URL.revokeObjectURL(url);
+  downloadTextFile(`orphans-${cr.name.replace(/[^a-zA-Z0-9-_]/g, "_")}.csv`, "text/csv", toCsv(rows));
 }
 
 const checkboxClass =
   "h-4 w-4 rounded border-border bg-input accent-primary cursor-pointer";
 
-/**
- * A USB identity flattened into one string so it can live in a <Select> value.
- * Empty means "no identity — match by mount path".
- */
-function usbKeyOf(
-  vendorId?: string | null,
-  productId?: string | null,
-  serial?: string | null
-): string {
-  if (!vendorId || !productId) return "";
-  return `${vendorId}:${productId}:${serial ?? ""}`;
-}
-
-/** Split a key back into the three columns. A blank key clears the identity. */
-function parseUsbKey(key: string): {
-  usbVendorId: string | null;
-  usbProductId: string | null;
-  usbSerial: string | null;
-} {
-  if (!key) return { usbVendorId: null, usbProductId: null, usbSerial: null };
-  const [vendorId, productId, ...rest] = key.split(":");
-  return { usbVendorId: vendorId, usbProductId: productId, usbSerial: rest.join(":") };
-}
-
-/** Best-effort display name; many devices report no product string at all. */
 /**
  * Why a typed capacity is not acceptable, or null when it is (empty included —
  * the field is optional). Up to four decimals, positive, and in the server's
@@ -132,11 +103,6 @@ function capacityError(raw: string): string | null {
   if (!(n > 0)) return "The capacity must be more than 0 GB.";
   if (n > 100_000) return "That is more than 100,000 GB — check the number.";
   return null;
-}
-
-function usbLabel(device: UsbDeviceInfo): string {
-  const base = device.ipodModel || device.productName || device.vendorName || "Unknown device";
-  return device.serial ? base : `${base} (no serial)`;
 }
 
 /**
@@ -248,7 +214,7 @@ export function DevicePanel() {
   useEffect(() => {
     if (!isWebMode()) return;
     const webIds = (Array.isArray(devices) ? devices : [])
-      .filter((d) => d?.transport === "web" && d?.id != null)
+      .filter((d) => (d?.transport === "web" || d?.connection === "hybrid") && d?.id != null)
       .map((d) => d.id);
     if (webIds.length === 0) return;
     void restoreWebDevices(webIds).then(() => {
@@ -701,21 +667,26 @@ export function DevicePanel() {
             const isDefaultDev = defaultDeviceId === d?.id;
             const status = d?.id != null ? onlineStatus[d.id] : null;
             const isEjecting = ejecting.has(d?.id ?? 0);
+            // The side of a hybrid device this window drives: a browser holds
+            // its folder, the desktop app its mount.
+            const browserSide =
+              d?.transport === "web" || (d?.connection === "hybrid" && isWebMode());
             const ejectReason = ejectDisabledReason({
               platform: window.api?.platform,
               online: status,
               deviceName: d?.name ?? "this device",
-              transport: d?.transport,
+              transport: browserSide ? "web" : "local",
             });
             // A player lives on one machine. From the wrong one it is listed
             // and removable — it is the user's device either way — but nothing
             // that touches its filesystem is offered.
-            const localityBlock = deviceLocalityBlock(d?.transport, isWebMode());
+            const localityBlock = deviceLocalityBlock(d, isWebMode());
             // Narrower, and deliberately asymmetric: the desktop app may still
             // remove a remote device — somebody has to be able to tidy up a
             // browser that never comes back — while a browser may not touch a
             // server-attached device's settings at all.
-            const adminBlock = deviceAdminBlock(d?.transport, isWebMode());
+            const adminBlock = deviceAdminBlock(d, isWebMode());
+            const removeBlock = deviceAdminBlock(d, isWebMode(), "remove");
             return (
               <Card key={d?.id ?? `device-${idx}`}>
                 <div className="flex items-start gap-3 mb-4">
@@ -741,7 +712,16 @@ export function DevicePanel() {
                           you are holding" — because a badge that means
                           different things in different windows is worse than
                           none. `warning` is the established token for it. */}
-                      {isRemoteDevice(d?.transport) && (
+                      {d?.connection === "hybrid" && (
+                        <span
+                          className="px-1.5 py-0.5 text-[9px] font-medium rounded bg-primary/15 text-primary"
+                          title="Reachable both from the machine running iPodRocks (USB) and from a browser."
+                          data-testid="device-hybrid-badge"
+                        >
+                          HYBRID
+                        </span>
+                      )}
+                      {isRemoteDevice(d) && (
                         <span
                           className="px-1.5 py-0.5 text-[9px] font-medium rounded bg-warning/20 text-warning"
                           title="Held by a browser through the web server, not plugged into the machine running iPodRocks."
@@ -763,11 +743,13 @@ export function DevicePanel() {
                   </div>
                 </div>
 
-                {d?.transport === "web" && d?.id != null && (
+                {browserSide && d?.id != null && (
                   <div className="mb-4">
                     <WebDeviceLink deviceId={d.id} />
                   </div>
                 )}
+
+                {d?.id != null && <DeviceConnections device={d} onChanged={fetchDevices} />}
 
                 <div className="space-y-2 text-xs mb-4">
                   {d?.transport !== "web" && (
@@ -1013,12 +995,12 @@ export function DevicePanel() {
                       Edit
                     </Button>
                   </span>
-                  <span title={adminBlock ?? "Remove"} className="inline-flex">
+                  <span title={removeBlock ?? "Remove"} className="inline-flex">
                     <Button
                       variant="danger"
                       size="sm"
                       onClick={() => d?.id != null && handleRemove(d.id)}
-                      disabled={adminBlock !== null}
+                      disabled={removeBlock !== null}
                     >
                       Remove
                     </Button>

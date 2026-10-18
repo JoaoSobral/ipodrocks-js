@@ -39,6 +39,11 @@ export async function launchApp(
       "utf-8"
     );
   }
+  // Its own temp directory too. The app keeps machine-wide scratch there
+  // (the preview player's transcodes, which every launch empties at startup),
+  // so with tests running in parallel one app would clear another's files.
+  const tempDir = path.join(userDataDir, "tmp");
+  fs.mkdirSync(tempDir, { recursive: true });
   const app = await electron.launch({
     args: [APP_ENTRY, `--user-data-dir=${userDataDir}`],
     env: {
@@ -58,6 +63,9 @@ export async function launchApp(
       // would. The guard itself is covered by
       // regressions/security-audit-hardening.test.ts.
       IPODROCKS_ALLOW_PRIVATE_FETCH: "1",
+      TMPDIR: tempDir,
+      TMP: tempDir,
+      TEMP: tempDir,
       ...extraEnv,
     },
   });

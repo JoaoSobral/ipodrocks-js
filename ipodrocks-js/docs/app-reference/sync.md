@@ -10,6 +10,7 @@ The Sync panel copies music, podcasts, audiobooks, and playlists from your libra
 - **Custom sync** — Select specific albums, artists, genres, podcasts, audiobooks, and playlists. Choose **Include** (sync only the ticked items) or **Exclude** (sync everything *except* the ticked items). The Audiobooks box includes **Extra Audiobooks** subscribed from LibriVox (see [Extra Audiobooks](./audiobooks.md)).
 - **Mirror library folder structure** — On by default. Reproduces your library's folder tree on the device 1:1, keeping album folder names exactly as they are (including the year, e.g. `Levels (2011)`). Turn it off to rebuild device paths from tags instead, as `Artist/Album/track.ext`.
 - **Group albums by** — Which artist identifies an album: **Album artist** (default) or **Track artist**. See below.
+- **Build Rockbox database** — Off by default, remembered per device. At the end of the sync, iPodRocks writes the player's Rockbox database itself, so the new music is browsable the moment you unplug — no **Database → Update now** on the device. See [Building the Rockbox database](#building-the-rockbox-database).
 - **Start Sync** — Runs the sync. Progress modal shows files copied, converted, and removed, the amount transferred and the current speed (KB/s or MB/s) with an estimate of the time left. A sync keeps running on its own if you leave the Sync panel or reload the page; coming back re-opens its progress.
 - **Results** — After sync, a summary card shows success, warnings, or errors.
 
@@ -67,13 +68,29 @@ The setting is per device and is saved with the rest of that device's sync prefe
 
 **Upgrading from an earlier version.** Libraries scanned before v2.3.0 never had their `albumartist` tags read, so their compilations are still split per track artist. The next library scan re-reads those tags once and merges the duplicate album entries; it does not re-hash files or re-transcode shadow libraries, so it is quick. Album selections you had already saved keep working — the old labels are still matched, and the picker moves them onto the new ones for you.
 
+## Building the Rockbox database
+
+Rockbox only lists a file in its database browser (Artists, Albums, Genres, Year, Composer…) after it has scanned it. Normally that means running **Database → Update now** (or **Initialize now**) on the player after every sync and waiting while it reads every file — minutes on a full iPod.
+
+Tick **Build Rockbox database** and iPodRocks does that step at the end of the sync instead. It already knows every tag of every file it copied, so it writes the finished database (`.rockbox/database_idx.tcd` and the `database_*.tcd` tag files) straight onto the player. Unplug, and the player is ready.
+
+- **Off by default, remembered per device.** Tick it once for a player and every later sync of that player builds the database, until you untick it.
+- **Your statistics are kept.** Play counts, listening time, last-played order and ratings already in the player's database are carried into the new one, track by track.
+- **New tracks get their ratings straight away.** A track copied in this sync is in the database with its library rating, so you no longer have to update the database and sync a second time for the rating to arrive (see [Ratings](./ratings.md)).
+- **Everything on the player is included**, not just what iPodRocks copied — music, podcasts, audiobooks and files you put there by hand, exactly as Rockbox's own scan would find them. Folders holding a `database.ignore` file are skipped, as Rockbox skips them. A hand-copied file that iPodRocks does not have in its library is read from the player for its tags; on a **remote** (browser-held) player that is not possible, so such a file is left out until you run **Database → Update now** once — the sync log says how many.
+- **Year, composer, comment and grouping** come from your files' tags. iPodRocks started storing these in 3.2.0; the first library scan after upgrading reads them once for tracks scanned by an older version.
+- **Needs Rockbox 4.0 or later.** The player must have a `.rockbox` folder. If its database was written by an older Rockbox, iPodRocks leaves it alone and says so in the log. A player that is not running Rockbox is never touched.
+- **Safe to interrupt.** The previous index is kept beside the new one as `database_idx.tcd.ipodrocks-bak`, the new files are written in full before they replace the old ones, and a failed build leaves the previous database in place. A failed build never fails the sync.
+- **Restart the player** if it was already running when you synced. Rockbox reads its database when it starts.
+- **"Auto update" on the player** still works. It only re-reads a file whose timestamp changed, and iPodRocks records the timestamp the way Rockbox does.
+
 ## Per-Device Sync Preferences
 
-Selecting a device in the Sync panel automatically restores that device's last-used sync configuration: sync type, content toggles (music/podcasts/audiobooks/playlists), orphan & reset policy, **Mirror library folder structure**, **Group albums by**, **the custom-sync Include/Exclude mode**, and any custom selections of albums, artists, genres, playlists, podcasts, and audiobooks.
+Selecting a device in the Sync panel automatically restores that device's last-used sync configuration: sync type, content toggles (music/podcasts/audiobooks/playlists), orphan & reset policy, **Mirror library folder structure**, **Group albums by**, **Build Rockbox database**, **the custom-sync Include/Exclude mode**, and any custom selections of albums, artists, genres, playlists, podcasts, and audiobooks.
 
 The state is saved every time you click **Sync** for that device — even if the sync errors partway through, because the saved state captures your intent, not the outcome.
 
-Devices that have never been synced through this panel fall back to the panel defaults: full sync, all content types enabled, keep-orphans policy, mirror library folder structure = on, group albums by = Album artist, custom-sync mode = Include.
+Devices that have never been synced through this panel fall back to the panel defaults: full sync, all content types enabled, keep-orphans policy, mirror library folder structure = on, group albums by = Album artist, build Rockbox database = off, custom-sync mode = Include.
 
 When you switch between devices, the panel live-swaps to that device's saved configuration. Removing a device from the Devices panel also clears its saved preferences.
 
@@ -110,5 +127,6 @@ rather than failing every remaining file:
 - "Check what would sync to my player" → `device_check` *(asks you to confirm first)*
 - "Sync my player" → `device_sync` *(asks you to confirm first)*
 - "Which player is plugged in right now?" → `usb_device_list`
+- "Build the Rockbox database when I sync" / "stop building it" → `device_set_sync_preferences` with `build_rockbox_database` *(runs straight away; it is a setting, the next sync does the work)*
 
-Both are destructive operations, so Rocksy pauses for a **Confirm / Cancel** prompt before running. See [Devices → Rocksy](./devices.md#rocksy).
+Checking and syncing are destructive operations, so Rocksy pauses for a **Confirm / Cancel** prompt before running. See [Devices → Rocksy](./devices.md#rocksy).

@@ -45,6 +45,66 @@ export class AppDatabase {
     this.migrateNfcPaths();
     this.migrateDeviceSyncedTrackPath();
     this.migrateResetPlaybackStats();
+    this.migrateLosslessCheck();
+    this.migrateTrackTagFields();
+    this.migrateDeviceBuildRockboxDb();
+    this.migrateDeviceRemoteEnabled();
+  }
+
+  /**
+   * Add tracks.year / composer / comment / grouping.
+   *
+   * Rockbox's database carries all four, and iPodRocks now writes that database
+   * itself at the end of a sync (`rockbox/tagcache-sync.ts`). Existing rows stay
+   * NULL until `library/tag-fields-backfill.ts` re-reads them on the next scan —
+   * the scan's mtime skip would otherwise never revisit an unchanged file.
+   * No index on any of them, so there is nothing to keep out of `SCHEMA_SQL`.
+   */
+  private migrateTrackTagFields(): void {
+    if (!this.db) return;
+    try {
+      const cols = new Set(
+        (this.db.prepare("PRAGMA table_info(tracks)").all() as { name: string }[]).map(
+          (r) => r.name
+        )
+      );
+      for (const [name, type] of [
+        ["year", "INTEGER"],
+        ["composer", "TEXT"],
+        ["comment", "TEXT"],
+        ["grouping", "TEXT"],
+      ] as const) {
+        if (!cols.has(name)) {
+          this.db.prepare(`ALTER TABLE tracks ADD COLUMN ${name} ${type}`).run();
+        }
+      }
+    } catch (err) {
+      console.error("[db] migration failed (migrateTrackTagFields):", err);
+    }
+  }
+
+  /**
+   * Add device_sync_preferences.build_rockbox_db — the Sync tab's "Build
+   * Rockbox database" option. Off by default: it rewrites the player's own
+   * database, so it is something a user opts into per device, and the choice
+   * is remembered from then on like every other sync preference.
+   */
+  private migrateDeviceBuildRockboxDb(): void {
+    if (!this.db) return;
+    try {
+      const rows = this.db
+        .prepare("PRAGMA table_info(device_sync_preferences)")
+        .all() as { name: string }[];
+      if (!new Set(rows.map((r) => r.name)).has("build_rockbox_db")) {
+        this.db
+          .prepare(
+            "ALTER TABLE device_sync_preferences ADD COLUMN build_rockbox_db INTEGER NOT NULL DEFAULT 0"
+          )
+          .run();
+      }
+    } catch (err) {
+      console.error("[db] migration failed (migrateDeviceBuildRockboxDb):", err);
+    }
   }
 
   /**
@@ -90,6 +150,38 @@ export class AppDatabase {
    * rows are the user's own history and deleting them is not this migration's
    * call to make.
    */
+  /**
+   * Lossless check (3.2.0): the verdict lives on the track row. Columns are in
+   * SCHEMA_SQL for fresh installs; the index is created only here, after the
+   * ALTERs — see the SCHEMA_SQL index hazard in CLAUDE.md.
+   */
+  private migrateLosslessCheck(): void {
+    if (!this.db) return;
+    try {
+      const names = new Set(
+        (this.db.prepare("PRAGMA table_info(tracks)").all() as { name: string }[]).map((r) => r.name)
+      );
+      const columns: [string, string][] = [
+        ["lossless_verdict", "TEXT"],
+        ["lossless_confidence", "REAL"],
+        ["lossless_cutoff_hz", "INTEGER"],
+        ["lossless_source", "TEXT"],
+        ["lossless_stage", "TEXT"],
+        ["lossless_details", "TEXT"],
+        ["lossless_checked_at", "TIMESTAMP"],
+        ["lossless_override", "INTEGER NOT NULL DEFAULT 0"],
+      ];
+      for (const [name, type] of columns) {
+        if (!names.has(name)) this.db.prepare(`ALTER TABLE tracks ADD COLUMN ${name} ${type}`).run();
+      }
+      this.db
+        .prepare("CREATE INDEX IF NOT EXISTS idx_tracks_lossless_verdict ON tracks(lossless_verdict)")
+        .run();
+    } catch (err) {
+      console.error("[db] migration failed (lossless check):", err);
+    }
+  }
+
   private migrateResetPlaybackStats(): void {
     if (!this.db) return;
     try {
@@ -431,6 +523,25 @@ export class AppDatabase {
       }
     } catch (err) {
       console.error("[db] migration failed (migrateDeviceWebOwner):", err);
+    }
+  }
+
+  /**
+   * Hybrid devices (3.2.0): a local device a browser may also hold. Existing
+   * rows are local or remote, never both, so the default of 0 is exact.
+   * No index — see the SCHEMA_SQL hazard; nothing queries by it.
+   */
+  private migrateDeviceRemoteEnabled(): void {
+    if (!this.db) return;
+    try {
+      const rows = this.db.prepare("PRAGMA table_info(devices)").all() as { name: string }[];
+      if (!new Set(rows.map((r) => r.name)).has("remote_enabled")) {
+        this.db
+          .prepare("ALTER TABLE devices ADD COLUMN remote_enabled INTEGER NOT NULL DEFAULT 0")
+          .run();
+      }
+    } catch (err) {
+      console.error("[db] migration failed (migrateDeviceRemoteEnabled):", err);
     }
   }
 

@@ -53,9 +53,18 @@ import {
   generateGeniusPlaylistFromDb,
 } from "../playlists/genius-engine";
 import { ingestRuntimeDataForDevice } from "../rockbox/runtime-ingest";
-import { getRatingPrefs, setRatingPrefs } from "../utils/prefs";
+import { deviceForClient } from "../devices/device-view";
+import {
+  getRatingPrefs,
+  setRatingPrefs,
+  getLibraryPrefs,
+  setLibraryPrefs,
+  getHarmonicPrefs,
+  setHarmonicPrefs,
+} from "../utils/prefs";
 import type { HandlerSender } from "../host/bridge";
 import { PROVIDERS, isProvider } from "../../shared/auth-providers";
+import { listDocsPages, readDocsPage, searchDocs } from "./appDocsSearch";
 
 export interface AiToolContext {
   db: Database.Database;
@@ -139,6 +148,43 @@ const library_search_tracks: AiTool = {
          LIMIT ?`
       )
       .all(contentType, like, like, like, limit);
+  },
+};
+
+/**
+ * The full user documentation, which the system prompt only summarises. Read
+ * tier and open to every allowlisted user: it is the published docs and
+ * nothing else — no paths, no settings, no other account's data.
+ */
+const app_docs_search: AiTool = {
+  name: "app_docs_search",
+  description:
+    "Search or read the iPodRocks user documentation (every page of the docs site: Library, Devices, Sync, Playlists, Ratings, Podcasts, Audiobooks, Settings, Web Server, installation, server deployment, troubleshooting, architecture). Pass `query` with the user's question or its key words to get the best-matching sections, or `page` (e.g. \"app-reference/sync.md\") to read one page whole. With neither, lists every page.",
+  parameters: {
+    type: "object",
+    properties: {
+      query: { type: "string", description: "Free-text question or keywords." },
+      page: {
+        type: "string",
+        description: "A page path from the list, e.g. \"guide/troubleshooting.md\".",
+      },
+    },
+  },
+  kind: "read",
+  summarize: (a) =>
+    a.page ? `Read docs page ${a.page}` : a.query ? `Search docs for "${a.query}"` : "List docs pages",
+  async run(args) {
+    if (typeof args.page === "string" && args.page.trim()) {
+      const page = readDocsPage(args.page);
+      return page ?? { error: `No docs page "${args.page}"`, pages: listDocsPages() };
+    }
+    if (typeof args.query === "string" && args.query.trim()) {
+      const results = searchDocs(args.query);
+      return results.length > 0
+        ? { results }
+        : { results: [], note: "Nothing in the docs matches; try other words.", pages: listDocsPages() };
+    }
+    return { pages: listDocsPages() };
   },
 };
 
@@ -252,10 +298,12 @@ const device_list: AiTool = {
       model: d.profile.modelName,
       lastSyncDate: d.profile.lastSyncDate,
       transport: d.profile.transport,
-      // Only meaningful for a web device: a local one's connection state is a
-      // question about the filesystem, and `device_check` answers it properly.
+      // local, remote (a browser holds it) or hybrid (both).
+      connection: d.profile.connection,
+      // Whether a browser holds it right now — meaningful only when one may.
+      // A local side's state is a filesystem question `device_check` answers.
       connected:
-        d.profile.transport === "web" ? isDeviceAttached(d.profile.id) : null,
+        d.profile.connection !== "local" ? isDeviceAttached(d.profile.id) : null,
       usbVendorId: d.profile.usbVendorId ?? null,
       usbProductId: d.profile.usbProductId ?? null,
       usbSerial: d.profile.usbSerial ?? null,
@@ -559,6 +607,109 @@ const ratings_set_tag_priority: AiTool = {
   },
 };
 
+const library_set_scan_on_startup: AiTool = {
+  name: "library_set_scan_on_startup",
+  description:
+    "Turn Settings → Library → 'Scan library at startup' on or off (off by default). On: the desktop app scans every library folder each time it opens, and a server scans when it starts. Off: the owner is asked to scan once the library has gone 10 days without a scan. Call with no `enabled` to report the setting and when the library was last scanned.",
+  parameters: {
+    type: "object",
+    properties: {
+      enabled: {
+        type: "boolean",
+        description: "Omit to just report the current setting; pass true/false to change it.",
+      },
+    },
+    required: [],
+  },
+  // Only the setting: the scan itself runs at the next start, or through
+  // library_scan with its own confirm gate.
+  kind: "write-safe",
+  summarize: (a) =>
+    a.enabled === undefined
+      ? "Check the startup library scan setting"
+      : `Turn "scan library at startup" ${a.enabled ? "on" : "off"}`,
+  async run(args, ctx) {
+    if (args.enabled === undefined) {
+      const { getLastLibraryScanAt } = await import("../library/scan-schedule");
+      const last = getLastLibraryScanAt(ctx.db);
+      return {
+        scanOnStartup: getLibraryPrefs().scanOnStartup,
+        lastLibraryScan: last === null ? null : new Date(last).toISOString(),
+      };
+    }
+    // Server-wide, owner-gated like `settings:setLibraryPrefs`.
+    const { OWNER_ONLY_SETTINGS_MESSAGE } = await import("../../server/auth/sessions");
+    const denied = await ownerGate(ctx, OWNER_ONLY_SETTINGS_MESSAGE);
+    if (denied) return denied;
+    const enabled = Boolean(args.enabled);
+    setLibraryPrefs({ scanOnStartup: enabled });
+    return {
+      ok: true,
+      scanOnStartup: enabled,
+      message: enabled
+        ? "The library will now be scanned every time iPodRocks starts."
+        : "Startup scans are off. You'll be asked to scan once the library has gone 10 days without one.",
+    };
+  },
+};
+
+const library_set_harmonic_analysis: AiTool = {
+  name: "library_set_harmonic_analysis",
+  description:
+    "Read or change Settings → Library → Harmonic Analysis: 'extract_tags' reads key/BPM from file tags during a scan; 'analyze_with_essentia' detects key/BPM from the audio itself, as the last step of every library scan, for tracks still missing key data (e.g. .m4a files with no key tag); 'analyze_percent' is how many of those tracks one scan analyses (1-100). There is no separate backfill: after turning Essentia on, offer to scan the library (library_scan). Call with no arguments to report the settings and how many tracks have key data.",
+  parameters: {
+    type: "object",
+    properties: {
+      extract_tags: { type: "boolean", description: "Read key/BPM tags during scans." },
+      analyze_with_essentia: { type: "boolean", description: "Analyse tracks without key tags during scans." },
+      analyze_percent: { type: "number", description: "1-100: share of the tracks missing key data analysed per scan." },
+    },
+    required: [],
+  },
+  // Only the setting: the analysis itself runs in the next library_scan,
+  // which has its own confirm gate.
+  kind: "write-safe",
+  summarize: (a) =>
+    a.extract_tags === undefined && a.analyze_with_essentia === undefined && a.analyze_percent === undefined
+      ? "Check the harmonic analysis settings"
+      : "Change the harmonic analysis settings",
+  async run(args, ctx) {
+    const changing =
+      args.extract_tags !== undefined ||
+      args.analyze_with_essentia !== undefined ||
+      args.analyze_percent !== undefined;
+    if (changing) {
+      // Server-wide, owner-gated like `settings:setHarmonicPrefs`.
+      const { OWNER_ONLY_SETTINGS_MESSAGE } = await import("../../server/auth/sessions");
+      const denied = await ownerGate(ctx, OWNER_ONLY_SETTINGS_MESSAGE);
+      if (denied) return denied;
+      const next: Parameters<typeof setHarmonicPrefs>[0] = {};
+      if (typeof args.extract_tags === "boolean") next.scanHarmonicData = args.extract_tags;
+      if (typeof args.analyze_with_essentia === "boolean") next.analyzeWithEssentia = args.analyze_with_essentia;
+      if (args.analyze_percent !== undefined) {
+        const n = Math.round(Number(args.analyze_percent));
+        if (!Number.isFinite(n) || n < 1 || n > 100) return { error: "analyze_percent must be 1-100" };
+        next.analyzePercent = n;
+      }
+      setHarmonicPrefs(next);
+    }
+    const prefs = getHarmonicPrefs();
+    const cov = ctx.db
+      .prepare(
+        "SELECT COUNT(*) AS total, SUM(camelot IS NOT NULL) AS keyed FROM tracks WHERE content_type = 'music'"
+      )
+      .get() as { total: number; keyed: number | null };
+    return {
+      ...(changing ? { ok: true } : {}),
+      extractTags: prefs.scanHarmonicData,
+      analyzeWithEssentia: prefs.analyzeWithEssentia,
+      analyzePercent: prefs.analyzePercent,
+      tracksWithKeyData: cov.keyed ?? 0,
+      musicTracks: cov.total,
+    };
+  },
+};
+
 /**
  * The gate every `web_server_*` tool shares.
  *
@@ -599,14 +750,23 @@ async function deviceGate(
     "../../shared/device-locality"
   );
   const clientIsWeb = ctx.sessionId !== undefined;
-  const transport = device.profile.transport;
   const reason =
     kind === "admin"
-      ? deviceAdminBlock(transport, clientIsWeb)
-      : deviceLocalityBlock(transport, clientIsWeb);
+      ? deviceAdminBlock(device.profile, clientIsWeb)
+      : deviceLocalityBlock(device.profile, clientIsWeb);
   if (reason) return reason;
   const { deviceOwnerBlock } = await import("../ipc/common");
   return deviceOwnerBlock(ctx.sessionId, deviceId);
+}
+
+/**
+ * The device as this caller reaches it — the twin of `getDeviceForCaller()` in
+ * `ipc/common.ts`. A tool that operates on a hybrid device must use the side
+ * its caller can reach, or a browser's request runs against the server's mount.
+ */
+function deviceForCaller(ctx: AiToolContext, deviceId: number) {
+  const device = ctx.getDevicesCore().getDeviceById(deviceId);
+  return device ? deviceForClient(device, ctx.sessionId !== undefined) : undefined;
 }
 
 async function ownerGate(
@@ -1278,7 +1438,7 @@ const device_check: AiTool = {
   async run(args, ctx) {
     const deviceId = Number(args.device_id);
     if (!Number.isInteger(deviceId) || deviceId <= 0) throw new Error("Invalid device_id");
-    const device = ctx.getDevicesCore().getDeviceById(deviceId);
+    const device = deviceForCaller(ctx, deviceId);
     if (!device) throw new Error(`Device #${deviceId} not found`);
     const blocked = await deviceGate(ctx, deviceId, "operate");
     if (blocked) return { error: blocked };
@@ -1350,7 +1510,7 @@ const device_read_runtime_data: AiTool = {
   async run(args, ctx) {
     const deviceId = Number(args.device_id);
     if (!Number.isInteger(deviceId) || deviceId <= 0) throw new Error("Invalid device_id");
-    const device = ctx.getDevicesCore().getDeviceById(deviceId);
+    const device = deviceForCaller(ctx, deviceId);
     if (!device) throw new Error(`Device #${deviceId} not found`);
     const blocked = await deviceGate(ctx, deviceId, "operate");
     if (blocked) return { error: blocked };
@@ -1584,7 +1744,7 @@ const device_eject: AiTool = {
   async run(args, ctx) {
     const deviceId = Number(args.device_id);
     if (!Number.isInteger(deviceId) || deviceId <= 0) throw new Error("Invalid device_id");
-    const device = ctx.getDevicesCore().getDeviceById(deviceId);
+    const device = deviceForCaller(ctx, deviceId);
     if (!device) throw new Error(`Device #${deviceId} not found`);
     const blocked = await deviceGate(ctx, deviceId, "operate");
     if (blocked) return { error: blocked };
@@ -1781,6 +1941,14 @@ const device_set_usb_identity: AiTool = {
     const blocked = await deviceGate(ctx, deviceId, "admin");
     if (blocked) return { error: blocked };
 
+    // The same rule `device:update` applies: a hybrid device's USB identity is
+    // a fact about the server's machine, out of a browser's reach.
+    if (ctx.sessionId !== undefined && device.profile.connection === "hybrid") {
+      return {
+        error:
+          "This device's USB identity belongs to the machine it is plugged into — change it in the app running there.",
+      };
+    }
     const clearing = !args.usb_vendor_id || !args.usb_product_id;
     const ok = ctx.getDevicesCore().updateDevice(deviceId, {
       usbVendorId: clearing ? null : String(args.usb_vendor_id),
@@ -1798,6 +1966,70 @@ const device_set_usb_identity: AiTool = {
         : `AI bound device ${device.profile.name} to USB ${args.usb_vendor_id}:${args.usb_product_id}`
     );
     return ctx.getDevicesCore().getDeviceById(deviceId)!.profile;
+  },
+};
+
+const device_set_connections: AiTool = {
+  name: "device_set_connections",
+  description:
+    "Change how a device connects: 'local' (plugged into the machine running iPodRocks, by mount path and USB), 'remote' (a folder held in a browser through the web server), or hybrid (both — the desktop app syncs it through its mount, a browser through its folder; same ratings, history and settings). A hybrid device must have a USB identity (see usb_device_list / device_set_usb_identity). Pass remote=true/false to allow or stop browser use; pass local={mount_path, usb_vendor_id, usb_product_id, usb_serial} to add or change the local side of a remote device (desktop app only), or local=null to drop it. From a browser only the server's owner may change this, and only the browser side. Picking the browser folder itself happens in the Devices panel (Connect folder), which Rocksy cannot do.",
+  parameters: {
+    type: "object",
+    properties: {
+      device_id: { type: "number", description: "Device ID (from device_list)" },
+      remote: { type: "boolean", description: "Allow (true) or stop (false) using it from a browser." },
+      local: {
+        type: ["object", "null"],
+        description: "The local side: an object to add/change it, null to drop it, omit to keep it.",
+        properties: {
+          mount_path: { type: "string" },
+          usb_vendor_id: { type: "string" },
+          usb_product_id: { type: "string" },
+          usb_serial: { type: "string" },
+        },
+      },
+    },
+    required: ["device_id"],
+  },
+  // Changes which machines can write to the player.
+  kind: "write-destructive",
+  summarize: (a) => {
+    const parts: string[] = [];
+    if (a.remote === true) parts.push("allow browser use");
+    if (a.remote === false) parts.push("stop browser use");
+    if (a.local === null) parts.push("drop the local connection");
+    else if (a.local && typeof a.local === "object") parts.push("set the local connection");
+    return `Device #${a.device_id}: ${parts.join(", ") || "no change"}`;
+  },
+  async run(args, ctx) {
+    const deviceId = Number(args.device_id);
+    if (!Number.isInteger(deviceId) || deviceId <= 0) throw new Error("Invalid device_id");
+    const { setDeviceConnectionsFor } = await import("../ipc/devices");
+    const local = args.local as Record<string, unknown> | null | undefined;
+    const result = setDeviceConnectionsFor({ sessionId: ctx.sessionId }, deviceId, {
+      remote: typeof args.remote === "boolean" ? args.remote : undefined,
+      local:
+        local === undefined
+          ? undefined
+          : local === null
+            ? null
+            : {
+                mountPath: String(local.mount_path ?? ""),
+                usbVendorId: (local.usb_vendor_id as string | undefined) ?? null,
+                usbProductId: (local.usb_product_id as string | undefined) ?? null,
+                usbSerial: (local.usb_serial as string | undefined) ?? null,
+              },
+    });
+    if ("error" in result) return result;
+    return {
+      ok: true,
+      device: result.name,
+      connection: result.connection,
+      note:
+        result.connection !== "local"
+          ? "To finish, open iPodRocks in the browser that holds the player and connect its folder in the Devices panel."
+          : undefined,
+    };
   },
 };
 
@@ -1819,6 +2051,11 @@ const device_set_sync_preferences: AiTool = {
         description:
           "Which artist identifies an album. 'album-artist' keeps compilations as a single album; 'track-artist' is the older per-track-artist behaviour.",
       },
+      build_rockbox_database: {
+        type: "boolean",
+        description:
+          "Build the Rockbox database on the device at the end of every sync, so the player is ready to browse without running Database → Update now. Off by default; only matters on a player running Rockbox.",
+      },
     },
     required: ["device_id"],
   },
@@ -1828,6 +2065,8 @@ const device_set_sync_preferences: AiTool = {
     if (a.preserve_folder_structure !== undefined)
       parts.push(`mirror folders = ${a.preserve_folder_structure}`);
     if (a.album_grouping !== undefined) parts.push(`group albums by ${a.album_grouping}`);
+    if (a.build_rockbox_database !== undefined)
+      parts.push(`build Rockbox database = ${a.build_rockbox_database}`);
     return `Update device #${a.device_id} sync layout (${parts.join(", ") || "no changes"})`;
   },
   async run(args, ctx) {
@@ -1840,7 +2079,8 @@ const device_set_sync_preferences: AiTool = {
 
     if (
       args.preserve_folder_structure === undefined &&
-      args.album_grouping === undefined
+      args.album_grouping === undefined &&
+      args.build_rockbox_database === undefined
     ) {
       throw new Error("No settings provided to update");
     }
@@ -1864,6 +2104,7 @@ const device_set_sync_preferences: AiTool = {
         includePlaylists: true,
         preserveFolderStructure: true,
         albumGrouping: "album-artist",
+        buildRockboxDatabase: false,
         selections: emptySelections(),
       } satisfies DeviceSyncPreferences);
 
@@ -1875,6 +2116,10 @@ const device_set_sync_preferences: AiTool = {
           : current.preserveFolderStructure,
       albumGrouping:
         (args.album_grouping as AlbumGrouping | undefined) ?? current.albumGrouping,
+      buildRockboxDatabase:
+        args.build_rockbox_database !== undefined
+          ? !!args.build_rockbox_database
+          : current.buildRockboxDatabase,
     };
 
     saveDeviceSyncPreferences(ctx.db, deviceId, next);
@@ -1889,6 +2134,7 @@ const device_set_sync_preferences: AiTool = {
       name: device.profile.name,
       preserveFolderStructure: next.preserveFolderStructure,
       albumGrouping: next.albumGrouping,
+      buildRockboxDatabase: next.buildRockboxDatabase,
     };
   },
 };
@@ -1940,6 +2186,7 @@ const device_set_orphan_policy: AiTool = {
         includePlaylists: true,
         preserveFolderStructure: true,
         albumGrouping: "album-artist",
+        buildRockboxDatabase: false,
         selections: emptySelections(),
       } satisfies DeviceSyncPreferences);
 
@@ -1977,7 +2224,7 @@ const device_sync: AiTool = {
   async run(args, ctx) {
     const deviceId = Number(args.device_id);
     if (!Number.isInteger(deviceId) || deviceId <= 0) throw new Error("Invalid device_id");
-    const device = ctx.getDevicesCore().getDeviceById(deviceId);
+    const device = deviceForCaller(ctx, deviceId);
     if (!device) throw new Error(`Device #${deviceId} not found`);
     const blocked = await deviceGate(ctx, deviceId, "operate");
     if (blocked) return { error: blocked };
@@ -1999,6 +2246,150 @@ const library_scan: AiTool = {
     const unreachable = await pushToCaller(ctx, "assistant:triggerLibraryScan");
     if (unreachable) return { error: unreachable };
     return { ok: true, message: "Library scan triggered — I've navigated to the Library panel and started the scan." };
+  },
+};
+
+const LOSSLESS_VERDICT_ENUM = ["lossy_strong", "lossy", "upsampled", "possibly_lossy"];
+
+const lossless_check: AiTool = {
+  name: "lossless_check",
+  description:
+    "Check the library's lossless files (FLAC/ALAC/WAV/AIFF) for lossy-sourced audio — files transcoded from MP3/AAC, or hi-res files upsampled from CD quality. A light spectral pass over every file, then a deep pass over the suspects. Opens the Lossless Check window in the Library panel and starts it; it runs in the background.",
+  parameters: {
+    type: "object",
+    properties: {
+      scope: {
+        type: "string",
+        enum: ["unchecked", "all"],
+        description: "'unchecked' (default) checks only files never checked; 'all' re-checks everything except files the user marked OK.",
+      },
+      deep: { type: "boolean", description: "Run the deep pass on suspects (default true)." },
+    },
+  },
+  kind: "write-destructive",
+  summarize: (args) =>
+    `Check ${args.scope === "all" ? "all" : "unchecked"} lossless files for lossy-sourced audio`,
+  async run(args, ctx) {
+    const denied = await ownerGate(ctx, "Only the server's owner can run the lossless check.");
+    if (denied) return denied;
+    const opts = { scope: args.scope === "all" ? "all" : "unchecked", deep: args.deep !== false };
+    const unreachable = await pushToCaller(ctx, "assistant:triggerLosslessCheck", opts);
+    if (unreachable) return { error: unreachable };
+    return {
+      ok: true,
+      message:
+        "Lossless check started — it's open in the Library panel and runs in the background. Ask me for the results when it's done.",
+    };
+  },
+};
+
+const lossless_report: AiTool = {
+  name: "lossless_report",
+  description:
+    "Results of the lossless check: counts per verdict and the flagged tracks (id, title, artist, album, path, verdict, confidence, cutoff, likely source). Verdicts describe the audio, not the seller: lossy_strong = unmistakable lossy encoder cutoff (e.g. MP3 128 → FLAC); lossy = clear but nearer the edge; upsampled = hi-res file with only CD-quality content; possibly_lossy = a wall that is not consistent; genuine; inconclusive (too quiet to judge).",
+  parameters: {
+    type: "object",
+    properties: {
+      verdicts: {
+        type: "array",
+        items: { type: "string", enum: [...LOSSLESS_VERDICT_ENUM, "genuine", "inconclusive"] },
+        description: "Only list these verdicts (default: the four flagged ones).",
+      },
+      limit: { type: "number", description: "Max rows to list (default 50)." },
+    },
+  },
+  kind: "read",
+  summarize: () => "Read lossless check results",
+  async run(args, ctx) {
+    const { getLosslessReport } = await import("../lossless/lossless-scan");
+    const all = getLosslessReport(ctx.db);
+    const counts: Record<string, number> = {};
+    for (const r of all) counts[r.verdict] = (counts[r.verdict] ?? 0) + 1;
+    const wanted = new Set(
+      Array.isArray(args.verdicts) && args.verdicts.length ? (args.verdicts as string[]) : LOSSLESS_VERDICT_ENUM
+    );
+    const limit = Math.max(1, Math.min(500, Number(args.limit) || 50));
+    const rows = all.filter((r) => wanted.has(r.verdict) && !r.override);
+    return {
+      counts,
+      markedOk: all.filter((r) => r.override).length,
+      total: rows.length,
+      tracks: rows.slice(0, limit).map((r) => ({
+        id: r.trackId,
+        title: r.title,
+        artist: r.artist,
+        album: r.album,
+        path: r.path,
+        verdict: r.verdict,
+        confidence: r.confidence,
+        cutoffHz: r.cutoffHz,
+        likelySource: r.source,
+      })),
+    };
+  },
+};
+
+const lossless_mark_ok: AiTool = {
+  name: "lossless_mark_ok",
+  description:
+    "Overrule the lossless check for tracks the user says are fine ('Mark as OK'): they stop showing as flagged and re-checks skip them. Pass ok: false to undo.",
+  parameters: {
+    type: "object",
+    properties: {
+      trackIds: { type: "array", items: { type: "number" }, description: "Track ids from lossless_report." },
+      ok: { type: "boolean", description: "true (default) marks OK; false removes the mark." },
+    },
+    required: ["trackIds"],
+  },
+  kind: "write-safe",
+  summarize: (args) =>
+    `${args.ok === false ? "Unmark" : "Mark"} ${Array.isArray(args.trackIds) ? args.trackIds.length : 0} track(s) as OK in the lossless check`,
+  async run(args, ctx) {
+    const denied = await ownerGate(ctx, "Only the server's owner can change lossless check results.");
+    if (denied) return denied;
+    const ids = (Array.isArray(args.trackIds) ? args.trackIds : []).filter(
+      (id): id is number => Number.isInteger(id) && (id as number) > 0
+    );
+    const { setLosslessOverride } = await import("../lossless/lossless-scan");
+    return { ok: true, changed: setLosslessOverride(ctx.db, ids, args.ok !== false) };
+  },
+};
+
+const lossless_delete_flagged: AiTool = {
+  name: "lossless_delete_flagged",
+  description:
+    "Delete lossy-sourced files the lossless check flagged, from disk and from the library. Pass explicit trackIds (from lossless_report) or verdicts (e.g. ['lossy_strong']) — never guess. Only flagged tracks the user has not marked OK can be deleted. The desktop app moves files to the OS trash; a headless server deletes them permanently.",
+  parameters: {
+    type: "object",
+    properties: {
+      trackIds: { type: "array", items: { type: "number" } },
+      verdicts: { type: "array", items: { type: "string", enum: LOSSLESS_VERDICT_ENUM } },
+    },
+  },
+  kind: "write-destructive",
+  summarize: (args) => {
+    if (Array.isArray(args.trackIds) && args.trackIds.length) return `Delete ${args.trackIds.length} lossy-sourced file(s) from disk`;
+    if (Array.isArray(args.verdicts) && args.verdicts.length) return `Delete every file flagged ${(args.verdicts as string[]).join(" / ")} from disk`;
+    return "Delete lossy-sourced files (none selected)";
+  },
+  async run(args, ctx) {
+    const denied = await ownerGate(ctx, "Only the server's owner can delete files from the library.");
+    if (denied) return denied;
+    let ids = (Array.isArray(args.trackIds) ? args.trackIds : []).filter(
+      (id): id is number => Number.isInteger(id) && (id as number) > 0
+    );
+    if (ids.length === 0 && Array.isArray(args.verdicts) && args.verdicts.length) {
+      const verdicts = (args.verdicts as string[]).filter((v) => LOSSLESS_VERDICT_ENUM.includes(v));
+      const { getLosslessReport } = await import("../lossless/lossless-scan");
+      ids = getLosslessReport(ctx.db, verdicts as never)
+        .filter((r) => !r.override)
+        .map((r) => r.trackId);
+    }
+    if (ids.length === 0) return { ok: false, error: "No flagged tracks selected — pass trackIds or verdicts." };
+    const { deleteLosslessFlagged } = await import("../ipc/lossless");
+    const result = await deleteLosslessFlagged(ids);
+    if ("error" in result) return { ok: false, error: result.error };
+    return { ok: true, ...result };
   },
 };
 
@@ -2372,6 +2763,7 @@ const audiobook_unsubscribe: AiTool = {
 // ---------------------------------------------------------------------------
 
 export const AI_TOOLS: AiTool[] = [
+  app_docs_search,
   library_search_tracks,
   library_list_albums,
   library_list_artists,
@@ -2386,6 +2778,8 @@ export const AI_TOOLS: AiTool[] = [
   ratings_list_conflicts,
   ratings_resolve_conflicts,
   ratings_set_tag_priority,
+  library_set_scan_on_startup,
+  library_set_harmonic_analysis,
   device_read_runtime_data,
   sync_status,
   playlist_create_classic,
@@ -2398,6 +2792,7 @@ export const AI_TOOLS: AiTool[] = [
   device_update_settings,
   device_set_sync_preferences,
   device_set_usb_identity,
+  device_set_connections,
   device_set_orphan_policy,
   device_sync,
   library_scan,
@@ -2432,6 +2827,10 @@ export const AI_TOOLS: AiTool[] = [
   web_server_approve_access_request,
   web_server_dismiss_access_request,
   web_server_remove_link,
+  lossless_check,
+  lossless_report,
+  lossless_mark_ok,
+  lossless_delete_flagged,
 ];
 
 export function getToolByName(name: string): AiTool | undefined {

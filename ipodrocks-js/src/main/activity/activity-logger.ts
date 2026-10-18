@@ -27,7 +27,9 @@ export type ActivityOperation =
   | "audiobook_subscribed"
   | "audiobook_unsubscribed"
   | "shadow_prune"
-  | "mpc_tag_repair";
+  | "mpc_tag_repair"
+  | "lossless_check"
+  | "lossless_delete";
 
 export interface ActivityEntry {
   id: number;

@@ -65,8 +65,8 @@ in amd64 and arm64.
 
 | Flavour | Tags | Pick it if… |
 |---|---|---|
-| **Distroless** (default) | `latest`, `3.1.0`, `3.1` | You just want it to run. Built on Google's distroless image: Node.js and nothing else — no shell, no package manager. |
-| **Alpine** | `alpine`, `3.1.0-alpine`, `3.1-alpine` | You want a shell inside the container (`docker exec -it ipodrocks sh`) or simply prefer Alpine. |
+| **Distroless** (default) | `latest`, `3.2.0`, `3.2` | You just want it to run. Built on Google's distroless image: Node.js and nothing else — no shell, no package manager. |
+| **Alpine** | `alpine`, `3.2.0-alpine`, `3.2-alpine` | You want a shell inside the container (`docker exec -it ipodrocks sh`) or simply prefer Alpine. |
 
 Both keep the operating system to the minimum the server needs, which is also
 what keeps security scanners quiet.
@@ -74,7 +74,7 @@ what keeps security scanners quiet.
 | Tag | Meaning |
 |---|---|
 | `latest` / `alpine` | The newest full release. |
-| `3.1.0` / `3.1.0-alpine` | That exact release. Pin this if you want upgrades to be a decision. |
+| `3.2.0` / `3.2.0-alpine` | That exact release. Pin this if you want upgrades to be a decision. |
 | `3.1` / `3.1-alpine` | The newest patch release of 3.1. |
 | `3.2.0-beta` / `3.2.0-beta-alpine` | A pre-release. Published only under its own tag; it **never moves `latest` or `alpine`**. |
 
@@ -186,7 +186,7 @@ published image; you need only that file and a `.env` beside it holding the
 variables it references:
 
 ```sh
-IPODROCKS_VERSION=latest          # or alpine, or pin: 3.1.0 / 3.1.0-alpine
+IPODROCKS_VERSION=latest          # or alpine, or pin: 3.2.0 / 3.2.0-alpine
 IPODROCKS_SESSION_SECRET=…        # openssl rand -base64 48
 IPODROCKS_PUBLIC_URL=https://ipod.example.com
 IPODROCKS_MUSIC_DIR=/srv/music
@@ -199,7 +199,7 @@ docker compose --profile tunnel up -d      # server + cloudflared
 ```
 
 `IPODROCKS_VERSION` is the image tag, so it also picks the flavour: `latest`
-or `3.1.0` for distroless, `alpine` or `3.1.0-alpine` for Alpine. To build your
+or `3.2.0` for distroless, `alpine` or `3.2.0-alpine` for Alpine. To build your
 checkout instead of pulling, run `docker compose up -d --build`; add
 `target: alpine` under `build:` for the Alpine flavour.
 

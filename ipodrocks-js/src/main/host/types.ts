@@ -48,6 +48,14 @@ export interface HostSecrets {
  *  web UI calls `window.open()` itself. */
 export interface HostShell {
   openExternal(url: string): Promise<{ opened: boolean }>;
+  /**
+   * Move a file to the OS trash. `trashed: false` means this host has no trash
+   * (the headless daemon) and nothing was touched — the caller decides whether
+   * to delete permanently instead.
+   */
+  trashItem(filePath: string): Promise<{ trashed: boolean }>;
+  /** Whether `trashItem` can ever succeed here — the UI words its confirm on it. */
+  readonly hasTrash: boolean;
 }
 
 export interface OpenFolderOptions {

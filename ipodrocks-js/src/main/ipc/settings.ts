@@ -8,7 +8,10 @@ import {
   setHarmonicPrefs,
   getRatingPrefs,
   setRatingPrefs,
+  getLibraryPrefs,
+  setLibraryPrefs,
   type HarmonicPrefs,
+  type LibraryPrefs,
   type RatingPrefs,
 } from "../utils/prefs";
 import type { OpenRouterConfig } from "../../shared/types";
@@ -113,6 +116,23 @@ export function registerSettingsHandlers(): void {
   bridgeHandle(
     "settings:getRatingPrefs",
     safe("settings:getRatingPrefs", async () => getRatingPrefs())
+  );
+
+  bridgeHandle(
+    "settings:getLibraryPrefs",
+    safe("settings:getLibraryPrefs", async () => ({
+      scanOnStartup: getLibraryPrefs().scanOnStartup,
+    }))
+  );
+
+  bridgeHandle(
+    "settings:setLibraryPrefs",
+    safe("settings:setLibraryPrefs", async (event, prefs: Pick<LibraryPrefs, "scanOnStartup">) => {
+      const denied = requireOwner(event);
+      if (denied) return denied;
+      // Only the switch: the reminder's snooze has its own owner-gated channel.
+      setLibraryPrefs({ scanOnStartup: prefs?.scanOnStartup === true });
+    })
   );
 
   bridgeHandle(

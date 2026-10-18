@@ -9,7 +9,7 @@ import { Device } from "./device";
 import { sanitizeMountPath } from "../path-allowlist";
 import { webDeviceRoot } from "./fs/device-fs";
 import { normalizeUsbId } from "./usb-devices";
-import { autoPodcastBlock } from "../../shared/device-locality";
+import { autoPodcastBlock, deviceConnection } from "../../shared/device-locality";
 
 interface DeviceRow {
   id: number;
@@ -50,6 +50,7 @@ interface DeviceRow {
   auto_podcasts_enabled: number;
   vbr_enabled: number;
   transport: string | null;
+  remote_enabled: number | null;
   usb_vendor_id: string | null;
   usb_product_id: string | null;
   usb_serial: string | null;
@@ -62,7 +63,7 @@ const DEVICES_QUERY = `
          d.override_bitrate, d.override_quality, d.override_bits,
          d.partial_sync_enabled, d.skip_playback_log, d.skip_album_artwork, d.artwork_max_dimension, d.capacity_gb, d.max_parallel_copies, d.rockbox_smart_playlists, d.dev_mode,
          d.auto_podcasts_enabled, d.vbr_enabled, d.source_library_type, d.shadow_library_id,
-         d.transport, d.usb_vendor_id, d.usb_product_id, d.usb_serial,
+         d.transport, d.remote_enabled, d.usb_vendor_id, d.usb_product_id, d.usb_serial,
          dtm.name as transfer_mode_name,
          cc.name as codec_config_name, cc.bitrate_value, cc.quality_value,
          cc.bits_per_sample, c.name as codec_name,
@@ -487,6 +488,12 @@ export class DevicesCore {
         updates.usbSerial
       );
       if (usb) this._assertUsbIdentityFree(usb, id);
+      if (!usb && device.profile.connection === "hybrid") {
+        throw new Error(
+          "This device is also used from a browser, so it must keep its USB device. " +
+            "Stop using it from a browser first."
+        );
+      }
       fields.push("usb_vendor_id = ?", "usb_product_id = ?", "usb_serial = ?");
       values.push(usb?.vendorId ?? null, usb?.productId ?? null, usb?.serial ?? null);
     }
@@ -521,7 +528,7 @@ export class DevicesCore {
       // device cannot have Auto Podcasts turned *on*. Turning it off is always
       // allowed — a device that should not have it must be able to give it up.
       if (dbField === "auto_podcasts_enabled" && value) {
-        const blocked = autoPodcastBlock(device.profile.transport);
+        const blocked = autoPodcastBlock(device.profile);
         if (blocked) throw new Error(blocked);
       }
 
@@ -551,6 +558,97 @@ export class DevicesCore {
       .run(...values);
 
     return info.changes > 0;
+  }
+
+  /**
+   * Change which machines can reach a device: its own mount (local), a
+   * browser's folder (remote), or both (hybrid).
+   *
+   * `local`: undefined keeps the current local side, null drops it, an object
+   * sets it. `remote`: undefined keeps, true/false sets. Who may ask for what
+   * (a browser can only switch its own side on or off, and only the server's
+   * owner) is the handler's business; this enforces what any caller gets:
+   *
+   * - **A hybrid device has a USB identity.** The local side of a device a
+   *   browser also writes must be the actual player, not whatever happens to
+   *   be mounted at the path, and `isDeviceOnline` only checks the USB unit
+   *   when there is one.
+   * - Something must still reach it.
+   * - `webOwnerSubject`, when given, becomes the browser side's owner; a
+   *   device that loses its browser side loses its owner.
+   */
+  setConnections(
+    id: number,
+    change: {
+      local?: { mountPath: string; usbVendorId?: string | null; usbProductId?: string | null; usbSerial?: string | null } | null;
+      remote?: boolean;
+    },
+    opts: { webOwnerSubject?: string | null } = {}
+  ): Device {
+    const device = this.getDeviceById(id);
+    if (!device) throw new Error(`Device with ID ${id} not found`);
+    const p = device.profile;
+    const hadLocal = p.transport === "local";
+    const hadRemote = p.transport === "web" || p.remoteEnabled;
+
+    const wantLocal = change.local === undefined ? hadLocal : change.local !== null;
+    const wantRemote = change.remote === undefined ? hadRemote : change.remote;
+    if (!wantLocal && !wantRemote) {
+      throw new Error("A device needs at least one connection: a local mount or a browser folder");
+    }
+
+    let mountPath = hadLocal ? p.mountPath : "";
+    let usb: UsbIdentity | null =
+      p.usbVendorId && p.usbProductId
+        ? { vendorId: p.usbVendorId, productId: p.usbProductId, serial: p.usbSerial ?? "" }
+        : null;
+    if (change.local) {
+      mountPath = sanitizeMountPath(change.local.mountPath);
+      const given = normalizeUsbIdentity(
+        change.local.usbVendorId,
+        change.local.usbProductId,
+        change.local.usbSerial
+      );
+      if (given) usb = given;
+    }
+    if (wantLocal && !mountPath) throw new Error("A local connection needs a mount path");
+    if (wantLocal && wantRemote && !usb) {
+      throw new Error(
+        "A device reachable both locally and from a browser needs its USB device set, " +
+          "so the local side is always the actual player. Pick it in the desktop app first."
+      );
+    }
+    if (usb) this._assertUsbIdentityFree(usb, id);
+
+    const owner = !wantRemote
+      ? null
+      : opts.webOwnerSubject !== undefined
+        ? opts.webOwnerSubject
+        : (this.db.prepare("SELECT web_owner_subject AS o FROM devices WHERE id = ?").get(id) as {
+            o: string | null;
+          }).o;
+
+    this.db
+      .prepare(
+        `UPDATE devices SET transport = ?, mount_path = ?, remote_enabled = ?, web_owner_subject = ?,
+           usb_vendor_id = ?, usb_product_id = ?, usb_serial = ? WHERE id = ?`
+      )
+      .run(
+        wantLocal ? "local" : "web",
+        wantLocal ? mountPath : webDeviceRoot(id),
+        wantLocal && wantRemote ? 1 : 0,
+        owner,
+        usb?.vendorId ?? null,
+        usb?.productId ?? null,
+        usb?.serial ?? null,
+        id
+      );
+    // A device the server can no longer reach on its own cannot keep its
+    // schedule (the same rule as autoPodcastBlock).
+    if (!wantLocal) {
+      this.db.prepare("UPDATE devices SET auto_podcasts_enabled = 0 WHERE id = ?").run(id);
+    }
+    return this.getDeviceById(id)!;
   }
 
   deleteDevice(id: number): boolean {
@@ -650,6 +748,11 @@ export class DevicesCore {
       autoPodcastsEnabled: !!(row.auto_podcasts_enabled ?? 0),
       vbrEnabled: !!(row.vbr_enabled ?? 0),
       transport: normalizeTransport(row.transport),
+      remoteEnabled: normalizeTransport(row.transport) === "local" && row.remote_enabled === 1,
+      connection: deviceConnection({
+        transport: normalizeTransport(row.transport),
+        remoteEnabled: row.remote_enabled === 1,
+      }),
       usbVendorId: row.usb_vendor_id ?? null,
       usbProductId: row.usb_product_id ?? null,
       usbSerial: row.usb_serial ?? null,

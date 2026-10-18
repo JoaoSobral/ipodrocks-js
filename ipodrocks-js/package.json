@@ -1,6 +1,6 @@
 {
   "name": "ipodrocks",
-  "version": "3.1.0",
+  "version": "3.2.0",
   "description": "iPod sync and library management",
   "author": {
     "name": "Pedro Goncalves",
@@ -17,7 +17,7 @@
     "dev:electron": "npx wait-on http://localhost:5173 dist/main/main/index.js && npx cross-env VITE_DEV_SERVER_URL=http://localhost:5173 electron .",
     "dev:server": "npx wait-on dist/main/server/daemon.js && node dist/main/server/daemon.js",
     "dev:electron:verbose": "npx wait-on http://localhost:5173 dist/main/main/index.js && npx cross-env VITE_DEV_SERVER_URL=http://localhost:5173 electron . --dev",
-    "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.main.json && npm run bundle-preload && vite build",
+    "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && npm run bundle-docs && tsc -p tsconfig.main.json && npm run bundle-preload && vite build",
     "server": "node dist/main/server/daemon.js",
     "server:accounts": "node dist/main/server/cli.js",
     "docker:distroless": "node scripts/docker-local.js run distroless",
@@ -36,7 +36,8 @@
     "dist:mac:x64": "npm run build && npm run copy-ffmpeg && electron-builder --mac --x64 -c.mac.artifactName='${productName}-${version}-INTEL-mac.${ext}' --publish never",
     "dist:win": "npm run build && npm run copy-ffmpeg && electron-builder --win --publish never",
     "postinstall": "electron-builder install-app-deps",
-    "bundle-preload": "node scripts/bundle-preload.js"
+    "bundle-preload": "node scripts/bundle-preload.js",
+    "bundle-docs": "node scripts/bundle-docs.js"
   },
   "dependencies": {
     "@ffmpeg-installer/ffmpeg": "^1.1.0",
