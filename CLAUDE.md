@@ -26,7 +26,7 @@ CI's `npm ci` never does. `npm ci` locally reproduces it exactly.
 
 **The e2e suite runs in parallel, except the web project.** The electron
 project spreads files across workers (`workers` in `playwright.config.ts`:
-half the cores locally, 2 on CI, `E2E_WORKERS` to override); each launch gets
+every core locally, 2 on CI, `E2E_WORKERS` to override); each launch gets
 its own user-data *and* temp directory (`TMPDIR` in `electron-launcher.ts`),
 because the app empties machine-wide scratch — the preview player's
 transcodes — at startup. A new spec must not touch a fixed path another spec
