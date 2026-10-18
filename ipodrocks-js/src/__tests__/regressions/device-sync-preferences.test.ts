@@ -54,6 +54,7 @@ describe("device_sync_preferences — exclude mode persistence", () => {
       includePlaylists: true,
       preserveFolderStructure: true,
       albumGrouping: "album-artist",
+      buildRockboxDatabase: false,
       selections: {
         mode: "exclude",
         albums: ["Album A"],
@@ -85,6 +86,7 @@ describe("device_sync_preferences — exclude mode persistence", () => {
       includePlaylists: true,
       preserveFolderStructure: true,
       albumGrouping: "album-artist",
+      buildRockboxDatabase: false,
       selections: { ...emptySelections(), mode: "include", albums: ["X"] },
     });
 
@@ -106,6 +108,7 @@ describe("device_sync_preferences — exclude mode persistence", () => {
       includePlaylists: true,
       preserveFolderStructure: false,
       albumGrouping: "album-artist",
+      buildRockboxDatabase: false,
       selections: emptySelections(),
     });
     expect(getDeviceSyncPreferences(db, 5)!.preserveFolderStructure).toBe(false);
@@ -119,6 +122,7 @@ describe("device_sync_preferences — exclude mode persistence", () => {
       includePlaylists: true,
       preserveFolderStructure: true,
       albumGrouping: "album-artist",
+      buildRockboxDatabase: false,
       selections: emptySelections(),
     });
     expect(getDeviceSyncPreferences(db, 5)!.preserveFolderStructure).toBe(true);
@@ -245,5 +249,33 @@ describe("device_sync_preferences — exclude mode persistence", () => {
 
     const loaded = getDeviceSyncPreferences(db, 4);
     expect(loaded!.selections.mode).toBe("include");
+  });
+
+  itDb("buildRockboxDatabase is opt-in and remembered per device", () => {
+    db = createTestDb();
+    seedDevice(db, 41);
+    seedDevice(db, 42);
+
+    const base = {
+      syncType: "full" as const,
+      extraTrackPolicy: "keep" as const,
+      includeMusic: true,
+      includePodcasts: true,
+      includeAudiobooks: true,
+      includePlaylists: true,
+      preserveFolderStructure: true,
+      albumGrouping: "album-artist" as const,
+      selections: emptySelections(),
+    };
+    saveDeviceSyncPreferences(db, 41, { ...base, buildRockboxDatabase: true });
+    saveDeviceSyncPreferences(db, 42, { ...base, buildRockboxDatabase: false });
+
+    expect(getDeviceSyncPreferences(db, 41)!.buildRockboxDatabase).toBe(true);
+    expect(getDeviceSyncPreferences(db, 42)!.buildRockboxDatabase).toBe(false);
+
+    // A row written before the column existed — the column default — reads off.
+    seedDevice(db, 43);
+    db.prepare("INSERT INTO device_sync_preferences (device_id) VALUES (43)").run();
+    expect(getDeviceSyncPreferences(db, 43)!.buildRockboxDatabase).toBe(false);
   });
 });

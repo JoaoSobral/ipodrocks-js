@@ -18,6 +18,76 @@
 - A replaced file is re-checked after the next library scan.
 - Limitation: MP3s encoded without a low-pass filter cannot be detected.
 
+### 🗄️ Build the Rockbox database during sync
+
+A new **Build Rockbox database** option in the Sync tab: iPodRocks writes the
+player's Rockbox database at the end of the sync, so new music is browsable as
+soon as you unplug — no more **Database → Update now** on the iPod after every
+sync.
+
+- Off by default; tick it once per device and it is remembered.
+- Play counts, listening time and ratings already in the player's database are
+  kept. Tracks copied in this sync go in with their library ratings, so a new
+  album's ratings no longer need a database update and a second sync.
+- Indexes every audio file on the player, including ones you copied there by
+  hand, and honours `database.ignore`. On a remote (browser-held) player, a
+  hand-copied file that is not in your library is left out until you update the
+  database on the player once.
+- Needs Rockbox 4.0 or later; any other player is left untouched. The previous
+  index is kept as `database_idx.tcd.ipodrocks-bak`, and a failed build never
+  fails the sync.
+- iPodRocks now reads **year, composer, comment and grouping** tags so Rockbox's
+  Year and Composer views are filled in. The first library scan after updating
+  reads them once for tracks you already have.
+- Rocksy: `device_set_sync_preferences` gains `build_rockbox_database`.
+
+### 📖 Rocksy knows the whole manual
+
+Rocksy can now search and read every page of the documentation
+(`app_docs_search`), so questions about setup, server deployment, features and
+troubleshooting are answered from the docs themselves, with the page to read
+for more.
+
+### 🔁 Keep the library current
+
+- **Settings → Library → Scan library at startup** (off by default): every
+  library folder is scanned when iPodRocks opens. A web server scans when it
+  starts.
+- With it off, once the library has gone **10 days** without a scan you are
+  asked *"You haven't scanned your library since … — scan it now?"*. **No** asks
+  again in 10 days. A dialog on the desktop; a notification in a browser, shown
+  only to the server's owner.
+- Rocksy tool: `library_set_scan_on_startup`.
+
+### 🔀 Hybrid devices — local and remote at once
+
+A device no longer has to be either plugged into the machine running iPodRocks
+or held in a browser. A **hybrid** device is both: the desktop app syncs it
+through its mount, a browser through its folder, and it stays one device with
+one sync history, one set of ratings and one set of settings.
+
+- Every device card shows its connection (**Local**, **Remote**, **Hybrid**) and
+  the control to change it: **Also allow browser use** / **Stop browser use**
+  on a local device, **Add local connection** (mount path + USB device) on a
+  remote one, and **Use from this browser** for the server's owner in a browser.
+- A hybrid device must have its **USB device** set, so its local side is always
+  the actual player.
+- From a browser only the server's owner can switch browser use on or off; a
+  browser cannot change a hybrid device's mount path or USB device, or remove
+  it.
+- Auto Podcasts keep working on a hybrid device, through its local mount.
+- Rocksy tool: `device_set_connections`.
+
+### 🐛 Fixes
+
+- **Album covers reach the player resized again.** A cover with a large
+  EXIF/ICC/comment block, which is most real-world artwork, was refused by the
+  ffmpeg input guard added in 3.0.1, and the sync quietly copied the original
+  at full size instead (`Artwork: ffmpeg failed, copied original`). The image
+  type is now taken from the file's own bytes. Covers already copied at full
+  size are replaced on the next sync. The ffmpeg version banner no longer
+  floods the sync log either.
+
 ## [3.1.0] — 2026-10
 
 ### 📶 Syncs that survive a bad connection

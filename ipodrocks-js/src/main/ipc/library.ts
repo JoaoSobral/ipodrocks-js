@@ -1,8 +1,14 @@
 import { handle as bridgeHandle, type HandlerContext, type HandlerSender } from "../host/bridge";
 import { safe, getLibrary, getPlaylistCore, validateFolderPath } from "./common";
-import { denyIfNotOwner } from "../../server/auth/sessions";
+import { denyIfNotOwner, OWNER_ONLY_SETTINGS_MESSAGE } from "../../server/auth/sessions";
 import { LibraryScanner } from "../library/library-scanner";
-import { getHarmonicPrefs, getRatingPrefs } from "../utils/prefs";
+import { getHarmonicPrefs, getRatingPrefs, getLibraryPrefs, setLibraryPrefs } from "../utils/prefs";
+import {
+  recordLibraryScan,
+  scanReminder,
+  SCAN_REMINDER_INTERVAL_MS,
+  type ScanReminder,
+} from "../library/scan-schedule";
 import { logActivity, getRecentActivity } from "../activity/activity-logger";
 import { invalidateAssistantCache } from "../assistant/assistantChat";
 
@@ -150,111 +156,175 @@ export function isLibraryScanActive(): boolean {
   return activeScan !== null;
 }
 
-export function registerLibraryHandlers(): void {
-  bridgeHandle(
-    "library:scan",
-    safe("library:scan", async (event, payload: { folders: Array<{ name: string; path: string; contentType: string }> }) => {
-      const lib = getLibrary();
-      if (activeScan) return { error: "A library scan is already running." };
-      const scanner = new LibraryScanner(lib.getConnection());
-      const scan = { controller: new AbortController(), sessionId: event.sessionId };
-      activeScan = scan;
-      const harmonicPrefs = getHarmonicPrefs();
-      const ratingPrefs = getRatingPrefs();
+/** A folder as the renderer (or the daemon's startup scan) hands it over. */
+export interface ScanFolderInput {
+  name: string;
+  path: string;
+  contentType: string;
+}
 
-      let totalAdded = 0;
-      let totalProcessed = 0;
-      let totalRemoved = 0;
+/**
+ * Scan the given library folders. Shared by `library:scan` and the daemon's
+ * startup scan, so both hold the same one-scan slot and run the same
+ * after-scan steps — shadow propagation, the activity log, playlist
+ * reconciliation and the last-scan time the reminder reads.
+ */
+export async function runLibraryScan(
+  folders: ScanFolderInput[],
+  opts: { sessionId?: string; onProgress?: (progress: unknown) => void } = {}
+) {
+  const lib = getLibrary();
+  if (activeScan) return { error: "A library scan is already running." };
+  const scanner = new LibraryScanner(lib.getConnection());
+  const scan = { controller: new AbortController(), sessionId: opts.sessionId };
+  activeScan = scan;
+  const harmonicPrefs = getHarmonicPrefs();
+  const ratingPrefs = getRatingPrefs();
 
-      const allErrors: string[] = [];
-      const allWarnings: string[] = [];
-      let totalDuplicateFiles = 0;
-      const allAdded: string[] = [];
-      const allUpdated: string[] = [];
-      const allRemovedIds: number[] = [];
-      const allRemovedShadowPaths: string[] = [];
-      try {
-        for (const folder of payload.folders) {
-          const validated = validateFolderPath(folder.path);
-          if ("error" in validated) {
-            allErrors.push(`${folder.name}: ${validated.error}`);
-            continue;
-          }
-          const result = await scanner.scanFolder(
-            validated.path,
-            folder.contentType,
-            (progress) => event.sender.send("scan:progress", progress),
-            scan.controller.signal,
-            {
-              scanHarmonicData: harmonicPrefs.scanHarmonicData,
-              forceRatingFromTags: ratingPrefs.tagRatingAlwaysWins,
-            }
-          );
-          totalAdded += result.filesAdded;
-          totalProcessed += result.filesProcessed;
-          totalRemoved += result.filesRemoved ?? 0;
-          if (result.errors?.length) allErrors.push(...result.errors);
-          if (result.warnings?.length) allWarnings.push(...result.warnings);
-          totalDuplicateFiles += result.duplicateFilesDetected ?? 0;
-          if (result.addedTrackPaths?.length) allAdded.push(...result.addedTrackPaths);
-          if (result.updatedTrackPaths?.length) allUpdated.push(...result.updatedTrackPaths);
-          if (result.removedTrackIds?.length) allRemovedIds.push(...result.removedTrackIds);
-          if (result.removedShadowPaths?.length)
-            allRemovedShadowPaths.push(...result.removedShadowPaths);
-          if (result.cancelled) {
-            return {
-              filesAdded: totalAdded,
-              filesProcessed: totalProcessed,
-              filesRemoved: totalRemoved,
-              cancelled: true,
-              errors: allErrors,
-              warnings: allWarnings,
-              duplicateFilesDetected: totalDuplicateFiles,
-            };
-          }
+  let totalAdded = 0;
+  let totalProcessed = 0;
+  let totalRemoved = 0;
+
+  const allErrors: string[] = [];
+  const allWarnings: string[] = [];
+  let totalDuplicateFiles = 0;
+  const allAdded: string[] = [];
+  const allUpdated: string[] = [];
+  const allRemovedIds: number[] = [];
+  const allRemovedShadowPaths: string[] = [];
+  try {
+    for (const folder of folders) {
+      const validated = validateFolderPath(folder.path);
+      if ("error" in validated) {
+        allErrors.push(`${folder.name}: ${validated.error}`);
+        continue;
+      }
+      const result = await scanner.scanFolder(
+        validated.path,
+        folder.contentType,
+        (progress) => opts.onProgress?.(progress),
+        scan.controller.signal,
+        {
+          scanHarmonicData: harmonicPrefs.scanHarmonicData,
+          forceRatingFromTags: ratingPrefs.tagRatingAlwaysWins,
         }
-
-        if (
-          allAdded.length > 0 ||
-          allUpdated.length > 0 ||
-          allRemovedIds.length > 0 ||
-          allRemovedShadowPaths.length > 0
-        ) {
-          lib
-            .propagateScanToShadows(
-              allAdded,
-              allUpdated,
-              allRemovedIds,
-              undefined,
-              allRemovedShadowPaths
-            )
-            .catch((err) => console.error("[ipc] Shadow propagation error:", err));
-        }
-
-        logActivity(
-          getLibrary().getConnection(),
-          "library_scan",
-          `Scanned ${totalProcessed} files, ${totalAdded} added, ${totalRemoved} removed`
-        );
-        invalidateAssistantCache(); // F9: library changed, rebuild context on next chat
-
-        // Keep playlists honest: drop songs that no longer exist and re-resolve
-        // smart playlists so they also pick up whatever this scan just added.
-        const playlistSummary = reconcilePlaylistsAfterLibraryChange("library scan");
-
+      );
+      totalAdded += result.filesAdded;
+      totalProcessed += result.filesProcessed;
+      totalRemoved += result.filesRemoved ?? 0;
+      if (result.errors?.length) allErrors.push(...result.errors);
+      if (result.warnings?.length) allWarnings.push(...result.warnings);
+      totalDuplicateFiles += result.duplicateFilesDetected ?? 0;
+      if (result.addedTrackPaths?.length) allAdded.push(...result.addedTrackPaths);
+      if (result.updatedTrackPaths?.length) allUpdated.push(...result.updatedTrackPaths);
+      if (result.removedTrackIds?.length) allRemovedIds.push(...result.removedTrackIds);
+      if (result.removedShadowPaths?.length)
+        allRemovedShadowPaths.push(...result.removedShadowPaths);
+      if (result.cancelled) {
         return {
           filesAdded: totalAdded,
           filesProcessed: totalProcessed,
           filesRemoved: totalRemoved,
-          cancelled: false,
+          cancelled: true,
           errors: allErrors,
           warnings: allWarnings,
           duplicateFilesDetected: totalDuplicateFiles,
-          playlistsUpdated: playlistSummary,
         };
-      } finally {
-        if (activeScan === scan) activeScan = null;
       }
+    }
+
+    if (
+      allAdded.length > 0 ||
+      allUpdated.length > 0 ||
+      allRemovedIds.length > 0 ||
+      allRemovedShadowPaths.length > 0
+    ) {
+      lib
+        .propagateScanToShadows(
+          allAdded,
+          allUpdated,
+          allRemovedIds,
+          undefined,
+          allRemovedShadowPaths
+        )
+        .catch((err) => console.error("[ipc] Shadow propagation error:", err));
+    }
+
+    logActivity(
+      getLibrary().getConnection(),
+      "library_scan",
+      `Scanned ${totalProcessed} files, ${totalAdded} added, ${totalRemoved} removed`
+    );
+    invalidateAssistantCache(); // F9: library changed, rebuild context on next chat
+
+    // Keep playlists honest: drop songs that no longer exist and re-resolve
+    // smart playlists so they also pick up whatever this scan just added.
+    const playlistSummary = reconcilePlaylistsAfterLibraryChange("library scan");
+
+    return {
+      filesAdded: totalAdded,
+      filesProcessed: totalProcessed,
+      filesRemoved: totalRemoved,
+      cancelled: false,
+      errors: allErrors,
+      warnings: allWarnings,
+      duplicateFilesDetected: totalDuplicateFiles,
+      playlistsUpdated: playlistSummary,
+    };
+  } finally {
+    if (activeScan === scan) activeScan = null;
+  }
+}
+
+/**
+ * The daemon's "Scan library at startup": every library folder, headless. The
+ * desktop app does its own from the renderer so the user sees the progress;
+ * a browser opening the web UI never starts one.
+ */
+export async function runStartupLibraryScan(
+  log: (line: string) => void = console.log
+): Promise<void> {
+  if (!getLibraryPrefs().scanOnStartup) return;
+  const folders = getLibrary()
+    .getLibraryFolders()
+    .map((f) => ({ name: f.name, path: f.path, contentType: f.contentType }));
+  if (folders.length === 0) return;
+  log(`[library] scanning ${folders.length} folder(s) at startup`);
+  const result = await runLibraryScan(folders);
+  if ("error" in result) log(`[library] startup scan not run: ${result.error}`);
+  else log(`[library] startup scan: ${result.filesProcessed} files, ${result.filesAdded} added, ${result.filesRemoved} removed`);
+}
+
+export function registerLibraryHandlers(): void {
+  bridgeHandle(
+    "library:scan",
+    safe("library:scan", async (event, payload: { folders: ScanFolderInput[] }) =>
+      runLibraryScan(payload.folders, {
+        sessionId: event.sessionId,
+        onProgress: (progress) => event.sender.send("scan:progress", progress),
+      })
+    )
+  );
+
+  bridgeHandle(
+    "library:getScanReminder",
+    safe("library:getScanReminder", async (event): Promise<ScanReminder> => {
+      const db = getLibrary().getConnection();
+      // The library is shared: only its owner is asked to keep it current.
+      if (denyIfNotOwner(event.sessionId)) {
+        return { due: false, lastScanAt: null };
+      }
+      return scanReminder(db, getLibraryPrefs());
+    })
+  );
+
+  bridgeHandle(
+    "library:snoozeScanReminder",
+    safe("library:snoozeScanReminder", async (event) => {
+      const denied = denyIfNotOwner(event.sessionId, OWNER_ONLY_SETTINGS_MESSAGE);
+      if (denied) return denied;
+      setLibraryPrefs({ scanReminderSnoozeUntil: Date.now() + SCAN_REMINDER_INTERVAL_MS });
+      return { ok: true };
     })
   );
 

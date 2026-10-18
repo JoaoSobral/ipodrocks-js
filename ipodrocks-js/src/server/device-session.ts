@@ -47,6 +47,7 @@ import {
   type TransferOptions,
 } from "../main/devices/fs/device-transport";
 import type { WebSocket } from "ws";
+import { denyIfNotOwner } from "./auth/sessions";
 import {
   onSocketClosed,
   registerFrameHandler,
@@ -63,6 +64,8 @@ export interface DeviceAttachRecord {
    * existed, which is why null admits rather than refuses.
    */
   webOwnerSubject: string | null;
+  /** A local device a browser may also hold (hybrid). Admitted like a web one. */
+  remoteEnabled?: boolean;
 }
 
 /** Resolves a device id, or null when there is no such device. */
@@ -508,7 +511,7 @@ export function attachDeviceSessions(opts: DeviceSessionsOptions): DeviceSession
     // thing it may hold. Without this any authenticated session could claim
     // someone else's player and start receiving its listings.
     const record = opts.lookupTransport(deviceId);
-    if (record?.transport !== "web") {
+    if (!record || (record.transport !== "web" && record.remoteEnabled !== true)) {
       sendRawToSocket(ctx.socket, {
         type: "device-attach-refused",
         deviceId,
@@ -531,6 +534,22 @@ export function attachDeviceSessions(opts: DeviceSessionsOptions): DeviceSession
     // existed, and inventing an owner for one would strand a player nobody
     // can reconnect. The refusal is deliberate rather than an eviction —
     // taking the device away from its holder is exactly what must not happen.
+    // A hybrid device enabled from the desktop app has no owner recorded, and
+    // it is also the server's own player: only the server's owner may hold it
+    // from a browser. (A null owner on a *remote* device stays open — those are
+    // rows from before the column existed, as above.)
+    if (
+      record.transport !== "web" &&
+      record.webOwnerSubject === null &&
+      denyIfNotOwner(ctx.sessionId) !== null
+    ) {
+      sendRawToSocket(ctx.socket, {
+        type: "device-attach-refused",
+        deviceId,
+        reason: "Only the server's owner can use this device from a browser.",
+      });
+      return;
+    }
     if (record.webOwnerSubject !== null && record.webOwnerSubject !== ctx.subject) {
       sendRawToSocket(ctx.socket, {
         type: "device-attach-refused",

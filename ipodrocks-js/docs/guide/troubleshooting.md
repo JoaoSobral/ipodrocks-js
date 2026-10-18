@@ -22,6 +22,17 @@ Common issues and how to fix them.
 - **Symptom:** Sync progress modal stalls or shows errors.
 - **Fix:** Check that the device has enough free space. Use "Check Device" in Devices first to see synced vs to-sync counts. If transcoding, ensure FFmpeg is available (it is bundled). For Musepack, ensure `mpcenc` is on PATH. Cancel and retry; if it persists, try a smaller custom sync (e.g. one album) to isolate the problem.
 
+## New music does not show in the player's Database menu
+
+- **Symptom:** After a sync the files are on the player (visible under **Files**), but Artists / Albums in the **Database** menu do not list them.
+- **Fix:** Rockbox only lists what its database knows. Either run **Database → Update now** on the player, or tick **Build Rockbox database** in the Sync tab so iPodRocks writes the database at the end of every sync. If the option is ticked and the sync log says *Rockbox database not built*, the line says why: no `.rockbox` folder (not a Rockbox player), or a Rockbox older than 4.0. Restart the player after a sync if it was running — Rockbox reads its database at startup.
+
+## The player asks "Database is not ready — Initialize now?"
+
+- **Symptom:** After a sync with **Build Rockbox database** ticked, the new music shows up, but a later restart of the player opens the Database menu with *Database is not ready* and offers to initialize it.
+- **Cause:** Rockbox marks its database as not ready while it merges an update, and only clears that mark when the merge finishes. With **Settings → Database → Auto update** on, the player rescans at startup and merges anything it believes has changed. Turning the player off, or plugging it in, during that merge leaves the mark in place. iPodRocks 3.2.0 pre-releases wrote file times off by your time zone on Linux, where FAT stores UTC, which made the player believe *every* file had changed, so that merge took minutes.
+- **Fix:** Answer **Yes** once, or sync again with the current version: the rebuilt database carries file times the player agrees with, and the startup scan finds nothing to merge. Let the player finish any *Committing database* screen before turning it off.
+
 ## Genius playlists: "No playback history"
 
 - **Symptom:** Genius tab says no playback data or no matched plays.

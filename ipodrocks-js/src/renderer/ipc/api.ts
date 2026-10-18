@@ -348,6 +348,27 @@ export async function addDevice(
   >;
 }
 
+export interface DeviceConnectionChange {
+  /** Add or change the local side (desktop app only); null drops it. */
+  local?: {
+    mountPath: string;
+    usbVendorId?: string | null;
+    usbProductId?: string | null;
+    usbSerial?: string | null;
+  } | null;
+  /** Allow or stop using the device from a browser. */
+  remote?: boolean;
+}
+
+export async function setDeviceConnections(
+  deviceId: number,
+  change: DeviceConnectionChange
+): Promise<DeviceProfile | { error: string }> {
+  return window.api.invoke("device:setConnections", deviceId, change) as Promise<
+    DeviceProfile | { error: string }
+  >;
+}
+
 export async function updateDevice(
   deviceId: number,
   updates: Record<string, unknown>
@@ -1013,6 +1034,32 @@ export async function getRatingPrefs(): Promise<RatingPrefs> {
 
 export async function setRatingPrefs(prefs: RatingPrefs): Promise<SettingsWriteResult> {
   return window.api.invoke("settings:setRatingPrefs", prefs) as Promise<SettingsWriteResult>;
+}
+
+export interface LibraryPrefs {
+  scanOnStartup: boolean;
+}
+
+export async function getLibraryPrefs(): Promise<LibraryPrefs> {
+  return window.api.invoke("settings:getLibraryPrefs") as Promise<LibraryPrefs>;
+}
+
+export async function setLibraryPrefs(prefs: LibraryPrefs): Promise<SettingsWriteResult> {
+  return window.api.invoke("settings:setLibraryPrefs", prefs) as Promise<SettingsWriteResult>;
+}
+
+export interface ScanReminder {
+  due: boolean;
+  /** ISO time of the last completed scan; null when there has never been one. */
+  lastScanAt: string | null;
+}
+
+export async function getScanReminder(): Promise<ScanReminder> {
+  return window.api.invoke("library:getScanReminder") as Promise<ScanReminder>;
+}
+
+export async function snoozeScanReminder(): Promise<{ ok?: boolean; error?: string }> {
+  return window.api.invoke("library:snoozeScanReminder") as Promise<{ ok?: boolean; error?: string }>;
 }
 
 // ---------------------------------------------------------------------------

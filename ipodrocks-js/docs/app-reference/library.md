@@ -38,6 +38,26 @@ The Library panel manages your music catalog: folders, scans, shadow libraries, 
 4. **Shadow library larger than it should be?** If it holds albums you renamed or deleted long ago, open its **⚙** menu and run **Prune orphan files**. Run it once; after that the app keeps itself tidy.
 5. **Clear cache:** Only when you know files or tags changed outside iPodRocks and you want a full re-scan.
 
+## Keeping the library current
+
+iPodRocks only knows about files it has scanned, so music you add to a folder
+does not appear until the next scan. Two things help with that:
+
+- **Scan library at startup** (Settings → **Library**, off by default). With it
+  on, every library folder is scanned each time iPodRocks opens. A
+  [web server](./settings-web-server.md) scans when the server starts; opening
+  the app in a browser never starts a scan by itself.
+- **The 10-day reminder.** With the startup scan off, once the library has gone
+  **10 days** without a scan you are asked: *"You haven't scanned your library
+  since {date}. Do you wish to scan it now?"* **Yes** scans straight away; **No**
+  asks again in another 10 days. On the desktop it is a dialog; in a browser it
+  is a notification in the corner, so it never sits in front of your work. On a
+  shared server only the server's owner is asked, because the library is
+  everybody's and one person decides when it is rescanned.
+
+A scan you start yourself (Scan Library, adding a folder, or Rocksy) resets the
+10-day clock the same way; a scan you cancel does not.
+
 ## Lossless Check
 
 A file can be a perfectly valid FLAC or ALAC and still hold audio that went through a lossy encoder first — an MP3 converted to FLAC, for example. Converting cannot bring back what the encoder threw away: above a certain frequency (about 16 kHz for a 128 kbps MP3, 19–20 kHz for 320 kbps or AAC) the file holds nothing at all, behind a sharp "wall". Real CD audio carries content up to about 22 kHz, or fades out gradually. The Lossless Check looks for that wall, using Essentia to measure each file's spectrum.
@@ -101,6 +121,7 @@ Double-click any track in the library list to start playback in the player bar t
 - "Add `/Users/me/Music` as a library folder" → `library_add_folder` *(asks you to confirm first)*
 - "Remove that folder" → `library_remove_folder` *(asks you to confirm first)*
 - "Rescan my library" → `library_scan` *(asks you to confirm first)*
+- "Scan my library every time the app opens" / "when did I last scan?" → `library_set_scan_on_startup`
 - "Are my FLACs really lossless?" / "find fake FLACs" → `lossless_check` *(asks you to confirm first; then runs in the background)*
 - "Which files are lossy-sourced?" → `lossless_report`
 - "That one is fine, ignore it" → `lossless_mark_ok`

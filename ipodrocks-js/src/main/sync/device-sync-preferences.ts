@@ -43,6 +43,7 @@ type Row = {
   include_playlists: number;
   preserve_folder_structure: number;
   album_grouping: string | null;
+  build_rockbox_db: number | null;
   custom_selections_json: string | null;
 };
 
@@ -82,6 +83,8 @@ export function getDeviceSyncPreferences(
     includePlaylists: row.include_playlists === 1,
     preserveFolderStructure: row.preserve_folder_structure !== 0,
     albumGrouping: parseAlbumGrouping(row.album_grouping),
+    // Opt-in: only an explicit 1 turns it on.
+    buildRockboxDatabase: row.build_rockbox_db === 1,
     selections: parseSelections(row.custom_selections_json),
   };
 }
@@ -95,8 +98,9 @@ export function saveDeviceSyncPreferences(
     INSERT INTO device_sync_preferences
       (device_id, sync_type, extra_track_policy, include_music, include_podcasts,
        include_audiobooks, include_playlists,
-       preserve_folder_structure, album_grouping, custom_selections_json, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+       preserve_folder_structure, album_grouping, build_rockbox_db,
+       custom_selections_json, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
     ON CONFLICT(device_id) DO UPDATE SET
       sync_type = excluded.sync_type,
       extra_track_policy = excluded.extra_track_policy,
@@ -106,6 +110,7 @@ export function saveDeviceSyncPreferences(
       include_playlists = excluded.include_playlists,
       preserve_folder_structure = excluded.preserve_folder_structure,
       album_grouping = excluded.album_grouping,
+      build_rockbox_db = excluded.build_rockbox_db,
       custom_selections_json = excluded.custom_selections_json,
       updated_at = CURRENT_TIMESTAMP
   `).run(
@@ -118,6 +123,7 @@ export function saveDeviceSyncPreferences(
     prefs.includePlaylists ? 1 : 0,
     prefs.preserveFolderStructure ? 1 : 0,
     parseAlbumGrouping(prefs.albumGrouping),
+    prefs.buildRockboxDatabase === true ? 1 : 0,
     JSON.stringify(prefs.selections)
   );
 }

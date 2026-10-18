@@ -39,6 +39,14 @@ export interface Track {
   losslessSource?: string | null;
   /** The user overruled the verdict ("Mark as OK"); re-checks leave the track alone. */
   losslessOverride?: boolean;
+  /**
+   * Year, composer, comment and grouping tags. Only the Rockbox database the
+   * sync writes reads them; null when untagged or not yet backfilled.
+   */
+  year?: number | null;
+  composer?: string | null;
+  comment?: string | null;
+  grouping?: string | null;
 }
 
 /**
@@ -190,6 +198,20 @@ export interface Device {
  */
 export type DeviceTransport = "local" | "web";
 
+/**
+ * Which machines can reach a device, derived from `transport` and
+ * `remoteEnabled`:
+ *
+ * - `local` — only the machine running the sync engine (mount path, USB);
+ * - `remote` — only the browser holding its folder (`transport: "web"`);
+ * - `hybrid` — both. Stored as `transport: "local"` plus `remoteEnabled`, so
+ *   everything server-side (the podcast scheduler, auto-audiobooks) keeps
+ *   treating it as the server's own device. Each client uses the side it can
+ *   reach — see `deviceForClient()` in `src/main/devices/device-view.ts`.
+ *   A hybrid device always has a USB identity.
+ */
+export type DeviceConnection = "local" | "remote" | "hybrid";
+
 export interface DeviceProfile extends Device {
   /**
    * Local, or held open in a browser tab. Set once when the device is added
@@ -199,6 +221,14 @@ export interface DeviceProfile extends Device {
    * filesystem.
    */
   transport: DeviceTransport;
+  /**
+   * A local device that a browser may also hold (a hybrid device). Like
+   * `transport`, never written by `device:update`; only `device:setConnections`
+   * changes it.
+   */
+  remoteEnabled: boolean;
+  /** Derived from `transport` + `remoteEnabled`. */
+  connection: DeviceConnection;
   description: string | null;
   lastSyncDate: string | null;
   totalSyncedItems: number;
@@ -720,6 +750,13 @@ export interface DeviceSyncPreferences {
   preserveFolderStructure: boolean;
   /** Issue #113: group albums (and non-mirrored device folders) by album artist or track artist. */
   albumGrouping: AlbumGrouping;
+  /**
+   * Write Rockbox's database (`.rockbox/database_*.tcd`) at the end of every
+   * sync, so the player is ready to browse without Database → Update now.
+   * Opt-in per device (off by default). Skipped on a device with no `.rockbox`
+   * folder.
+   */
+  buildRockboxDatabase: boolean;
   selections: CustomSelections;
 }
 
@@ -742,6 +779,8 @@ export interface SyncOptions {
   /** Issue #113: which artist keys the album list and the rebuilt device folder
    * layout used when preserveFolderStructure is false (default "album-artist"). */
   albumGrouping?: AlbumGrouping;
+  /** Build the Rockbox database on the device after copying (default false). */
+  buildRockboxDatabase?: boolean;
 }
 
 // ---------------------------------------------------------------------------

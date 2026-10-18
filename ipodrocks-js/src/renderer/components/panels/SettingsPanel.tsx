@@ -13,6 +13,8 @@ import {
   setHarmonicPrefs,
   getRatingPrefs,
   setRatingPrefs,
+  getLibraryPrefs,
+  setLibraryPrefs,
   podcastGetSettings,
   podcastSetSettings,
   podcastBrowseDownloadDir,
@@ -66,17 +68,19 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
   const [analyzeWithEssentia, setAnalyzeWithEssentia] = useState(false);
   const [analyzePercent, setAnalyzePercent] = useState(10);
   const [tagRatingAlwaysWins, setTagRatingAlwaysWins] = useState(false);
+  const [scanOnStartup, setScanOnStartup] = useState(false);
 
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
     (async () => {
-      const [config, data, harmonic, ratingPrefs, podcastCfg] = await Promise.all([
+      const [config, data, harmonic, ratingPrefs, podcastCfg, libraryPrefs] = await Promise.all([
         getOpenRouterConfig(),
         checkSavantKeyData(),
         getHarmonicPrefs(),
         getRatingPrefs(),
         podcastGetSettings(),
+        getLibraryPrefs(),
       ]);
       if (!cancelled) {
         setApiKey(config?.apiKey ?? "");
@@ -88,6 +92,7 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
         setAnalyzeWithEssentia(harmonic.analyzeWithEssentia ?? false);
         setAnalyzePercent(harmonic.analyzePercent ?? 10);
         setTagRatingAlwaysWins(ratingPrefs.tagRatingAlwaysWins ?? false);
+        setScanOnStartup(libraryPrefs?.scanOnStartup === true);
         setPodcastSettings(podcastCfg);
         // Credentials are never sent to the renderer (F1); inputs stay blank
         // and the placeholder indicates whether a value is already stored.
@@ -175,6 +180,7 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
         analyzePercent: Math.min(100, Math.max(1, analyzePercent)),
       }));
       note(await setRatingPrefs({ tagRatingAlwaysWins }));
+      note(await setLibraryPrefs({ scanOnStartup }));
       const customDir = podcastDownloadDir.trim();
       const folderChanged = customDir !== podcastDownloadDirOriginal;
       // Only send credential fields when the user actually typed a value;
@@ -395,6 +401,30 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
                   onChange={(e) =>
                     setBackfillPercent(parseInt(e.target.value, 10) || 100)
                   }
+                />
+              </div>
+            </Card>
+
+            <Card
+              title="Library"
+              subtitle="Keep the library in step with the files on disk."
+            >
+              <div className="flex items-start justify-between gap-4">
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium text-foreground">
+                    Scan library at startup
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Scan every library folder each time iPodRocks starts (on a
+                    server, when the server starts). With this off, you are asked
+                    once the library has gone 10 days without a scan.
+                  </p>
+                </div>
+                <Switch
+                  checked={scanOnStartup}
+                  onChange={setScanOnStartup}
+                  className="shrink-0"
+                  data-testid="scan-on-startup"
                 />
               </div>
             </Card>

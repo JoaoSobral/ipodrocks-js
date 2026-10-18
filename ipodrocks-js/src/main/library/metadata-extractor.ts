@@ -40,6 +40,88 @@ export interface TrackMetadata {
    * guessed at, since 0 is a real half-star-below-one rating on that scale.
    */
   tagRating: number | null;
+  /**
+   * Year, composer, comment and grouping. iPodRocks shows none of them; they
+   * exist for the Rockbox database the sync writes (`rockbox/tagcache-sync.ts`),
+   * whose Year and Composer views would otherwise read `<Untagged>` throughout.
+   * Optional so a caller that builds a `TrackMetadata` by hand need not care.
+   */
+  tagFields?: TagFields;
+}
+
+/** The four tags only the Rockbox database needs. Null means "not tagged". */
+export interface TagFields {
+  year: number | null;
+  composer: string | null;
+  comment: string | null;
+  grouping: string | null;
+}
+
+export const EMPTY_TAG_FIELDS: TagFields = {
+  year: null,
+  composer: null,
+  comment: null,
+  grouping: null,
+};
+
+/** A plausible year out of a free-form tag value ("1994", "1994-03-01"). */
+export function parseYear(value: unknown): number | null {
+  if (typeof value === "number") {
+    return Number.isInteger(value) && value > 0 && value < 10000 ? value : null;
+  }
+  if (typeof value !== "string") return null;
+  const m = /^\s*(\d{4})/.exec(value);
+  if (!m) return null;
+  const year = Number(m[1]);
+  return year > 0 ? year : null;
+}
+
+function cleanText(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
+}
+
+/**
+ * music-metadata's `common` onto {@link TagFields}. A comment is either a
+ * string or `{ text }` depending on the music-metadata version and container,
+ * so both are accepted.
+ */
+export function tagFieldsFromCommon(
+  common: Pick<ICommonTagsResult, "year" | "date" | "composer" | "comment" | "grouping">
+): TagFields {
+  const rawComment = (common.comment as unknown[] | undefined)?.[0];
+  const comment =
+    typeof rawComment === "string"
+      ? rawComment
+      : (rawComment as { text?: unknown } | undefined)?.text;
+  return {
+    year: parseYear(common.year) ?? parseYear(common.date),
+    composer: cleanText(common.composer?.[0]),
+    comment: cleanText(comment),
+    grouping: cleanText(common.grouping),
+  };
+}
+
+/** A flat ffprobe tag dictionary onto {@link TagFields}; keys are case-folded. */
+export function tagFieldsFromTagMap(tags: Record<string, string>): TagFields {
+  const lower: Record<string, string> = {};
+  for (const [k, v] of Object.entries(tags)) lower[k.toLowerCase()] = v;
+  return {
+    year: parseYear(lower.date) ?? parseYear(lower.year),
+    composer: cleanText(lower.composer),
+    comment: cleanText(lower.comment) ?? cleanText(lower.description),
+    grouping: cleanText(lower.grouping) ?? cleanText(lower.contentgroup),
+  };
+}
+
+function tagFieldsFromApe(ape: ApeTags): TagFields {
+  return {
+    year: parseYear(ape.year),
+    composer: cleanText(ape.composer),
+    comment: cleanText(ape.comment),
+    grouping: cleanText(ape.extra?.Grouping ?? ape.extra?.GROUPING),
+  };
 }
 
 /**
@@ -147,6 +229,7 @@ export class MetadataExtractor {
       const trackNumber = common.track?.no?.toString() ?? "";
       const discNumber = common.disk?.no?.toString() ?? "";
       const tagRating = ratingFromCommonTags(common);
+      const tagFields = tagFieldsFromCommon(common);
 
       if (contentType === "podcast" || contentType === "audiobook") {
         const showTitle = common.album || "";
@@ -161,6 +244,7 @@ export class MetadataExtractor {
           showTitle,
           episodeNumber: trackNumber,
           tagRating,
+          tagFields,
         };
       }
 
@@ -173,6 +257,7 @@ export class MetadataExtractor {
         trackNumber,
         discNumber,
         tagRating,
+        tagFields,
       };
     } catch (err) {
       console.warn(`⚠️  Error reading metadata from ${filePath}:`, err);
@@ -211,6 +296,32 @@ export class MetadataExtractor {
         duration: false,
       });
       return ratingFromCommonTags(metadata.common);
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Read only year, composer, comment and grouping. Used by the one-shot
+   * backfill (`tag-fields-backfill.ts`) for tracks scanned before these were
+   * stored, for the same mtime-skip reason as {@link extractRatingTag}.
+   * Null when the file cannot be read at all, so the caller can tell "no tags"
+   * from "could not look".
+   */
+  async extractTagFields(filePath: string): Promise<TagFields | null> {
+    if (isMpcFile(filePath)) {
+      try {
+        return tagFieldsFromApe(readApeTags(filePath));
+      } catch {
+        return null;
+      }
+    }
+    try {
+      const metadata = await parseFile(filePath, {
+        skipCovers: true,
+        duration: false,
+      });
+      return tagFieldsFromCommon(metadata.common);
     } catch {
       return null;
     }
@@ -423,6 +534,7 @@ export class MetadataExtractor {
       const genre = tags.genre || tags.GENRE || "Unknown Genre";
       const trackNumber = tags.track || tags.TRACK || "";
       const discNumber = tags.disc || tags.DISC || "";
+      const tagFields = tagFieldsFromTagMap(tags);
       if (contentType === "podcast" || contentType === "audiobook") {
         return {
           title,
@@ -435,6 +547,7 @@ export class MetadataExtractor {
           showTitle: album,
           episodeNumber: trackNumber,
           tagRating: null,
+          tagFields,
         };
       }
       return {
@@ -446,6 +559,7 @@ export class MetadataExtractor {
         trackNumber,
         discNumber,
         tagRating: null,
+        tagFields,
       };
     } catch {
       return null;
@@ -484,6 +598,7 @@ export class MetadataExtractor {
     const genre = ape.genre || "Unknown Genre";
     const trackNumber = ape.track ?? "";
     const discNumber = ape.disc ?? "";
+    const tagFields = tagFieldsFromApe(ape);
 
     if (contentType === "podcast" || contentType === "audiobook") {
       return {
@@ -497,6 +612,7 @@ export class MetadataExtractor {
         showTitle: album,
         episodeNumber: trackNumber,
         tagRating: null,
+        tagFields,
       };
     }
 
@@ -509,6 +625,7 @@ export class MetadataExtractor {
       trackNumber,
       discNumber,
       tagRating: null,
+      tagFields,
     };
   }
 

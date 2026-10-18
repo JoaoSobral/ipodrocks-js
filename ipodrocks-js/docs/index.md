@@ -77,6 +77,7 @@ behind a Cloudflare Tunnel that opens no inbound port at all.
 - **Extra Audiobooks** — Subscribe to free public-domain audiobooks from LibriVox; chapters download on sync
 - **Harmonic mixing** — Key and BPM detection, Camelot wheel compatibility
 - **Rockbox-native smart playlists** — Per-device opt-in: live, auto-updating tagnavi entries instead of frozen `.m3u` snapshots
+- **[Rockbox database built during sync](/app-reference/sync#building-the-rockbox-database)** — Per-device opt-in: the sync writes the player's database, so new music is browsable without **Database → Update now**, with play counts and ratings kept
 
 **All of the above works offline, with no account and no API key.**
 
@@ -90,7 +91,8 @@ key of your own. Leave it blank and nothing else changes.
   type; Classic, Smart and Genius need no key.
 - **[Rocksy](/app-reference/assistant)** — A chat assistant that can act rather
   than only answer: build playlists, subscribe to podcasts, check and sync
-  devices, manage the web server's allowlist. Convenient, never required —
+  devices, manage the web server's allowlist — and answer questions from this
+  whole manual, which it can search. Convenient, never required —
   everything it does has a button somewhere.
 
 ## Next steps

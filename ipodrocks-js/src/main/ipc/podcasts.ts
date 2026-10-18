@@ -310,7 +310,7 @@ export function registerPodcastHandlers(): void {
       if (!device) return { error: `Device ${deviceId} not found` };
       // Turning it *off* is always allowed — a device that should not have had
       // it must be able to give it up, whatever it is.
-      const blocked = enabled ? autoPodcastBlock(device.profile.transport) : null;
+      const blocked = enabled ? autoPodcastBlock(device.profile) : null;
       if (blocked) return { error: blocked };
       getDevicesCore().updateDevice(deviceId, { autoPodcastsEnabled: enabled });
       return undefined;

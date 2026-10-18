@@ -30,6 +30,7 @@
  * of their aliases. `mov`'s external data references are off by default
  * (`enable_drefs`), which is what keeps it on the list.
  */
+import * as fs from "fs";
 import * as path from "path";
 import { spawn, type ChildProcess } from "child_process";
 
@@ -44,9 +45,16 @@ export const AUDIO_INPUT_DEMUXERS: readonly string[] = [
 /**
  * Single still images. Deliberately the `*_pipe` demuxers and **not** `image2`,
  * whose default pattern handling expands a filename into a glob or a numbered
- * sequence and so reads files other than the one named. Probing a real JPEG or
- * PNG picks the pipe demuxer on its own (it outscores `image2`'s extension
- * match), so nothing needs forcing.
+ * sequence and so reads files other than the one named.
+ *
+ * **Probing does not reliably reach these on its own.** `image2` claims any
+ * file with an image extension, and `jpeg_pipe` only outscores it when the
+ * first image data (SOS) falls inside the probe window. A real-world cover with
+ * a big EXIF/ICC/comment block ahead of it probes as `image2`, the whitelist
+ * refuses that, and every such cover silently fell back to a full-size copy.
+ * So `ffmpegInputArgs(…, "image")` names the demuxer from the file's magic
+ * bytes (`imageDemuxerFor`). An unrecognised file gets no `-f`, and the
+ * whitelist still decides.
  */
 export const IMAGE_INPUT_DEMUXERS: readonly string[] = [
   "jpeg_pipe", "png_pipe", "bmp_pipe", "gif", "gif_pipe", "webp_pipe", "tiff_pipe",
@@ -64,11 +72,43 @@ export function ffmpegInputArgs(
   kind: FfmpegInputKind = "audio"
 ): string[] {
   const list = kind === "image" ? IMAGE_INPUT_DEMUXERS : AUDIO_INPUT_DEMUXERS;
+  const forced = kind === "image" ? imageDemuxerFor(filePath) : null;
   return [
     "-protocol_whitelist", "file",
     "-format_whitelist", list.join(","),
+    ...(forced ? ["-f", forced] : []),
     "-i", path.resolve(filePath),
   ];
+}
+
+/**
+ * The single-image demuxer for a file's magic bytes, or null when it is none
+ * of them (or unreadable — ffmpeg then reports that itself). Always one of
+ * `IMAGE_INPUT_DEMUXERS`.
+ */
+export function imageDemuxerFor(filePath: string): string | null {
+  const head = Buffer.alloc(12);
+  let n = 0;
+  try {
+    const fd = fs.openSync(filePath, "r");
+    try {
+      n = fs.readSync(fd, head, 0, head.length, 0);
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch {
+    return null;
+  }
+  const b = head.subarray(0, n);
+  const starts = (sig: number[], at = 0) =>
+    b.length >= at + sig.length && sig.every((v, i) => b[at + i] === v);
+  if (starts([0xff, 0xd8, 0xff])) return "jpeg_pipe";
+  if (starts([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) return "png_pipe";
+  if (starts([0x47, 0x49, 0x46, 0x38])) return "gif";
+  if (starts([0x52, 0x49, 0x46, 0x46]) && starts([0x57, 0x45, 0x42, 0x50], 8)) return "webp_pipe";
+  if (starts([0x49, 0x49, 0x2a, 0x00]) || starts([0x4d, 0x4d, 0x00, 0x2a])) return "tiff_pipe";
+  if (starts([0x42, 0x4d])) return "bmp_pipe";
+  return null;
 }
 
 /**

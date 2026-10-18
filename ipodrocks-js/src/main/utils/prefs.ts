@@ -30,6 +30,17 @@ export interface RatingPrefs {
 }
 
 /**
+ * Keeping the library current. Server-wide, owner-only to change (the library
+ * is shared), like every other pref here.
+ */
+export interface LibraryPrefs {
+  /** Scan every library folder when the app (or the daemon) starts. Off by default. */
+  scanOnStartup?: boolean;
+  /** Unix ms — the "you haven't scanned since …" reminder stays quiet until then. */
+  scanReminderSnoozeUntil?: number;
+}
+
+/**
  * Deployment shape for the web server (`src/server/`). Third-party OAuth client
  * credentials are deliberately *not* here — they come from the environment
  * only; see `src/server/config.ts` for why.
@@ -57,6 +68,7 @@ interface Prefs {
   _encApiKey?: string;
   harmonic?: HarmonicPrefs;
   ratings?: RatingPrefs;
+  library?: LibraryPrefs;
   /** Unix ms timestamp — auto update check is suppressed until this time. */
   updateSnoozeUntil?: number;
   /** Unix ms timestamp of the last automatic update check, throttling it to one/day. */
@@ -289,6 +301,26 @@ export function getRatingPrefs(): RatingPrefs {
 export function setRatingPrefs(prefs: RatingPrefs): void {
   const all = readPrefs();
   all.ratings = { ...all.ratings, ...prefs };
+  writePrefs(all);
+}
+
+export function getLibraryPrefs(): Required<Pick<LibraryPrefs, "scanOnStartup">> & LibraryPrefs {
+  const l = readPrefs().library;
+  const snooze = l?.scanReminderSnoozeUntil;
+  return {
+    scanOnStartup: l?.scanOnStartup === true,
+    ...(typeof snooze === "number" && Number.isFinite(snooze) ? { scanReminderSnoozeUntil: snooze } : {}),
+  };
+}
+
+export function setLibraryPrefs(prefs: LibraryPrefs): void {
+  const all = readPrefs();
+  const next: LibraryPrefs = { ...all.library };
+  if (typeof prefs.scanOnStartup === "boolean") next.scanOnStartup = prefs.scanOnStartup;
+  if (typeof prefs.scanReminderSnoozeUntil === "number" && Number.isFinite(prefs.scanReminderSnoozeUntil)) {
+    next.scanReminderSnoozeUntil = prefs.scanReminderSnoozeUntil;
+  }
+  all.library = next;
   writePrefs(all);
 }
 

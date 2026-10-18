@@ -53,9 +53,11 @@ import {
   generateGeniusPlaylistFromDb,
 } from "../playlists/genius-engine";
 import { ingestRuntimeDataForDevice } from "../rockbox/runtime-ingest";
-import { getRatingPrefs, setRatingPrefs } from "../utils/prefs";
+import { deviceForClient } from "../devices/device-view";
+import { getRatingPrefs, setRatingPrefs, getLibraryPrefs, setLibraryPrefs } from "../utils/prefs";
 import type { HandlerSender } from "../host/bridge";
 import { PROVIDERS, isProvider } from "../../shared/auth-providers";
+import { listDocsPages, readDocsPage, searchDocs } from "./appDocsSearch";
 
 export interface AiToolContext {
   db: Database.Database;
@@ -139,6 +141,43 @@ const library_search_tracks: AiTool = {
          LIMIT ?`
       )
       .all(contentType, like, like, like, limit);
+  },
+};
+
+/**
+ * The full user documentation, which the system prompt only summarises. Read
+ * tier and open to every allowlisted user: it is the published docs and
+ * nothing else — no paths, no settings, no other account's data.
+ */
+const app_docs_search: AiTool = {
+  name: "app_docs_search",
+  description:
+    "Search or read the iPodRocks user documentation (every page of the docs site: Library, Devices, Sync, Playlists, Ratings, Podcasts, Audiobooks, Settings, Web Server, installation, server deployment, troubleshooting, architecture). Pass `query` with the user's question or its key words to get the best-matching sections, or `page` (e.g. \"app-reference/sync.md\") to read one page whole. With neither, lists every page.",
+  parameters: {
+    type: "object",
+    properties: {
+      query: { type: "string", description: "Free-text question or keywords." },
+      page: {
+        type: "string",
+        description: "A page path from the list, e.g. \"guide/troubleshooting.md\".",
+      },
+    },
+  },
+  kind: "read",
+  summarize: (a) =>
+    a.page ? `Read docs page ${a.page}` : a.query ? `Search docs for "${a.query}"` : "List docs pages",
+  async run(args) {
+    if (typeof args.page === "string" && args.page.trim()) {
+      const page = readDocsPage(args.page);
+      return page ?? { error: `No docs page "${args.page}"`, pages: listDocsPages() };
+    }
+    if (typeof args.query === "string" && args.query.trim()) {
+      const results = searchDocs(args.query);
+      return results.length > 0
+        ? { results }
+        : { results: [], note: "Nothing in the docs matches; try other words.", pages: listDocsPages() };
+    }
+    return { pages: listDocsPages() };
   },
 };
 
@@ -252,10 +291,12 @@ const device_list: AiTool = {
       model: d.profile.modelName,
       lastSyncDate: d.profile.lastSyncDate,
       transport: d.profile.transport,
-      // Only meaningful for a web device: a local one's connection state is a
-      // question about the filesystem, and `device_check` answers it properly.
+      // local, remote (a browser holds it) or hybrid (both).
+      connection: d.profile.connection,
+      // Whether a browser holds it right now — meaningful only when one may.
+      // A local side's state is a filesystem question `device_check` answers.
       connected:
-        d.profile.transport === "web" ? isDeviceAttached(d.profile.id) : null,
+        d.profile.connection !== "local" ? isDeviceAttached(d.profile.id) : null,
       usbVendorId: d.profile.usbVendorId ?? null,
       usbProductId: d.profile.usbProductId ?? null,
       usbSerial: d.profile.usbSerial ?? null,
@@ -559,6 +600,52 @@ const ratings_set_tag_priority: AiTool = {
   },
 };
 
+const library_set_scan_on_startup: AiTool = {
+  name: "library_set_scan_on_startup",
+  description:
+    "Turn Settings → Library → 'Scan library at startup' on or off (off by default). On: the desktop app scans every library folder each time it opens, and a server scans when it starts. Off: the owner is asked to scan once the library has gone 10 days without a scan. Call with no `enabled` to report the setting and when the library was last scanned.",
+  parameters: {
+    type: "object",
+    properties: {
+      enabled: {
+        type: "boolean",
+        description: "Omit to just report the current setting; pass true/false to change it.",
+      },
+    },
+    required: [],
+  },
+  // Only the setting: the scan itself runs at the next start, or through
+  // library_scan with its own confirm gate.
+  kind: "write-safe",
+  summarize: (a) =>
+    a.enabled === undefined
+      ? "Check the startup library scan setting"
+      : `Turn "scan library at startup" ${a.enabled ? "on" : "off"}`,
+  async run(args, ctx) {
+    if (args.enabled === undefined) {
+      const { getLastLibraryScanAt } = await import("../library/scan-schedule");
+      const last = getLastLibraryScanAt(ctx.db);
+      return {
+        scanOnStartup: getLibraryPrefs().scanOnStartup,
+        lastLibraryScan: last === null ? null : new Date(last).toISOString(),
+      };
+    }
+    // Server-wide, owner-gated like `settings:setLibraryPrefs`.
+    const { OWNER_ONLY_SETTINGS_MESSAGE } = await import("../../server/auth/sessions");
+    const denied = await ownerGate(ctx, OWNER_ONLY_SETTINGS_MESSAGE);
+    if (denied) return denied;
+    const enabled = Boolean(args.enabled);
+    setLibraryPrefs({ scanOnStartup: enabled });
+    return {
+      ok: true,
+      scanOnStartup: enabled,
+      message: enabled
+        ? "The library will now be scanned every time iPodRocks starts."
+        : "Startup scans are off. You'll be asked to scan once the library has gone 10 days without one.",
+    };
+  },
+};
+
 /**
  * The gate every `web_server_*` tool shares.
  *
@@ -599,14 +686,23 @@ async function deviceGate(
     "../../shared/device-locality"
   );
   const clientIsWeb = ctx.sessionId !== undefined;
-  const transport = device.profile.transport;
   const reason =
     kind === "admin"
-      ? deviceAdminBlock(transport, clientIsWeb)
-      : deviceLocalityBlock(transport, clientIsWeb);
+      ? deviceAdminBlock(device.profile, clientIsWeb)
+      : deviceLocalityBlock(device.profile, clientIsWeb);
   if (reason) return reason;
   const { deviceOwnerBlock } = await import("../ipc/common");
   return deviceOwnerBlock(ctx.sessionId, deviceId);
+}
+
+/**
+ * The device as this caller reaches it — the twin of `getDeviceForCaller()` in
+ * `ipc/common.ts`. A tool that operates on a hybrid device must use the side
+ * its caller can reach, or a browser's request runs against the server's mount.
+ */
+function deviceForCaller(ctx: AiToolContext, deviceId: number) {
+  const device = ctx.getDevicesCore().getDeviceById(deviceId);
+  return device ? deviceForClient(device, ctx.sessionId !== undefined) : undefined;
 }
 
 async function ownerGate(
@@ -1278,7 +1374,7 @@ const device_check: AiTool = {
   async run(args, ctx) {
     const deviceId = Number(args.device_id);
     if (!Number.isInteger(deviceId) || deviceId <= 0) throw new Error("Invalid device_id");
-    const device = ctx.getDevicesCore().getDeviceById(deviceId);
+    const device = deviceForCaller(ctx, deviceId);
     if (!device) throw new Error(`Device #${deviceId} not found`);
     const blocked = await deviceGate(ctx, deviceId, "operate");
     if (blocked) return { error: blocked };
@@ -1350,7 +1446,7 @@ const device_read_runtime_data: AiTool = {
   async run(args, ctx) {
     const deviceId = Number(args.device_id);
     if (!Number.isInteger(deviceId) || deviceId <= 0) throw new Error("Invalid device_id");
-    const device = ctx.getDevicesCore().getDeviceById(deviceId);
+    const device = deviceForCaller(ctx, deviceId);
     if (!device) throw new Error(`Device #${deviceId} not found`);
     const blocked = await deviceGate(ctx, deviceId, "operate");
     if (blocked) return { error: blocked };
@@ -1584,7 +1680,7 @@ const device_eject: AiTool = {
   async run(args, ctx) {
     const deviceId = Number(args.device_id);
     if (!Number.isInteger(deviceId) || deviceId <= 0) throw new Error("Invalid device_id");
-    const device = ctx.getDevicesCore().getDeviceById(deviceId);
+    const device = deviceForCaller(ctx, deviceId);
     if (!device) throw new Error(`Device #${deviceId} not found`);
     const blocked = await deviceGate(ctx, deviceId, "operate");
     if (blocked) return { error: blocked };
@@ -1781,6 +1877,14 @@ const device_set_usb_identity: AiTool = {
     const blocked = await deviceGate(ctx, deviceId, "admin");
     if (blocked) return { error: blocked };
 
+    // The same rule `device:update` applies: a hybrid device's USB identity is
+    // a fact about the server's machine, out of a browser's reach.
+    if (ctx.sessionId !== undefined && device.profile.connection === "hybrid") {
+      return {
+        error:
+          "This device's USB identity belongs to the machine it is plugged into — change it in the app running there.",
+      };
+    }
     const clearing = !args.usb_vendor_id || !args.usb_product_id;
     const ok = ctx.getDevicesCore().updateDevice(deviceId, {
       usbVendorId: clearing ? null : String(args.usb_vendor_id),
@@ -1798,6 +1902,70 @@ const device_set_usb_identity: AiTool = {
         : `AI bound device ${device.profile.name} to USB ${args.usb_vendor_id}:${args.usb_product_id}`
     );
     return ctx.getDevicesCore().getDeviceById(deviceId)!.profile;
+  },
+};
+
+const device_set_connections: AiTool = {
+  name: "device_set_connections",
+  description:
+    "Change how a device connects: 'local' (plugged into the machine running iPodRocks, by mount path and USB), 'remote' (a folder held in a browser through the web server), or hybrid (both — the desktop app syncs it through its mount, a browser through its folder; same ratings, history and settings). A hybrid device must have a USB identity (see usb_device_list / device_set_usb_identity). Pass remote=true/false to allow or stop browser use; pass local={mount_path, usb_vendor_id, usb_product_id, usb_serial} to add or change the local side of a remote device (desktop app only), or local=null to drop it. From a browser only the server's owner may change this, and only the browser side. Picking the browser folder itself happens in the Devices panel (Connect folder), which Rocksy cannot do.",
+  parameters: {
+    type: "object",
+    properties: {
+      device_id: { type: "number", description: "Device ID (from device_list)" },
+      remote: { type: "boolean", description: "Allow (true) or stop (false) using it from a browser." },
+      local: {
+        type: ["object", "null"],
+        description: "The local side: an object to add/change it, null to drop it, omit to keep it.",
+        properties: {
+          mount_path: { type: "string" },
+          usb_vendor_id: { type: "string" },
+          usb_product_id: { type: "string" },
+          usb_serial: { type: "string" },
+        },
+      },
+    },
+    required: ["device_id"],
+  },
+  // Changes which machines can write to the player.
+  kind: "write-destructive",
+  summarize: (a) => {
+    const parts: string[] = [];
+    if (a.remote === true) parts.push("allow browser use");
+    if (a.remote === false) parts.push("stop browser use");
+    if (a.local === null) parts.push("drop the local connection");
+    else if (a.local && typeof a.local === "object") parts.push("set the local connection");
+    return `Device #${a.device_id}: ${parts.join(", ") || "no change"}`;
+  },
+  async run(args, ctx) {
+    const deviceId = Number(args.device_id);
+    if (!Number.isInteger(deviceId) || deviceId <= 0) throw new Error("Invalid device_id");
+    const { setDeviceConnectionsFor } = await import("../ipc/devices");
+    const local = args.local as Record<string, unknown> | null | undefined;
+    const result = setDeviceConnectionsFor({ sessionId: ctx.sessionId }, deviceId, {
+      remote: typeof args.remote === "boolean" ? args.remote : undefined,
+      local:
+        local === undefined
+          ? undefined
+          : local === null
+            ? null
+            : {
+                mountPath: String(local.mount_path ?? ""),
+                usbVendorId: (local.usb_vendor_id as string | undefined) ?? null,
+                usbProductId: (local.usb_product_id as string | undefined) ?? null,
+                usbSerial: (local.usb_serial as string | undefined) ?? null,
+              },
+    });
+    if ("error" in result) return result;
+    return {
+      ok: true,
+      device: result.name,
+      connection: result.connection,
+      note:
+        result.connection !== "local"
+          ? "To finish, open iPodRocks in the browser that holds the player and connect its folder in the Devices panel."
+          : undefined,
+    };
   },
 };
 
@@ -1819,6 +1987,11 @@ const device_set_sync_preferences: AiTool = {
         description:
           "Which artist identifies an album. 'album-artist' keeps compilations as a single album; 'track-artist' is the older per-track-artist behaviour.",
       },
+      build_rockbox_database: {
+        type: "boolean",
+        description:
+          "Build the Rockbox database on the device at the end of every sync, so the player is ready to browse without running Database → Update now. Off by default; only matters on a player running Rockbox.",
+      },
     },
     required: ["device_id"],
   },
@@ -1828,6 +2001,8 @@ const device_set_sync_preferences: AiTool = {
     if (a.preserve_folder_structure !== undefined)
       parts.push(`mirror folders = ${a.preserve_folder_structure}`);
     if (a.album_grouping !== undefined) parts.push(`group albums by ${a.album_grouping}`);
+    if (a.build_rockbox_database !== undefined)
+      parts.push(`build Rockbox database = ${a.build_rockbox_database}`);
     return `Update device #${a.device_id} sync layout (${parts.join(", ") || "no changes"})`;
   },
   async run(args, ctx) {
@@ -1840,7 +2015,8 @@ const device_set_sync_preferences: AiTool = {
 
     if (
       args.preserve_folder_structure === undefined &&
-      args.album_grouping === undefined
+      args.album_grouping === undefined &&
+      args.build_rockbox_database === undefined
     ) {
       throw new Error("No settings provided to update");
     }
@@ -1864,6 +2040,7 @@ const device_set_sync_preferences: AiTool = {
         includePlaylists: true,
         preserveFolderStructure: true,
         albumGrouping: "album-artist",
+        buildRockboxDatabase: false,
         selections: emptySelections(),
       } satisfies DeviceSyncPreferences);
 
@@ -1875,6 +2052,10 @@ const device_set_sync_preferences: AiTool = {
           : current.preserveFolderStructure,
       albumGrouping:
         (args.album_grouping as AlbumGrouping | undefined) ?? current.albumGrouping,
+      buildRockboxDatabase:
+        args.build_rockbox_database !== undefined
+          ? !!args.build_rockbox_database
+          : current.buildRockboxDatabase,
     };
 
     saveDeviceSyncPreferences(ctx.db, deviceId, next);
@@ -1889,6 +2070,7 @@ const device_set_sync_preferences: AiTool = {
       name: device.profile.name,
       preserveFolderStructure: next.preserveFolderStructure,
       albumGrouping: next.albumGrouping,
+      buildRockboxDatabase: next.buildRockboxDatabase,
     };
   },
 };
@@ -1940,6 +2122,7 @@ const device_set_orphan_policy: AiTool = {
         includePlaylists: true,
         preserveFolderStructure: true,
         albumGrouping: "album-artist",
+        buildRockboxDatabase: false,
         selections: emptySelections(),
       } satisfies DeviceSyncPreferences);
 
@@ -1977,7 +2160,7 @@ const device_sync: AiTool = {
   async run(args, ctx) {
     const deviceId = Number(args.device_id);
     if (!Number.isInteger(deviceId) || deviceId <= 0) throw new Error("Invalid device_id");
-    const device = ctx.getDevicesCore().getDeviceById(deviceId);
+    const device = deviceForCaller(ctx, deviceId);
     if (!device) throw new Error(`Device #${deviceId} not found`);
     const blocked = await deviceGate(ctx, deviceId, "operate");
     if (blocked) return { error: blocked };
@@ -2516,6 +2699,7 @@ const audiobook_unsubscribe: AiTool = {
 // ---------------------------------------------------------------------------
 
 export const AI_TOOLS: AiTool[] = [
+  app_docs_search,
   library_search_tracks,
   library_list_albums,
   library_list_artists,
@@ -2530,6 +2714,7 @@ export const AI_TOOLS: AiTool[] = [
   ratings_list_conflicts,
   ratings_resolve_conflicts,
   ratings_set_tag_priority,
+  library_set_scan_on_startup,
   device_read_runtime_data,
   sync_status,
   playlist_create_classic,
@@ -2542,6 +2727,7 @@ export const AI_TOOLS: AiTool[] = [
   device_update_settings,
   device_set_sync_preferences,
   device_set_usb_identity,
+  device_set_connections,
   device_set_orphan_policy,
   device_sync,
   library_scan,

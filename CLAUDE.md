@@ -533,6 +533,99 @@ through the already-gated `library_scan`). Pinned in
 `src/__tests__/regressions/rating-tag-overwrite.test.ts` and
 `src/__tests__/regressions/rating-tag-always-wins.test.ts`.
 
+## Hazard: iPodRocks writes the Rockbox database, and Rockbox does not repair it
+
+The Sync tab's **Build Rockbox database** (`DeviceSyncPreferences.buildRockboxDatabase`,
+column `device_sync_preferences.build_rockbox_db`, **off by default** and per device)
+writes `.rockbox/database_idx.tcd` and the ten `database_N.tcd` tag files at the end
+of a sync. Encoder: `rockbox/tagcache-build.ts` (pure). Orchestration:
+`rockbox/tagcache-sync.ts`. A database Rockbox disagrees with is not fixed on the
+player — it fails the load and the user has no database until they initialize one.
+
+- **The format rules are `apps/tagcache.c`'s and are pinned byte for byte** by a
+  hand-assembled fixture in `regressions/tagcache-encoder.test.ts`: little-endian;
+  unique tags (0,1,2,5,6,7,8,12) deduplicated ASCII-case-insensitively with
+  `idx_id = -1`; title sorted but one entry per track; filename in index order and
+  unpadded; sorted entries `'X'`-padded so header+data is a multiple of 8;
+  `<Untagged>` sorts first; and the master `datasize = 24 + 96n + Σ tag-file
+  datasizes except filename` — get that last one wrong and RAM-cache load fails.
+  Only magic `0x10` (Rockbox 4.0+) is written; anything else is skipped.
+- **It runs after Phase 3**, so the ratings Phase 3 just patched into the old index
+  are what get carried, and Phase 3's `idxIds` stay valid while it uses them.
+  Runtime fields are carried **by normalized filename**, with `FLAG_DIRTYNUM`, and
+  `serial` is kept above every `lastplayed`. Dropping them would read as a wiped
+  device to `detectRebuiltDatabase()` on the next sync.
+- **A track new to the device gets `tracks.rating`** and is `markRatingsPropagated()`,
+  which is why Phase 3's "waiting for the device's database" message is held back
+  until the build has either succeeded (then it is moot) or not.
+- **Filenames keep the volume prefix the old database used** (`/<HDD0>/` on a
+  multi-volume build). The file list is the *device's* (`listTree`), filtered the
+  way `check_dir()` does (`ROCKBOX_AUDIO_EXTENSIONS`, `database.ignore`), plus
+  dot-folders and `._` files skipped — which also hides a delete-all's
+  `.ipodrocks-trash-*` still being removed.
+- **`mtime` must be what Rockbox reads off the FAT entry, or auto-update re-indexes
+  everything.** `add_tagcache()` deletes and re-adds any entry whose mtime differs
+  from the file's — dropping its play counts — and `commit()` marks the index
+  dirty until the merge ends, so a restart mid-merge is the "Database is not
+  ready, initialize now?" prompt. `dostime_mktime()` reads the FAT fields as UTC,
+  and what the fields hold depends on the *writer*: UTC on Linux with the clock
+  on UTC (systemd's default, `sys_tz` = 0), a mount's `time_offset=`/`tz=UTC` if
+  given, local time on Windows/macOS. `detectFatClock()` decides; the first
+  version assumed local everywhere and was off by the zone on every Linux sync.
+  Verified against `mdir` on a real udisks vfat mount.
+- **Locally the files are staged as `.ipodrocks-new` and renamed, index last; a
+  browser-held device writes in place**, because `RemoteDeviceFs.rename` is a
+  read + write + delete. `database_tmp.tcd`/`database_state.tcd` are deleted so
+  Rockbox never commits a stale scan over the result.
+- Year/composer/comment/grouping come from `tracks` columns added for this
+  (`migrateTrackTagFields()`), backfilled once by `library/tag-fields-backfill.ts`.
+
+Pinned in `regressions/tagcache-encoder`, `tagcache-sync-build`,
+`tag-fields-backfill`, `device-sync-preferences`, and e2e `rockbox-database-build`
+/ `web-rockbox-database-build`. Real-player loading is manual verification.
+
+## Hazard: a hybrid device is two devices to its handlers, and one to the database
+
+A hybrid device (3.2.0) is `transport='local'` + `devices.remote_enabled = 1`:
+the real mount and USB identity on the server's machine, *and* a browser folder
+under the synthetic `webDeviceRoot(id)`. It is stored as local so nothing
+server-side that reads `transport` (podcast scheduler, auto-audiobooks,
+`removeDeviceCopy`) changes, and so the `transport` CHECK needs no rebuild.
+
+- **Every handler that operates on a device must look it up with
+  `getDeviceForCaller()` (`ipc/common.ts`) — the assistant twin is
+  `deviceForCaller()` in `tools.ts`.** Both go through `deviceForClient()`
+  (`devices/device-view.ts`), which hands a browser a view with
+  `transport: "web"`, `mountPath: webDeviceRoot(id)` and the browser's
+  filesystem, and the desktop the local side. Everything below the handler
+  already branches on `profile.transport`; a lookup that skips the view hands
+  a browser's sync the server's mount and `NodeDeviceFs`.
+- **A hybrid device always has a USB identity** — `setConnections()` refuses one
+  without, and `updateDevice()` refuses clearing it. `isDeviceOnline()` checks
+  the USB unit only when there is one, so without it the local side could be
+  whatever is mounted at the path while a browser writes the real player.
+- **`remote_enabled` is out of `ALLOWED_UPDATE_FIELDS`**, like `transport`; only
+  `device:setConnections` / `device_set_connections` change it, both through
+  `setDeviceConnectionsFor()`. From a browser: owner-only, browser side only,
+  and the caller becomes `web_owner_subject`. A hybrid device with a **null**
+  owner (opened from the desktop) is the server owner's alone — the attach
+  handshake and `deviceOwnerBlock()` both say so, unlike a pre-column remote
+  device, whose null owner still admits anyone.
+- A browser may edit a hybrid device but `device:update` strips `mountPath` and
+  `usb*`, and `deviceAdminBlock(…, "remove")` refuses removing it.
+
+Pinned in `regressions/hybrid-device.test.ts` and e2e `hybrid-device` /
+`web-hybrid-device` (whose load-bearing assertion is that the server's mount is
+still empty after the browser's sync).
+
+## Rocksy reads the docs through a generated bundle
+
+`app_docs_search` (read tier, any user) searches `assistant/docsCorpus.generated.ts`,
+which `scripts/bundle-docs.js` builds from `docs/` (also run by `npm run build`).
+**After editing anything under `docs/`, run `npm run bundle-docs`** —
+`regressions/app-docs-bundle.test.ts` fails on a stale bundle. `appDocs.ts` stays
+the short summary in every system prompt.
+
 ## Hazard: APEv2 item flags put the type in bits 1-2, not bits 0-1
 
 Issue #125. `ITEM_TYPE_BINARY` was `1`. In APEv2 **bit 0 is the read-only flag

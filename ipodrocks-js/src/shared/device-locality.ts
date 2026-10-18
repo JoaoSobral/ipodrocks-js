@@ -1,4 +1,23 @@
-import type { DeviceTransport } from "./types";
+import type { DeviceConnection, DeviceTransport } from "./types";
+
+/**
+ * What the guards need to know about a device: a bare transport (older
+ * callers, and the renderer's form state), or the profile itself, whose
+ * `remoteEnabled` makes a local device hybrid.
+ */
+export type DeviceReach =
+  | DeviceTransport
+  | { transport?: DeviceTransport; remoteEnabled?: boolean | null }
+  | null
+  | undefined;
+
+/** Which machines can reach this device. */
+export function deviceConnection(device: DeviceReach): DeviceConnection {
+  const transport = typeof device === "string" ? device : device?.transport;
+  if (transport === "web") return "remote";
+  const remoteEnabled = typeof device === "object" && device !== null && device.remoteEnabled === true;
+  return remoteEnabled ? "hybrid" : "local";
+}
 
 /**
  * Which client can actually drive which device.
@@ -33,10 +52,13 @@ import type { DeviceTransport } from "./types";
  * rather than naming a transport.
  */
 export function deviceLocalityBlock(
-  transport: DeviceTransport | undefined,
+  device: DeviceReach,
   clientIsWeb: boolean
 ): string | null {
-  const isRemote = transport === "web";
+  const connection = deviceConnection(device);
+  // Each side of a hybrid device is reachable from its own client.
+  if (connection === "hybrid") return null;
+  const isRemote = connection === "remote";
   if (clientIsWeb && !isRemote) {
     return (
       "This device is plugged into the server, so only the app running there " +
@@ -68,10 +90,22 @@ export function deviceLocalityBlock(
  *   it cannot see and will never be able to verify.
  */
 export function deviceAdminBlock(
-  transport: DeviceTransport | undefined,
-  clientIsWeb: boolean
+  device: DeviceReach,
+  clientIsWeb: boolean,
+  op: "edit" | "remove" = "edit"
 ): string | null {
-  if (clientIsWeb && !isRemoteDevice(transport)) {
+  const connection = deviceConnection(device);
+  // A browser holding a hybrid device may change its ordinary settings (the
+  // handler keeps the mount path and USB identity out of reach), but the
+  // device is also the server's: removing it is for the app running there.
+  // The browser can give up its own connection instead.
+  if (clientIsWeb && connection === "hybrid") {
+    return op === "remove"
+      ? "This device is also plugged into the server. Remove it from the app " +
+          "running there, or stop using it from this browser in its Connections."
+      : null;
+  }
+  if (clientIsWeb && connection === "local") {
     return (
       "This device belongs to the machine running the server. Change or remove " +
       "it from the app running there."
@@ -81,8 +115,13 @@ export function deviceAdminBlock(
 }
 
 /** A device held by a browser rather than attached to the sync engine's host. */
-export function isRemoteDevice(transport: DeviceTransport | undefined): boolean {
-  return transport === "web";
+export function isRemoteDevice(device: DeviceReach): boolean {
+  return deviceConnection(device) === "remote";
+}
+
+/** A browser may hold this device (remote or hybrid). */
+export function browserMayHold(device: DeviceReach): boolean {
+  return deviceConnection(device) !== "local";
 }
 
 /**
@@ -95,10 +134,9 @@ export function isRemoteDevice(transport: DeviceTransport | undefined): boolean 
  * link nobody chose for it. Downloading episodes stays on; only the automatic
  * push to the device is refused.
  */
-export function autoPodcastBlock(
-  transport: DeviceTransport | undefined
-): string | null {
-  return isRemoteDevice(transport)
+export function autoPodcastBlock(device: DeviceReach): string | null {
+  // A hybrid device is fine: the schedule reaches it through its local mount.
+  return isRemoteDevice(device)
     ? "Auto Podcasts needs a device the server can reach on its own. A remote " +
         "device is only connected while its browser tab is open, so there is " +
         "nothing for the schedule to sync to."

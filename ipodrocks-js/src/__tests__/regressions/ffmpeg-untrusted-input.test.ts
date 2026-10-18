@@ -228,6 +228,25 @@ describe("Rockbox cover generation", () => {
     fs.copyFileSync(secretJpg, scratch);
     expect(run(scratch).status).toBe(0);
   });
+
+  // A real-world cover: a large header block (EXIF, ICC, a comment) pushes the
+  // first image data past ffmpeg's probe window, so probing lands on `image2`
+  // — refused by the whitelist — and every such cover was copied at full size.
+  it("resizes a JPEG whose first image data is past the probe window", () => {
+    const small = fs.readFileSync(secretJpg);
+    const payload = Buffer.alloc(4000, 0x41);
+    const com = Buffer.concat([
+      Buffer.from([0xff, 0xfe, (payload.length + 2) >> 8, (payload.length + 2) & 0xff]),
+      payload,
+    ]);
+    for (const name of ["padded.jpg", "padded.jpeg"]) {
+      const padded = path.join(dir, "secret", name);
+      fs.writeFileSync(padded, Buffer.concat([small.subarray(0, 2), com, small.subarray(2)]));
+      const res = run(padded);
+      expect(res.stderr).not.toMatch(/whitelist/);
+      expect(res.status).toBe(0);
+    }
+  });
 });
 
 describe("Essentia decode", () => {

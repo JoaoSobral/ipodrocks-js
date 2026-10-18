@@ -40,6 +40,7 @@ interface SyncPrefsState {
   extraTrackPolicy: ExtraTrackPolicy;
   preserveFolderStructure: boolean;
   albumGrouping: AlbumGrouping;
+  buildRockboxDatabase: boolean;
   customMode: CustomSelectionMode;
   selectedItems: Record<string, Set<string>>;
 }
@@ -62,6 +63,7 @@ const INITIAL_PREFS: SyncPrefsState = {
   extraTrackPolicy: "keep",
   preserveFolderStructure: true,
   albumGrouping: "album-artist",
+  buildRockboxDatabase: false,
   customMode: "include",
   selectedItems: EMPTY_SELECTIONS,
 };
@@ -77,6 +79,7 @@ type SyncPrefsAction =
   | { type: "setExtraTrackPolicy"; value: ExtraTrackPolicy }
   | { type: "setPreserveFolderStructure"; value: boolean }
   | { type: "setAlbumGrouping"; value: AlbumGrouping }
+  | { type: "setBuildRockboxDatabase"; value: boolean }
   | { type: "setAlbumSelections"; labels: string[] }
   | { type: "setCustomMode"; value: CustomSelectionMode }
   | { type: "toggleSelection"; category: string; label: string; checked: boolean };
@@ -95,6 +98,7 @@ function syncPrefsReducer(state: SyncPrefsState, action: SyncPrefsAction): SyncP
         extraTrackPolicy: action.prefs.extraTrackPolicy,
         preserveFolderStructure: action.prefs.preserveFolderStructure,
         albumGrouping: action.prefs.albumGrouping ?? "album-artist",
+        buildRockboxDatabase: action.prefs.buildRockboxDatabase === true,
         customMode: action.prefs.selections.mode === "exclude" ? "exclude" : "include",
         selectedItems: {
           albums: new Set(action.prefs.selections.albums),
@@ -113,6 +117,7 @@ function syncPrefsReducer(state: SyncPrefsState, action: SyncPrefsAction): SyncP
     case "setExtraTrackPolicy": return { ...state, extraTrackPolicy: action.value };
     case "setPreserveFolderStructure": return { ...state, preserveFolderStructure: action.value };
     case "setAlbumGrouping": return { ...state, albumGrouping: action.value };
+    case "setBuildRockboxDatabase": return { ...state, buildRockboxDatabase: action.value };
     case "setAlbumSelections":
       return { ...state, selectedItems: { ...state.selectedItems, albums: new Set(action.labels) } };
     case "setCustomMode": return { ...state, customMode: action.value };
@@ -167,7 +172,7 @@ export function SyncPanel() {
   const navigateTo = useUIStore((s) => s.navigateTo);
   const [shadowLibs, setShadowLibs] = useState<ShadowLibrary[]>([]);
   const [prefs, dispatch] = useReducer(syncPrefsReducer, INITIAL_PREFS);
-  const { syncType, fullIncludeMusic, fullIncludePodcasts, fullIncludeAudiobooks, fullIncludePlaylists, extraTrackPolicy, preserveFolderStructure, albumGrouping, customMode, selectedItems } = prefs;
+  const { syncType, fullIncludeMusic, fullIncludePodcasts, fullIncludeAudiobooks, fullIncludePlaylists, extraTrackPolicy, preserveFolderStructure, albumGrouping, buildRockboxDatabase, customMode, selectedItems } = prefs;
 
   const [tracks, setTracks] = useState<Track[]>([]);
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
@@ -555,7 +560,7 @@ export function SyncPanel() {
       // A player is plugged into one machine. `sync:start` refuses this too —
       // that is the guard; this is so the user reads the reason here rather
       // than after a round trip.
-      const wrongMachine = deviceLocalityBlock(selectedDevice.transport, isWebMode());
+      const wrongMachine = deviceLocalityBlock(selectedDevice, isWebMode());
       if (wrongMachine) {
         setPrecheckError(wrongMachine);
         return;
@@ -610,6 +615,7 @@ export function SyncPanel() {
       extraTrackPolicy,
       preserveFolderStructure,
       albumGrouping,
+      buildRockboxDatabase,
       selections,
       ...(syncType === "full" && {
         includeMusic: fullIncludeMusic,
@@ -651,6 +657,7 @@ export function SyncPanel() {
     extraTrackPolicy,
     preserveFolderStructure,
     albumGrouping,
+    buildRockboxDatabase,
     customMode,
     selectedItems,
   ]);
@@ -667,7 +674,7 @@ export function SyncPanel() {
             value: String(d?.id ?? ""),
             // Listed, not hidden: a device that vanishes from the picker reads
             // as "iPodRocks lost my iPod". Picking one explains itself.
-            label: deviceLocalityBlock(d?.transport, isWebMode())
+            label: deviceLocalityBlock(d, isWebMode())
               ? `${d?.name ?? ""} — unavailable here`
               : d?.name ?? "",
           }))}
@@ -801,6 +808,19 @@ export function SyncPanel() {
             <span className="text-sm text-muted-foreground flex items-center gap-1">
               Mirror library folder structure
               <InfoTooltip text="Keep the device folder layout identical to your library, including album folder names with the year (e.g. 'Levels (2011)'). When off, paths are rebuilt from artist/album tags. Exported M3U playlists match the mirrored paths." />
+            </span>
+          </label>
+          <label className="flex items-center gap-2 cursor-default">
+            <input
+              type="checkbox"
+              data-testid="build-rockbox-db"
+              checked={buildRockboxDatabase}
+              onChange={(e) => dispatch({ type: "setBuildRockboxDatabase", value: e.target.checked })}
+              className="accent-primary rounded"
+            />
+            <span className="text-sm text-muted-foreground flex items-center gap-1">
+              Build Rockbox database
+              <InfoTooltip text="At the end of the sync, write the player's Rockbox database (.rockbox/database_*.tcd) so new music is browsable straight away — no Database → Update now on the device. Play counts and ratings already on the player are kept, and ratings for newly copied tracks go in too. Needs Rockbox 4.0 or later; a device without a .rockbox folder is left alone. Remembered per device." />
             </span>
           </label>
           <Select

@@ -8,6 +8,7 @@
  */
 import { setHost, createNodeHost } from "../main/host";
 import { registerIpcHandlers } from "../main/ipc";
+import { runStartupLibraryScan } from "../main/ipc/library";
 import { ensureServerStarted, stopServerIfRunning } from "./index";
 import { getFfmpegPath } from "../main/utils/ffmpeg-path";
 import { isMpcencAvailable } from "../main/utils/mpcenc";
@@ -58,6 +59,10 @@ async function main(): Promise<void> {
     process.exitCode = 1;
     return;
   }
+
+  // Settings → Library → "Scan library at startup". In the background: the
+  // server answers requests while it runs, and a failure is only logged.
+  void runStartupLibraryScan().catch((err) => console.error("[library] startup scan failed:", err));
 
   const shutdown = (signal: string) => {
     void (async () => {

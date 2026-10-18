@@ -53,7 +53,7 @@ After file sync, iPodRocks writes each canonical library rating straight into th
 
 Two cases the sync log calls out, both of them normal:
 
-- **"N rating(s) are waiting for the device's database."** Rockbox only knows about a file once its database has been updated, so an album copied during *this* sync has no record to write a rating into. On the player, run **Database → Update now** (or restart it with Auto Update on) and sync again — the ratings are sent then.
+- **"N rating(s) are waiting for the device's database."** Rockbox only knows about a file once its database has been updated, so an album copied during *this* sync has no record to write a rating into. On the player, run **Database → Update now** (or restart it with Auto Update on) and sync again — the ratings are sent then. With **Build Rockbox database** ticked in the Sync tab this never comes up: the new tracks go into the database the sync writes, with their ratings already in it (see [Sync → Building the Rockbox database](./sync.md#building-the-rockbox-database)).
 - **"Could not write N rating(s)."** The device's database is missing, or Rockbox was updating it while the sync ran. Nothing is recorded as sent, so the next sync retries.
 
 ## Resolving conflicts

@@ -175,6 +175,44 @@ Everything else — codec profiles, folder layout, orphan policy, playlists,
 ratings, runtime data — behaves exactly as it does on the desktop. A device is a
 device; only the filesystem underneath it changed.
 
+## Hybrid devices: local and remote at once
+
+A device does not have to pick a side. A **hybrid** device is reachable both
+from the machine running iPodRocks (by its mount path and USB device) and from
+a browser holding its folder. Each one syncs it through the side it can reach:
+the desktop app through the mount, a browser through its folder. It is still
+one device, so its sync history, ratings, play counts and settings are shared —
+a track synced from the browser counts as on the device when the desktop app
+checks it, and the other way round.
+
+Every device card has a **connection** line saying which kind it is, with the
+control to change it:
+
+- **A local device → hybrid.** In the desktop app, **Also allow browser use**.
+  From a browser, the server's owner can press **Use from this browser** instead,
+  and then **Connect folder** to pick the player's folder in that browser.
+- **A remote device → hybrid.** In the desktop app, **Add local connection**:
+  give the mount path and pick the player's USB device.
+- **Back again.** **Stop browser use** makes a hybrid device local only. Giving
+  a remote device a local side and then removing it returns it to remote.
+
+Rules that keep this safe:
+
+- **A hybrid device must have a USB device set** (see [Identifying a
+  device](#identifying-a-device)). The local side then only counts as connected
+  when that exact player is plugged in, so a browser and the desktop can never
+  be writing to two different volumes they both think are the device. Its USB
+  device cannot be cleared while it is hybrid.
+- **From a browser, only the server's owner** can turn browser use on or off,
+  and never the local side, which belongs to the machine the player is plugged
+  into. A browser can change a hybrid device's ordinary settings, but not its
+  mount path or USB device, and it cannot remove the device: it is also the
+  server's. It can only stop using it.
+- The browser side belongs to whoever turned it on from their browser. When the
+  desktop app turned it on, it belongs to the server's owner.
+- **Auto Podcasts work on a hybrid device**: the schedule reaches it through
+  its local mount, just as for a local device.
+
 ## Identifying a device
 
 A device can be identified in one of two ways.
@@ -215,6 +253,7 @@ Notes:
 - "Check my player" → `device_check` *(asks you to confirm first)*
 - "Sync my player" → `device_sync` *(asks you to confirm first)*
 - "Remove the old Nano" → `device_remove` *(asks you to confirm first)*
+- "Let me sync this iPod from the browser too" / "make my remote iPod local" → `device_set_connections` *(asks you to confirm first)*
 
 Listing devices and USB devices runs immediately; checking, syncing, removing a device, and changing a USB identity each pause for a **Confirm / Cancel** prompt before running.
 

@@ -8,6 +8,7 @@ import {
   getLibrary,
   getPlaylistCore,
   getDevicesCore,
+  getDeviceForCaller,
   buildLibraryTrackMaps,
   remapTrackMapToShadow,
 } from "./common";
@@ -34,10 +35,75 @@ import {
 } from "../playlists/genius-engine";
 import { logActivity } from "../activity/activity-logger";
 import { invalidateAssistantCache } from "../assistant/assistantChat";
-import type { AddDeviceConfig } from "../../shared/types";
-import { callerSubject } from "../../server/auth/sessions";
+import type { AddDeviceConfig, DeviceProfile } from "../../shared/types";
+import { callerSubject, denyIfNotOwner } from "../../server/auth/sessions";
 import { logCompareDiagnostics } from "../sync/compare-diagnostics";
 import { devLog, isDevLogEnabled } from "../utils/dev-log";
+
+export interface ConnectionChange {
+  local?: {
+    mountPath: string;
+    usbVendorId?: string | null;
+    usbProductId?: string | null;
+    usbSerial?: string | null;
+  } | null;
+  remote?: boolean;
+}
+
+/**
+ * Make a device local, remote or hybrid (`DevicesCore.setConnections`), with
+ * the caller's rights applied. Shared by `device:setConnections` and Rocksy's
+ * `device_set_connections`, so the two cannot disagree.
+ *
+ * From a browser this is the server's owner switching *browser* use of a
+ * server-attached player on or off — never its local side, which only the
+ * machine it is plugged into can describe. Turning it on records the caller as
+ * the browser side's owner. The desktop app (no session) may change either.
+ */
+export function setDeviceConnectionsFor(
+  caller: { sessionId?: string; subject?: string },
+  deviceId: number,
+  change: ConnectionChange
+): DeviceProfile | { error: string } {
+  const existing = getDevicesCore().getDeviceById(deviceId);
+  if (!existing) return { error: `Device ${deviceId} not found` };
+  if (!change || typeof change !== "object") return { error: "Invalid connection change" };
+  let webOwnerSubject: string | null | undefined;
+  if (caller.sessionId !== undefined) {
+    const denied = denyIfNotOwner(
+      caller.sessionId,
+      "Only the server's owner can change how a device connects."
+    );
+    if (denied) return denied;
+    if (change.local !== undefined) {
+      return {
+        error:
+          "A device's local connection is set in the app running on the machine it is plugged into.",
+      };
+    }
+    if (typeof change.remote !== "boolean") return { error: "Nothing to change" };
+    if (existing.profile.connection === "remote") {
+      return {
+        error: change.remote
+          ? "This device is already used from a browser."
+          : "This device has no local connection to fall back to.",
+      };
+    }
+    if (change.remote) webOwnerSubject = callerSubject(caller);
+  }
+  const device = getDevicesCore().setConnections(
+    deviceId,
+    { local: change.local, remote: change.remote },
+    { webOwnerSubject }
+  );
+  logActivity(
+    getLibrary().getConnection(),
+    "update_device",
+    `Device connections: ${device.profile.name} is now ${device.profile.connection}`
+  );
+  invalidateAssistantCache();
+  return device.profile;
+}
 
 export function registerDeviceHandlers(): void {
   bridgeHandle(
@@ -157,10 +223,17 @@ export function registerDeviceHandlers(): void {
     safe("device:update", async (event, deviceId: number, updates: Record<string, unknown>) => {
       const existing = getDevicesCore().getDeviceById(deviceId);
       if (!existing) return { error: `Device ${deviceId} not found` };
-      const wrongAdmin = blockWrongAdmin(event, existing.profile.transport);
+      const wrongAdmin = blockWrongAdmin(event, existing.profile);
       if (wrongAdmin) return wrongAdmin;
       const notYours = blockWrongDeviceOwner(event, deviceId);
       if (notYours) return notYours;
+      // A browser may edit a hybrid device's settings, but its mount path and
+      // USB identity are facts about the server's machine, which the browser
+      // can neither see nor verify.
+      if (event.sessionId !== undefined && existing.profile.connection === "hybrid") {
+        updates = { ...updates };
+        for (const key of ["mountPath", "usbVendorId", "usbProductId", "usbSerial"]) delete updates[key];
+      }
       const ok = getDevicesCore().updateDevice(deviceId, updates);
       if (!ok) return { error: "Update failed" };
       const device = getDevicesCore().getDeviceById(deviceId)?.profile;
@@ -175,11 +248,18 @@ export function registerDeviceHandlers(): void {
   );
 
   bridgeHandle(
+    "device:setConnections",
+    safe("device:setConnections", async (event, deviceId: number, change: ConnectionChange) =>
+      setDeviceConnectionsFor(event, deviceId, change)
+    )
+  );
+
+  bridgeHandle(
     "device:remove",
     safe("device:remove", async (event, deviceId: number) => {
       const existing = getDevicesCore().getDeviceById(deviceId);
       if (existing) {
-        const wrongAdmin = blockWrongAdmin(event, existing.profile.transport);
+        const wrongAdmin = blockWrongAdmin(event, existing.profile, "remove");
         if (wrongAdmin) return wrongAdmin;
         const notYours = blockWrongDeviceOwner(event, deviceId);
         if (notYours) return notYours;
@@ -192,8 +272,8 @@ export function registerDeviceHandlers(): void {
 
   bridgeHandle(
     "device:ping",
-    safe("device:ping", async (_event, deviceId: number) => {
-      const device = getDevicesCore().getDeviceById(deviceId);
+    safe("device:ping", async (event, deviceId: number) => {
+      const device = getDeviceForCaller(event, deviceId);
       if (!device) return { online: false };
       await refreshUsbSnapshot();
       return { online: isDeviceOnline(device.profile) };
@@ -206,10 +286,10 @@ export function registerDeviceHandlers(): void {
       if (!isEjectSupported()) {
         return { error: "Ejecting from iPodRocks is not supported on this platform yet." };
       }
-      const device = getDevicesCore().getDeviceById(deviceId);
+      const device = getDeviceForCaller(event, deviceId);
       if (!device) return { error: "Device not found" };
       // Unmounting is a host-level effect on a volume the caller may not own.
-      const wrongMachine = blockWrongLocality(event, device.profile.transport);
+      const wrongMachine = blockWrongLocality(event, device.profile);
       if (wrongMachine) return wrongMachine;
       const notYours = blockWrongDeviceOwner(event, deviceId);
       if (notYours) return notYours;
@@ -258,9 +338,9 @@ export function registerDeviceHandlers(): void {
   bridgeHandle(
     "device:check",
     safe("device:check", async (event, deviceId: number) => {
-      const device = getDevicesCore().getDeviceById(deviceId);
+      const device = getDeviceForCaller(event, deviceId);
       if (!device) return { error: `Device ${deviceId} not found` };
-      const wrongMachine = blockWrongLocality(event, device.profile.transport);
+      const wrongMachine = blockWrongLocality(event, device.profile);
       if (wrongMachine) return wrongMachine;
       const notYours = blockWrongDeviceOwner(event, deviceId);
       if (notYours) return notYours;
@@ -540,10 +620,10 @@ export function registerDeviceHandlers(): void {
   bridgeHandle(
     "device:readRuntimeData",
     safe("device:readRuntimeData", async (event, deviceId: number) => {
-      const device = getDevicesCore().getDeviceById(deviceId);
+      const device = getDeviceForCaller(event, deviceId);
       if (!device) return { error: `Device ${deviceId} not found` };
       // Same device.fs surface as `device:check`, which has always been gated.
-      const wrongMachine = blockWrongLocality(event, device.profile.transport);
+      const wrongMachine = blockWrongLocality(event, device.profile);
       if (wrongMachine) return wrongMachine;
       const notYours = blockWrongDeviceOwner(event, deviceId);
       if (notYours) return notYours;
