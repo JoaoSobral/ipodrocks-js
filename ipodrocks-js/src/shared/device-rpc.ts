@@ -103,6 +103,26 @@ export interface RpcRemoveResult {
   code?: string;
 }
 
+/** The operating systems whose FAT timestamp convention is known. */
+export type ClientPlatform = "linux" | "darwin" | "win32";
+
+export function isClientPlatform(v: unknown): v is ClientPlatform {
+  return v === "linux" || v === "darwin" || v === "win32";
+}
+
+/**
+ * The browser's OS from its own report. `userAgentData` first: Chromium is
+ * freezing `navigator.platform`. Anything unrecognised — ChromeOS, Android —
+ * is undefined, which keeps the build on its local-time default.
+ */
+export function clientPlatformFrom(nav: { platform?: string; userAgentData?: { platform?: string } }): ClientPlatform | undefined {
+  const p = (nav.userAgentData?.platform || nav.platform || "").toLowerCase();
+  if (p.startsWith("win")) return "win32";
+  if (p.startsWith("mac")) return "darwin";
+  if (p.startsWith("linux")) return "linux";
+  return undefined;
+}
+
 export interface DeviceAttachFrame {
   type: typeof DEVICE_ATTACH;
   deviceId: number;
@@ -123,6 +143,14 @@ export interface DeviceAttachFrame {
    * re-copies the entire library on every single run.
    */
   clientNow: number;
+  /**
+   * The browser's operating system, when it can tell. It is the OS — not the
+   * browser — that writes a FAT device's timestamps, and they have no zone of
+   * their own: Linux stores UTC, Windows and macOS local time. The Rockbox
+   * database build has to write the same `mtime` the player reads off the
+   * file, or its auto-update re-indexes every track (`browserFatClock()`).
+   */
+  platform?: ClientPlatform;
   /** The picked folder's name, for the UI. Never used as a path. */
   rootName: string;
   /** False when the browser only has read permission — the sync must refuse. */

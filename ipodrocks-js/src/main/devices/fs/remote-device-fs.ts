@@ -31,6 +31,7 @@ import * as path from "path";
 import type { DiskSpace } from "../../../shared/types";
 import {
   RM_MANY_CHUNK,
+  type ClientPlatform,
   type RpcDirent,
   type RpcRemoveResult,
   type RpcStat,
@@ -131,6 +132,11 @@ export class RemoteDeviceFs implements DeviceFs {
   private abs(rel: string): string {
     if (!rel) return this.root;
     return path.join(this.root, ...rel.split("/"));
+  }
+
+  /** The OS of the browser holding this device, when it reported one. */
+  get clientPlatform(): ClientPlatform | undefined {
+    return this.transport.clientPlatform;
   }
 
   private shiftMtime(mtimeMs: number): number {

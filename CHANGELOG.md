@@ -1,5 +1,16 @@
 # Changelog
 
+## [3.2.1] — 2026-10
+
+### 🐛 Fixes
+
+- **Build Rockbox database on a remote (browser) player:** when the browser ran
+  on Linux, every file time was written off by your time zone. With the
+  player's database auto-update on, Rockbox then re-indexed every track at
+  boot, which showed empty artist/album folders and the "Database is not ready"
+  prompt. The browser now reports its OS so the times match what Rockbox reads.
+  Reload the iPodRocks tab once after updating, then sync.
+
 ## [3.2.0] — 2026-10
 
 ### 🔍 Lossless Check

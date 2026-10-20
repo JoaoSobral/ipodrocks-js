@@ -16,6 +16,7 @@ import {
   DEVICE_RPC_PROGRESS,
   DEVICE_RPC_REQUEST,
   DEVICE_RPC_RESULT,
+  clientPlatformFrom,
   type DeviceAttachFrame,
   type DeviceRpcRequestFrame,
   type DeviceRpcVerb,
@@ -161,6 +162,7 @@ export class DeviceClient {
       // Read as late as possible: the server subtracts its own clock from this
       // to get the skew it applies to every mtime the device reports.
       clientNow: Date.now(),
+      platform: clientPlatformFrom(navigator),
       rootName: handle.name,
       writable,
     };
@@ -188,6 +190,7 @@ export class DeviceClient {
       type: DEVICE_ATTACH,
       deviceId,
       clientNow: Date.now(),
+      platform: clientPlatformFrom(navigator),
       rootName: held.handle.name,
       writable,
       resumed: true,
