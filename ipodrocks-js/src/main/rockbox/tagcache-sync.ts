@@ -217,7 +217,9 @@ export function detectFatClock(
   if (platform !== "linux") return { kind: "local" };
   const mounts = read("/proc/mounts");
   if (mounts) {
-    const want = path.resolve(mountPath);
+    // POSIX on purpose: /proc/mounts is a Linux file, and `path.resolve` on a
+    // win32 host would turn "/run/media/x" into "C:\run\media\x".
+    const want = path.posix.resolve(mountPath);
     let best: { point: string; opts: string } | null = null;
     for (const line of mounts.split("\n")) {
       const [, rawPoint, type, opts] = line.split(" ");

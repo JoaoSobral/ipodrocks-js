@@ -134,8 +134,15 @@ describe.skipIf(!canRunDbTests)("scan reminder over IPC", () => {
     } catch {
       /* ignore */
     }
-    fs.rmSync(dir, { recursive: true, force: true });
-    fs.rmSync(music, { recursive: true, force: true });
+    // On Windows the app database the IPC session opened stays locked until
+    // the process exits, so the temp dir cannot always be removed here.
+    for (const d of [dir, music]) {
+      try {
+        fs.rmSync(d, { recursive: true, force: true });
+      } catch {
+        /* ignore */
+      }
+    }
   });
 
   it("asks the owner and nobody else, and only the owner can snooze it", async () => {

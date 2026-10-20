@@ -35,7 +35,10 @@ interface Profile {
 
 test.beforeEach(async () => {
   root = fs.mkdtempSync(path.join(os.homedir(), ".ipr-e2e-hybrid-"));
-  launched = await launchApp();
+  // Suppress the "Musepack (MPC) unavailable" reminder. On a host without
+  // mpcenc (every CI runner) DevicePanel raises it by itself once its probes
+  // answer, and its backdrop swallows every click on the device cards.
+  launched = await launchApp(undefined, { seedPrefs: { mpcRemindDisabled: true } });
 });
 
 test.afterEach(async () => {

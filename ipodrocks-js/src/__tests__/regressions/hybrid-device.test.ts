@@ -150,8 +150,15 @@ describe.skipIf(!canRunDbTests)("hybrid devices over IPC", () => {
     } catch {
       /* ignore */
     }
-    fs.rmSync(dir, { recursive: true, force: true });
-    fs.rmSync(mount, { recursive: true, force: true });
+    // On Windows the app database the IPC session opened stays locked until
+    // the process exits, so the temp dir cannot always be removed here.
+    for (const d of [dir, mount]) {
+      try {
+        fs.rmSync(d, { recursive: true, force: true });
+      } catch {
+        /* ignore */
+      }
+    }
   });
 
   it("the desktop opens a local device to browsers; each client then gets its own side", async () => {
