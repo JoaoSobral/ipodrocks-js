@@ -11,6 +11,7 @@
  *
  * Run with: `npm run build && npx playwright test --project=web`
  */
+import * as zlib from "zlib";
 import { test, expect } from "@playwright/test";
 import { WEB_ORIGIN, signIn } from "./web-harness";
 
@@ -37,6 +38,24 @@ test("a state-changing API call from another origin is refused", async ({ reques
     data: { args: [] },
   });
   expect(allowed.status()).toBe(200);
+});
+
+test("a Brotli request body is refused before sign-in and after (CVE-2026-111497)", async ({
+  request,
+}) => {
+  const brotli = zlib.brotliCompressSync(Buffer.from(JSON.stringify({ args: [] })));
+  const headers = { "content-type": "application/json", "content-encoding": "br" };
+
+  // `/api/auth` parses a body for anyone, signed in or not.
+  const login = await request.post("/api/auth/local/login", { headers, data: brotli });
+  expect(login.status()).toBe(415);
+
+  const invoked = await request.post(`/api/invoke/${HARMLESS_CHANNEL}`, { headers, data: brotli });
+  expect(invoked.status()).toBe(415);
+
+  // Control: the same call uncompressed goes through.
+  const plain = await request.post(`/api/invoke/${HARMLESS_CHANNEL}`, { data: { args: [] } });
+  expect(plain.status()).toBe(200);
 });
 
 test("the app's own origin is admitted", async ({ request }) => {

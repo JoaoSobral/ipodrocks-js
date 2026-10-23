@@ -35,9 +35,9 @@
 #
 # This is the *build* image only; nothing from it ships except node_modules and
 # dist/. Trixie to match the distroless runtime's Debian 13.
-ARG NODE_VERSION=24-trixie
+ARG NODE_VERSION=24.22.1-trixie
 # Keep the major in step with NODE_VERSION and the distroless tag below.
-ARG NODE_ALPINE_VERSION=24-alpine
+ARG NODE_ALPINE_VERSION=24.22.1-alpine
 
 # ---------------------------------------------------------------------------
 # deps — the production tree the runtime stage keeps
