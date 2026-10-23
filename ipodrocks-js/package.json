@@ -92,7 +92,7 @@
     "@vitejs/plugin-react": "^4.0.0",
     "concurrently": "^9.2.5",
     "cross-env": "^10.0.0",
-    "electron": "^43.5.0",
+    "electron": "^43.7.6",
     "electron-builder": "^26.15.3",
     "jsdom": "^26.0.0",
     "tailwindcss": "^4.0.0",
@@ -100,7 +100,7 @@
     "vite": "^7.3.7",
     "vitepress": "^1.6.4",
     "vitepress-plugin-diagrams": "^1.2.2",
-    "vitest": "^5.0.0",
+    "vitest": "^5.0.5",
     "wait-on": "^9.0.0"
   }
 }
