@@ -14,8 +14,6 @@
 - **Docker images** are now built on Node.js 24.22.1, which has the fix. If you
   run the server in Docker, pull `3.2.2` (or `latest` / `alpine`) and recreate
   the container.
-- The desktop app's Electron runtime does not include the Node.js fix yet, so
-  the two changes above protect it in the meantime.
 
 ## [3.2.1] — 2026-10
 
