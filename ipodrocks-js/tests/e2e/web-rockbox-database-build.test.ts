@@ -122,7 +122,7 @@ async function attachRockboxDevice(page: Page, id: number): Promise<void> {
 async function readDevice(
   page: Page,
   id: number
-): Promise<{ rockbox: Record<string, string>; music: string[] }> {
+): Promise<{ rockbox: Record<string, string>; music: string[]; mtimes: Record<string, number> }> {
   return page.evaluate(async (targetId: number) => {
     const root = await navigator.storage.getDirectory();
     const dev = await root.getDirectoryHandle(`device-${targetId}`);
@@ -136,15 +136,19 @@ async function readDevice(
       rockbox[h.name] = btoa(bin);
     }
     const music: string[] = [];
+    const mtimes: Record<string, number> = {};
     const walk = async (dir: FileSystemDirectoryHandle, prefix: string) => {
       for await (const h of (dir as unknown as { values(): AsyncIterable<FileSystemHandle> }).values()) {
         const rel = `${prefix}/${h.name}`;
         if (h.kind === "directory") await walk(h as FileSystemDirectoryHandle, rel);
-        else music.push(rel);
+        else {
+          music.push(rel);
+          mtimes[`/${rel}`] = (await (h as FileSystemFileHandle).getFile()).lastModified;
+        }
       }
     };
     await walk(await dev.getDirectoryHandle("Music"), "Music");
-    return { rockbox, music };
+    return { rockbox, music, mtimes };
   }, id);
 }
 
@@ -170,7 +174,7 @@ test("a sync with the option on writes the database into the browser-held device
   expect(result.errors).toBe(0);
   expect(result.synced).toBe(TRACKS.length);
 
-  const { rockbox, music } = await readDevice(page, deviceId);
+  const { rockbox, music, mtimes } = await readDevice(page, deviceId);
   expect(music).toHaveLength(TRACKS.length);
 
   // Written in place: no staging files left behind, and no backup because
@@ -188,6 +192,14 @@ test("a sync with the option on writes the database into the browser-held device
   // one is left out because a browser-held device cannot be read file by file.
   expect(db.entries.map((e) => e.filename).sort()).toEqual(music.map((m) => `/${m}`).sort());
   for (const e of db.entries) expect(e.title).toMatch(/^0[12] (First|Second)$/);
+  // This Chromium runs on Linux, whose vfat stores UTC: the mtime must be the
+  // file's own, not a zone off, or the player's auto-update re-indexes every
+  // track. Only meaningful when the daemon's zone is not UTC.
+  if (process.platform === "linux") {
+    for (const e of db.entries) {
+      expect(Math.abs((e.mtime ?? 0) - Math.floor(mtimes[e.filename] / 2000) * 2)).toBeLessThanOrEqual(2);
+    }
+  }
 
   // Remembered for this device.
   const prefs = (await page.evaluate(

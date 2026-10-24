@@ -35,8 +35,10 @@
 import * as nodeFs from "fs";
 import * as path from "path";
 
+import type { ClientPlatform } from "../../shared/device-rpc";
 import type { DeviceFs } from "../devices/fs/device-fs";
 import { NodeDeviceFs } from "../devices/fs/node-device-fs";
+import { RemoteDeviceFs } from "../devices/fs/remote-device-fs";
 import { MetadataExtractor } from "../library/metadata-extractor";
 import { codecAgnosticKey, normalizeDevicePath } from "./device-path-match";
 import {
@@ -215,7 +217,9 @@ export function detectFatClock(
   if (platform !== "linux") return { kind: "local" };
   const mounts = read("/proc/mounts");
   if (mounts) {
-    const want = path.resolve(mountPath);
+    // POSIX on purpose: /proc/mounts is a Linux file, and `path.resolve` on a
+    // win32 host would turn "/run/media/x" into "C:\run\media\x".
+    const want = path.posix.resolve(mountPath);
     let best: { point: string; opts: string } | null = null;
     for (const line of mounts.split("\n")) {
       const [, rawPoint, type, opts] = line.split(" ");
@@ -241,6 +245,18 @@ export function detectFatClock(
     return { kind: "fixed", offsetSec: -new Date().getTimezoneOffset() * 60 };
   }
   return { kind: "utc" };
+}
+
+/**
+ * The `FatClock` of a browser-held device, from the OS the browser reported.
+ * The server can see neither that machine's mount options nor its hardware
+ * clock, so this takes each OS's default: Linux's vfat writes UTC (systemd
+ * keeps `sys_tz` at 0), Windows and macOS local time. An OS the browser did
+ * not name gets local time, which is what every remote build used to assume —
+ * and what put every mtime a time-zone offset out on a Linux browser.
+ */
+export function browserFatClock(platform: ClientPlatform | undefined): FatClock {
+  return platform === "linux" ? { kind: "utc" } : { kind: "local" };
 }
 
 function readTextOrNull(file: string): string | null {
@@ -609,8 +625,12 @@ export async function buildDeviceTagcache(
   const files = await listIndexableFiles(fs, mountPath, signal);
   const parseLocally = fs instanceof NodeDeviceFs;
   // A browser-held device is written by the browser's OS, which the server
-  // cannot see; Windows and macOS both keep FAT in local time.
-  const fatClock = options.fatClock ?? (parseLocally ? detectFatClock(mountPath) : { kind: "local" as const });
+  // knows only by what the browser reported when it attached.
+  const fatClock =
+    options.fatClock ??
+    (parseLocally
+      ? detectFatClock(mountPath)
+      : browserFatClock(fs instanceof RemoteDeviceFs ? fs.clientPlatform : undefined));
 
   const entries: TagcacheEntry[] = [];
   const seededTrackIds: number[] = [];

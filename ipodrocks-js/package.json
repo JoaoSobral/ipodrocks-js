@@ -1,6 +1,6 @@
 {
   "name": "ipodrocks",
-  "version": "3.2.0",
+  "version": "3.2.2",
   "description": "iPod sync and library management",
   "author": {
     "name": "Pedro Goncalves",
@@ -69,7 +69,7 @@
       "node-abi": "^4.33.0"
     },
     "vitepress": {
-      "vite": "6.4.3"
+      "vite": "$vite"
     }
   },
   "devDependencies": {
@@ -97,7 +97,7 @@
     "jsdom": "^26.0.0",
     "tailwindcss": "^4.0.0",
     "typescript": "^5.0.0",
-    "vite": "^7.3.5",
+    "vite": "^7.3.7",
     "vitepress": "^1.6.4",
     "vitepress-plugin-diagrams": "^1.2.2",
     "vitest": "^5.0.0",

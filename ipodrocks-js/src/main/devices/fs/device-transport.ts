@@ -11,7 +11,7 @@
  * one is connected exactly while a tab has its directory handle open, which is
  * exactly while a transport is registered.
  */
-import type { DeviceRpcVerb } from "../../../shared/device-rpc";
+import type { ClientPlatform, DeviceRpcVerb } from "../../../shared/device-rpc";
 
 export interface TransferOptions {
   /** Bytes moved so far for this one file, as the browser reports them. */
@@ -28,6 +28,12 @@ export interface DeviceRpcTransport {
    * or slow re-copies the entire library on every run without this.
    */
   readonly clockSkewMs: number;
+  /**
+   * The OS of the browser holding the device, if it said. That OS writes the
+   * device's FAT timestamps, and the Rockbox database build has to know in
+   * which zone (`browserFatClock()` in `rockbox/tagcache-sync.ts`).
+   */
+  readonly clientPlatform?: ClientPlatform;
   /** The picked folder's name. UI only; never used to build a path. */
   readonly rootName: string;
   /** False when the browser holds only read permission. */

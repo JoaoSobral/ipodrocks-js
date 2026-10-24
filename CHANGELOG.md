@@ -1,5 +1,31 @@
 # Changelog
 
+## [3.2.2] — 2026-10
+
+### 🔒 Security
+
+- **Node.js Brotli flaw (CVE-2026-111497, "Node2Shell"):** a crafted
+  Brotli-compressed payload could crash the web server, leak memory, or
+  possibly run code. iPodRocks no longer decodes Brotli from anyone else:
+  - The web server refuses compressed request bodies (HTTP 415), including on
+    the sign-in endpoints that answer before anyone has logged in.
+  - Podcast feeds, feed previews and cover downloads no longer ask servers for
+    Brotli, and refuse a response that arrives Brotli-compressed anyway.
+- **Docker images** are now built on Node.js 24.22.1, which has the fix. If you
+  run the server in Docker, pull `3.2.2` (or `latest` / `alpine`) and recreate
+  the container.
+
+## [3.2.1] — 2026-10
+
+### 🐛 Fixes
+
+- **Build Rockbox database on a remote (browser) player:** when the browser ran
+  on Linux, every file time was written off by your time zone. With the
+  player's database auto-update on, Rockbox then re-indexed every track at
+  boot, which showed empty artist/album folders and the "Database is not ready"
+  prompt. The browser now reports its OS so the times match what Rockbox reads.
+  Reload the iPodRocks tab once after updating, then sync.
+
 ## [3.2.0] — 2026-10
 
 ### 🔍 Lossless Check

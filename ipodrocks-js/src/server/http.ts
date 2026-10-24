@@ -63,6 +63,18 @@ const SESSION_COOKIE = "ipodrocks.sid";
 const SESSION_SECRET_KEY = "session_secret";
 
 /**
+ * Every JSON body parser on `/api`. `inflate: false` answers 415 to any
+ * `Content-Encoding` instead of decoding it: body-parser 2 decodes `br` with
+ * Node's own Brotli, which is CVE-2026-111497 (Node2Shell) on any runtime
+ * below 22.23.4 / 24.22.1 / 26.12.1 — and `/api/auth` takes a body before
+ * anyone has signed in. No client of ours compresses a request, so this costs
+ * nothing and can stay after every runtime is patched.
+ */
+export function jsonBody(limit: string | number): express.RequestHandler {
+  return express.json({ limit, inflate: false });
+}
+
+/**
  * The session signing secret.
  *
  * Generated and stored on first run rather than derived from anything, so it
@@ -274,7 +286,7 @@ export async function startServer(
   app.use(
     "/api/auth",
     authRateLimiter(),
-    express.json({ limit: "64kb" }),
+    jsonBody("64kb"),
     createAuthRouter({
       config,
       enabledProviders,
@@ -292,7 +304,7 @@ export async function startServer(
     "/api/invoke/:channel",
     apiLimiter,
     requireAuth(config),
-    express.json({ limit: MAX_INVOKE_BODY_BYTES }),
+    jsonBody(MAX_INVOKE_BODY_BYTES),
     (req, res) => {
       void handleInvoke(req, res, { subjectFor });
     }

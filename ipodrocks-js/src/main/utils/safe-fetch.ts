@@ -268,11 +268,15 @@ function decoderFor(encoding: string | undefined): Transform | null {
       return zlib.createGunzip();
     case "deflate":
       return zlib.createInflate();
-    case "br":
-      return zlib.createBrotliDecompress();
     default:
       return null; // identity, or something we do not decode — passed through as-is
   }
+}
+
+function isBrotli(encoding: string | undefined): boolean {
+  return (encoding ?? "")
+    .split(",")
+    .some((e) => e.trim().toLowerCase() === "br");
 }
 
 const NULL_BODY_STATUSES = new Set([101, 103, 204, 205, 304]);
@@ -294,7 +298,11 @@ function requestOnce(
     headers[k] = v;
   });
   headers["accept"] ??= "*/*";
-  headers["accept-encoding"] ??= "gzip, deflate, br";
+  // No `br`: CVE-2026-111497 (Node2Shell) is in Node's Brotli decoder, and the
+  // Electron build still bundles an unpatched Node. A server that sends Brotli
+  // anyway is refused below rather than decoded. Restore once every runtime
+  // this ships on is >= 22.23.4 / 24.22.1 / 26.12.1.
+  headers["accept-encoding"] = "gzip, deflate";
 
   const idleMs = Math.min(
     Math.max(1, init.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS),
@@ -363,6 +371,11 @@ function requestOnce(
       if (method === "HEAD" || NULL_BODY_STATUSES.has(status)) {
         res.resume();
       } else {
+        if (isBrotli(res.headers["content-encoding"])) {
+          res.destroy();
+          fail(new Error(`Refusing a Brotli-encoded body from ${target.url.host}`));
+          return;
+        }
         const decoder = decoderFor(res.headers["content-encoding"]);
         const decoded: Readable = decoder ? pipeline(res, decoder, () => {}) : res;
         body = Readable.toWeb(decoded) as unknown as ReadableStream<Uint8Array>;

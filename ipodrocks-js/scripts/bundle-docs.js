@@ -56,14 +56,19 @@ function stripFrontmatter(markdown) {
   return markdown.replace(/^---\n[\s\S]*?\n---\n/, "");
 }
 
+/**
+ * A page's text as Rocksy gets it. Line endings first: on a Windows checkout
+ * the frontmatter is CRLF and stripFrontmatter's `\n` pattern never matches it.
+ */
+function pageContent(raw) {
+  return stripFrontmatter(raw.replace(/\r\n/g, "\n"));
+}
+
 function render() {
   const pages = collect(DOCS)
     .map((file) => {
       const rel = path.relative(DOCS, file).split(path.sep).join("/");
-      const content = stripFrontmatter(fs.readFileSync(file, "utf8")).replace(
-        /\r\n/g,
-        "\n",
-      );
+      const content = pageContent(fs.readFileSync(file, "utf8"));
       return { path: rel, title: titleOf(content, rel), content };
     })
     .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
@@ -101,4 +106,4 @@ function main() {
 
 if (require.main === module) main();
 
-module.exports = { render, OUT };
+module.exports = { render, pageContent, OUT };

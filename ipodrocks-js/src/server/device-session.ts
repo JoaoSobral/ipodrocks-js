@@ -34,6 +34,8 @@ import {
   DEVICE_RPC_TIMEOUT_MS,
   DEVICE_TRANSFER_IDLE_MS,
   RETRYABLE_DEVICE_VERBS,
+  isClientPlatform,
+  type ClientPlatform,
   type DeviceAttachFrame,
   type DeviceRpcProgressFrame,
   type DeviceRpcRequestFrame,
@@ -90,6 +92,7 @@ interface Attachment {
   socket: WebSocket;
   subject: string;
   clockSkewMs: number;
+  platform: ClientPlatform | undefined;
   rootName: string;
   writable: boolean;
   pending: Map<number, Pending>;
@@ -375,6 +378,9 @@ function makeTransport(link: Link): DeviceRpcTransport {
     get clockSkewMs() {
       return current().clockSkewMs;
     },
+    get clientPlatform() {
+      return current().platform;
+    },
     get rootName() {
       return current().rootName;
     },
@@ -580,6 +586,7 @@ export function attachDeviceSessions(opts: DeviceSessionsOptions): DeviceSession
       // Measured once, here, because this frame is the only moment both clocks
       // are readable within a round trip of each other.
       clockSkewMs: Number(frame.clientNow) - Date.now(),
+      platform: isClientPlatform(frame.platform) ? frame.platform : undefined,
       rootName: typeof frame.rootName === "string" ? frame.rootName : "device",
       writable: frame.writable !== false,
       socket: ctx.socket,

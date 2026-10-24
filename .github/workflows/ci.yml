@@ -17,7 +17,7 @@ jobs:
 
       - uses: actions/setup-node@v6
         with:
-          node-version: "25.7.0"
+          node-version: "24.22.1"
           cache: "npm"
           cache-dependency-path: ipodrocks-js/package-lock.json
 
@@ -37,7 +37,7 @@ jobs:
 
       - uses: actions/setup-node@v6
         with:
-          node-version: "25.7.0"
+          node-version: "24.22.1"
           cache: "npm"
           cache-dependency-path: ipodrocks-js/package-lock.json
 

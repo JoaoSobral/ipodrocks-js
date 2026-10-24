@@ -31,7 +31,10 @@ its own user-data *and* temp directory (`TMPDIR` in `electron-launcher.ts`),
 because the app empties machine-wide scratch — the preview player's
 transcodes — at startup. A new spec must not touch a fixed path another spec
 could use. The web project is pinned to one worker: every web spec drives one
-long-lived daemon. **Never run `npm run dev` or `npm run build` while a suite
+long-lived daemon. **Electron 43 downloads its binary on first
+`require("electron")`, not at install**, so `tests/e2e/global-setup.ts` resolves
+it once before the workers start — without it, a fresh checkout (every CI run)
+has two workers downloading into one `dist/` and fails with `spawn ETXTBSY`. **Never run `npm run dev` or `npm run build` while a suite
 runs** — both delete `dist/`, and the failures read as "Built app not found"
 or launch timeouts scattered over unrelated specs.
 
@@ -583,7 +586,12 @@ player — it fails the load and the user has no database until they initialize 
   on UTC (systemd's default, `sys_tz` = 0), a mount's `time_offset=`/`tz=UTC` if
   given, local time on Windows/macOS. `detectFatClock()` decides; the first
   version assumed local everywhere and was off by the zone on every Linux sync.
-  Verified against `mdir` on a real udisks vfat mount.
+  Verified against `mdir` on a real udisks vfat mount. **A browser-held device
+  had the same bug a second time**: `browserFatClock()` now picks UTC when the
+  attach frame's `platform` says Linux, local otherwise. Off by the zone, a
+  player with auto-update on deletes and re-adds every track at boot — empty
+  artist/album folders until the commit, and "Database is not ready" if it is
+  interrupted (`regressions/rockbox-remote-fat-clock`).
 - **Locally the files are staged as `.ipodrocks-new` and renamed, index last; a
   browser-held device writes in place**, because `RemoteDeviceFs.rename` is a
   read + write + delete. `database_tmp.tcd`/`database_state.tcd` are deleted so

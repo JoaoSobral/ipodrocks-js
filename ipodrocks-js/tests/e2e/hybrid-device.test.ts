@@ -35,8 +35,10 @@ interface Profile {
 
 test.beforeEach(async () => {
   root = fs.mkdtempSync(path.join(os.homedir(), ".ipr-e2e-hybrid-"));
-  // A CI runner has no mpcenc, so the Devices panel raises MpcUnavailableModal
-  // on its own and its backdrop swallows every click on the cards behind it.
+  // Suppress the "Musepack (MPC) unavailable" reminder. CI runners have no
+  // mpcenc, so DevicePanel raises it by itself once its probes answer, and its
+  // backdrop swallows every click on the device cards behind it.
+
   launched = await launchApp(undefined, { seedPrefs: { mpcRemindDisabled: true } });
 });
 
