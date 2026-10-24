@@ -35,7 +35,9 @@ interface Profile {
 
 test.beforeEach(async () => {
   root = fs.mkdtempSync(path.join(os.homedir(), ".ipr-e2e-hybrid-"));
-  launched = await launchApp();
+  // A CI runner has no mpcenc, so the Devices panel raises MpcUnavailableModal
+  // on its own and its backdrop swallows every click on the cards behind it.
+  launched = await launchApp(undefined, { seedPrefs: { mpcRemindDisabled: true } });
 });
 
 test.afterEach(async () => {

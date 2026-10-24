@@ -134,7 +134,7 @@ test.beforeEach(async () => {
 });
 
 test.afterEach(async () => {
-  await launched.cleanup();
+  await launched?.cleanup();
   await new Promise<void>((r) => stubServer.server.close(() => r()));
 });
 

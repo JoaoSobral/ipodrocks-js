@@ -44,7 +44,7 @@ export async function launchApp(
   // so with tests running in parallel one app would clear another's files.
   const tempDir = path.join(userDataDir, "tmp");
   fs.mkdirSync(tempDir, { recursive: true });
-  const app = await electron.launch({
+  const app = await launchWithRetry({
     args: [APP_ENTRY, `--user-data-dir=${userDataDir}`],
     env: {
       ...process.env,
@@ -81,4 +81,23 @@ export async function launchApp(
       }
     },
   };
+}
+
+type LaunchOptions = NonNullable<Parameters<typeof electron.launch>[0]>;
+
+/**
+ * `spawn ETXTBSY` is a transient on Linux CI: with every worker launching the
+ * same Electron binary at once, an exec can briefly race another process's
+ * fork and be refused. Nothing in the suite writes that binary, so a short
+ * retry is the whole fix. Any other launch failure is real and thrown as-is.
+ */
+async function launchWithRetry(options: LaunchOptions): Promise<ElectronApplication> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await electron.launch(options);
+    } catch (err) {
+      if (attempt >= 5 || !String((err as Error)?.message).includes("ETXTBSY")) throw err;
+      await new Promise((r) => setTimeout(r, 200 * attempt));
+    }
+  }
 }
