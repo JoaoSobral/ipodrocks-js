@@ -69,6 +69,16 @@ export async function launchApp(
       ...extraEnv,
     },
   });
+  // Electron 45 hands Playwright the window while it is still on its initial
+  // blank document, so a spec's `waitForLoadState("domcontentloaded")`
+  // resolves against that, and the real load of index.html then destroys the
+  // context it evaluates in. Wait for the app's own page here, once, so no
+  // spec has to know.
+  const window = await app.firstWindow();
+  await window.waitForURL((url) => url.protocol !== "about:" && url.href !== "", {
+    waitUntil: "commit",
+    timeout: 30_000,
+  });
   return {
     app,
     userDataDir,

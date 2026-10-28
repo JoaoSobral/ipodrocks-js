@@ -1,5 +1,18 @@
 # Changelog
 
+## [3.2.3] — 2026-10
+
+### ✨ Changes
+
+- New devices default to the **Keep** orphan policy.
+- **Start Sync** with Remove orphans, Delete all or Prompt shows a warning first; OK is enabled after 2 seconds.
+- The warning has a per-device **Do not show this warning again** box (not for Delete all, which always asks). **Show it again** in the Sync tab restores it.
+- Docs: the library is the source of truth; syncs make the device match it.
+
+### 🔧 Under the hood
+
+- Electron 45.1.0 (Node.js 24.22.1).
+
 ## [3.2.2] — 2026-10
 
 ### 🔒 Security

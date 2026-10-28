@@ -31,7 +31,7 @@ its own user-data *and* temp directory (`TMPDIR` in `electron-launcher.ts`),
 because the app empties machine-wide scratch — the preview player's
 transcodes — at startup. A new spec must not touch a fixed path another spec
 could use. The web project is pinned to one worker: every web spec drives one
-long-lived daemon. **Electron 43 downloads its binary on first
+long-lived daemon. **Electron 45 downloads its binary on first
 `require("electron")`, not at install**, so `tests/e2e/global-setup.ts` resolves
 it once before the workers start — without it, a fresh checkout (every CI run)
 has two workers downloading into one `dist/` and fails with `spawn ETXTBSY`. **Never run `npm run dev` or `npm run build` while a suite
@@ -47,6 +47,13 @@ for two minutes. **Run `IPODROCKS_HEADLESS=0 npx playwright test <file>` to watc
 one happen**, which is the first thing to try when a UI test fails only in CI.
 The flag is checked as `=== "1"` and is set nowhere else: an app that never
 shows a window is useless to a user, so it must stay opt-in.
+
+## Changelog style
+
+`CHANGELOG.md` entries are practical and concise: one short line per change,
+saying what changed and what the user does differently, if anything. No
+rhetoric, no backstory, no rationale paragraphs — those belong here or in the
+docs.
 
 ## AI Assistant (Rocksy) Tool Policy
 
@@ -1741,7 +1748,7 @@ the other way.
 `better-sqlite3` 13 is a **Node-API** addon (`node-addon-api` ^8,
 `gypfile: false`) shipping per-platform prebuilds inside the npm tarball. The
 same `prebuilds/<platform>-<arch>.node` loads under Node 22, Node 24 and
-Electron 43; `node_modules/better-sqlite3/build/Release/` holds no binary at all
+Electron 45; `node_modules/better-sqlite3/build/Release/` holds no binary at all
 in this checkout, which is the quickest way to confirm it. It is also the only
 native dependency in `dependencies`.
 

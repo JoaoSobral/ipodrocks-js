@@ -64,6 +64,10 @@ The app creates `Music`, `Podcasts`, `Audiobooks`, and `Playlists` folders on th
 
 Progress is shown in a modal. When it finishes, your device is ready to use.
 
+::: tip Your library leads, your device follows
+iPodRocks's first rule is to respect the **library**, not the device: a sync makes the player match the library you are syncing, never the other way round. On a new device the **Orphan & Reset Policy** is **Keep**, so anything already on the player that is not in your library is left alone. Switch it to **Remove orphans** (or **Delete all**) when you want the player to be an exact copy — iPodRocks warns you before it deletes anything.
+:::
+
 ## Next steps
 
 You have a library, a device, and a sync under your belt. From here, dig into the pieces that interest you most:

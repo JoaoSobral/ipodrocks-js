@@ -15,6 +15,7 @@ import {
   emptySelections,
   getDeviceSyncPreferences,
   saveDeviceSyncPreferences,
+  setOrphanWarningHidden,
 } from "../sync/device-sync-preferences";
 import {
   runSync,
@@ -1265,5 +1266,17 @@ export function registerSyncHandlers(): void {
     "sync:getDevicePreferences",
     safe("sync:getDevicePreferences", async (_e, deviceId: number) =>
       getDeviceSyncPreferences(getLibrary().getConnection(), deviceId))
+  );
+
+  bridgeHandle(
+    "sync:setOrphanWarningHidden",
+    safe("sync:setOrphanWarningHidden", async (event, deviceId: number, hidden: boolean) => {
+      if (!Number.isInteger(deviceId) || deviceId <= 0) return { error: "Invalid device id" };
+      const notYours = blockWrongDeviceOwner(event, deviceId);
+      if (notYours) return notYours;
+      if (!getDevicesCore().getDeviceById(deviceId)) return { error: "Device not found" };
+      setOrphanWarningHidden(getLibrary().getConnection(), deviceId, hidden === true);
+      return { ok: true };
+    })
   );
 }

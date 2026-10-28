@@ -374,6 +374,7 @@ CREATE TABLE IF NOT EXISTS device_sync_preferences (
     preserve_folder_structure INTEGER NOT NULL DEFAULT 1,
     album_grouping TEXT NOT NULL DEFAULT 'album-artist',
     build_rockbox_db INTEGER NOT NULL DEFAULT 0,
+    hide_orphan_warning INTEGER NOT NULL DEFAULT 0,
     custom_selections_json TEXT,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (device_id) REFERENCES devices (id) ON DELETE CASCADE

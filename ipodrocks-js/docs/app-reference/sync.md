@@ -2,6 +2,10 @@
 
 The Sync panel copies music, podcasts, audiobooks, and playlists from your library (or shadow library) to a device.
 
+::: tip The library is the source of truth
+iPodRocks respects your **library**, not the device. A sync makes the player follow the library — it never changes the library to follow the player (star ratings are the one thing that travel back). What it does with files on the device that are *not* in the library is up to the **Orphan & Reset Policy**, and that is **Keep** by default: nothing on the device is deleted until you choose otherwise. Pick anything else and iPodRocks warns you before the sync starts.
+:::
+
 ## What it does
 
 - **Device** — Select which device to sync.
@@ -23,13 +27,17 @@ The Sync panel copies music, podcasts, audiobooks, and playlists from your libra
   - **Sync in another format** — No pre-built mirror. The device profile specifies a target codec, and FFmpeg converts each missing track on the fly during the sync. Trade: no extra disk space, but every sync that adds tracks pays the conversion cost again.
 - **What sync does and does not propagate** — Sync is a **one-way file copy** from computer to device. It only transfers audio files and album artwork; it does not write play counts, ratings, or any other library metadata to the device. This also applies to shadow libraries: they hold pre-transcoded audio files only — no play counts, ratings, or listening history. Play counts flow the *other* direction: iPodRocks imports them from the counters Rockbox keeps on the device (see Devices → "Play history"). Ratings are the one exception to the one-way rule — they travel both ways, and a rating you set in iPodRocks is written into Rockbox's own database on the next sync.
 - **Orphan & Reset Policy** (called "Orphan Policy" before 2.3.2, and "Extra Track Policy" in some earlier versions) — Controls what happens to content that exists **on the device but is not part of the sync**:
-  - **Keep** — Leave it alone. Useful if you manually copy files to the device outside of iPodRocks.
+  - **Keep** (default for every new device) — Leave it alone. Useful if you manually copy files to the device outside of iPodRocks.
   - **Remove orphans** — Delete anything the sync selection does not account for, so the device mirrors the library. This covers **songs, podcasts and audiobooks alike**, including content types the current sync has nothing to copy to. (Before 2.3.2 those were skipped, so a device full of podcasts survived "remove" untouched if your selection had no podcasts.)
   - **Delete all** — Erase the device's **Music**, **Podcasts** and **Audiobooks** folders outright, then rebuild them from the library in the same sync. Everything in those folders goes, including files iPodRocks did not put there, and auto-podcast episodes are downloaded again. The **Playlists** folder is left alone, and so are the ratings and listening history stored on the device. iPodRocks asks you to confirm before anything is deleted. On a device plugged into this computer the old folders are moved aside instantly and deleted while the new files copy; on a remote device they are deleted in batches, with progress in the log.
   - **Prompt** — Report what was found instead of deleting it.
 
+  **Every policy except Keep asks first.** Pressing **Start Sync** with Remove orphans, Delete all or Prompt opens a warning that says what that policy will do to the music, podcasts and audiobooks on the device that do not match the library being synced. Its confirm button stays disabled for two seconds, so a quick double-click cannot carry straight through it. **Cancel** leaves the device untouched.
+
+  Tick **Do not show this warning again for this device** to stop seeing it for Remove orphans and Prompt on that one player; other devices still warn. While it is hidden, a line under the policy says so, with a **Show it again** link. **Delete all** is always confirmed, whatever that box says.
+
   If a device had the retired **Remove all** option saved, it loads as **Remove orphans** — upgrading never turns an old setting into a wipe.
-- **Codec mismatches** — When a device has files in a codec that no longer matches its profile (e.g. old Musepack files after switching the profile to Opus) and you sync with **Orphan & Reset Policy = "Remove orphans"** (or "Delete all"), those old-codec files are removed and replaced by the new codec during sync.
+- **Codec mismatches** — When a device holds a library track in a codec that no longer matches its profile (e.g. old Musepack files after switching the profile to Opus), the old-codec file is removed and replaced by the new codec during sync, **whatever the Orphan & Reset Policy** — Keep included. The track is still in your library; only its format on the device changes.
 - **Album artwork** — Copied by default (`cover.jpg`, `folder.png`, etc.). The **Skip album artwork** option is a per-device setting (Devices panel), not a per-sync toggle.
 - **Extra Audiobooks** — LibriVox audiobooks are downloaded on demand during the sync (not pre-fetched). Each book's chapters and cover are copied to `<device>/<Audiobooks folder>/<Author - Title>/`. See [Extra Audiobooks](./audiobooks.md).
 - **Rockbox tagnavi (per-device option)** — If the device profile has "Rockbox smart playlists (tagnavi)" enabled, smart playlists are written to `<device>/.rockbox/tagnavi_custom.config` instead of `Playlists/<name>.m3u`. See [Devices](./devices.md) and [Smart Playlists](./playlists-smart.md).
@@ -90,7 +98,7 @@ Selecting a device in the Sync panel automatically restores that device's last-u
 
 The state is saved every time you click **Sync** for that device — even if the sync errors partway through, because the saved state captures your intent, not the outcome.
 
-Devices that have never been synced through this panel fall back to the panel defaults: full sync, all content types enabled, keep-orphans policy, mirror library folder structure = on, group albums by = Album artist, build Rockbox database = off, custom-sync mode = Include.
+Devices that have never been synced through this panel fall back to the panel defaults: full sync, all content types enabled, **Keep** orphan & reset policy, mirror library folder structure = on, group albums by = Album artist, build Rockbox database = off, custom-sync mode = Include.
 
 When you switch between devices, the panel live-swaps to that device's saved configuration. Removing a device from the Devices panel also clears its saved preferences.
 
@@ -127,6 +135,8 @@ rather than failing every remaining file:
 - "Check what would sync to my player" → `device_check` *(asks you to confirm first)*
 - "Sync my player" → `device_sync` *(asks you to confirm first)*
 - "Which player is plugged in right now?" → `usb_device_list`
+- "Remove orphans on my iPod" / "keep everything on it" → `device_set_orphan_policy`
+- "Stop warning me about orphans before every sync" / "show that warning again" → `device_set_orphan_warning` *(per device; Delete all is still confirmed)*
 - "Build the Rockbox database when I sync" / "stop building it" → `device_set_sync_preferences` with `build_rockbox_database` *(runs straight away; it is a setting, the next sync does the work)*
 
 Checking and syncing are destructive operations, so Rocksy pauses for a **Confirm / Cancel** prompt before running. See [Devices → Rocksy](./devices.md#rocksy).

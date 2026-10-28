@@ -759,6 +759,13 @@ export interface DeviceSyncPreferences {
    * folder.
    */
   buildRockboxDatabase: boolean;
+  /**
+   * The user ticked "do not show this warning again for this device" on the
+   * Start Sync warning for a policy other than Keep. Read-only here: it is
+   * written by `sync:setOrphanWarningHidden`, never by a sync's own save, so
+   * starting a sync cannot reset it. "Delete all" is confirmed regardless.
+   */
+  hideOrphanWarning?: boolean;
   selections: CustomSelections;
 }
 

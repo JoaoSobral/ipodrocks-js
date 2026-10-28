@@ -36,6 +36,8 @@ Grab the latest release for macOS or Windows from the [GitHub Releases page](htt
 
 iPodRocks is a **sync manager** for [Rockbox devices](https://www.rockbox.org/) and any mountable player. It is **not** a library manager — use [beets](https://beets.io/) or similar to manage your collection. Once your library is ready, iPodRocks keeps as many players as you own in step with it: transcoding, playlists, album art, podcasts, audiobooks, star ratings and play history.
 
+**The library leads; the device follows.** iPodRocks's primary strategy is to respect your library, not whatever happens to be on the player. A sync makes the device match the library — it never rewrites the library to match the device (star ratings are the one thing that travel back, and they are merged, not overwritten). Out of the box nothing on the player is deleted: the **Orphan & Reset Policy** starts at **Keep**, and choosing anything stricter shows a warning before the sync runs.
+
 ## Sync from anywhere
 
 Your player no longer has to be plugged into the machine holding your music.

@@ -550,6 +550,17 @@ export async function getDeviceSyncPreferences(
   >;
 }
 
+/** "Do not show this warning again for this device" on the orphan-policy warning. */
+export async function setOrphanWarningHidden(
+  deviceId: number,
+  hidden: boolean
+): Promise<{ ok?: boolean; error?: string }> {
+  return window.api.invoke("sync:setOrphanWarningHidden", deviceId, hidden) as Promise<{
+    ok?: boolean;
+    error?: string;
+  }>;
+}
+
 // ---------------------------------------------------------------------------
 // Playlists
 // ---------------------------------------------------------------------------

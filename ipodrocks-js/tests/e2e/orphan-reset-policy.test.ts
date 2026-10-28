@@ -215,3 +215,155 @@ test("confirming Delete all erases the device, rebuilds it, and leaves no trash 
   expect(music.some((p) => p.endsWith(".flac"))).toBe(true);
   expect(fs.readdirSync(mountPath).filter((n) => n.startsWith(".ipodrocks-trash-"))).toEqual([]);
 });
+
+test("a new device defaults to Keep, and Keep syncs with no warning", async () => {
+  test.skip(!seedTrack("track.flac"), "ffmpeg unavailable — cannot seed a library");
+
+  const window = await readyWindow();
+  await scanLibrary(window);
+  const deviceId = await addDevice(window, mountPath);
+
+  // A device that has never synced has no saved preferences, so the panel's
+  // own default is what applies — and that must be Keep.
+  const stored = (await window.evaluate(async (id) => {
+    return (window as unknown as ApiWindow).api.invoke("sync:getDevicePreferences", id);
+  }, deviceId)) as { extraTrackPolicy?: string } | null;
+  expect(stored?.extraTrackPolicy ?? "keep").toBe("keep");
+
+  await window.getByRole("button", { name: "Sync", exact: true }).click();
+  await expect(policySelect(window)).toHaveText(/Keep/, { timeout: 10_000 });
+
+  await window.getByRole("button", { name: "Start Sync" }).click();
+  await expect(window.getByTestId("orphan-policy-gate")).toHaveCount(0);
+  const dialog = window.getByRole("dialog").filter({ hasText: "Syncing to Device" });
+  await expect(dialog.getByRole("button", { name: "Close" })).toBeVisible({ timeout: 30_000 });
+});
+
+for (const { option, title, warns } of [
+  { option: "Remove orphans", title: "Remove what is not in this sync?", warns: /deleted from the device/ },
+  { option: "Prompt", title: "Report what does not match?", warns: /nothing is deleted/ },
+]) {
+  test(`choosing ${option} warns, and holds OK for two seconds`, async () => {
+    test.skip(!seedTrack("track.flac"), "ffmpeg unavailable — cannot seed a library");
+
+    const window = await readyWindow();
+    await scanLibrary(window);
+    await addDevice(window, mountPath);
+
+    // An orphan the Remove policy would take, so "nothing happened yet" is a
+    // claim about the disk.
+    const planted = path.join(mountPath, "Music", "Not In Library", "stray.mp3");
+    fs.mkdirSync(path.dirname(planted), { recursive: true });
+    fs.writeFileSync(planted, "stray");
+
+    await window.getByRole("button", { name: "Sync", exact: true }).click();
+    await expect(
+      window.getByText("Orphan & Reset Policy", { exact: true })
+    ).toBeVisible({ timeout: 10_000 });
+    await policySelect(window).click();
+    await window.getByRole("option", { name: option }).click();
+    await window.getByRole("button", { name: "Start Sync" }).click();
+
+    const gate = window.getByTestId("orphan-policy-gate");
+    await expect(gate).toBeVisible({ timeout: 10_000 });
+    await expect(window.getByText(title)).toBeVisible();
+    await expect(gate).toContainText(warns);
+
+    // The OK is held, then released.
+    const confirm = window.getByTestId("orphan-policy-gate-confirm");
+    await expect(confirm).toBeDisabled();
+    await expect(confirm).toBeEnabled({ timeout: 5_000 });
+    expect(fs.existsSync(planted)).toBe(true);
+
+    // Cancel leaves the device alone; reopening restarts the countdown.
+    await gate.getByRole("button", { name: "Cancel" }).click();
+    await expect(gate).toHaveCount(0);
+    await window.getByRole("button", { name: "Start Sync" }).click();
+    await expect(confirm).toBeDisabled();
+    await expect(confirm).toBeEnabled({ timeout: 5_000 });
+    await confirm.click();
+
+    const dialog = window.getByRole("dialog").filter({ hasText: "Syncing to Device" });
+    await expect(dialog.getByRole("button", { name: "Close" })).toBeVisible({ timeout: 30_000 });
+    expect(fs.existsSync(planted)).toBe(option === "Prompt");
+  });
+}
+
+test("'do not show this warning again' is remembered per device, and never skips Delete all", async () => {
+  test.skip(!seedTrack("track.flac"), "ffmpeg unavailable — cannot seed a library");
+
+  const window = await readyWindow();
+  await scanLibrary(window);
+  const deviceId = await addDevice(window, mountPath);
+
+  const closeSync = async () => {
+    const dialog = window.getByRole("dialog").filter({ hasText: "Syncing to Device" });
+    await expect(dialog.getByRole("button", { name: "Close" })).toBeVisible({ timeout: 30_000 });
+    await dialog.getByRole("button", { name: "Close" }).click();
+    await expect(dialog).toHaveCount(0);
+  };
+
+  await window.getByRole("button", { name: "Sync", exact: true }).click();
+  await expect(
+    window.getByText("Orphan & Reset Policy", { exact: true })
+  ).toBeVisible({ timeout: 10_000 });
+  await policySelect(window).click();
+  await window.getByRole("option", { name: "Prompt" }).click();
+
+  // Tick the box and confirm.
+  await window.getByRole("button", { name: "Start Sync" }).click();
+  const gate = window.getByTestId("orphan-policy-gate");
+  await expect(gate).toBeVisible({ timeout: 10_000 });
+  await window.getByTestId("orphan-policy-gate-dont-show").check();
+  await window.getByTestId("orphan-policy-gate-confirm").click();
+  await closeSync();
+
+  // Stored against the device, not just held in the panel.
+  const stored = (await window.evaluate(async (id) => {
+    return (window as unknown as ApiWindow).api.invoke("sync:getDevicePreferences", id);
+  }, deviceId)) as { hideOrphanWarning?: boolean } | null;
+  expect(stored?.hideOrphanWarning).toBe(true);
+
+  // A second device is unaffected.
+  const otherMount = path.join(rootDir, "device-2");
+  fs.mkdirSync(path.join(otherMount, "Music"), { recursive: true });
+  const otherId = await window.evaluate(async (m) => {
+    const created = (await (window as unknown as ApiWindow).api.invoke("device:add", {
+      name: "OtherDevice",
+      mountPath: m,
+    })) as { id?: number };
+    return created.id as number;
+  }, otherMount);
+  const otherStored = (await window.evaluate(async (id) => {
+    return (window as unknown as ApiWindow).api.invoke("sync:getDevicePreferences", id);
+  }, otherId)) as { hideOrphanWarning?: boolean } | null;
+  expect(otherStored?.hideOrphanWarning ?? false).toBe(false);
+
+  // Remove orphans now goes straight to the sync for this device.
+  await policySelect(window).click();
+  await window.getByRole("option", { name: "Remove orphans" }).click();
+  await expect(window.getByTestId("orphan-warning-hidden")).toBeVisible();
+  await window.getByRole("button", { name: "Start Sync" }).click();
+  await expect(gate).toHaveCount(0);
+  await closeSync();
+
+  // Delete all is still confirmed, and offers no box.
+  await policySelect(window).click();
+  await window.getByRole("option", { name: "Delete all" }).click();
+  await window.getByRole("button", { name: "Start Sync" }).click();
+  await expect(window.getByText("Erase and rebuild this device?")).toBeVisible({ timeout: 10_000 });
+  await expect(window.getByTestId("orphan-policy-gate-dont-show")).toHaveCount(0);
+  await gate.getByRole("button", { name: "Cancel" }).click();
+
+  // "Show it again" brings the warning back.
+  await policySelect(window).click();
+  await window.getByRole("option", { name: "Prompt" }).click();
+  await window.getByTestId("orphan-warning-hidden").getByRole("button", { name: "Show it again" }).click();
+  await expect(window.getByTestId("orphan-warning-hidden")).toHaveCount(0);
+  await window.getByRole("button", { name: "Start Sync" }).click();
+  await expect(gate).toBeVisible({ timeout: 10_000 });
+  const reset = (await window.evaluate(async (id) => {
+    return (window as unknown as ApiWindow).api.invoke("sync:getDevicePreferences", id);
+  }, deviceId)) as { hideOrphanWarning?: boolean } | null;
+  expect(reset?.hideOrphanWarning).toBe(false);
+});

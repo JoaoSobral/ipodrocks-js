@@ -44,6 +44,7 @@ type Row = {
   preserve_folder_structure: number;
   album_grouping: string | null;
   build_rockbox_db: number | null;
+  hide_orphan_warning: number | null;
   custom_selections_json: string | null;
 };
 
@@ -85,6 +86,7 @@ export function getDeviceSyncPreferences(
     albumGrouping: parseAlbumGrouping(row.album_grouping),
     // Opt-in: only an explicit 1 turns it on.
     buildRockboxDatabase: row.build_rockbox_db === 1,
+    hideOrphanWarning: row.hide_orphan_warning === 1,
     selections: parseSelections(row.custom_selections_json),
   };
 }
@@ -126,4 +128,25 @@ export function saveDeviceSyncPreferences(
     prefs.buildRockboxDatabase === true ? 1 : 0,
     JSON.stringify(prefs.selections)
   );
+}
+
+/**
+ * Remember (or forget) the user's "do not show this warning again" for the
+ * Start Sync orphan-policy warning. Its own writer on purpose:
+ * `saveDeviceSyncPreferences()` runs on every sync and leaves this column
+ * alone, so only an explicit choice ever changes it. Creates the row for a
+ * device that has never synced, with every other column at its default.
+ */
+export function setOrphanWarningHidden(
+  db: Database.Database,
+  deviceId: number,
+  hidden: boolean
+): void {
+  db.prepare(`
+    INSERT INTO device_sync_preferences (device_id, hide_orphan_warning, updated_at)
+    VALUES (?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(device_id) DO UPDATE SET
+      hide_orphan_warning = excluded.hide_orphan_warning,
+      updated_at = CURRENT_TIMESTAMP
+  `).run(deviceId, hidden ? 1 : 0);
 }

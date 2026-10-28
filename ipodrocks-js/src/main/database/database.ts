@@ -48,6 +48,7 @@ export class AppDatabase {
     this.migrateLosslessCheck();
     this.migrateTrackTagFields();
     this.migrateDeviceBuildRockboxDb();
+    this.migrateDeviceHideOrphanWarning();
     this.migrateDeviceRemoteEnabled();
   }
 
@@ -104,6 +105,29 @@ export class AppDatabase {
       }
     } catch (err) {
       console.error("[db] migration failed (migrateDeviceBuildRockboxDb):", err);
+    }
+  }
+
+  /**
+   * Add device_sync_preferences.hide_orphan_warning — the "do not show this
+   * warning again for this device" box on the Start Sync warning for any
+   * Orphan & Reset Policy other than Keep. Off by default: the warning shows.
+   */
+  private migrateDeviceHideOrphanWarning(): void {
+    if (!this.db) return;
+    try {
+      const rows = this.db
+        .prepare("PRAGMA table_info(device_sync_preferences)")
+        .all() as { name: string }[];
+      if (!new Set(rows.map((r) => r.name)).has("hide_orphan_warning")) {
+        this.db
+          .prepare(
+            "ALTER TABLE device_sync_preferences ADD COLUMN hide_orphan_warning INTEGER NOT NULL DEFAULT 0"
+          )
+          .run();
+      }
+    } catch (err) {
+      console.error("[db] migration failed (migrateDeviceHideOrphanWarning):", err);
     }
   }
 

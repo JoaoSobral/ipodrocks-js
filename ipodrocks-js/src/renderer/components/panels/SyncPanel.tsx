@@ -16,11 +16,13 @@ import {
   getShadowLibraries,
   getLibraryStats,
   getDeviceSyncPreferences,
+  setOrphanWarningHidden,
   getSyncStatus,
   getBrokenPlaylists,
   repairPlaylist,
 } from "../../ipc/api";
 import { SyncProgressModal } from "../modals/SyncProgressModal";
+import { OrphanPolicyGate } from "../modals/OrphanPolicyGate";
 import { useAudiobooksStore } from "../../stores/audiobooks-store";
 import type { Track, Playlist, ShadowLibrary } from "@shared/types";
 import type { AlbumGrouping, CustomSelectionMode, CustomSelections, ExtraTrackPolicy, SyncOptions, SyncType } from "@shared/types";
@@ -41,6 +43,8 @@ interface SyncPrefsState {
   preserveFolderStructure: boolean;
   albumGrouping: AlbumGrouping;
   buildRockboxDatabase: boolean;
+  /** Per device: the user asked not to see the orphan-policy warning again. */
+  hideOrphanWarning: boolean;
   customMode: CustomSelectionMode;
   selectedItems: Record<string, Set<string>>;
 }
@@ -64,6 +68,7 @@ const INITIAL_PREFS: SyncPrefsState = {
   preserveFolderStructure: true,
   albumGrouping: "album-artist",
   buildRockboxDatabase: false,
+  hideOrphanWarning: false,
   customMode: "include",
   selectedItems: EMPTY_SELECTIONS,
 };
@@ -80,6 +85,7 @@ type SyncPrefsAction =
   | { type: "setPreserveFolderStructure"; value: boolean }
   | { type: "setAlbumGrouping"; value: AlbumGrouping }
   | { type: "setBuildRockboxDatabase"; value: boolean }
+  | { type: "setHideOrphanWarning"; value: boolean }
   | { type: "setAlbumSelections"; labels: string[] }
   | { type: "setCustomMode"; value: CustomSelectionMode }
   | { type: "toggleSelection"; category: string; label: string; checked: boolean };
@@ -99,6 +105,7 @@ function syncPrefsReducer(state: SyncPrefsState, action: SyncPrefsAction): SyncP
         preserveFolderStructure: action.prefs.preserveFolderStructure,
         albumGrouping: action.prefs.albumGrouping ?? "album-artist",
         buildRockboxDatabase: action.prefs.buildRockboxDatabase === true,
+        hideOrphanWarning: action.prefs.hideOrphanWarning === true,
         customMode: action.prefs.selections.mode === "exclude" ? "exclude" : "include",
         selectedItems: {
           albums: new Set(action.prefs.selections.albums),
@@ -118,6 +125,7 @@ function syncPrefsReducer(state: SyncPrefsState, action: SyncPrefsAction): SyncP
     case "setPreserveFolderStructure": return { ...state, preserveFolderStructure: action.value };
     case "setAlbumGrouping": return { ...state, albumGrouping: action.value };
     case "setBuildRockboxDatabase": return { ...state, buildRockboxDatabase: action.value };
+    case "setHideOrphanWarning": return { ...state, hideOrphanWarning: action.value };
     case "setAlbumSelections":
       return { ...state, selectedItems: { ...state.selectedItems, albums: new Set(action.labels) } };
     case "setCustomMode": return { ...state, customMode: action.value };
@@ -128,6 +136,17 @@ function syncPrefsReducer(state: SyncPrefsState, action: SyncPrefsAction): SyncP
       return { ...state, selectedItems: next };
     }
   }
+}
+
+/**
+ * Every policy but Keep warns before the sync. The user may turn that off per
+ * device — except for Delete all, which erases folders outright and is always
+ * confirmed.
+ */
+function needsPolicyGate(policy: ExtraTrackPolicy, hideOrphanWarning: boolean): boolean {
+  if (policy === "keep") return false;
+  if (policy === "delete-all") return true;
+  return !hideOrphanWarning;
 }
 
 export function SyncPanel() {
@@ -162,7 +181,8 @@ export function SyncPanel() {
   // "Delete all" erases the device's content folders before copying, so it is
   // confirmed the same way the broken-playlist gate is: stash the options,
   // resume on confirm.
-  const [deleteAllGate, setDeleteAllGate] = useState<SyncOptions | null>(null);
+  // Any policy but Keep deletes from (or reports on) the device: warn first.
+  const [policyGate, setPolicyGate] = useState<SyncOptions | null>(null);
   const [repairing, setRepairing] = useState(false);
 
   const [deviceId, setDeviceId] = useState<number | "">("");
@@ -172,7 +192,7 @@ export function SyncPanel() {
   const navigateTo = useUIStore((s) => s.navigateTo);
   const [shadowLibs, setShadowLibs] = useState<ShadowLibrary[]>([]);
   const [prefs, dispatch] = useReducer(syncPrefsReducer, INITIAL_PREFS);
-  const { syncType, fullIncludeMusic, fullIncludePodcasts, fullIncludeAudiobooks, fullIncludePlaylists, extraTrackPolicy, preserveFolderStructure, albumGrouping, buildRockboxDatabase, customMode, selectedItems } = prefs;
+  const { syncType, fullIncludeMusic, fullIncludePodcasts, fullIncludeAudiobooks, fullIncludePlaylists, extraTrackPolicy, preserveFolderStructure, albumGrouping, buildRockboxDatabase, hideOrphanWarning, customMode, selectedItems } = prefs;
 
   const [tracks, setTracks] = useState<Track[]>([]);
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
@@ -637,8 +657,8 @@ export function SyncPanel() {
       }
     }
 
-    if (syncOpts.extraTrackPolicy === "delete-all") {
-      setDeleteAllGate(syncOpts);
+    if (needsPolicyGate(syncOpts.extraTrackPolicy, hideOrphanWarning)) {
+      setPolicyGate(syncOpts);
       return;
     }
 
@@ -658,6 +678,7 @@ export function SyncPanel() {
     preserveFolderStructure,
     albumGrouping,
     buildRockboxDatabase,
+    hideOrphanWarning,
     customMode,
     selectedItems,
   ]);
@@ -796,6 +817,24 @@ export function SyncPanel() {
               { value: "prompt", label: "Prompt" },
             ]}
           />
+          {hideOrphanWarning && extraTrackPolicy !== "keep" && (
+            <p className="text-xs text-muted-foreground" data-testid="orphan-warning-hidden">
+              {extraTrackPolicy === "delete-all"
+                ? "Delete all is always confirmed before it runs."
+                : "The warning before sync is hidden for this device."}{" "}
+              <button
+                type="button"
+                className="underline hover:text-foreground cursor-default"
+                onClick={() => {
+                  if (!deviceId) return;
+                  dispatch({ type: "setHideOrphanWarning", value: false });
+                  setOrphanWarningHidden(deviceId as number, false).catch(console.error);
+                }}
+              >
+                Show it again
+              </button>
+            </p>
+          )}
         </div>
         <div className="flex flex-wrap gap-6 mt-4">
           <label className="flex items-center gap-2 cursor-default">
@@ -997,8 +1036,8 @@ export function SyncPanel() {
                     await Promise.all(brokenGateModal.broken.map((pl) => repairPlaylist(pl.id)));
                     const opts = brokenGateModal.pendingOptions;
                     setBrokenGateModal(null);
-                    if (opts.extraTrackPolicy === "delete-all") {
-                      setDeleteAllGate(opts);
+                    if (needsPolicyGate(opts.extraTrackPolicy, hideOrphanWarning)) {
+                      setPolicyGate(opts);
                     } else {
                       setSyncOptionsForModal(opts);
                       setShowSyncModal(true);
@@ -1017,45 +1056,23 @@ export function SyncPanel() {
         )}
       </Modal>
 
-      {/* "Delete all" confirmation gate */}
-      <Modal
-        open={deleteAllGate !== null}
-        onClose={() => setDeleteAllGate(null)}
-        title="Erase and rebuild this device?"
-        className="max-w-md"
-      >
-        {deleteAllGate && (
-          <div className="flex flex-col gap-4">
-            <p className="text-sm text-foreground">
-              This deletes the <strong>Music</strong>, <strong>Podcasts</strong>{" "}
-              and <strong>Audiobooks</strong> folders on{" "}
-              <strong>{deviceList.find((d) => d.id === deleteAllGate.deviceId)?.name ?? "this device"}</strong>{" "}
-              and rebuilds them from your library.
-            </p>
-            <ul className="text-xs text-muted-foreground list-disc pl-5 space-y-1">
-              <li>Everything currently in those folders is removed, including files iPodRocks did not put there.</li>
-              <li>Auto-podcast episodes are downloaded again, so this can take a while.</li>
-              <li>Ratings and listening history stored on the device are not touched.</li>
-            </ul>
-            <div className="flex gap-2 justify-end pt-1">
-              <Button variant="ghost" onClick={() => setDeleteAllGate(null)}>
-                Cancel
-              </Button>
-              <Button
-                variant="danger"
-                onClick={() => {
-                  const opts = deleteAllGate;
-                  setDeleteAllGate(null);
-                  setSyncOptionsForModal(opts);
-                  setShowSyncModal(true);
-                }}
-              >
-                Erase and rebuild
-              </Button>
-            </div>
-          </div>
-        )}
-      </Modal>
+      {/* Orphan & Reset Policy warning: every policy except Keep */}
+      <OrphanPolicyGate
+        policy={policyGate?.extraTrackPolicy ?? null}
+        deviceName={deviceList.find((d) => d.id === policyGate?.deviceId)?.name ?? "this device"}
+        onCancel={() => setPolicyGate(null)}
+        onConfirm={(dontShowAgain) => {
+          const opts = policyGate;
+          setPolicyGate(null);
+          if (!opts) return;
+          if (dontShowAgain) {
+            dispatch({ type: "setHideOrphanWarning", value: true });
+            setOrphanWarningHidden(opts.deviceId, true).catch(console.error);
+          }
+          setSyncOptionsForModal(opts);
+          setShowSyncModal(true);
+        }}
+      />
 
       {/* Sync progress modal */}
       {showSyncModal && syncOptionsForModal && (

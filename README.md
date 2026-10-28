@@ -24,6 +24,19 @@ It also runs **headless**: a plain daemon with no Electron, published on Docker 
 
 iPodRocks is NOT a library manager. I strongly advise you to use beets and beets-flask as proper library managers (there are other alternatives). Once you library is ready then iPodRocks can sync to multiple RockBox devices.
 
+### The library leads, the device follows
+
+iPodRocks's primary strategy is to **respect your library, not the device**. Your library is the source of truth: a sync makes the player match the library you are syncing, and never rewrites the library to match the player. (Star ratings are the one exception — they travel both ways and are merged, not overwritten.)
+
+What happens to files on the player that are *not* in the library is your call, through the Sync tab's **Orphan & Reset Policy**:
+
+- **Keep** — the default for every new device. Nothing on the player that is outside the library is deleted. (A library track left on the player in a codec its profile no longer uses is still replaced by the new format.)
+- **Remove orphans** — music, podcasts and audiobooks that do not match the library being synced are deleted from the player, so it becomes an exact copy.
+- **Delete all** — the player's Music, Podcasts and Audiobooks folders are erased and rebuilt from the library.
+- **Prompt** — nothing is deleted; what does not match is reported.
+
+Anything other than **Keep** shows a warning when you press **Start Sync**, and its OK button is held for two seconds so you cannot click straight through it. You can tick **Do not show this warning again for this device** to silence it for one player (and bring it back from the Sync tab) — except for **Delete all**, which is always confirmed.
+
 ---
 
 If you really like iPodRocks and want to keep it caffeinated, you can buy me a coffee — every cup helps keep the development going. Thank you! ☕
@@ -332,7 +345,7 @@ and no browser grants folder access on an insecure origin.
 1. **Add library folder** — Open **Library**, click **Add Folder**, and choose your music root folder (for example, `/home/user/Music`). iPodRocks scans all subfolders recursively for audio files. Important to have your audio with tags
 2. **Add device** — Open **Devices**, click **+ Add Device**, and pick the **root mount path of the device** (for example, `/media/ipod`). The app will automatically create `music`, `podcasts`, and `audiobooks` folders on the device if they do not exist. If you own more than one player, also pick it from the optional **USB Device** dropdown so the two never get confused for each other.
 3. **Create playlists** (optional) — Open **Playlists** for Classic (hand-picked), Smart, Genius, or Savant playlists.
-4. **Sync** — Open **Sync**, select your device, choose full or custom sync, and click **Start Sync**.
+4. **Sync** — Open **Sync**, select your device, choose full or custom sync, and click **Start Sync**. The Orphan & Reset Policy starts at **Keep**, so nothing already on the player is deleted unless you choose otherwise.
 
 ---
 
@@ -383,6 +396,7 @@ and no browser grants folder access on an insecure origin.
 ### Sync
 
 - **Full sync** — Music, podcasts, audiobooks, playlists
+- **Orphan & Reset Policy** — **Keep** by default; Remove orphans, Delete all and Prompt each show a warning before the sync runs (see [The library leads, the device follows](#the-library-leads-the-device-follows))
 - **Custom sync** — Pick albums, artists, genres, playlists
 - **Mirror library folder structure** — On by default; keeps the device layout identical to your library, including album folders that carry the year (`Levels (2011)`). Turn it off to rebuild paths from tags as `Artist/Album/track.ext`
 - **Group albums by** — **Album artist** (default) keeps a compilation as one album in both the picker and the rebuilt folder layout; **Track artist** restores the older per-track-artist behaviour
@@ -415,7 +429,7 @@ and no browser grants folder access on an insecure origin.
 
 | Layer    | Technology                    |
 |----------|--------------------------------|
-| Shell    | Electron 43                   |
+| Shell    | Electron 45                   |
 | Frontend | React 19, Tailwind CSS 4, Zustand 5 |
 | Backend  | TypeScript, better-sqlite3, music-metadata, Essentia.js |
 | Server   | Express, WebSocket, Passport — headless on Node 24 |

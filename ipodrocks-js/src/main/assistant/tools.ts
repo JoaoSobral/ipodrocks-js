@@ -24,6 +24,7 @@ import {
   emptySelections,
   getDeviceSyncPreferences,
   saveDeviceSyncPreferences,
+  setOrphanWarningHidden,
 } from "../sync/device-sync-preferences";
 import type { ToolDefinition } from "../llm/openRouterClient";
 import {
@@ -2147,7 +2148,7 @@ const device_set_sync_preferences: AiTool = {
 const device_set_orphan_policy: AiTool = {
   name: "device_set_orphan_policy",
   description:
-    "Set a device's Orphan & Reset Policy — what a sync does about content on the device it does not cover. 'keep' leaves it alone. 'remove' deletes anything the sync selection does not account for, across songs, podcasts and audiobooks. 'delete-all' erases the device's Music, Podcasts and Audiobooks folders and rebuilds them from the library (auto-podcast episodes are downloaded again); the user still confirms this in a dialog before the sync runs. 'prompt' reports the extras instead of deleting them.",
+    "Set a device's Orphan & Reset Policy — what a sync does about content on the device it does not cover. 'keep' leaves it alone. 'remove' deletes anything the sync selection does not account for, across songs, podcasts and audiobooks. 'delete-all' erases the device's Music, Podcasts and Audiobooks folders and rebuilds them from the library (auto-podcast episodes are downloaded again); 'prompt' reports the extras instead of deleting them. New devices default to 'keep'. Starting a sync from the Sync panel with any policy other than 'keep' shows a warning the user must confirm.",
   parameters: {
     type: "object",
     properties: {
@@ -2205,6 +2206,49 @@ const device_set_orphan_policy: AiTool = {
         policy === "delete-all"
           ? `Set to Delete all. The next sync will erase ${device.profile.name}'s Music, Podcasts and Audiobooks folders and rebuild them — you'll get a confirmation dialog before anything is deleted.`
           : `Orphan & reset policy for ${device.profile.name} is now "${policy}".`,
+    };
+  },
+};
+
+/**
+ * The twin of the Start Sync warning's "do not show this warning again for
+ * this device" box. Write-safe: it hides a reminder and deletes nothing — the
+ * policy itself is what decides what a sync removes, and "Delete all" is
+ * confirmed in the Sync panel whatever this says.
+ */
+const device_set_orphan_warning: AiTool = {
+  name: "device_set_orphan_warning",
+  description:
+    "Show or hide the warning the Sync panel raises when Start Sync is pressed with an Orphan & Reset Policy other than 'keep' (the same as the warning's 'do not show this warning again for this device' box). Remembered per device. 'Delete all' is always confirmed regardless.",
+  parameters: {
+    type: "object",
+    properties: {
+      device_id: { type: "number", description: "Device ID (from device_list)" },
+      show: { type: "boolean", description: "true to show the warning again, false to stop showing it." },
+    },
+    required: ["device_id", "show"],
+  },
+  kind: "write-safe",
+  summarize: (a) =>
+    `${a.show ? "Show" : "Hide"} the orphan-policy sync warning for device #${a.device_id}`,
+  async run(args, ctx) {
+    const deviceId = Number(args.device_id);
+    if (!Number.isInteger(deviceId) || deviceId <= 0) throw new Error("Invalid device_id");
+    if (typeof args.show !== "boolean") throw new Error("show must be true or false");
+    const device = ctx.getDevicesCore().getDeviceById(deviceId);
+    if (!device) throw new Error(`Device #${deviceId} not found`);
+    const blocked = await deviceGate(ctx, deviceId, "admin");
+    if (blocked) return { error: blocked };
+
+    setOrphanWarningHidden(ctx.db, deviceId, !args.show);
+    invalidateAssistantCache();
+    return {
+      updated: true,
+      name: device.profile.name,
+      show: args.show,
+      message: args.show
+        ? `The orphan-policy warning will show again for ${device.profile.name}.`
+        : `The orphan-policy warning is hidden for ${device.profile.name}. "Delete all" is still confirmed before it runs.`,
     };
   },
 };
@@ -2794,6 +2838,7 @@ export const AI_TOOLS: AiTool[] = [
   device_set_usb_identity,
   device_set_connections,
   device_set_orphan_policy,
+  device_set_orphan_warning,
   device_sync,
   library_scan,
   shadow_list,
