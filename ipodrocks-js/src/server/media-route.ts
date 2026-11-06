@@ -37,7 +37,7 @@ const MIME_BY_EXT: Record<string, string> = {
   ".webp": "image/webp",
 };
 
-function contentTypeFor(filePath: string): string {
+export function contentTypeFor(filePath: string): string {
   return MIME_BY_EXT[path.extname(filePath).toLowerCase()] ?? "application/octet-stream";
 }
 

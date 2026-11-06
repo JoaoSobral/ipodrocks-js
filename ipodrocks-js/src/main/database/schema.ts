@@ -488,6 +488,62 @@ CREATE TABLE IF NOT EXISTS content_hashes (
 -- Application Settings
 -- ============================================================
 
+-- Remote libraries: another iPodRocks server's share, as seen from here
+-- (src/main/remote-library/). Whole new tables, so their indexes may live in
+-- SCHEMA_SQL; nothing here references tracks(id) — a cached copy is found by
+-- joining tracks.path = remote_tracks.cache_path, which survives the scanner's
+-- foreign_keys = OFF deletes without a dangling id.
+CREATE TABLE IF NOT EXISTS remote_libraries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    -- Canonical origin pinned at pairing: scheme://host[:port], nothing else.
+    -- Never updated; a moved peer means a new invite.
+    peer_origin TEXT NOT NULL,
+    share_id TEXT NOT NULL,
+    -- The sharer's Ed25519 key from pairing; every response must be
+    -- countersigned by it.
+    sharer_public_key TEXT NOT NULL,
+    lan INTEGER NOT NULL DEFAULT 0,
+    allow_download INTEGER NOT NULL DEFAULT 1,
+    status TEXT NOT NULL DEFAULT 'active'
+        CHECK(status IN ('active', 'offline', 'revoked', 'error')),
+    last_error TEXT,
+    track_count INTEGER NOT NULL DEFAULT 0,
+    total_bytes INTEGER NOT NULL DEFAULT 0,
+    -- The managed library_folders row holding cached copies, once one exists.
+    cache_folder_id INTEGER,
+    last_synced_at INTEGER,
+    created_at INTEGER NOT NULL,
+    UNIQUE(peer_origin, share_id)
+);
+
+CREATE TABLE IF NOT EXISTS remote_tracks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    remote_library_id INTEGER NOT NULL REFERENCES remote_libraries(id) ON DELETE CASCADE,
+    ref TEXT NOT NULL,
+    title TEXT,
+    artist TEXT,
+    album TEXT,
+    album_artist TEXT,
+    genre TEXT,
+    track_number INTEGER,
+    disc_number INTEGER,
+    year INTEGER,
+    duration REAL,
+    bitrate INTEGER,
+    file_size INTEGER,
+    content_type TEXT NOT NULL DEFAULT 'music',
+    codec TEXT,
+    hash TEXT,
+    rel_path TEXT NOT NULL,
+    -- Absolute, server-derived: the cache root joined with the sanitized
+    -- rel_path. Where a "Keep offline" copy lands.
+    cache_path TEXT NOT NULL,
+    UNIQUE(remote_library_id, ref)
+);
+CREATE INDEX IF NOT EXISTS idx_remote_tracks_library ON remote_tracks(remote_library_id);
+CREATE INDEX IF NOT EXISTS idx_remote_tracks_cache_path ON remote_tracks(cache_path);
+
 CREATE TABLE IF NOT EXISTS app_settings (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     key TEXT NOT NULL UNIQUE,

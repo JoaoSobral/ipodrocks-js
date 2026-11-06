@@ -1,3 +1,6 @@
+import * as fs from "fs";
+import * as path from "path";
+import { isInsideRemoteCache, remoteCacheBase } from "../remote-library/store";
 import { handle as bridgeHandle, type HandlerContext, type HandlerSender } from "../host/bridge";
 import { safe, getLibrary, getPlaylistCore, validateFolderPath } from "./common";
 import { denyIfNotOwner, OWNER_ONLY_SETTINGS_MESSAGE } from "../../server/auth/sessions";
@@ -153,6 +156,24 @@ export function reconcilePlaylistsAfterLibraryChange(context: string) {
 }
 
 /** True while a library scan runs — the lossless delete waits for it to finish. */
+/**
+ * A remote library's offline cache (`<userData>/remote-cache/<id>`) is a
+ * server-derived folder, and on a Linux daemon the data directory sits outside
+ * the folder allowlist — so without this a scan of every folder would report
+ * it missing. Admitted only once realpath'd to strictly inside the cache base:
+ * the most a client can name this way is a folder this server wrote itself.
+ */
+function remoteCacheFolder(raw: string): { path: string } | null {
+  if (typeof raw !== "string" || raw.includes("\0")) return null;
+  try {
+    const real = fs.realpathSync(path.resolve(raw));
+    if (real === remoteCacheBase() || !isInsideRemoteCache(real)) return null;
+    return fs.statSync(real).isDirectory() ? { path: real } : null;
+  } catch {
+    return null;
+  }
+}
+
 export function isLibraryScanActive(): boolean {
   return activeScan !== null;
 }
@@ -195,7 +216,7 @@ export async function runLibraryScan(
   const allRemovedShadowPaths: string[] = [];
   try {
     for (const folder of folders) {
-      const validated = validateFolderPath(folder.path);
+      const validated = remoteCacheFolder(folder.path) ?? validateFolderPath(folder.path);
       if ("error" in validated) {
         allErrors.push(`${folder.name}: ${validated.error}`);
         continue;
@@ -418,6 +439,17 @@ export function registerLibraryHandlers(): void {
   bridgeHandle(
     "library:removeFolder",
     safe("library:removeFolder", async (_event, folderId: number) => {
+      // A remote library's offline cache is managed: removing it here would
+      // leave `remote_libraries.cache_folder_id` pointing at nothing.
+      const managed = getLibrary()
+        .getConnection()
+        .prepare("SELECT name FROM remote_libraries WHERE cache_folder_id = ?")
+        .get(folderId) as { name: string } | undefined;
+      if (managed) {
+        throw new Error(
+          `This folder holds offline copies from the remote library "${managed.name}". Remove them from Library → Remote libraries.`
+        );
+      }
       const ok = getLibrary().removeLibraryFolder(folderId, true);
       if (!ok) throw new Error("Folder not found or could not remove");
       reconcilePlaylistsAfterLibraryChange("folder removal");

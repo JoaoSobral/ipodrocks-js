@@ -40,6 +40,13 @@ import { handleInvoke, handleInvokeResult, MAX_INVOKE_BODY_BYTES } from "./invok
 import { handleMediaRequest } from "./media-route";
 import { issueMediaToken, resetMediaTokenKey } from "./media-token";
 import { setMediaUrlEncoder } from "../main/player/media-url";
+import { createFederationRouter, resetFederationState } from "./federation/router";
+import { resetServerKeyPair } from "./federation/signing";
+import { handleRemoteMediaRequest } from "./remote-media-route";
+import {
+  startRemoteLibraryScheduler,
+  stopRemoteLibraryScheduler,
+} from "../main/remote-library/catalog-sync";
 
 /**
  * The web server.
@@ -208,6 +215,8 @@ export async function startServer(
   const config = { ...loadServerConfig(), ...overrides } as ServerConfig;
 
   resetMediaTokenKey();
+  resetServerKeyPair();
+  resetFederationState();
   resetEventSessions();
   resetDeviceSessions();
   resetPassport();
@@ -319,6 +328,16 @@ export async function startServer(
   app.get("/api/media/:token", apiLimiter, requireAuth(config), handleMediaRequest);
   app.head("/api/media/:token", apiLimiter, requireAuth(config), handleMediaRequest);
 
+  // A remote library's tracks, proxied through this server so the browser
+  // never talks to a peer and no peer credential reaches it. Same token as
+  // `/api/media`, minted for `remote:<id>` — see `remote-media-route.ts`.
+  app.get("/api/remote-media/:token", apiLimiter, requireAuth(config), (req, res) => {
+    void handleRemoteMediaRequest(req, res);
+  });
+  app.head("/api/remote-media/:token", apiLimiter, requireAuth(config), (req, res) => {
+    void handleRemoteMediaRequest(req, res);
+  });
+
   // The device data plane. No body parser: the payload is a raw audio file and
   // it is piped, not buffered. Deliberately *not* rate-limited either — see
   // `deviceIoIsDeliberatelyUnlimited` in `rate-limits.ts`: a sync is one
@@ -330,6 +349,13 @@ export async function startServer(
   app.post("/api/device-io/:direction/:token", requireAuth(config), (req, res) => {
     void handleDeviceIo(req, res);
   });
+
+  // Library sharing with other iPodRocks servers. Outside `requireAuth` on
+  // purpose: a peer has no session and never gets one. Every route but the
+  // invite exchange verifies an Ed25519 signature from the key bound to the
+  // share, and the router answers everything it does not recognise with the
+  // same 404. See `federation/router.ts`.
+  app.use("/api/federation", createFederationRouter({ libraryDb: getLibraryDb }));
 
   // The renderer bundle. Served after the API routes so a file called
   // `api` could never shadow one, and without `index: false` shortcuts that
@@ -396,6 +422,10 @@ export async function startServer(
   // Media URLs now have to be tokens. Installed here, torn down in `stop()`,
   // so the desktop app's `media://` scheme comes back if the toggle is turned
   // off again.
+  // Remote libraries refresh their catalogues while the server runs, and only
+  // then: the peer client signs with this server's federation key.
+  startRemoteLibraryScheduler(getLibraryDb);
+
   setMediaUrlEncoder((filePath, sessionId) => {
     return `/api/media/${issueMediaToken(filePath, sessionId ?? null)}`;
   });
@@ -457,6 +487,7 @@ export async function startServer(
     config,
     async stop(): Promise<void> {
       setMediaUrlEncoder(null);
+      stopRemoteLibraryScheduler();
       deviceSessions.close();
       resetDeviceSessions();
       await events.close();

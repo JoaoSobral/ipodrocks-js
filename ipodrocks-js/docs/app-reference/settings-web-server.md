@@ -175,3 +175,9 @@ needs that provider's credentials configured, like its login button.
 
 Managing accounts and approvals is owner-only. Asked by anyone else, Rocksy says so and does
 nothing; it also never reads a claim token or a password back into the chat.
+
+## Sharing with another server
+
+The **Sharing** card shares chosen folders and playlists with a friend's own
+iPodRocks server. They do not get an account on yours. See
+[Library Sharing](./library-sharing.md).

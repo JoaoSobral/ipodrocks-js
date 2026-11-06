@@ -91,6 +91,62 @@ CREATE TABLE IF NOT EXISTS server_settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
+
+-- Library sharing (federation/shares.ts). A share is a capability handed to
+-- another iPodRocks *server*, never an account: it opens only the read-only
+-- /api/federation router. Here rather than in ipodrock.db because it is
+-- authentication material (the peer's key, the invite hash) and this file is
+-- the 0600 one. Folder and playlist ids point into the library database, so
+-- there are no foreign keys; scope is re-resolved on every request instead.
+CREATE TABLE IF NOT EXISTS federation_shares (
+  id TEXT PRIMARY KEY,
+  label TEXT NOT NULL,
+  allow_download INTEGER NOT NULL DEFAULT 1,
+  byte_budget_daily INTEGER,
+  max_streams INTEGER NOT NULL DEFAULT 3,
+  invite_hash TEXT,
+  invite_expires_at INTEGER,
+  peer_public_key TEXT,
+  peer_name TEXT,
+  accepted_at INTEGER,
+  revoked_at INTEGER,
+  last_seen_at INTEGER,
+  bytes_served INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS federation_share_scope (
+  share_id TEXT NOT NULL REFERENCES federation_shares(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL CHECK(kind IN ('folder', 'playlist')),
+  target_id INTEGER NOT NULL,
+  PRIMARY KEY (share_id, kind, target_id)
+);
+
+-- Opaque per-share track ids. A peer never sees tracks.id, so it can neither
+-- enumerate the library nor correlate two shares.
+CREATE TABLE IF NOT EXISTS federation_share_refs (
+  share_id TEXT NOT NULL REFERENCES federation_shares(id) ON DELETE CASCADE,
+  ref TEXT NOT NULL,
+  track_id INTEGER NOT NULL,
+  PRIMARY KEY (share_id, ref),
+  UNIQUE (share_id, track_id)
+);
+
+-- The recipient's side: credentials for reaching a peer that sits behind
+-- Cloudflare Access. Here, not beside remote_libraries, because this file is
+-- the 0600 one; never returned to a renderer.
+CREATE TABLE IF NOT EXISTS federation_peer_secrets (
+  remote_library_id INTEGER PRIMARY KEY,
+  cf_client_id TEXT,
+  cf_client_secret TEXT
+);
+
+CREATE TABLE IF NOT EXISTS federation_share_usage (
+  share_id TEXT NOT NULL REFERENCES federation_shares(id) ON DELETE CASCADE,
+  day TEXT NOT NULL,
+  bytes INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (share_id, day)
+);
 `;
 
 let db: Database.Database | null = null;

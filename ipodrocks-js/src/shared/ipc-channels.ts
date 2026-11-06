@@ -32,6 +32,8 @@ export const ALLOWED_CHANNEL_PREFIXES = [
   "audiobook:",
   "server:",
   "lossless:",
+  "share:",
+  "remote:",
 ] as const;
 
 export function isAllowedChannel(channel: string): boolean {

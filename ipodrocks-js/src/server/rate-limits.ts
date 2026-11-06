@@ -110,3 +110,21 @@ export function apiRateLimiter(): RateLimitRequestHandler {
  * finds this reasoning instead of an oversight.
  */
 export const deviceIoIsDeliberatelyUnlimited = true;
+
+export const FEDERATION_WINDOW_MS = MINUTE;
+export const FEDERATION_LIMIT = 600;
+
+/**
+ * Library sharing between servers (`/api/federation`). Keyed on the address,
+ * like the rest: a peer server is one address, and a catalogue refresh plus a
+ * handful of Range-chunked downloads sits far below this. The per-share
+ * ceilings — concurrent streams and the daily byte budget — live in the
+ * router, where the share is known.
+ */
+export function federationRateLimiter(): RateLimitRequestHandler {
+  return limiter({
+    windowMs: FEDERATION_WINDOW_MS,
+    limit: FEDERATION_LIMIT,
+    message: "Too many requests. Slow down.",
+  });
+}

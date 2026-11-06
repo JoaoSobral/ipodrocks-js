@@ -204,7 +204,24 @@ interface VettedTarget {
   addresses: { address: string; family: number }[] | null;
 }
 
-async function vetUrl(raw: string): Promise<VettedTarget> {
+/**
+ * Decides whether one address may be connected to. `true` means refused.
+ *
+ * Supplied per call by a caller that knows more than the global switch does —
+ * the remote-library peer client, which allows a private range for exactly one
+ * owner-entered host. When it is present it **replaces** `allowPrivate`
+ * outright, in both directions: `IPODROCKS_ALLOW_PRIVATE_FETCH` never widens a
+ * call that brought its own policy, and the policy's exception never leaks to
+ * a call that did not.
+ */
+export type AddressPolicy = (ip: string) => boolean;
+
+function refused(ip: string, policy: AddressPolicy | undefined): boolean {
+  if (policy) return policy(ip);
+  return !allowPrivate && isBlockedAddress(ip);
+}
+
+async function vetUrl(raw: string, policy?: AddressPolicy): Promise<VettedTarget> {
   let u: URL;
   try {
     u = new URL(raw);
@@ -216,7 +233,7 @@ async function vetUrl(raw: string): Promise<VettedTarget> {
   }
   const host = u.hostname.replace(/^\[|\]$/g, "");
   if (net.isIP(host)) {
-    if (!allowPrivate && isBlockedAddress(host)) {
+    if (refused(host, policy)) {
       throw new BlockedUrlError(`Refusing to fetch a non-public address: ${host}`);
     }
     return { url: u, addresses: null };
@@ -228,7 +245,7 @@ async function vetUrl(raw: string): Promise<VettedTarget> {
     throw new BlockedUrlError(`Could not resolve ${host}`);
   }
   if (addrs.length === 0) throw new BlockedUrlError(`Could not resolve ${host}`);
-  if (!allowPrivate && addrs.some((a) => isBlockedAddress(a.address))) {
+  if (addrs.some((a) => refused(a.address, policy))) {
     throw new BlockedUrlError(`Refusing to fetch a non-public address: ${host}`);
   }
   return { url: u, addresses: addrs };
@@ -245,6 +262,15 @@ export interface SafeFetchInit {
   signal?: AbortSignal;
   /** Socket inactivity bound; clamped to `MAX_IDLE_TIMEOUT_MS`, never disabled. */
   idleTimeoutMs?: number;
+  /** Replaces the global private-address switch for this call. See {@link AddressPolicy}. */
+  addressPolicy?: AddressPolicy;
+  /**
+   * `"error"` refuses any 3xx instead of following it — for a caller talking
+   * to a pinned peer that has no business sending one anywhere.
+   */
+  redirect?: "follow" | "error";
+  /** A request body. Only sensible with `redirect: "error"`: a body is never re-sent to a new hop. */
+  body?: string | Buffer;
 }
 
 /** A `lookup` that answers with the vetted list and never consults DNS. */
@@ -391,7 +417,7 @@ function requestOnce(
       settled = true;
       resolve({ status, location: null, response });
     });
-    req.end();
+    req.end(init.body);
   });
 }
 
@@ -412,11 +438,17 @@ function abortReason(signal: AbortSignal): Error {
  * *decoded* bytes — which is the number that matters for a compression bomb.
  */
 export async function safeFetch(raw: string, init: SafeFetchInit = {}): Promise<Response> {
+  if (init.body !== undefined && init.redirect !== "error") {
+    throw new Error("safeFetch: a request body requires redirect: \"error\"");
+  }
   let current = raw;
   for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
-    const target = await vetUrl(current);
+    const target = await vetUrl(current, init.addressPolicy);
     const result = await requestOnce(target, init, current);
     if (result.response) return result.response;
+    if (init.redirect === "error") {
+      throw new BlockedUrlError(`Refusing a redirect from ${new URL(current).host}`);
+    }
     current = new URL(result.location!, current).toString();
   }
   throw new BlockedUrlError(`Too many redirects starting at ${raw}`);

@@ -24,6 +24,7 @@ import {
 import type { OpenRouterConfig, SavantKeyData, PodcastSettings } from "../../ipc/api";
 import { WebServerCard } from "./WebServerCard";
 import { SignInMethodsCard } from "./SignInMethodsCard";
+import { SharingCard } from "./SharingCard";
 import { isWebMode } from "../../ipc/web-transport";
 
 interface SettingsPanelProps {
@@ -654,6 +655,7 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
           >
             {isWebMode() && <SignInMethodsCard open={open} />}
             <WebServerCard open={open} />
+            {isWebMode() && <SharingCard open={open} />}
           </div>
           </div>
         </div>

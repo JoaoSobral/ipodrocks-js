@@ -42,6 +42,7 @@ Scan library at startup — Settings → Library, OFF by default. On: every fold
 Shadow Libraries — pre-transcoded mirrors (e.g. FLAC → MPC). Create once, sync fast to multiple devices that need a specific codec. Shadow libraries hold audio files and artwork only — no play counts, ratings, or listening history.
 Rebuild (the ⟳ button on a shadow library row) — adopts files that are already correctly encoded rather than re-encoding them. It never re-opens a file that already exists, so it cannot fix a file an older version wrote badly; for that, delete the shadow library *with* its files and create it again, which re-encodes everything.
 Tracks / Playlists — switch between track list and library playlists. Search, sort, filter by device, type, sync status.
+Remote libraries (web server only) — a friend's own iPodRocks server can share folders/playlists with this one. The owner shares via Settings → Remote → Sharing (invite link, single use, 7 days; Rocksy: share_create / share_revoke). The recipient's owner pastes the link in Library → Remote libraries (Rocksy: remote_library_add). Browse and play from there; "Keep offline" downloads tracks into the library so they sync to an iPod (Rocksy: remote_library_keep_offline). Revoking deletes the friend's offline copies.
 
 Tip: enable "Extract harmonic data" and "Analyze with Essentia" in Settings before scanning if you want key/BPM data for Savant and harmonic mixing.
 

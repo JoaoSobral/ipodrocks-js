@@ -1620,3 +1620,148 @@ export async function readDevLog(
 export async function clearDevLog(): Promise<void> {
   await window.api.invoke("app:devLog:clear");
 }
+
+// ---------------------------------------------------------------------------
+// Library sharing (owner) and remote libraries — web mode only
+// ---------------------------------------------------------------------------
+
+export type Denied = { error: string };
+
+export function isDenied<T>(r: T | Denied): r is Denied {
+  return typeof r === "object" && r !== null && "error" in r;
+}
+
+export interface LibraryShare {
+  id: string;
+  label: string;
+  allowDownload: boolean;
+  byteBudgetDaily: number | null;
+  maxStreams: number;
+  scope: { folderIds: number[]; playlistIds: number[] };
+  status: "pending" | "expired" | "active" | "revoked";
+  inviteExpiresAt: number | null;
+  peerName: string | null;
+  peerFingerprint: string | null;
+  acceptedAt: number | null;
+  revokedAt: number | null;
+  lastSeenAt: number | null;
+  bytesServed: number;
+  createdAt: number;
+}
+
+export interface ShareInput {
+  label: string;
+  folderIds: number[];
+  playlistIds: number[];
+  allowDownload: boolean;
+  byteBudgetDaily: number | null;
+  maxStreams?: number;
+}
+
+export async function listShares(): Promise<{ shares: LibraryShare[] } | Denied> {
+  return window.api.invoke("share:list") as Promise<{ shares: LibraryShare[] } | Denied>;
+}
+
+export async function createShare(
+  input: ShareInput
+): Promise<{ share: LibraryShare; inviteLink: string } | Denied> {
+  return window.api.invoke("share:create", input) as Promise<
+    { share: LibraryShare; inviteLink: string } | Denied
+  >;
+}
+
+export async function revokeShare(id: string): Promise<{ ok: true } | Denied> {
+  return window.api.invoke("share:revoke", id) as Promise<{ ok: true } | Denied>;
+}
+
+export async function deleteShare(id: string): Promise<{ ok: true } | Denied> {
+  return window.api.invoke("share:delete", id) as Promise<{ ok: true } | Denied>;
+}
+
+export interface RemoteLibrary {
+  id: number;
+  name: string;
+  peerOrigin: string;
+  lan: boolean;
+  allowDownload: boolean;
+  status: "active" | "offline" | "revoked" | "error";
+  lastError: string | null;
+  trackCount: number;
+  totalBytes: number;
+  cachedCount: number;
+  sharerFingerprint: string;
+  lastSyncedAt: number | null;
+  createdAt: number;
+}
+
+export interface RemoteTrack {
+  id: number;
+  remoteLibraryId: number;
+  ref: string;
+  title: string | null;
+  artist: string | null;
+  album: string | null;
+  albumArtist: string | null;
+  genre: string | null;
+  trackNumber: number | null;
+  discNumber: number | null;
+  year: number | null;
+  duration: number | null;
+  fileSize: number | null;
+  codec: string | null;
+  cached: boolean;
+  localDuplicate: boolean;
+}
+
+export async function listRemoteLibraries(): Promise<{ libraries: RemoteLibrary[] } | Denied> {
+  return window.api.invoke("remote:list") as Promise<{ libraries: RemoteLibrary[] } | Denied>;
+}
+
+export async function addRemoteLibrary(input: {
+  inviteLink: string;
+  name?: string;
+  lan: boolean;
+  cfClientId?: string;
+  cfClientSecret?: string;
+}): Promise<{ library: RemoteLibrary } | Denied> {
+  return window.api.invoke("remote:add", input) as Promise<{ library: RemoteLibrary } | Denied>;
+}
+
+export async function removeRemoteLibrary(id: number): Promise<{ ok: true } | Denied> {
+  return window.api.invoke("remote:remove", id) as Promise<{ ok: true } | Denied>;
+}
+
+export async function refreshRemoteLibrary(
+  id: number
+): Promise<{ ok: true; trackCount: number } | Denied> {
+  return window.api.invoke("remote:refresh", id) as Promise<{ ok: true; trackCount: number } | Denied>;
+}
+
+export async function listRemoteTracks(
+  id: number,
+  opts: { search?: string; offset?: number; limit?: number; hideLocalDuplicates?: boolean }
+): Promise<{ total: number; tracks: RemoteTrack[] } | Denied> {
+  return window.api.invoke("remote:tracks", id, opts) as Promise<
+    { total: number; tracks: RemoteTrack[] } | Denied
+  >;
+}
+
+export async function keepRemoteOffline(
+  id: number,
+  trackIds: number[]
+): Promise<{ downloaded: number; failed: number; errors: string[] } | Denied> {
+  return window.api.invoke("remote:keepOffline", id, trackIds) as Promise<
+    { downloaded: number; failed: number; errors: string[] } | Denied
+  >;
+}
+
+export async function evictRemoteOffline(
+  id: number,
+  trackIds: number[]
+): Promise<{ removed: number } | Denied> {
+  return window.api.invoke("remote:evict", id, trackIds) as Promise<{ removed: number } | Denied>;
+}
+
+export async function remoteStreamUrl(remoteTrackId: number): Promise<{ url: string } | Denied> {
+  return window.api.invoke("remote:streamUrl", remoteTrackId) as Promise<{ url: string } | Denied>;
+}

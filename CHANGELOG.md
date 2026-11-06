@@ -1,5 +1,20 @@
 # Changelog
 
+## [Unreleased]
+
+### ✨ Changes
+
+- **Library sharing (web server only):** share chosen folders and playlists with a friend's own iPodRocks server from **Settings → Remote → Sharing**. You send a single-use invite link, valid for 7 days. Revoke stops it at once.
+- **Remote libraries:** paste a friend's invite link in **Library → Remote libraries** to browse and play their share. **Keep offline** adds tracks to your library so they sync to an iPod.
+- Each share has an **allow offline copies** setting and an optional daily transfer limit.
+- Rocksy can share, revoke, add, refresh, search and remove remote libraries, and keep tracks offline.
+
+### 🔒 Security
+
+- Servers pair through the invite, then sign every request with Ed25519 keys and countersign every response. A share never creates an account.
+- The recipient pins the peer's address and follows no redirects. It never reaches loopback, link-local or cloud-metadata addresses, and reaches private addresses only for a peer you mark as LAN or tailnet.
+- Tracks you keep offline from someone else's share are never re-shared.
+
 ## [3.2.3] — 2026-10
 
 ### ✨ Changes

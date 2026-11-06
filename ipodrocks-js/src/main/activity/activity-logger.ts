@@ -29,7 +29,10 @@ export type ActivityOperation =
   | "shadow_prune"
   | "mpc_tag_repair"
   | "lossless_check"
-  | "lossless_delete";
+  | "lossless_delete"
+  | "library_share_created"
+  | "library_share_accepted"
+  | "library_share_revoked";
 
 export interface ActivityEntry {
   id: number;

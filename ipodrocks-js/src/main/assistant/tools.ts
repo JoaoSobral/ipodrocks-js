@@ -2806,6 +2806,204 @@ const audiobook_unsubscribe: AiTool = {
 // Registry
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Library sharing (src/server/federation) and remote libraries
+// (src/main/remote-library). Every gate lives in the shared `…For(ctx)`
+// functions the IPC channels call, so a tool reached through
+// `assistant:confirmAction` with no LLM in the loop is refused exactly as the
+// channel would refuse it.
+// ---------------------------------------------------------------------------
+
+const share_list: AiTool = {
+  name: "share_list",
+  description:
+    "List this server's library shares (which friends' servers can browse, stream and keep copies of which folders/playlists), with their status, the accepting server and its key fingerprint, and bytes served. Also lists the library folders and playlists that can be shared, with their ids, for share_create. Owner only.",
+  parameters: { type: "object", properties: {}, required: [] },
+  kind: "read",
+  summarize: () => "List library shares",
+  async run(_args, ctx) {
+    const { listSharesFor } = await import("../ipc/shares");
+    const listed = listSharesFor(ctx);
+    if ("error" in listed) return listed;
+    const { getLibraryDb } = await import("../ipc/common");
+    const db = getLibraryDb();
+    return {
+      ...listed,
+      shareableFolders: db.prepare("SELECT id, name, content_type FROM library_folders WHERE id NOT IN (SELECT cache_folder_id FROM remote_libraries WHERE cache_folder_id IS NOT NULL)").all(),
+      shareablePlaylists: db.prepare("SELECT id, name FROM playlists ORDER BY name").all(),
+    };
+  },
+};
+
+const share_create: AiTool = {
+  name: "share_create",
+  description:
+    "Share part of this library with a friend's or family member's own iPodRocks server. Creates a share over the chosen library folders and/or playlists and returns a single-use invite link (valid 7 days) the user sends them; they paste it into Library → Remote libraries on their server. Needs the web server running. Call share_list first for folder and playlist ids. Owner only.",
+  parameters: {
+    type: "object",
+    properties: {
+      label: { type: "string", description: "Who or what the share is for, e.g. \"Ana\"." },
+      folder_ids: { type: "array", items: { type: "number" }, description: "Library folder ids to share." },
+      playlist_ids: { type: "array", items: { type: "number" }, description: "Playlist ids to share; their current members are shared." },
+      allow_download: {
+        type: "boolean",
+        description: "Whether the friend's server may keep offline copies (needed to sync them to an iPod). Default true.",
+      },
+      daily_limit_gb: { type: "number", description: "Optional cap on what this share may transfer per day, in GB." },
+    },
+    required: ["label"],
+  },
+  kind: "write-destructive",
+  summarize: (a) => `Share library folders/playlists as "${a.label}" and create an invite link`,
+  async run(args, ctx) {
+    const { createShareFor } = await import("../ipc/shares");
+    const gb = typeof args.daily_limit_gb === "number" && args.daily_limit_gb > 0 ? args.daily_limit_gb : null;
+    return createShareFor(ctx, {
+      label: args.label,
+      folderIds: args.folder_ids,
+      playlistIds: args.playlist_ids,
+      allowDownload: args.allow_download !== false,
+      byteBudgetDaily: gb === null ? null : Math.floor(gb * 1024 ** 3),
+    });
+  },
+};
+
+const share_revoke: AiTool = {
+  name: "share_revoke",
+  description:
+    "Stop sharing: revoke a library share by id (from share_list). Takes effect on the friend's server's next request, and their server deletes its offline copies. Owner only.",
+  parameters: {
+    type: "object",
+    properties: { share_id: { type: "string", description: "The share id from share_list." } },
+    required: ["share_id"],
+  },
+  kind: "write-destructive",
+  summarize: (a) => `Revoke library share ${a.share_id}`,
+  async run(args, ctx) {
+    const { revokeShareFor } = await import("../ipc/shares");
+    return revokeShareFor(ctx, args.share_id);
+  },
+};
+
+const remote_library_list: AiTool = {
+  name: "remote_library_list",
+  description:
+    "List the remote libraries on this server — other people's iPodRocks libraries shared with us — with status (active, offline, revoked, error), track counts, how many are kept offline, and whether offline copies are allowed.",
+  parameters: { type: "object", properties: {}, required: [] },
+  kind: "read",
+  summarize: () => "List remote libraries",
+  async run() {
+    const { listRemoteLibrariesFor } = await import("../ipc/remote-library");
+    return listRemoteLibrariesFor();
+  },
+};
+
+const remote_library_search: AiTool = {
+  name: "remote_library_search",
+  description:
+    "Search one remote library's catalogue by title, artist or album. Returns tracks with ids and whether each is kept offline. Tracks the user already has locally are hidden.",
+  parameters: {
+    type: "object",
+    properties: {
+      library_id: { type: "number", description: "Remote library id from remote_library_list." },
+      query: { type: "string", description: "Search text; empty lists everything (first 200)." },
+    },
+    required: ["library_id"],
+  },
+  kind: "read",
+  summarize: (a) => `Search remote library ${a.library_id} for "${a.query ?? ""}"`,
+  async run(args) {
+    const { getLibraryDb } = await import("../ipc/common");
+    const { getRemoteLibraryRow, listRemoteTracks } = await import("../remote-library/store");
+    const db = getLibraryDb();
+    const row = getRemoteLibraryRow(db, args.library_id);
+    if (!row) return { error: "Remote library not found." };
+    return listRemoteTracks(db, row.id, { search: args.query, limit: 200 });
+  },
+};
+
+const remote_library_add: AiTool = {
+  name: "remote_library_add",
+  description:
+    "Add a friend's shared library from the invite link they sent (https://their-server/#share=…). Pairs this server with theirs and fetches the catalogue. Set lan=true only when their server is on the user's own LAN or tailnet (allows a private address and plain http). Needs the web server running. Owner only.",
+  parameters: {
+    type: "object",
+    properties: {
+      invite_link: { type: "string", description: "The invite link exactly as received." },
+      name: { type: "string", description: "Optional display name, e.g. \"Ana's library\"." },
+      lan: { type: "boolean", description: "Their server is on this LAN or tailnet." },
+    },
+    required: ["invite_link"],
+  },
+  kind: "write-destructive",
+  summarize: (a) => `Add the remote library from an invite link${a.lan ? " (LAN/tailnet)" : ""}`,
+  async run(args, ctx) {
+    const { addRemoteLibraryFor } = await import("../ipc/remote-library");
+    return addRemoteLibraryFor(ctx, { inviteLink: args.invite_link, name: args.name, lan: args.lan === true });
+  },
+};
+
+const remote_library_refresh: AiTool = {
+  name: "remote_library_refresh",
+  description: "Re-fetch a remote library's catalogue now (it also refreshes every six hours on its own).",
+  parameters: {
+    type: "object",
+    properties: { library_id: { type: "number", description: "Remote library id." } },
+    required: ["library_id"],
+  },
+  kind: "write-safe",
+  summarize: (a) => `Refresh remote library ${a.library_id}`,
+  async run(args) {
+    const { refreshRemoteLibraryFor } = await import("../ipc/remote-library");
+    return refreshRemoteLibraryFor(args.library_id);
+  },
+};
+
+const remote_library_keep_offline: AiTool = {
+  name: "remote_library_keep_offline",
+  description:
+    "Download tracks from a remote library so they become normal library tracks — which is what lets them be synced to an iPod. Give track_ids (from remote_library_search) or a query matching title/artist/album; every match is kept (max 2000). Refused when the sharer has turned offline copies off.",
+  parameters: {
+    type: "object",
+    properties: {
+      library_id: { type: "number" },
+      track_ids: { type: "array", items: { type: "number" } },
+      query: { type: "string", description: "Keep every track matching this, e.g. an album name." },
+    },
+    required: ["library_id"],
+  },
+  kind: "write-safe",
+  summarize: (a) => `Keep tracks from remote library ${a.library_id} offline`,
+  async run(args) {
+    const { keepOfflineFor } = await import("../ipc/remote-library");
+    let ids = Array.isArray(args.track_ids) ? args.track_ids : [];
+    if (ids.length === 0 && typeof args.query === "string" && args.query.trim()) {
+      const { getLibraryDb } = await import("../ipc/common");
+      const { listRemoteTracks } = await import("../remote-library/store");
+      if (typeof args.library_id !== "number") return { error: "Remote library not found." };
+      ids = listRemoteTracks(getLibraryDb(), args.library_id, { search: args.query, limit: 2000 }).tracks.map((t) => t.id);
+    }
+    return keepOfflineFor(args.library_id, ids);
+  },
+};
+
+const remote_library_remove: AiTool = {
+  name: "remote_library_remove",
+  description:
+    "Remove a remote library from this server, deleting its catalogue and every offline copy (and so those tracks from the library). Owner only.",
+  parameters: {
+    type: "object",
+    properties: { library_id: { type: "number" } },
+    required: ["library_id"],
+  },
+  kind: "write-destructive",
+  summarize: (a) => `Remove remote library ${a.library_id} and its offline copies`,
+  async run(args, ctx) {
+    const { removeRemoteLibraryFor } = await import("../ipc/remote-library");
+    return removeRemoteLibraryFor(ctx, args.library_id);
+  },
+};
+
 export const AI_TOOLS: AiTool[] = [
   app_docs_search,
   library_search_tracks,
@@ -2876,6 +3074,15 @@ export const AI_TOOLS: AiTool[] = [
   lossless_report,
   lossless_mark_ok,
   lossless_delete_flagged,
+  share_list,
+  share_create,
+  share_revoke,
+  remote_library_list,
+  remote_library_search,
+  remote_library_add,
+  remote_library_refresh,
+  remote_library_keep_offline,
+  remote_library_remove,
 ];
 
 export function getToolByName(name: string): AiTool | undefined {

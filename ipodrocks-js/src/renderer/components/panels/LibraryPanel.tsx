@@ -57,6 +57,8 @@ import type { DeviceProfile, Playlist, ShadowLibrary, ShadowBuildProgress, Lossl
 import { LosslessCheckModal } from "../modals/LosslessCheckModal";
 import { LosslessBadge, losslessTooltip } from "../common/LosslessBadge";
 import { useLosslessStore } from "../../stores/lossless-store";
+import { RemoteLibrariesCard } from "./RemoteLibrariesCard";
+import { isWebMode } from "../../ipc/web-transport";
 
 type SortField =
   | "title"
@@ -716,6 +718,16 @@ export function LibraryPanel() {
             Review →
           </Button>
         </div>
+      )}
+
+      {/* Remote libraries — a friend's server's share. Web mode only: the
+          peer client and the stream proxy live in the web server. */}
+      {isWebMode() && (
+        <RemoteLibrariesCard
+          onLibraryChanged={() => {
+            void Promise.all([fetchFolders(), fetchTracks(), fetchStats()]);
+          }}
+        />
       )}
 
       {/* Folders + Shadow Libraries — compact side-by-side grid */}

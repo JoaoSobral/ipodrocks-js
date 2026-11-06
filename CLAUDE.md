@@ -1631,6 +1631,70 @@ e2e `web-sync-resilience` (a real socket drop and a real reload mid-sync),
 `web-connection-resilience`, `web-device-sync` (remote delete-all) and
 `orphan-reset-policy` (local delete-all leaves no trash).
 
+## Hazard: library sharing is a second trust boundary, server to server
+
+`src/server/federation/` (sharer) and `src/main/remote-library/` (recipient)
+let one iPodRocks server share folders/playlists with another. Web server only.
+A share is a **capability for a server, never an account**: it opens only
+`/api/federation/*` (pair, info, catalog, media), mounted outside `requireAuth`,
+and nothing there reaches `/api/invoke`, IPC or Rocksy.
+
+- **Auth is Ed25519 both ways.** The single-use invite binds the recipient's
+  public key to the share; every later request is signed over method, path
+  (`req.originalUrl`), share id, timestamp and nonce (±5 min, nonce consumed
+  only *after* the signature verifies). The sharer **countersigns every
+  authenticated answer** over the request's nonce, and the recipient refuses
+  any response without it — that, not TLS, is what stops a re-pointed hostname.
+  One key pair per server, in `server_settings` (the 0600 DB); shares and the
+  recipient's Cloudflare service tokens live in that DB too, never in
+  `ipodrock.db`.
+- **Every pre-signature failure is the same 404** — no route, bad signature,
+  unknown share, stale clock, replay. A revoked share answers 410, but only to
+  its own key. Keep it that way: a distinct answer is an oracle.
+- **Ids, never paths.** A peer sees per-share random refs, never `tracks.id`,
+  and relative paths. Scope is re-resolved on **every** request
+  (`trackInScope`), so leaving a shared playlist closes a track immediately.
+- **A friend's tracks are never re-shared.** Every scope query excludes the
+  remote caches' folders (`notRemoteCache()` in `shares.ts`), including via a
+  playlist. `COALESCE` is load-bearing: `NULL NOT IN (…)` drops folderless
+  tracks.
+- **The recipient's outbound client is an SSRF surface.** `PeerClient` builds
+  every URL from the origin pinned at pairing (never updated; a move is a new
+  invite), passes `redirect: "error"` and a per-peer `addressPolicy` to
+  `safeFetch`. **When a call brings an `addressPolicy` it replaces the global
+  `allowPrivate` in both directions** — `IPODROCKS_ALLOW_PRIVATE_FETCH` must
+  never widen peer traffic. `peer-policy.ts` refuses metadata endpoints by
+  exact value *inside* ranges a LAN peer may use (`fd00:ec2::254`,
+  `100.100.100.200`, `100.100.100.100`). `IPODROCKS_FEDERATION_ALLOW_LOOPBACK=1`
+  is a test-only seam for the two-daemon e2e, honoured only with the LAN flag.
+- **The stream proxy never forwards the peer's `Content-Type`** — a sharer
+  answering `text/html` would serve a page from our origin. Type comes from the
+  catalogue path, whose extension `cleanRelPath()` already required to be audio.
+  Its token is the media token minted for `remote:<id>`, which `/api/media`
+  can never honour.
+- **Kept-offline tracks are ordinary tracks** in a managed library folder
+  (`<userData>/remote-cache/<id>`, `remote_libraries.cache_folder_id`), so
+  sync, shadows, ratings and the matcher need no remote-awareness. Cached rows
+  are matched by `tracks.path = remote_tracks.cache_path` — no FK into
+  `tracks`, so nothing to add to `deleteRemovedTracks()` — which is why the
+  cache base is realpath'd and catalogue paths NFC'd. `runLibraryScan()` admits
+  that folder (realpath'd, strictly inside the base) despite the path
+  allowlist; `library:removeFolder` refuses it. Revocation or "downloads off"
+  purges it through `removeLibraryFolder()`.
+- **Downloads trust bytes, not words**: chunked `Range` (32 MiB, under
+  Cloudflare's ~100 s cut), `downloadWatchdog`, a byte ceiling per chunk,
+  size checked against the catalogue, `sniffAudioFile` before the rename.
+- **"Allow offline copies" is advisory** — streaming is the same bytes. The
+  enforced limits are the daily byte budget and concurrent-stream cap.
+
+Owner-only: `share:*`, `remote:add`, `remote:remove` and their Rocksy twins
+(gates inside the shared `…For(ctx)` functions). Pinned in
+`regressions/federation-sharer`, `peer-client-ssrf`,
+`remote-library-recipient`, and e2e `web-library-share` and
+`web-remote-library` (two real daemons). Not done: a per-share bandwidth
+throttle; sync rules cannot select remote albums directly — keep them offline
+first.
+
 ## Hazard: `/api/invoke` checks authentication, not authorization
 
 Every `server:*`, `library:*`, `device:*` … channel reaching a web client goes

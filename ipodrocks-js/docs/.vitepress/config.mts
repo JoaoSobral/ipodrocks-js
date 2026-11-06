@@ -96,6 +96,10 @@ export default defineConfig({
                   text: "Web Server",
                   link: "/app-reference/settings-web-server",
                 },
+                {
+                  text: "Library Sharing",
+                  link: "/app-reference/library-sharing",
+                },
               ],
             },
             { text: "Ratings", link: "/app-reference/ratings" },

@@ -14,6 +14,8 @@ import { registerPodcastHandlers } from "./podcasts";
 import { registerAudiobookHandlers } from "./audiobooks";
 import { registerServerHandlers } from "./server";
 import { registerLosslessHandlers } from "./lossless";
+import { registerShareHandlers } from "./shares";
+import { registerRemoteLibraryHandlers } from "./remote-library";
 
 export { getLibraryDb, resumeInterruptedShadowBuilds };
 
@@ -41,4 +43,6 @@ export function registerIpcHandlers(): void {
   registerAudiobookHandlers();
   registerServerHandlers();
   registerLosslessHandlers();
+  registerShareHandlers();
+  registerRemoteLibraryHandlers();
 }

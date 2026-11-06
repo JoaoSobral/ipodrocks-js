@@ -80,6 +80,9 @@ const OPERATION_LABELS: Record<string, string> = {
   mpc_tag_repair: "Musepack tags repaired",
   lossless_check: "Lossless check",
   lossless_delete: "Lossy-sourced files deleted",
+  library_share_created: "Library share created",
+  library_share_accepted: "Library share accepted",
+  library_share_revoked: "Library share revoked",
 };
 
 function formatActivityTime(iso: string): string {
