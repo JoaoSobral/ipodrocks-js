@@ -204,6 +204,18 @@ test("the Library panel renders the remote library", async ({ page }) => {
   await expect(row).toBeVisible();
   await expect(row).toContainText("Ana");
   await expect(row).toContainText("1 offline");
+
+  // "+ Add Remote Library" sits in the top bar beside "+ Add Folder" and
+  // opens the add dialog.
+  const addFolder = page.getByRole("button", { name: "+ Add Folder" });
+  const addRemote = page.getByTestId("remote-add-open");
+  await expect(addRemote).toHaveText("+ Add Remote Library");
+  await expect(addRemote.locator("xpath=..")).toContainText("+ Add Folder");
+  await expect(addFolder).toBeVisible();
+  await addRemote.click();
+  await expect(page.getByTestId("remote-add-form")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("remote-add-form")).toBeHidden();
 });
 
 test("revoking on the sharer purges the copy on the recipient", async ({ request }) => {

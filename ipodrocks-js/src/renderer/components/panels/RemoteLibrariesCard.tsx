@@ -45,10 +45,21 @@ function albumKey(t: RemoteTrack): string {
   return `${t.albumArtist ?? t.artist ?? "Unknown artist"} — ${t.album ?? "Unknown album"}`;
 }
 
-export function RemoteLibrariesCard({ onLibraryChanged }: { onLibraryChanged?: () => void }) {
+/**
+ * The "+ Add Remote Library" button lives in the Library panel's top bar, next
+ * to "+ Add Folder", so the panel owns whether the add dialog is open.
+ */
+export function RemoteLibrariesCard({
+  onLibraryChanged,
+  addOpen,
+  onAddClose,
+}: {
+  onLibraryChanged?: () => void;
+  addOpen: boolean;
+  onAddClose: () => void;
+}) {
   const [libraries, setLibraries] = useState<RemoteLibrary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [adding, setAdding] = useState(false);
   const [browsing, setBrowsing] = useState<RemoteLibrary | null>(null);
   const [busy, setBusy] = useState<number | null>(null);
 
@@ -101,15 +112,12 @@ export function RemoteLibrariesCard({ onLibraryChanged }: { onLibraryChanged?: (
   return (
     <Card className="!p-2.5">
       <div className="flex items-center justify-between mb-1.5">
-        <h3 className="text-[11px] font-semibold text-card-foreground">Remote libraries</h3>
-        <Button size="sm" variant="ghost" onClick={() => setAdding(true)} data-testid="remote-add-open">
-          + Add remote library
-        </Button>
+        <h3 className="text-[11px] font-semibold text-card-foreground">Remote Libraries</h3>
       </div>
       {error && <p className="text-[11px] text-muted-foreground">{error}</p>}
       {libraries?.length === 0 && !error && (
         <p className="text-[11px] text-muted-foreground">
-          When a friend shares their iPodRocks library with you, paste their invite link here.
+          No remote libraries yet — when a friend shares their iPodRocks library, add their invite link above.
         </p>
       )}
       <ul className="space-y-1" data-testid="remote-libraries">
@@ -157,11 +165,11 @@ export function RemoteLibrariesCard({ onLibraryChanged }: { onLibraryChanged?: (
         ))}
       </ul>
 
-      {adding && (
+      {addOpen && (
         <AddRemoteLibraryModal
-          onClose={() => setAdding(false)}
+          onClose={onAddClose}
           onAdded={() => {
-            setAdding(false);
+            onAddClose();
             void load();
           }}
         />

@@ -138,6 +138,7 @@ export function LibraryPanel() {
   const [sortField, setSortField] = useState<SortField>("artist");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
   const [showAddFolder, setShowAddFolder] = useState(false);
+  const [showAddRemote, setShowAddRemote] = useState(false);
   const [folderName, setFolderName] = useState("");
   const [folderPath, setFolderPath] = useState("");
   const [folderSubmitted, setFolderSubmitted] = useState(false);
@@ -614,6 +615,16 @@ export function LibraryPanel() {
         <Button variant="primary" size="sm" onClick={() => setShowAddFolder(true)}>
           + Add Folder
         </Button>
+        {isWebMode() && (
+          <Button
+            variant="primary"
+            size="sm"
+            onClick={() => setShowAddRemote(true)}
+            data-testid="remote-add-open"
+          >
+            + Add Remote Library
+          </Button>
+        )}
         <Button size="sm" onClick={handleScan} disabled={folders.length === 0}>
           ⟳ Scan Library
         </Button>
@@ -724,6 +735,8 @@ export function LibraryPanel() {
           peer client and the stream proxy live in the web server. */}
       {isWebMode() && (
         <RemoteLibrariesCard
+          addOpen={showAddRemote}
+          onAddClose={() => setShowAddRemote(false)}
           onLibraryChanged={() => {
             void Promise.all([fetchFolders(), fetchTracks(), fetchStats()]);
           }}

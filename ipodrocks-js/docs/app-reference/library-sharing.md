@@ -46,7 +46,7 @@ Their server can never see:
 
 ## Adding a remote library
 
-1. Open **Library → Remote libraries → + Add remote library**.
+1. Open **Library** and choose **+ Add Remote Library** (next to **+ Add Folder**).
 2. Paste the invite link.
 3. Tick **Their server is on my LAN or tailnet** only if it is. This allows a
    private address (192.168.x, 10.x, Tailscale 100.x) and plain `http` for that

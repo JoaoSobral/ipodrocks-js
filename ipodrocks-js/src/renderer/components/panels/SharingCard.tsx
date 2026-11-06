@@ -131,20 +131,13 @@ export function SharingCard({ open }: { open: boolean }) {
     <Card
       title="Sharing"
       subtitle="Let a friend's or family member's own iPodRocks server browse, play and keep copies of chosen folders and playlists."
-      action={
-        !creating && (
-          <Button size="sm" variant="primary" onClick={() => setCreating(true)} data-testid="share-new">
-            Share my library
-          </Button>
-        )
-      }
     >
       <div className="space-y-4" data-testid="sharing-card">
         {invite && (
           <div className="rounded-lg border border-primary/30 bg-primary/5 p-3 space-y-2" data-testid="share-invite">
             <p className="text-xs text-foreground">
               Send this link to <strong>{invite.label}</strong>. It works once and expires in 7 days.
-              They paste it into Library → Remote libraries on their own server.
+              They add it with Library → + Add Remote Library on their own server.
             </p>
             <div className="flex gap-2">
               <input
@@ -156,6 +149,7 @@ export function SharingCard({ open }: { open: boolean }) {
               />
               <Button
                 size="sm"
+                variant="secondary"
                 onClick={() => {
                   void navigator.clipboard?.writeText(invite.link).then(
                     () => toast.success("Invite link copied"),
@@ -165,7 +159,7 @@ export function SharingCard({ open }: { open: boolean }) {
               >
                 Copy
               </Button>
-              <Button size="sm" variant="ghost" onClick={() => setInvite(null)}>
+              <Button size="sm" variant="secondary" onClick={() => setInvite(null)}>
                 Done
               </Button>
             </div>
@@ -240,12 +234,12 @@ export function SharingCard({ open }: { open: boolean }) {
               onChange={(e) => setDailyGb(e.target.value)}
             />
             <div className="flex justify-end gap-2">
-              <Button size="sm" variant="ghost" onClick={() => setCreating(false)}>
+              <Button size="sm" variant="secondary" onClick={() => setCreating(false)}>
                 Cancel
               </Button>
               <Button
                 size="sm"
-                variant="primary"
+                variant="secondary"
                 disabled={busy || !label.trim() || (folderIds.length === 0 && playlistIds.length === 0)}
                 onClick={() => void submit()}
                 data-testid="share-create"
@@ -285,7 +279,7 @@ export function SharingCard({ open }: { open: boolean }) {
                   {s.status !== "revoked" && s.status !== "expired" && (
                     <Button
                       size="sm"
-                      variant="danger"
+                      variant="secondary"
                       disabled={busy}
                       onClick={() => void act(() => revokeShare(s.id), "Share revoked")}
                       data-testid={`share-revoke-${s.id}`}
@@ -296,7 +290,7 @@ export function SharingCard({ open }: { open: boolean }) {
                   {(s.status === "revoked" || s.status === "expired") && (
                     <Button
                       size="sm"
-                      variant="ghost"
+                      variant="secondary"
                       disabled={busy}
                       onClick={() => void act(() => deleteShare(s.id), "Share deleted")}
                     >
@@ -308,6 +302,12 @@ export function SharingCard({ open }: { open: boolean }) {
             </li>
           ))}
         </ul>
+
+        {!creating && (
+          <Button size="sm" variant="secondary" onClick={() => setCreating(true)} data-testid="share-new">
+            Share my library
+          </Button>
+        )}
       </div>
     </Card>
   );
