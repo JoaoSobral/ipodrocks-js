@@ -1509,7 +1509,13 @@ the OS libraries a browser needs and *no browser*, so every `web` spec failed
 with "Executable doesn't exist at …/chrome-headless-shell" while the `electron`
 project — which launches the app's own bundled Electron — passed beside them.
 The step is `playwright install --with-deps chromium`, which does both jobs so
-the two cannot drift apart again. **Every spec runs
+the two cannot drift apart again. **Playwright must be ≥ 1.65 for CI.** On
+2026-10-19 `ubuntu-latest` became Ubuntu 26.04, and 1.60 fails that step with
+"Playwright does not support chromium on ubuntu26.04-x64" before a single test
+runs. The fix was the bump, not pinning `runs-on` back to `ubuntu-24.04`.
+When merging a branch cut before the bump, keep main's `@playwright/test`
+version and lockfile entries. Do not resolve the conflict by taking the
+branch's 1.60, and do not "fix" a red e2e job by pinning the runner. **Every spec runs
 against one long-lived daemon**, so a spec that changes server state (an added
 account, a revoked session) has to put it back.
 
